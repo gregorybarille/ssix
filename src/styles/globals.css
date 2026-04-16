@@ -1,0 +1,62 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --background: 222.2 84% 4.9%;
+    --foreground: 210 40% 98%;
+    --card: 222.2 84% 4.9%;
+    --card-foreground: 210 40% 98%;
+    --popover: 222.2 84% 4.9%;
+    --popover-foreground: 210 40% 98%;
+    --primary: 210 40% 98%;
+    --primary-foreground: 222.2 47.4% 11.2%;
+    --secondary: 217.2 32.6% 17.5%;
+    --secondary-foreground: 210 40% 98%;
+    --muted: 217.2 32.6% 17.5%;
+    --muted-foreground: 215 20.2% 65.1%;
+    --accent: 217.2 32.6% 17.5%;
+    --accent-foreground: 210 40% 98%;
+    --destructive: 0 62.8% 30.6%;
+    --destructive-foreground: 210 40% 98%;
+    --border: 217.2 32.6% 17.5%;
+    --input: 217.2 32.6% 17.5%;
+    --ring: 212.7 26.8% 83.9%;
+    --radius: 0.5rem;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  body {
+    @apply bg-background text-foreground;
+    font-feature-settings: "rlig" 1, "calt" 1;
+  }
+}
+
+:root {
+  --oc-blue-0: #e7f5ff;
+  --oc-blue-1: #d0ebff;
+  --oc-blue-2: #a5d8ff;
+  --oc-blue-3: #74c0fc;
+  --oc-blue-4: #4dabf7;
+  --oc-blue-5: #339af0;
+  --oc-blue-6: #228be6;
+  --oc-blue-7: #1c7ed6;
+  --oc-blue-8: #1971c2;
+  --oc-blue-9: #1864ab;
+  --oc-green-5: #51cf66;
+  --oc-red-5: #ff6b6b;
+  --oc-yellow-5: #fcc419;
+  --oc-grape-5: #cc5de8;
+  --oc-cyan-5: #22b8cf;
+  --oc-pink-5: #f06595;
+  --oc-orange-5: #ff922b;
+  --oc-teal-5: #20c997;
+  --oc-violet-5: #7950f2;
+  --oc-indigo-5: #5c7cfa;
+  --oc-lime-5: #94d82d;
+}
