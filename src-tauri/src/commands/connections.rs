@@ -9,6 +9,7 @@ pub struct AddConnectionInput {
     pub host: String,
     pub port: u16,
     pub credential_id: Option<String>,
+    #[serde(flatten)]
     pub kind: ConnectionKind,
 }
 
@@ -19,6 +20,7 @@ pub struct UpdateConnectionInput {
     pub host: String,
     pub port: u16,
     pub credential_id: Option<String>,
+    #[serde(flatten)]
     pub kind: ConnectionKind,
 }
 

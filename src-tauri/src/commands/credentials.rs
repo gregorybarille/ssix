@@ -6,6 +6,7 @@ use serde::Deserialize;
 pub struct AddCredentialInput {
     pub name: String,
     pub username: String,
+    #[serde(flatten)]
     pub kind: CredentialKind,
 }
 
@@ -14,6 +15,7 @@ pub struct UpdateCredentialInput {
     pub id: String,
     pub name: String,
     pub username: String,
+    #[serde(flatten)]
     pub kind: CredentialKind,
 }
 
