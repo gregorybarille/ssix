@@ -1,5 +1,5 @@
 import React from "react";
-import { Server, Key, Settings } from "lucide-react";
+import { Server, Key } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 type NavItem = "connections" | "credentials" | "settings";
@@ -12,7 +12,6 @@ interface SidebarProps {
 const navItems: { id: NavItem; label: string; icon: React.ReactNode }[] = [
   { id: "connections", label: "Connections", icon: <Server className="h-5 w-5" /> },
   { id: "credentials", label: "Credentials", icon: <Key className="h-5 w-5" /> },
-  { id: "settings", label: "Settings", icon: <Settings className="h-5 w-5" /> },
 ];
 
 export function Sidebar({ active, onNavigate }: SidebarProps) {

@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { Sidebar } from "./components/Sidebar";
+import { TitleBar } from "./components/TitleBar";
 import { ConnectionList } from "./components/ConnectionList";
 import { ConnectionForm } from "./components/ConnectionForm";
 import { CredentialList } from "./components/CredentialList";
@@ -10,6 +11,7 @@ import { Button } from "./components/ui/button";
 import { useConnectionsStore } from "./store/useConnectionsStore";
 import { useCredentialsStore } from "./store/useCredentialsStore";
 import { useSettingsStore } from "./store/useSettingsStore";
+import { useApplySettings } from "./hooks/useApplySettings";
 import { Connection, Credential } from "./types";
 import { Plus } from "lucide-react";
 
@@ -43,6 +45,8 @@ function App() {
   } = useCredentialsStore();
 
   const { settings, fetchSettings, saveSettings } = useSettingsStore();
+
+  useApplySettings(settings);
 
   useEffect(() => {
     fetchConnections();
@@ -86,10 +90,12 @@ function App() {
   };
 
   return (
-    <div className="flex h-screen bg-background text-foreground overflow-hidden">
-      <Sidebar active={view} onNavigate={(v) => setView(v as View)} />
+    <div className="flex flex-col h-screen bg-background text-foreground overflow-hidden">
+      <TitleBar onSettings={() => setView("settings")} settingsActive={view === "settings"} />
+      <div className="flex flex-1 overflow-hidden">
+        <Sidebar active={view} onNavigate={(v) => setView(v as View)} />
 
-      <main className="flex-1 flex flex-col overflow-hidden">
+        <main className="flex-1 flex flex-col overflow-hidden">
         {view === "connections" && (
           <>
             <div className="flex items-center justify-between px-6 py-4 border-b border-border">
@@ -189,6 +195,7 @@ function App() {
           </div>
         )}
       </main>
+      </div>
     </div>
   );
 }
