@@ -35,8 +35,8 @@ Download the latest release for your platform from the [Releases](../../releases
 - Platform system dependencies (see [docs/development.md](docs/development.md))
 
 ```bash
-git clone https://github.com/gregorybarille/ssix
-cd ssix
+git clone https://github.com/gregorybarille/ssx
+cd ssx
 npm install
 npm run tauri build
 ```
