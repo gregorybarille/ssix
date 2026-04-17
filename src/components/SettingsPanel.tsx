@@ -1,0 +1,165 @@
+import React, { useEffect } from "react";
+import { AppSettings, OPEN_COLORS, FONT_FAMILIES, FONT_SIZES } from "@/types";
+import { Button } from "./ui/button";
+import { Label } from "./ui/label";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "./ui/select";
+import { Separator } from "./ui/separator";
+import { cn } from "@/lib/utils";
+
+interface SettingsPanelProps {
+  settings: AppSettings;
+  onSave: (settings: AppSettings) => Promise<void>;
+}
+
+const COLOR_VALUES: Record<string, string> = {
+  blue: "#339af0",
+  green: "#51cf66",
+  red: "#ff6b6b",
+  yellow: "#fcc419",
+  grape: "#cc5de8",
+  cyan: "#22b8cf",
+  pink: "#f06595",
+  orange: "#ff922b",
+  teal: "#20c997",
+  violet: "#7950f2",
+  indigo: "#5c7cfa",
+  lime: "#94d82d",
+};
+
+export function SettingsPanel({ settings, onSave }: SettingsPanelProps) {
+  const [form, setForm] = React.useState(settings);
+  const [isSaving, setIsSaving] = React.useState(false);
+  const [saved, setSaved] = React.useState(false);
+
+  useEffect(() => {
+    setForm(settings);
+  }, [settings]);
+
+  const handleSave = async () => {
+    setIsSaving(true);
+    try {
+      await onSave(form);
+      setSaved(true);
+      setTimeout(() => setSaved(false), 2000);
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  return (
+    <div className="space-y-6 p-6 max-w-lg">
+      <div>
+        <h2 className="text-lg font-semibold">Settings</h2>
+        <p className="text-sm text-muted-foreground mt-1">
+          Customize the appearance of SSX
+        </p>
+      </div>
+      <Separator />
+
+      <div className="space-y-4">
+        <h3 className="text-sm font-medium">Font</h3>
+
+        <div className="space-y-2">
+          <Label htmlFor="font-family">Font Family</Label>
+          <Select
+            value={form.font_family}
+            onValueChange={(v) => setForm({ ...form, font_family: v })}
+          >
+            <SelectTrigger id="font-family">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {FONT_FAMILIES.map((f) => (
+                <SelectItem key={f} value={f} style={{ fontFamily: f }}>
+                  {f}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+
+        <div className="space-y-2">
+          <Label htmlFor="font-size">Font Size</Label>
+          <Select
+            value={String(form.font_size)}
+            onValueChange={(v) => setForm({ ...form, font_size: parseInt(v) })}
+          >
+            <SelectTrigger id="font-size">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {FONT_SIZES.map((s) => (
+                <SelectItem key={s} value={String(s)}>
+                  {s}px
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+      </div>
+
+      <Separator />
+
+      <div className="space-y-4">
+        <h3 className="text-sm font-medium">Color Scheme (Open Colors)</h3>
+        <div className="grid grid-cols-4 gap-2">
+          {OPEN_COLORS.map((color) => (
+            <button
+              key={color}
+              className={cn(
+                "flex flex-col items-center gap-1.5 p-2 rounded-lg border transition-all",
+                form.color_scheme === color
+                  ? "border-primary bg-accent"
+                  : "border-transparent hover:border-border"
+              )}
+              onClick={() => setForm({ ...form, color_scheme: color })}
+            >
+              <div
+                className="w-6 h-6 rounded-full"
+                style={{ backgroundColor: COLOR_VALUES[color] }}
+              />
+              <span className="text-xs capitalize">{color}</span>
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <Separator />
+
+      <div className="space-y-4">
+        <h3 className="text-sm font-medium">Theme</h3>
+        <div className="flex gap-3">
+          {(["dark", "light"] as const).map((theme) => (
+            <button
+              key={theme}
+              className={cn(
+                "flex-1 py-2 px-4 rounded-lg border text-sm font-medium capitalize transition-all",
+                form.theme === theme
+                  ? "border-primary bg-accent text-foreground"
+                  : "border-border text-muted-foreground hover:text-foreground"
+              )}
+              onClick={() => setForm({ ...form, theme })}
+            >
+              {theme}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <div className="flex items-center gap-3">
+        <Button onClick={handleSave} disabled={isSaving}>
+          {isSaving ? "Saving..." : "Save Settings"}
+        </Button>
+        {saved && (
+          <span className="text-sm text-green-500">Settings saved!</span>
+        )}
+      </div>
+    </div>
+  );
+}
