@@ -158,6 +158,7 @@ function App() {
             onSelectTab={setActiveTabId}
             onCloseTab={handleCloseTab}
             onNewTab={handleNewTabFromTerminal}
+            settings={settings}
           />
         ) : (
         <>

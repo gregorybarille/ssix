@@ -61,7 +61,7 @@ describe("ConnectionList", () => {
     expect(screen.getByText("tunnel")).toBeInTheDocument();
   });
 
-  it("renders connect buttons when onConnect is provided", () => {
+  it("renders connect buttons only for direct connections when onConnect is provided", () => {
     render(
       <ConnectionList
         connections={mockConnections}
@@ -73,7 +73,9 @@ describe("ConnectionList", () => {
       />
     );
     const connectButtons = screen.getAllByTitle("Connect");
-    expect(connectButtons).toHaveLength(mockConnections.length);
+    // Only the direct connection gets a Connect button; tunnel connections do not
+    const directCount = mockConnections.filter((c) => c.type === "direct").length;
+    expect(connectButtons).toHaveLength(directCount);
   });
 
   it("calls onConnect with the correct connection", () => {

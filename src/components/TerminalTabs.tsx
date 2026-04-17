@@ -3,6 +3,7 @@ import { Terminal } from "./Terminal";
 import { Button } from "./ui/button";
 import { X, Plus } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { AppSettings } from "@/types";
 
 export interface TerminalSession {
   sessionId: string;
@@ -15,6 +16,7 @@ interface TerminalTabsProps {
   onSelectTab: (sessionId: string) => void;
   onCloseTab: (sessionId: string) => void;
   onNewTab: () => void;
+  settings?: AppSettings;
 }
 
 export function TerminalTabs({
@@ -23,6 +25,7 @@ export function TerminalTabs({
   onSelectTab,
   onCloseTab,
   onNewTab,
+  settings,
 }: TerminalTabsProps) {
   return (
     <div className="flex flex-col h-full">
@@ -72,6 +75,7 @@ export function TerminalTabs({
             connectionName={session.connectionName}
             isVisible={activeTabId === session.sessionId}
             onDisconnect={() => onCloseTab(session.sessionId)}
+            settings={settings}
           />
         ))}
       </div>

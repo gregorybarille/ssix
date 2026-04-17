@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useCallback } from "react";
 import { Terminal as XTerm } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { invoke } from "@/lib/tauri";
+import { AppSettings } from "@/types";
 import "@xterm/xterm/css/xterm.css";
 
 interface TerminalProps {
@@ -9,9 +10,10 @@ interface TerminalProps {
   connectionName: string;
   isVisible: boolean;
   onDisconnect: () => void;
+  settings?: AppSettings;
 }
 
-export function Terminal({ sessionId, connectionName, isVisible, onDisconnect }: TerminalProps) {
+export function Terminal({ sessionId, connectionName, isVisible, onDisconnect, settings }: TerminalProps) {
   const termRef = useRef<HTMLDivElement>(null);
   const xtermRef = useRef<XTerm | null>(null);
   const fitAddonRef = useRef<FitAddon | null>(null);
@@ -37,13 +39,24 @@ export function Terminal({ sessionId, connectionName, isVisible, onDisconnect }:
     }
   }, [isVisible, sessionId]);
 
+  // Update xterm font options when settings change
+  useEffect(() => {
+    const term = xtermRef.current;
+    if (!term || !settings) return;
+    term.options.fontSize = settings.font_size;
+    term.options.fontFamily = `'${settings.font_family}', monospace`;
+    fitAddonRef.current?.fit();
+  }, [settings?.font_size, settings?.font_family]);
+
   useEffect(() => {
     if (!termRef.current) return;
 
     const term = new XTerm({
       cursorBlink: true,
-      fontSize: 14,
-      fontFamily: "'JetBrains Mono', 'Fira Code', monospace",
+      fontSize: settings?.font_size ?? 14,
+      fontFamily: settings?.font_family
+        ? `'${settings.font_family}', monospace`
+        : "'JetBrains Mono', 'Fira Code', monospace",
       theme: {
         background: "#1a1b26",
         foreground: "#c0caf5",

@@ -12,7 +12,7 @@ A modern desktop SSH client built with [Tauri v2](https://v2.tauri.app/), React,
 - **Multi-tab Sessions** — Run multiple SSH sessions side-by-side with a tabbed interface
 - **Connections** — Create, edit, clone, and search saved connections
 - **Credentials** — Save passwords or SSH key paths for reuse
-- **Tunnel / Jump Host** — SSH through a gateway to reach internal servers
+- **Tunnel / Jump Host** — SSH through a gateway to reach internal servers _(coming soon)_
 - **Settings** — Customize font, font size, color scheme (Open Colors), and dark/light theme
 - **Cross-platform** — macOS, Windows, and Linux with native titlebar integration
 

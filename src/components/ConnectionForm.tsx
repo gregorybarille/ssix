@@ -73,7 +73,7 @@ export function ConnectionForm({
         destination_port: connection.destination_port,
       });
       setConnectionType(connection.type);
-      setAuthMethod(connection.credential_id ? "credential" : "credential");
+      setAuthMethod("credential");
     } else {
       setForm(DEFAULT_FORM);
       setConnectionType("direct");

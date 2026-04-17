@@ -58,6 +58,9 @@ export function CredentialForm({
     setError(null);
     setIsSubmitting(true);
     try {
+      if (credType === "ssh_key" && !privateKeyPath.trim()) {
+        throw new Error("Private key path is required");
+      }
       const data: Omit<Credential, "id"> = {
         name,
         username,
