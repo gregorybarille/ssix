@@ -19,12 +19,15 @@ import {
 } from "./ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "./ui/tabs";
 
+type AuthMethod = "password" | "ssh_key" | "credential";
+
 interface ConnectionFormProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   connection?: Connection | null;
   credentials: Credential[];
   onSubmit: (data: Omit<Connection, "id"> | Connection) => Promise<void>;
+  onCreateCredential?: (data: Omit<Credential, "id">) => Promise<Credential>;
   isClone?: boolean;
 }
 
@@ -42,10 +45,16 @@ export function ConnectionForm({
   connection,
   credentials,
   onSubmit,
+  onCreateCredential,
   isClone = false,
 }: ConnectionFormProps) {
   const [form, setForm] = useState<Omit<Connection, "id">>(DEFAULT_FORM);
   const [connectionType, setConnectionType] = useState<"direct" | "tunnel">("direct");
+  const [authMethod, setAuthMethod] = useState<AuthMethod>("credential");
+  const [inlineUsername, setInlineUsername] = useState("");
+  const [inlinePassword, setInlinePassword] = useState("");
+  const [inlineKeyPath, setInlineKeyPath] = useState("");
+  const [inlinePassphrase, setInlinePassphrase] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
@@ -64,10 +73,16 @@ export function ConnectionForm({
         destination_port: connection.destination_port,
       });
       setConnectionType(connection.type);
+      setAuthMethod(connection.credential_id ? "credential" : "credential");
     } else {
       setForm(DEFAULT_FORM);
       setConnectionType("direct");
+      setAuthMethod("credential");
     }
+    setInlineUsername("");
+    setInlinePassword("");
+    setInlineKeyPath("");
+    setInlinePassphrase("");
     setError(null);
   }, [connection, open, isClone]);
 
@@ -76,8 +91,35 @@ export function ConnectionForm({
     setError(null);
     setIsSubmitting(true);
     try {
+      let credentialId = form.credential_id;
+
+      // Auto-create credential for inline auth
+      if (authMethod === "password" && onCreateCredential) {
+        if (!inlineUsername) throw new Error("Username is required");
+        if (!inlinePassword) throw new Error("Password is required");
+        const cred = await onCreateCredential({
+          name: `${form.name || "connection"}-cred`,
+          username: inlineUsername,
+          type: "password",
+          password: inlinePassword,
+        });
+        credentialId = cred.id;
+      } else if (authMethod === "ssh_key" && onCreateCredential) {
+        if (!inlineUsername) throw new Error("Username is required");
+        if (!inlineKeyPath) throw new Error("Private key path is required");
+        const cred = await onCreateCredential({
+          name: `${form.name || "connection"}-key`,
+          username: inlineUsername,
+          type: "ssh_key",
+          private_key_path: inlineKeyPath,
+          passphrase: inlinePassphrase || undefined,
+        });
+        credentialId = cred.id;
+      }
+
       const data = {
         ...form,
+        credential_id: credentialId,
         type: connectionType,
         ...(connectionType !== "tunnel" && {
           gateway_host: undefined,
@@ -108,7 +150,7 @@ export function ConnectionForm({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-[520px]">
+      <DialogContent className="sm:max-w-[520px] max-h-[90vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>{title}</DialogTitle>
         </DialogHeader>
@@ -162,29 +204,108 @@ export function ConnectionForm({
                 </div>
               </div>
 
-              <div className="space-y-2">
-                <Label htmlFor="credential">Credential</Label>
-                <Select
-                  value={form.credential_id ?? "none"}
-                  onValueChange={(v) =>
-                    setForm({
-                      ...form,
-                      credential_id: v === "none" ? undefined : v,
-                    })
-                  }
+              {/* Auth method selection */}
+              <div className="space-y-3">
+                <Label>Authentication</Label>
+                <Tabs
+                  value={authMethod}
+                  onValueChange={(v) => setAuthMethod(v as AuthMethod)}
                 >
-                  <SelectTrigger id="credential">
-                    <SelectValue placeholder="Select credential..." />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="none">None</SelectItem>
-                    {credentials.map((cred) => (
-                      <SelectItem key={cred.id} value={cred.id}>
-                        {cred.name} ({cred.username})
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+                  <TabsList className="w-full">
+                    <TabsTrigger value="credential" className="flex-1 text-xs">
+                      Saved Credential
+                    </TabsTrigger>
+                    <TabsTrigger value="password" className="flex-1 text-xs">
+                      Password
+                    </TabsTrigger>
+                    <TabsTrigger value="ssh_key" className="flex-1 text-xs">
+                      SSH Key
+                    </TabsTrigger>
+                  </TabsList>
+
+                  <TabsContent value="credential" className="space-y-3 mt-3">
+                    <Select
+                      value={form.credential_id ?? "none"}
+                      onValueChange={(v) =>
+                        setForm({
+                          ...form,
+                          credential_id: v === "none" ? undefined : v,
+                        })
+                      }
+                    >
+                      <SelectTrigger>
+                        <SelectValue placeholder="Select credential..." />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="none">None</SelectItem>
+                        {credentials.map((cred) => (
+                          <SelectItem key={cred.id} value={cred.id}>
+                            {cred.name} ({cred.username})
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </TabsContent>
+
+                  <TabsContent value="password" className="space-y-3 mt-3">
+                    <div className="space-y-2">
+                      <Label htmlFor="inline-username">Username *</Label>
+                      <Input
+                        id="inline-username"
+                        placeholder="root"
+                        value={inlineUsername}
+                        onChange={(e) => setInlineUsername(e.target.value)}
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="inline-password">Password *</Label>
+                      <Input
+                        id="inline-password"
+                        type="password"
+                        placeholder="••••••••"
+                        value={inlinePassword}
+                        onChange={(e) => setInlinePassword(e.target.value)}
+                      />
+                    </div>
+                    <p className="text-xs text-muted-foreground">
+                      A credential will be auto-created and linked to this connection.
+                    </p>
+                  </TabsContent>
+
+                  <TabsContent value="ssh_key" className="space-y-3 mt-3">
+                    <div className="space-y-2">
+                      <Label htmlFor="key-username">Username *</Label>
+                      <Input
+                        id="key-username"
+                        placeholder="root"
+                        value={inlineUsername}
+                        onChange={(e) => setInlineUsername(e.target.value)}
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="key-path">Private Key Path *</Label>
+                      <Input
+                        id="key-path"
+                        placeholder="~/.ssh/id_rsa"
+                        value={inlineKeyPath}
+                        onChange={(e) => setInlineKeyPath(e.target.value)}
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="key-passphrase">Passphrase (optional)</Label>
+                      <Input
+                        id="key-passphrase"
+                        type="password"
+                        placeholder="••••••••"
+                        value={inlinePassphrase}
+                        onChange={(e) => setInlinePassphrase(e.target.value)}
+                      />
+                    </div>
+                    <p className="text-xs text-muted-foreground">
+                      A credential will be auto-created and linked to this connection.
+                    </p>
+                  </TabsContent>
+                </Tabs>
               </div>
 
               <TabsContent value="tunnel" className="space-y-4 mt-0">

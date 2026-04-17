@@ -2,7 +2,7 @@ import React from "react";
 import { Connection, Credential } from "@/types";
 import { Button } from "./ui/button";
 import { Badge } from "./ui/badge";
-import { Server, Edit, Trash2, Copy, Network, ChevronRight } from "lucide-react";
+import { Server, Edit, Trash2, Copy, Network, ChevronRight, Play } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 interface ConnectionListProps {
@@ -12,6 +12,7 @@ interface ConnectionListProps {
   onDelete: (id: string) => void;
   onClone: (connection: Connection) => void;
   onSelect?: (connection: Connection) => void;
+  onConnect?: (connection: Connection) => void;
   selectedId?: string;
 }
 
@@ -22,6 +23,7 @@ export function ConnectionList({
   onDelete,
   onClone,
   onSelect,
+  onConnect,
   selectedId,
 }: ConnectionListProps) {
   const getCredentialName = (credId?: string) => {
@@ -76,6 +78,20 @@ export function ConnectionList({
             </p>
           </div>
           <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+            {onConnect && (
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-7 w-7 text-green-500 hover:text-green-600"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onConnect(conn);
+                }}
+                title="Connect"
+              >
+                <Play className="h-3.5 w-3.5" />
+              </Button>
+            )}
             <Button
               variant="ghost"
               size="icon"

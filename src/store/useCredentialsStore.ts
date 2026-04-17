@@ -7,7 +7,7 @@ interface CredentialsState {
   isLoading: boolean;
   error: string | null;
   fetchCredentials: () => Promise<void>;
-  addCredential: (input: Omit<Credential, "id">) => Promise<void>;
+  addCredential: (input: Omit<Credential, "id">) => Promise<Credential>;
   updateCredential: (input: Credential) => Promise<void>;
   deleteCredential: (id: string) => Promise<void>;
 }
@@ -35,6 +35,7 @@ export const useCredentialsStore = create<CredentialsState>((set) => ({
         credentials: [...state.credentials, cred],
         isLoading: false,
       }));
+      return cred;
     } catch (err) {
       set({ error: String(err), isLoading: false });
       throw err;
