@@ -36,7 +36,10 @@ jobs:
             libxdo-dev \
             libssl-dev \
             libayatana-appindicator3-dev \
-            librsvg2-dev
+            librsvg2-dev \
+            libsecret-1-dev \
+            dbus-x11 \
+            gnome-keyring
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:

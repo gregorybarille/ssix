@@ -1,3 +1,4 @@
+use crate::keychain;
 use crate::models::{ConnectionKind, CredentialKind};
 use crate::ssh::{start_ssh_session, AuthMethod, SessionMsg, SshState};
 use crate::storage;
@@ -29,11 +30,15 @@ pub fn ssh_connect(
         );
     }
 
-    let cred = data
+    let mut cred = data
         .credentials
         .iter()
         .find(|c| c.id == *cred_id)
-        .ok_or("Credential not found")?;
+        .ok_or("Credential not found")?
+        .clone();
+
+    // Enrich from OS keychain so the actual password/passphrase is available.
+    keychain::enrich_credential(&mut cred);
 
     let username = cred.username.clone();
     let auth = match &cred.kind {

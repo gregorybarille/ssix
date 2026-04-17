@@ -1,3 +1,4 @@
+use crate::keychain;
 use crate::models::{Credential, CredentialKind};
 use crate::storage::{load_data, save_data};
 use serde::Deserialize;
@@ -19,10 +20,49 @@ pub struct UpdateCredentialInput {
     pub kind: CredentialKind,
 }
 
+/// Extract the secret fields from a `CredentialKind`, persist them to the OS
+/// keychain keyed by `credential_id`, and return a sanitised `CredentialKind`
+/// suitable for JSON storage (passwords replaced by `""`, passphrases by `None`).
+fn store_secrets_and_sanitize(
+    credential_id: &str,
+    kind: &CredentialKind,
+) -> Result<CredentialKind, String> {
+    match kind {
+        CredentialKind::Password { password } => {
+            keychain::store_password(credential_id, password)?;
+            Ok(CredentialKind::Password {
+                password: String::new(),
+            })
+        }
+        CredentialKind::SshKey {
+            private_key_path,
+            passphrase,
+        } => {
+            if let Some(pp) = passphrase.as_deref() {
+                if !pp.is_empty() {
+                    keychain::store_passphrase(credential_id, pp)?;
+                }
+            }
+            Ok(CredentialKind::SshKey {
+                private_key_path: private_key_path.clone(),
+                passphrase: None,
+            })
+        }
+    }
+}
+
 #[tauri::command]
 pub fn get_credentials() -> Result<Vec<Credential>, String> {
     let data = load_data()?;
-    Ok(data.credentials)
+    let credentials = data
+        .credentials
+        .into_iter()
+        .map(|mut c| {
+            keychain::enrich_credential(&mut c);
+            c
+        })
+        .collect();
+    Ok(credentials)
 }
 
 #[tauri::command]
@@ -31,10 +71,26 @@ pub fn add_credential(input: AddCredentialInput) -> Result<Credential, String> {
     if data.credentials.iter().any(|c| c.name == input.name) {
         return Err(format!("A credential named '{}' already exists", input.name));
     }
-    let credential = Credential::new(input.name, input.username, input.kind);
-    data.credentials.push(credential.clone());
+
+    // Generate the ID here so we can use it as the keychain key.
+    let cred_id = uuid::Uuid::new_v4().to_string();
+    let kind_for_json = store_secrets_and_sanitize(&cred_id, &input.kind)?;
+
+    let credential = Credential {
+        id: cred_id,
+        name: input.name,
+        username: input.username,
+        kind: kind_for_json,
+    };
+
+    // Return the credential enriched with its secret so the caller can use it
+    // immediately (e.g. for display or connection).
+    let mut result = credential.clone();
+    keychain::enrich_credential(&mut result);
+
+    data.credentials.push(credential);
     save_data(&data)?;
-    Ok(credential)
+    Ok(result)
 }
 
 #[tauri::command]
@@ -43,13 +99,23 @@ pub fn update_credential(input: UpdateCredentialInput) -> Result<Credential, Str
     if data.credentials.iter().any(|c| c.name == input.name && c.id != input.id) {
         return Err(format!("A credential named '{}' already exists", input.name));
     }
-    let idx = data.credentials.iter().position(|c| c.id == input.id)
+    let idx = data
+        .credentials
+        .iter()
+        .position(|c| c.id == input.id)
         .ok_or_else(|| "Credential not found".to_string())?;
+
+    // Replace keychain entries with updated values.
+    keychain::delete_all_for_credential(&input.id);
+    let kind_for_json = store_secrets_and_sanitize(&input.id, &input.kind)?;
+
     data.credentials[idx].name = input.name;
     data.credentials[idx].username = input.username;
-    data.credentials[idx].kind = input.kind;
-    let updated = data.credentials[idx].clone();
+    data.credentials[idx].kind = kind_for_json;
+
+    let mut updated = data.credentials[idx].clone();
     save_data(&data)?;
+    keychain::enrich_credential(&mut updated);
     Ok(updated)
 }
 
@@ -58,6 +124,8 @@ pub fn delete_credential(id: String) -> Result<(), String> {
     let mut data = load_data()?;
     data.credentials.retain(|c| c.id != id);
     save_data(&data)?;
+    // Remove secrets from the keychain after the JSON entry is gone.
+    keychain::delete_all_for_credential(&id);
     Ok(())
 }
 
@@ -84,3 +152,4 @@ mod tests {
         assert_eq!(cred.name, "my_key");
     }
 }
+

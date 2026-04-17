@@ -1,4 +1,5 @@
 mod commands;
+mod keychain;
 mod models;
 mod ssh;
 mod storage;
