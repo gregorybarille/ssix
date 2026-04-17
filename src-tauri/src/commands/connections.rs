@@ -84,12 +84,17 @@ pub fn clone_connection(input: CloneConnectionInput) -> Result<Connection, Strin
     let original = data.connections.iter().find(|c| c.id == input.id)
         .ok_or_else(|| "Connection not found".to_string())?
         .clone();
+    let credential_id = match input.credential_id {
+        Some(credential_id) if credential_id.is_empty() => None,
+        Some(credential_id) => Some(credential_id),
+        None => original.credential_id,
+    };
     let cloned = Connection {
         id: Uuid::new_v4().to_string(),
         name: input.new_name,
         host: input.host.unwrap_or(original.host),
         port: input.port.unwrap_or(original.port),
-        credential_id: input.credential_id.or(original.credential_id),
+        credential_id,
         kind: original.kind,
     };
     data.connections.push(cloned.clone());
