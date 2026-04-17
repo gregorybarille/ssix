@@ -19,7 +19,7 @@ Download the latest release for your platform from the [Releases](../../releases
 
 **Prerequisites:**
 - [Rust](https://rustup.rs/) (1.70+)
-- [Node.js](https://nodejs.org/) (18+)
+- [Node.js](https://nodejs.org/) (20+)
 - npm (9+)
 - Platform system dependencies (see [docs/development.md](docs/development.md))
 
