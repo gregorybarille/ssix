@@ -43,19 +43,23 @@ export function Terminal({ sessionId, connectionName, isVisible, onDisconnect, s
   useEffect(() => {
     const term = xtermRef.current;
     if (!term || !settings) return;
+    const safeFontFamily = settings.font_family.replace(/['"\\]/g, "");
     term.options.fontSize = settings.font_size;
-    term.options.fontFamily = `'${settings.font_family}', monospace`;
+    term.options.fontFamily = `'${safeFontFamily}', monospace`;
     fitAddonRef.current?.fit();
   }, [settings?.font_size, settings?.font_family]);
 
   useEffect(() => {
     if (!termRef.current) return;
 
+    const safeFontFamily = settings?.font_family
+      ? settings.font_family.replace(/['"\\]/g, "")
+      : null;
     const term = new XTerm({
       cursorBlink: true,
       fontSize: settings?.font_size ?? 14,
-      fontFamily: settings?.font_family
-        ? `'${settings.font_family}', monospace`
+      fontFamily: safeFontFamily
+        ? `'${safeFontFamily}', monospace`
         : "'JetBrains Mono', 'Fira Code', monospace",
       theme: {
         background: "#1a1b26",
