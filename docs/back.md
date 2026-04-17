@@ -13,7 +13,7 @@ src-tauri/src/
   commands/
     mod.rs
     credentials.rs # get/add/update/delete_credential
-    connections.rs # get/add/update/delete/clone/search_connection
+    connections.rs # get/add/update/delete/clone/search_connections
     settings.rs    # get/save_settings
 ```
 
