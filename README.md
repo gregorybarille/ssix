@@ -11,7 +11,7 @@ A modern desktop SSH client built with [Tauri v2](https://v2.tauri.app/), React,
 - **SSH Terminal** — Connect to remote servers with an interactive terminal powered by xterm.js
 - **Multi-tab Sessions** — Run multiple SSH sessions side-by-side with a tabbed interface
 - **Connections** — Create, edit, clone, and search saved connections
-- **Credentials** — Store passwords or SSH key paths securely
+- **Credentials** — Save passwords or SSH key paths for reuse
 - **Tunnel / Jump Host** — SSH through a gateway to reach internal servers
 - **Settings** — Customize font, font size, color scheme (Open Colors), and dark/light theme
 - **Cross-platform** — macOS, Windows, and Linux with native titlebar integration
@@ -35,8 +35,8 @@ Download the latest release for your platform from the [Releases](../../releases
 - Platform system dependencies (see [docs/development.md](docs/development.md))
 
 ```bash
-git clone https://github.com/gregorybarille/ssx
-cd ssx
+git clone https://github.com/gregorybarille/ssix
+cd ssix
 npm install
 npm run tauri build
 ```

@@ -1,4 +1,4 @@
-use crate::models::CredentialKind;
+use crate::models::{ConnectionKind, CredentialKind};
 use crate::ssh::{start_ssh_session, AuthMethod, SessionMsg, SshState};
 use crate::storage;
 
@@ -19,6 +19,15 @@ pub fn ssh_connect(
         .credential_id
         .as_ref()
         .ok_or("No credential configured for this connection")?;
+
+    // Check connection kind — tunnel connections require gateway setup not yet supported
+    if let ConnectionKind::Tunnel { .. } = &conn.kind {
+        return Err(
+            "Tunnel/jump-host connections are not yet supported. \
+             Please configure a direct connection instead."
+                .to_string(),
+        );
+    }
 
     let cred = data
         .credentials

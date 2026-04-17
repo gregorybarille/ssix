@@ -28,6 +28,9 @@ pub fn get_credentials() -> Result<Vec<Credential>, String> {
 #[tauri::command]
 pub fn add_credential(input: AddCredentialInput) -> Result<Credential, String> {
     let mut data = load_data()?;
+    if data.credentials.iter().any(|c| c.name == input.name) {
+        return Err(format!("A credential named '{}' already exists", input.name));
+    }
     let credential = Credential::new(input.name, input.username, input.kind);
     data.credentials.push(credential.clone());
     save_data(&data)?;
@@ -37,6 +40,9 @@ pub fn add_credential(input: AddCredentialInput) -> Result<Credential, String> {
 #[tauri::command]
 pub fn update_credential(input: UpdateCredentialInput) -> Result<Credential, String> {
     let mut data = load_data()?;
+    if data.credentials.iter().any(|c| c.name == input.name && c.id != input.id) {
+        return Err(format!("A credential named '{}' already exists", input.name));
+    }
     let idx = data.credentials.iter().position(|c| c.id == input.id)
         .ok_or_else(|| "Credential not found".to_string())?;
     data.credentials[idx].name = input.name;

@@ -121,14 +121,23 @@ export function ConnectionForm({
         ...form,
         credential_id: credentialId,
         type: connectionType,
-        ...(connectionType !== "tunnel" && {
-          gateway_host: undefined,
-          gateway_port: undefined,
-          gateway_credential_id: undefined,
-          destination_host: undefined,
-          destination_port: undefined,
-        }),
+        ...(connectionType === "tunnel"
+          ? {
+              gateway_port: form.gateway_port ?? 22,
+              destination_port: form.destination_port ?? 22,
+            }
+          : {
+              gateway_host: undefined,
+              gateway_port: undefined,
+              gateway_credential_id: undefined,
+              destination_host: undefined,
+              destination_port: undefined,
+            }),
       };
+      if (connectionType === "tunnel") {
+        if (!data.gateway_host) throw new Error("Gateway host is required for tunnel connections");
+        if (!data.destination_host) throw new Error("Destination host is required for tunnel connections");
+      }
       if (connection && !isClone) {
         await onSubmit({ ...data, id: connection.id });
       } else {

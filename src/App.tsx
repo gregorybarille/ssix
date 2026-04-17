@@ -104,7 +104,7 @@ function App() {
     setConnectError(null);
     try {
       const sessionId = await invoke<string>("ssh_connect", {
-        connectionId: conn.id,
+        connection_id: conn.id,
       });
       const newSession: TerminalSession = { sessionId, connectionName: conn.name };
       setSessions((prev) => [...prev, newSession]);
@@ -117,7 +117,7 @@ function App() {
 
   const handleCloseTab = async (sessionId: string) => {
     try {
-      await invoke("ssh_disconnect", { sessionId });
+      await invoke("ssh_disconnect", { session_id: sessionId });
     } catch {
       // ignore
     }
