@@ -1,15 +1,26 @@
 # SSX — SSH Client
 
-A modern desktop SSH client built with Tauri v2, React, and Rust.
+[![Test](https://github.com/gregorybarille/ssix/actions/workflows/test.yml/badge.svg?branch=main)](https://github.com/gregorybarille/ssix/actions/workflows/test.yml)
+
+A modern desktop SSH client built with [Tauri v2](https://v2.tauri.app/), React, and Rust.
+
+![Connections](docs/screenshots/connections.png)
 
 ## Features
 
-- **Connections**: Manage SSH connections with name, host, port, and credentials
-- **Credentials**: Store password or SSH key credentials securely
-- **Clone Connections**: Duplicate connections and customize settings
-- **Search**: Filter connections by name or host
-- **Tunnel Connections**: SSH through a gateway/jump host
-- **Settings**: Customize font family, font size, and color scheme (Open Colors)
+- **SSH Terminal** — Connect to remote servers with an interactive terminal powered by xterm.js
+- **Multi-tab Sessions** — Run multiple SSH sessions side-by-side with a tabbed interface
+- **Connections** — Create, edit, clone, and search saved connections
+- **Credentials** — Store passwords or SSH key paths securely
+- **Tunnel / Jump Host** — SSH through a gateway to reach internal servers
+- **Settings** — Customize font, font size, color scheme (Open Colors), and dark/light theme
+- **Cross-platform** — macOS, Windows, and Linux with native titlebar integration
+
+## Screenshots
+
+| Credentials | New Credential | Terminal |
+|:-----------:|:--------------:|:--------:|
+| ![Credentials](docs/screenshots/credentials.png) | ![New Credential](docs/screenshots/new-credential.png) | ![Terminal](docs/screenshots/terminal.png) |
 
 ## Installation
 
@@ -45,9 +56,18 @@ cd src-tauri && cargo test  # Backend tests
 
 1. Click the **Server** icon in the sidebar
 2. Click **New Connection** to create a connection
-3. Enter name, host, port, and optionally select a credential
+3. Enter name, host, port, and choose an auth method (saved credential, password, or SSH key)
 4. For tunneled connections, switch to the **Tunnel** tab and configure the gateway
 5. Hover over a connection to see **Edit**, **Clone**, and **Delete** actions
+6. Click the **▶** button to connect and open a terminal session
+
+### Terminal Sessions
+
+- Active sessions appear in a tab bar at the top of the terminal view
+- Click **+** to open an additional connection from the tab bar
+- Switch between sessions by clicking tabs
+- Close a session by clicking **×** on its tab
+- The sidebar shows a terminal icon with a badge count when sessions are active
 
 ### Credentials
 

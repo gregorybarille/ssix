@@ -169,3 +169,68 @@ fn run_session(
     let _ = channel.wait_close();
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_ssh_state_new() {
+        let state = SshState::new();
+        let sessions = state.sessions.lock().unwrap();
+        assert!(sessions.is_empty());
+    }
+
+    #[test]
+    fn test_ssh_state_insert_and_remove() {
+        let state = SshState::new();
+        let (tx, _rx) = mpsc::channel::<SessionMsg>();
+
+        {
+            let mut sessions = state.sessions.lock().unwrap();
+            sessions.insert("test-session".to_string(), tx);
+            assert_eq!(sessions.len(), 1);
+            assert!(sessions.contains_key("test-session"));
+        }
+
+        {
+            let mut sessions = state.sessions.lock().unwrap();
+            sessions.remove("test-session");
+            assert!(sessions.is_empty());
+        }
+    }
+
+    #[test]
+    fn test_session_msg_send_receive() {
+        let (tx, rx) = mpsc::channel::<SessionMsg>();
+
+        tx.send(SessionMsg::Write(b"hello".to_vec())).unwrap();
+        tx.send(SessionMsg::Resize { cols: 80, rows: 24 }).unwrap();
+        tx.send(SessionMsg::Disconnect).unwrap();
+
+        match rx.recv().unwrap() {
+            SessionMsg::Write(data) => assert_eq!(data, b"hello"),
+            _ => panic!("expected Write"),
+        }
+
+        match rx.recv().unwrap() {
+            SessionMsg::Resize { cols, rows } => {
+                assert_eq!(cols, 80);
+                assert_eq!(rows, 24);
+            }
+            _ => panic!("expected Resize"),
+        }
+
+        match rx.recv().unwrap() {
+            SessionMsg::Disconnect => {}
+            _ => panic!("expected Disconnect"),
+        }
+    }
+
+    #[test]
+    fn test_sender_disconnect_detection() {
+        let (tx, rx) = mpsc::channel::<SessionMsg>();
+        drop(tx);
+        assert!(rx.try_recv().is_err());
+    }
+}

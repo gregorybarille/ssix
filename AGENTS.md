@@ -27,6 +27,7 @@
 
 ## Key conventions
 
+- **Every new feature must include tests.** Frontend features need Vitest + Testing Library tests in `src/test/`. Rust features need `#[cfg(test)]` unit tests in the relevant module. Do not consider a feature complete until its tests pass.
 - Keep the frontend and backend models in sync. Connections, credentials, and settings use the same snake_case field names in TypeScript and Rust because that shape is passed directly through Tauri and persisted to JSON.
 - Credential and connection variants are encoded as tagged unions with a `type` field (`password` / `ssh_key`, `direct` / `tunnel`). Preserve that wire format instead of introducing camelCase adapters.
 - Treat the Zustand stores as the async boundary. Components are mostly presentational; create/update/delete/search operations should go through the stores, which call Tauri commands and update local state.
@@ -56,6 +57,8 @@ A feature that touches both layers typically needs edits in all of these spots:
 5. `src/store/use<Area>Store.ts` — add the action that calls `invoke("command_name", { ... })` and updates store state.
 6. `src/App.tsx` or the relevant component — wire the store action into the UI.
 7. Add backend tests in the command's `#[cfg(test)] mod tests` block and, if applicable, frontend tests under `src/test/`.
+
+**Important:** Tests are mandatory, not optional. Run `npm test` and `cd src-tauri && cargo test` before considering any feature complete.
 
 ## Recommended MCP server: Playwright
 

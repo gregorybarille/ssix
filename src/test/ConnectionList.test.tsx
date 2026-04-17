@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { render, screen, fireEvent } from "@testing-library/react";
 import { ConnectionList } from "@/components/ConnectionList";
 import { Connection, Credential } from "@/types";
 
@@ -59,5 +59,50 @@ describe("ConnectionList", () => {
       />
     );
     expect(screen.getByText("tunnel")).toBeInTheDocument();
+  });
+
+  it("renders connect buttons when onConnect is provided", () => {
+    render(
+      <ConnectionList
+        connections={mockConnections}
+        credentials={mockCredentials}
+        onEdit={vi.fn()}
+        onDelete={vi.fn()}
+        onClone={vi.fn()}
+        onConnect={vi.fn()}
+      />
+    );
+    const connectButtons = screen.getAllByTitle("Connect");
+    expect(connectButtons).toHaveLength(mockConnections.length);
+  });
+
+  it("calls onConnect with the correct connection", () => {
+    const onConnect = vi.fn();
+    render(
+      <ConnectionList
+        connections={mockConnections}
+        credentials={mockCredentials}
+        onEdit={vi.fn()}
+        onDelete={vi.fn()}
+        onClone={vi.fn()}
+        onConnect={onConnect}
+      />
+    );
+    const connectButtons = screen.getAllByTitle("Connect");
+    fireEvent.click(connectButtons[0]);
+    expect(onConnect).toHaveBeenCalledWith(mockConnections[0]);
+  });
+
+  it("does not render connect buttons when onConnect is not provided", () => {
+    render(
+      <ConnectionList
+        connections={mockConnections}
+        credentials={mockCredentials}
+        onEdit={vi.fn()}
+        onDelete={vi.fn()}
+        onClone={vi.fn()}
+      />
+    );
+    expect(screen.queryByTitle("Connect")).not.toBeInTheDocument();
   });
 });
