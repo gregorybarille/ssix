@@ -1,0 +1,56 @@
+services:
+  server-a:
+    build:
+      context: .
+      args:
+        USER_NAME: usera
+        USER_PASS: passa
+    hostname: server-a
+    networks:
+      - public
+      - private_a
+    ports:
+      - "2201:22"
+
+  server-b:
+    build:
+      context: .
+      args:
+        USER_NAME: userb
+        USER_PASS: passb
+    hostname: server-b
+    networks:
+      - public
+      - private_b
+    ports:
+      - "2202:22"
+
+  server-c:
+    build:
+      context: .
+      args:
+        USER_NAME: userc
+        USER_PASS: passc
+    hostname: server-c
+    networks:
+      - private_a
+
+  server-d:
+    build:
+      context: .
+      args:
+        USER_NAME: userd
+        USER_PASS: passd
+    hostname: server-d
+    networks:
+      - private_b
+
+networks:
+  public:
+    driver: bridge
+  private_a:
+    driver: bridge
+    internal: true
+  private_b:
+    driver: bridge
+    internal: true
