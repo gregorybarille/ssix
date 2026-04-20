@@ -45,6 +45,8 @@ docker compose down
 
 ## Credentials
 
+> **Note:** These are test-only credentials for local development. Do not reuse them in any production environment.
+
 | Server   | Hostname | Username | Password | Host Port | Access              |
 |----------|----------|----------|----------|-----------|---------------------|
 | server-a | server-a | usera    | passa    | 2201      | Direct              |

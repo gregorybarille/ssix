@@ -2,8 +2,7 @@ FROM alpine:3.21
 
 RUN apk add --no-cache openssh-server && \
     ssh-keygen -A && \
-    mkdir -p /root/.ssh && \
-    echo "PermitRootLogin yes" >> /etc/ssh/sshd_config && \
+    echo "PermitRootLogin no" >> /etc/ssh/sshd_config && \
     echo "PasswordAuthentication yes" >> /etc/ssh/sshd_config
 
 ARG USER_NAME=testuser
