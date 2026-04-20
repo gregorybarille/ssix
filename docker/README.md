@@ -24,8 +24,10 @@ Host machine
 
 ```bash
 # Start all servers
-cd docker
-docker compose up -d --build
+npm run docker:up
+
+# Start Docker servers and Tauri dev together
+npm run dev:full
 
 # Test direct connection to server-a
 ssh -p 2201 usera@localhost
@@ -40,7 +42,7 @@ ssh -J usera@localhost:2201 userc@server-c
 ssh -J userb@localhost:2202 userd@server-d
 
 # Stop all servers
-docker compose down
+npm run docker:down
 ```
 
 ## Credentials
