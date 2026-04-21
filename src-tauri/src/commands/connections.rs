@@ -72,6 +72,18 @@ pub fn update_connection(input: UpdateConnectionInput) -> Result<Connection, Str
 #[tauri::command]
 pub fn delete_connection(id: String) -> Result<(), String> {
     let mut data = load_data()?;
+
+    // If the connection has a private credential, remove it too so it doesn't
+    // become an orphan that can never be seen or deleted through the UI.
+    if let Some(conn) = data.connections.iter().find(|c| c.id == id) {
+        if let Some(cred_id) = conn.credential_id.clone() {
+            if data.credentials.iter().any(|c| c.id == cred_id && c.is_private) {
+                data.credentials.retain(|c| c.id != cred_id);
+                crate::keychain::delete_all_for_credential(&cred_id);
+            }
+        }
+    }
+
     data.connections.retain(|c| c.id != id);
     save_data(&data)?;
     Ok(())

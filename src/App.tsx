@@ -49,6 +49,7 @@ function App() {
     credentials,
     fetchCredentials,
     addCredential,
+    addInlineCredential,
     updateCredential,
     deleteCredential,
   } = useCredentialsStore();
@@ -90,6 +91,9 @@ function App() {
   };
 
   const handleCreateCredential = async (data: Omit<Credential, "id">): Promise<Credential> => {
+    if (data.is_private) {
+      return await addInlineCredential(data);
+    }
     return await addCredential(data);
   };
 

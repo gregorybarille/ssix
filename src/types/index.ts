@@ -10,6 +10,8 @@ export interface Credential {
   password?: string;
   private_key_path?: string;
   passphrase?: string;
+  /** When true: auto-created for inline auth, not shown in the credentials list. */
+  is_private?: boolean;
 }
 
 export type ConnectionKind =

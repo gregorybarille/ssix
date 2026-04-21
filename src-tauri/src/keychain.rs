@@ -162,6 +162,7 @@ mod tests {
             kind: CredentialKind::Password {
                 password: password.to_string(),
             },
+            is_private: false,
         }
     }
 
@@ -174,6 +175,7 @@ mod tests {
                 private_key_path: "/home/user/.ssh/id_rsa".to_string(),
                 passphrase: passphrase.map(str::to_string),
             },
+            is_private: false,
         }
     }
 

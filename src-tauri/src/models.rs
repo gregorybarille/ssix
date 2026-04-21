@@ -15,6 +15,10 @@ pub struct Credential {
     pub username: String,
     #[serde(flatten)]
     pub kind: CredentialKind,
+    /// When true the credential was auto-created for inline auth and is not
+    /// shown in the credentials list. Treated as false when absent (legacy data).
+    #[serde(default)]
+    pub is_private: bool,
 }
 
 impl Credential {
@@ -25,6 +29,7 @@ impl Credential {
             name,
             username,
             kind,
+            is_private: false,
         }
     }
 }

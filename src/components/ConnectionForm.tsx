@@ -56,6 +56,7 @@ export function ConnectionForm({
   const [inlinePassword, setInlinePassword] = useState("");
   const [inlineKeyPath, setInlineKeyPath] = useState("");
   const [inlinePassphrase, setInlinePassphrase] = useState("");
+  const [saveCredential, setSaveCredential] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
@@ -85,6 +86,7 @@ export function ConnectionForm({
     setInlinePassword("");
     setInlineKeyPath("");
     setInlinePassphrase("");
+    setSaveCredential(false);
     setError(null);
   }, [connection, open, isClone]);
 
@@ -103,22 +105,32 @@ export function ConnectionForm({
         if (authMethod === "password" && onCreateCredential) {
           if (!inlineUsername) throw new Error("Username is required");
           if (!inlinePassword) throw new Error("Password is required");
+          const isPrivate = !saveCredential;
+          const credName = saveCredential
+            ? `${form.name || "connection"}-cred`
+            : `inline-${crypto.randomUUID()}`;
           const cred = await onCreateCredential({
-            name: `${form.name || "connection"}-cred`,
+            name: credName,
             username: inlineUsername,
             type: "password",
             password: inlinePassword,
+            is_private: isPrivate,
           });
           credentialId = cred.id;
         } else if (authMethod === "ssh_key" && onCreateCredential) {
           if (!inlineUsername) throw new Error("Username is required");
           if (!inlineKeyPath) throw new Error("Private key path is required");
+          const isPrivate = !saveCredential;
+          const credName = saveCredential
+            ? `${form.name || "connection"}-key`
+            : `inline-${crypto.randomUUID()}`;
           const cred = await onCreateCredential({
-            name: `${form.name || "connection"}-key`,
+            name: credName,
             username: inlineUsername,
             type: "ssh_key",
             private_key_path: inlineKeyPath,
             passphrase: inlinePassphrase || undefined,
+            is_private: isPrivate,
           });
           credentialId = cred.id;
         }
@@ -463,9 +475,15 @@ export function ConnectionForm({
                       onChange={(e) => setInlinePassword(e.target.value)}
                     />
                   </div>
-                  <p className="text-xs text-muted-foreground">
-                    A credential will be auto-created and linked to this connection.
-                  </p>
+                  <label className="flex items-center gap-2 text-xs text-muted-foreground cursor-pointer select-none">
+                    <input
+                      type="checkbox"
+                      checked={saveCredential}
+                      onChange={(e) => setSaveCredential(e.target.checked)}
+                      className="accent-primary"
+                    />
+                    Save as a named credential (visible in the Credentials list)
+                  </label>
                 </TabsContent>
 
                 <TabsContent value="ssh_key" className="space-y-3 mt-3">
@@ -496,9 +514,15 @@ export function ConnectionForm({
                       onChange={(e) => setInlinePassphrase(e.target.value)}
                     />
                   </div>
-                  <p className="text-xs text-muted-foreground">
-                    A credential will be auto-created and linked to this connection.
-                  </p>
+                  <label className="flex items-center gap-2 text-xs text-muted-foreground cursor-pointer select-none">
+                    <input
+                      type="checkbox"
+                      checked={saveCredential}
+                      onChange={(e) => setSaveCredential(e.target.checked)}
+                      className="accent-primary"
+                    />
+                    Save as a named credential (visible in the Credentials list)
+                  </label>
                 </TabsContent>
               </Tabs>
             </div>

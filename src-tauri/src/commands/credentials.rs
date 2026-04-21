@@ -9,6 +9,8 @@ pub struct AddCredentialInput {
     pub username: String,
     #[serde(flatten)]
     pub kind: CredentialKind,
+    #[serde(default)]
+    pub is_private: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -57,6 +59,7 @@ pub fn get_credentials() -> Result<Vec<Credential>, String> {
     let credentials = data
         .credentials
         .into_iter()
+        .filter(|c| !c.is_private)
         .map(|mut c| {
             keychain::enrich_credential(&mut c);
             c
@@ -68,7 +71,9 @@ pub fn get_credentials() -> Result<Vec<Credential>, String> {
 #[tauri::command]
 pub fn add_credential(input: AddCredentialInput) -> Result<Credential, String> {
     let mut data = load_data()?;
-    if data.credentials.iter().any(|c| c.name == input.name) {
+    // Private credentials skip the unique-name check since they use
+    // auto-generated UUID-based names and are never shown in the UI list.
+    if !input.is_private && data.credentials.iter().any(|c| c.name == input.name) {
         return Err(format!("A credential named '{}' already exists", input.name));
     }
 
@@ -81,6 +86,7 @@ pub fn add_credential(input: AddCredentialInput) -> Result<Credential, String> {
         name: input.name,
         username: input.username,
         kind: kind_for_json,
+        is_private: input.is_private,
     };
 
     // Return the credential enriched with its secret so the caller can use it
@@ -150,6 +156,21 @@ mod tests {
         };
         let cred = Credential::new("my_key".to_string(), "admin".to_string(), kind);
         assert_eq!(cred.name, "my_key");
+    }
+
+    #[test]
+    fn test_credential_new_is_not_private_by_default() {
+        let kind = CredentialKind::Password { password: "pw".to_string() };
+        let cred = Credential::new("test".to_string(), "user".to_string(), kind);
+        assert!(!cred.is_private);
+    }
+
+    #[test]
+    fn test_is_private_serde_default() {
+        // Existing JSON without is_private deserializes correctly (defaults to false).
+        let json = r#"{"id":"1","name":"old","username":"u","type":"password","password":""}"#;
+        let cred: Credential = serde_json::from_str(json).unwrap();
+        assert!(!cred.is_private);
     }
 }
 

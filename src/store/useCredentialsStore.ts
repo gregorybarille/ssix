@@ -8,6 +8,8 @@ interface CredentialsState {
   error: string | null;
   fetchCredentials: () => Promise<void>;
   addCredential: (input: Omit<Credential, "id">) => Promise<Credential>;
+  /** Creates a private (inline) credential without adding it to the visible store state. */
+  addInlineCredential: (input: Omit<Credential, "id">) => Promise<Credential>;
   updateCredential: (input: Credential) => Promise<void>;
   deleteCredential: (id: string) => Promise<void>;
 }
@@ -38,6 +40,14 @@ export const useCredentialsStore = create<CredentialsState>((set) => ({
       return cred;
     } catch (err) {
       set({ error: String(err), isLoading: false });
+      throw err;
+    }
+  },
+
+  addInlineCredential: async (input) => {
+    try {
+      return await invoke<Credential>("add_credential", { input });
+    } catch (err) {
       throw err;
     }
   },
