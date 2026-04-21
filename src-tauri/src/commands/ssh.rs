@@ -32,7 +32,7 @@ fn resolve_credential(
 }
 
 #[tauri::command]
-pub fn ssh_connect(
+pub async fn ssh_connect(
     app: tauri::AppHandle,
     state: tauri::State<'_, SshState>,
     connection_id: String,

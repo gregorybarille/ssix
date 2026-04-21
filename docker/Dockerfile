@@ -3,7 +3,8 @@ FROM alpine:3.21
 RUN apk add --no-cache openssh-server && \
     ssh-keygen -A && \
     echo "PermitRootLogin no" >> /etc/ssh/sshd_config && \
-    echo "PasswordAuthentication yes" >> /etc/ssh/sshd_config
+    echo "PasswordAuthentication yes" >> /etc/ssh/sshd_config && \
+    sed -i 's/^AllowTcpForwarding no/AllowTcpForwarding yes/' /etc/ssh/sshd_config
 
 ARG USER_NAME=testuser
 ARG USER_PASS=testpass

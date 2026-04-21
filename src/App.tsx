@@ -30,6 +30,9 @@ function App() {
   const [searchQuery, setSearchQuery] = useState("");
   const [sessions, setSessions] = useState<TerminalSession[]>([]);
   const [activeTabId, setActiveTabId] = useState<string | null>(null);
+  // Placeholder IDs the user cancelled while ssh_connect was still in flight.
+  // We keep them in a ref so the async handler can check after awaiting.
+  const cancelledRef = React.useRef<Set<string>>(new Set());
   const [pickerOpen, setPickerOpen] = useState(false);
 
   const {
@@ -123,6 +126,13 @@ function App() {
       const sessionId = await invoke<string>("ssh_connect", {
         connectionId: conn.id,
       });
+      // If the user cancelled while ssh_connect was in flight, disconnect the
+      // now-orphan backend session and leave UI state alone.
+      if (cancelledRef.current.has(failedId)) {
+        cancelledRef.current.delete(failedId);
+        invoke("ssh_disconnect", { sessionId }).catch(() => {});
+        return;
+      }
       // Success: replace the placeholder/failed tab with a live session.
       setSessions((prev) =>
         prev.map((s) =>
@@ -131,6 +141,10 @@ function App() {
       );
       setActiveTabId(sessionId);
     } catch (err) {
+      if (cancelledRef.current.has(failedId)) {
+        cancelledRef.current.delete(failedId);
+        return;
+      }
       // Failure: populate or update the error, clear retrying.
       setSessions((prev) =>
         prev.map((s) =>
@@ -157,6 +171,13 @@ function App() {
   };
 
   const handleCloseTab = async (sessionId: string) => {
+    // If this is a placeholder session that's still connecting, mark it
+    // cancelled so handleConnect's resolve path cleans up any backend session
+    // that arrives after the user has closed the tab.
+    const session = sessions.find((s) => s.sessionId === sessionId);
+    if (session?.retrying && !session.error) {
+      cancelledRef.current.add(sessionId);
+    }
     try {
       await invoke("ssh_disconnect", { sessionId });
     } catch {

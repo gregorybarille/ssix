@@ -61,8 +61,8 @@ export function FailedTerminal({
               </Button>
             </>
           )}
-          <Button size="sm" variant="ghost" disabled={retrying} onClick={onClose}>
-            Dismiss
+          <Button size="sm" variant={retrying && !error ? "destructive" : "ghost"} onClick={onClose}>
+            {retrying && !error ? "Cancel" : "Dismiss"}
           </Button>
         </div>
       </div>

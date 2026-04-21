@@ -19,6 +19,7 @@ Host machine
 - All four servers are directly accessible from the host on their respective ports.
 - **server-c** is additionally reachable through **server-a** via the `private_a` internal network (for testing port forwarding and jump-shell connections).
 - **server-d** is additionally reachable through **server-b** via the `private_b` internal network.
+- All servers have `AllowTcpForwarding yes` in sshd, which is required for port-forward and jump-shell to work.
 
 ## Usage
 

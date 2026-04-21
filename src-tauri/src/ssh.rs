@@ -1,9 +1,9 @@
 use std::collections::HashMap;
 use std::io::{Read, Write};
-use std::net::{SocketAddr, TcpListener, TcpStream};
+use std::net::{SocketAddr, TcpListener, TcpStream, ToSocketAddrs};
 use std::path::Path;
 use std::sync::mpsc::{self, Receiver, Sender, TryRecvError};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Barrier, Mutex};
 use std::thread;
 use std::time::Duration;
 
@@ -147,6 +147,56 @@ fn open_shell(
     Ok((session, channel))
 }
 
+/// Like `open_shell` but takes an already-connected `TcpStream` (e.g. one that
+/// has been bridged through a gateway via `channel_direct_tcpip`).
+fn open_shell_over_stream(
+    tcp: TcpStream,
+    username: &str,
+    auth: &AuthMethod,
+) -> Result<(Session, ssh2::Channel), String> {
+    tcp.set_nonblocking(false).ok();
+
+    let mut session =
+        Session::new().map_err(|e| format!("SSH session create failed: {}", e))?;
+    session.set_tcp_stream(tcp);
+    session
+        .handshake()
+        .map_err(|e| format!("SSH handshake failed: {}", e))?;
+
+    match auth {
+        AuthMethod::Password(pw) => {
+            session
+                .userauth_password(username, pw)
+                .map_err(|e| format!("Password auth failed: {}", e))?;
+        }
+        AuthMethod::Key { path, passphrase } => {
+            session
+                .userauth_pubkey_file(username, None, Path::new(path), passphrase.as_deref())
+                .map_err(|e| format!("Key auth failed: {}", e))?;
+        }
+    }
+
+    if !session.authenticated() {
+        return Err("Authentication failed".to_string());
+    }
+
+    let mut channel = session
+        .channel_session()
+        .map_err(|e| format!("Channel open failed: {}", e))?;
+
+    channel
+        .request_pty("xterm-256color", None, Some((80, 24, 0, 0)))
+        .map_err(|e| format!("PTY request failed: {}", e))?;
+
+    channel
+        .shell()
+        .map_err(|e| format!("Shell request failed: {}", e))?;
+
+    session.set_blocking(false);
+
+    Ok((session, channel))
+}
+
 fn run_io_loop(
     mut channel: ssh2::Channel,
     app_handle: &AppHandle,
@@ -231,7 +281,14 @@ fn open_gateway_session(
     auth: &AuthMethod,
 ) -> Result<Session, String> {
     let addr = format!("{}:{}", gateway_host, gateway_port);
-    let tcp = TcpStream::connect(&addr)
+    // Resolve + connect with a 10s timeout so a dead gateway doesn't hang the UI
+    // (the OS default connect timeout is ~30s+).
+    let socket_addr = addr
+        .to_socket_addrs()
+        .map_err(|e| format!("Failed to resolve gateway {}: {}", addr, e))?
+        .next()
+        .ok_or_else(|| format!("No addresses resolved for gateway {}", addr))?;
+    let tcp = TcpStream::connect_timeout(&socket_addr, Duration::from_secs(10))
         .map_err(|e| format!("TCP connect to gateway {} failed: {}", addr, e))?;
     tcp.set_nonblocking(false).ok();
 
@@ -266,6 +323,10 @@ fn open_gateway_session(
 /// Runs both directions on a single thread using non-blocking polling so we can
 /// detect EOF on either side without blocking the other.
 fn forward_bidi(mut local: TcpStream, mut channel: ssh2::Channel) {
+    // Both local and channel must be non-blocking so neither direction can
+    // stall the other. local uses set_nonblocking; the channel inherits the
+    // gateway session's blocking flag — callers must set_blocking(false) on
+    // the session before calling this function.
     local.set_nonblocking(true).ok();
     let mut buf_a = [0u8; 16384];
     let mut buf_b = [0u8; 16384];
@@ -273,10 +334,9 @@ fn forward_bidi(mut local: TcpStream, mut channel: ssh2::Channel) {
     loop {
         let mut idle = true;
 
-        // local -> channel
+        // local → channel
         match local.read(&mut buf_a) {
             Ok(0) => {
-                // local closed
                 let _ = channel.send_eof();
                 let _ = channel.wait_eof();
                 let _ = channel.close();
@@ -284,8 +344,18 @@ fn forward_bidi(mut local: TcpStream, mut channel: ssh2::Channel) {
                 return;
             }
             Ok(n) => {
-                if channel.write_all(&buf_a[..n]).is_err() {
-                    return;
+                // Write with retry on WouldBlock — the underlying gateway TCP
+                // socket is non-blocking, so a large burst may need multiple
+                // attempts before the kernel buffer has room.
+                let mut written = 0;
+                while written < n {
+                    match channel.write(&buf_a[written..n]) {
+                        Ok(k) => written += k,
+                        Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                            thread::sleep(Duration::from_millis(1));
+                        }
+                        Err(_) => return,
+                    }
                 }
                 let _ = channel.flush();
                 idle = false;
@@ -297,7 +367,7 @@ fn forward_bidi(mut local: TcpStream, mut channel: ssh2::Channel) {
             }
         }
 
-        // channel -> local
+        // channel → local
         match channel.read(&mut buf_b) {
             Ok(0) => {
                 let _ = local.shutdown(std::net::Shutdown::Both);
@@ -323,7 +393,7 @@ fn forward_bidi(mut local: TcpStream, mut channel: ssh2::Channel) {
         }
 
         if idle {
-            thread::sleep(Duration::from_millis(10));
+            thread::sleep(Duration::from_millis(1));
         }
     }
 }
@@ -515,66 +585,81 @@ pub fn start_jump_shell(
         .local_addr()
         .map_err(|e| format!("local_addr() failed: {}", e))?;
     let local_port = local_addr.port();
-    listener.set_nonblocking(true).ok();
 
     // Open gateway session synchronously so auth errors surface now.
     let gateway_session =
         open_gateway_session(&gateway_host, gateway_port, &gateway_username, &gateway_auth)?;
     let gateway_session = Arc::new(Mutex::new(gateway_session));
 
-    // Spawn the accept-and-forward loop. Unlike port_forward, we do not expose
-    // a stop channel here — the listener is closed when the inner SSH session
-    // disconnects (its socket closes, no more accepts happen, and the thread
-    // exits when it sees the listener has closed). To make that deterministic
-    // we keep the listener alive only for as long as needed: we'll close it
-    // after the first accepted connection, since a JumpShell is a single-session
-    // construct (the inner SSH session multiplexes its own channels over that
-    // one TCP connection).
+    // Use a barrier so open_shell (below) only proceeds after the forwarder
+    // thread has accepted the connection AND successfully opened the
+    // channel_direct_tcpip. This eliminates the SSH-banner race where the
+    // inner TcpStream connects but the pipe isn't bridged yet.
+    // barrier(2): one wait in the forwarder thread, one wait here.
+    let barrier = Arc::new(Barrier::new(2));
+    // Carry any error from the forwarder back to the main thread.
+    let forward_err: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
+
+    // Switch listener back to blocking so accept() is a clean blocking call.
+    listener.set_nonblocking(false).ok();
+
     {
         let gateway_session = Arc::clone(&gateway_session);
         let destination_host_inner = destination_host.clone();
+        let barrier = Arc::clone(&barrier);
+        let forward_err = Arc::clone(&forward_err);
         thread::spawn(move || {
-            // Wait for the inner SSH session to connect (typically <100ms).
-            loop {
-                match listener.accept() {
-                    Ok((local_stream, peer)) => {
-                        let chan_result = {
-                            let sess = gateway_session.lock().unwrap();
-                            sess.channel_direct_tcpip(
-                                &destination_host_inner,
-                                destination_port,
-                                Some((&peer.ip().to_string(), peer.port())),
-                            )
-                        };
-                        match chan_result {
-                            Ok(channel) => {
-                                forward_bidi(local_stream, channel);
-                            }
-                            Err(_) => {
-                                let _ = local_stream.shutdown(std::net::Shutdown::Both);
-                            }
+            // Block until the inner SSH session connects.
+            match listener.accept() {
+                Ok((local_stream, peer)) => {
+                    let chan_result = {
+                        let sess = gateway_session.lock().unwrap();
+                        sess.channel_direct_tcpip(
+                            &destination_host_inner,
+                            destination_port,
+                            Some((&peer.ip().to_string(), peer.port())),
+                        )
+                    };
+                    match chan_result {
+                        Ok(channel) => {
+                            // Must switch to non-blocking before forward_bidi so
+                            // channel.read() doesn't block and deadlock with the
+                            // handshake on the main thread.
+                            gateway_session.lock().unwrap().set_blocking(false);
+                            // Signal the main thread: the bridge is live, open_shell may proceed.
+                            barrier.wait();
+                            forward_bidi(local_stream, channel);
                         }
-                        // Single-shot: drop the listener.
-                        return;
+                        Err(e) => {
+                            *forward_err.lock().unwrap() =
+                                Some(format!("channel_direct_tcpip failed: {}", e));
+                            let _ = local_stream.shutdown(std::net::Shutdown::Both);
+                            barrier.wait();
+                        }
                     }
-                    Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
-                        thread::sleep(Duration::from_millis(10));
-                    }
-                    Err(_) => return,
+                }
+                Err(e) => {
+                    *forward_err.lock().unwrap() = Some(format!("accept() failed: {}", e));
+                    barrier.wait();
                 }
             }
         });
     }
 
-    // Now open the inner SSH session against the loopback port. The forwarder
-    // above will accept this connection and bridge it through the gateway.
-    let (session, channel) = open_shell(
-        "127.0.0.1",
-        local_port,
-        &destination_username,
-        &destination_auth,
-    )
-    .map_err(|e| format!("Destination connect via gateway failed: {}", e))?;
+    let connect_result = TcpStream::connect(("127.0.0.1", local_port))
+        .map_err(|e| format!("Failed to connect inner SSH session: {}", e));
+
+    // Wait for the forwarder to finish bridging before starting the SSH handshake.
+    barrier.wait();
+
+    if let Some(err) = forward_err.lock().unwrap().take() {
+        return Err(format!("Destination connect via gateway failed: {}", err));
+    }
+
+    let tcp_stream = connect_result?;
+
+    let (session, channel) = open_shell_over_stream(tcp_stream, &destination_username, &destination_auth)
+        .map_err(|e| format!("Destination connect via gateway failed: {}", e))?;
 
     let (tx, rx): (Sender<SessionMsg>, Receiver<SessionMsg>) = mpsc::channel();
     let sid = session_id.clone();
