@@ -102,6 +102,13 @@ export function Terminal({ sessionId, connectionName, isVisible, onDisconnect, s
       invoke("ssh_write", { sessionId, data: bytes }).catch(() => {});
     });
 
+    const selectionDisposable = term.onSelectionChange(() => {
+      const sel = term.getSelection();
+      if (sel) {
+        navigator.clipboard.writeText(sel).catch(() => {});
+      }
+    });
+
     const setupListeners = async () => {
       try {
         const { listen } = await import("@tauri-apps/api/event");
@@ -140,6 +147,7 @@ export function Terminal({ sessionId, connectionName, isVisible, onDisconnect, s
 
     return () => {
       dataDisposable.dispose();
+      selectionDisposable.dispose();
       listenersRef.current.forEach((fn) => fn());
       resizeObserver.disconnect();
       term.dispose();
