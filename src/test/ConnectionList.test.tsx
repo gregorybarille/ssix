@@ -7,14 +7,28 @@ const mockConnections: Connection[] = [
   { id: "1", name: "prod-server", host: "192.168.1.1", port: 22, type: "direct" },
   {
     id: "2",
-    name: "tunnel-dev",
+    name: "jump-dev",
     host: "internal.dev",
     port: 22,
-    type: "tunnel",
+    type: "jump_shell",
     gateway_host: "gateway.dev",
     gateway_port: 22,
+    gateway_credential_id: "gw-cred",
     destination_host: "internal.dev",
     destination_port: 22,
+  },
+  {
+    id: "3",
+    name: "api-tunnel",
+    host: "api.internal",
+    port: 80,
+    type: "port_forward",
+    gateway_host: "gateway.dev",
+    gateway_port: 22,
+    gateway_credential_id: "gw-cred",
+    local_port: 9000,
+    destination_host: "api.internal",
+    destination_port: 80,
   },
 ];
 
@@ -45,10 +59,11 @@ describe("ConnectionList", () => {
       />
     );
     expect(screen.getByText("prod-server")).toBeInTheDocument();
-    expect(screen.getByText("tunnel-dev")).toBeInTheDocument();
+    expect(screen.getByText("jump-dev")).toBeInTheDocument();
+    expect(screen.getByText("api-tunnel")).toBeInTheDocument();
   });
 
-  it("shows tunnel badge for tunnel connections", () => {
+  it("shows badges for tunnel kinds", () => {
     render(
       <ConnectionList
         connections={mockConnections}
@@ -58,10 +73,11 @@ describe("ConnectionList", () => {
         onClone={vi.fn()}
       />
     );
-    expect(screen.getByText("tunnel")).toBeInTheDocument();
+    expect(screen.getByText("port-forward")).toBeInTheDocument();
+    expect(screen.getByText("jump-shell")).toBeInTheDocument();
   });
 
-  it("renders connect buttons only for direct connections when onConnect is provided", () => {
+  it("renders connect buttons for every connection kind when onConnect is provided", () => {
     render(
       <ConnectionList
         connections={mockConnections}
@@ -73,9 +89,7 @@ describe("ConnectionList", () => {
       />
     );
     const connectButtons = screen.getAllByTitle("Connect");
-    // Only the direct connection gets a Connect button; tunnel connections do not
-    const directCount = mockConnections.filter((c) => c.type === "direct").length;
-    expect(connectButtons).toHaveLength(directCount);
+    expect(connectButtons).toHaveLength(mockConnections.length);
   });
 
   it("calls onConnect with the correct connection", () => {

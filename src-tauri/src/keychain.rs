@@ -1,83 +1,132 @@
-/// Cross-platform OS keychain integration for SSX.
+/// Secret storage for SSX.
 ///
-/// Secrets (passwords and SSH key passphrases) are stored in the native
-/// OS credential store:
-///   - macOS  → Keychain
-///   - Windows → Credential Manager
-///   - Linux   → Secret Service (GNOME Keyring / KDE Wallet via D-Bus)
+/// Secrets (passwords and SSH key passphrases) are stored in
+/// `~/.ssx/secrets.json` with permissions `0600` (owner read/write only).
+/// This avoids macOS Keychain code-signature issues that make the `keyring`
+/// crate unreliable for unsigned development builds.
 ///
-/// Only non-secret metadata is persisted to `~/.ssx/data.json`.
+/// The file is a flat JSON object mapping a string key to a string secret:
+///   { "<credential_id>": "password", "<credential_id>:passphrase": "pp" }
 use crate::models::{Credential, CredentialKind};
-use keyring::Entry;
+use std::collections::HashMap;
+use std::fs;
+use std::path::PathBuf;
+use std::sync::Mutex;
 
-const SERVICE: &str = "ssx";
+static SECRETS_LOCK: Mutex<()> = Mutex::new(());
 
-/// Return the keyring entry for a password credential.
-fn password_entry(credential_id: &str) -> Result<Entry, String> {
-    Entry::new(SERVICE, credential_id).map_err(|e| e.to_string())
+fn secrets_path() -> PathBuf {
+    let home = dirs_next::home_dir().unwrap_or_else(|| PathBuf::from("."));
+    home.join(".ssx").join("secrets.json")
 }
 
-/// Return the keyring entry for an SSH key passphrase.
-fn passphrase_entry(credential_id: &str) -> Result<Entry, String> {
-    let key = format!("{credential_id}:passphrase");
-    Entry::new(SERVICE, &key).map_err(|e| e.to_string())
+fn load_secrets() -> HashMap<String, String> {
+    let path = secrets_path();
+    if !path.exists() {
+        return HashMap::new();
+    }
+    let content = match fs::read_to_string(&path) {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("[secrets] failed to read secrets file: {}", e);
+            return HashMap::new();
+        }
+    };
+    serde_json::from_str(&content).unwrap_or_default()
 }
 
-/// Store a password in the OS keychain.
+fn save_secrets(secrets: &HashMap<String, String>) -> Result<(), String> {
+    let path = secrets_path();
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+    let content = serde_json::to_string_pretty(secrets).map_err(|e| e.to_string())?;
+    fs::write(&path, &content).map_err(|e| e.to_string())?;
+
+    // Restrict to owner read/write only (unix only; no-op on Windows).
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let perms = fs::Permissions::from_mode(0o600);
+        fs::set_permissions(&path, perms).map_err(|e| e.to_string())?;
+    }
+
+    Ok(())
+}
+
+/// Run `f` with an exclusive lock on the secrets file.
+fn with_secrets<T>(f: impl FnOnce(&mut HashMap<String, String>) -> T) -> T {
+    let _guard = SECRETS_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let mut secrets = load_secrets();
+    f(&mut secrets)
+}
+
+/// Run `f` with an exclusive lock, then save the (possibly mutated) map.
+fn with_secrets_mut(f: impl FnOnce(&mut HashMap<String, String>)) -> Result<(), String> {
+    let _guard = SECRETS_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let mut secrets = load_secrets();
+    f(&mut secrets);
+    save_secrets(&secrets)
+}
+
+fn password_key(credential_id: &str) -> String {
+    credential_id.to_string()
+}
+
+fn passphrase_key(credential_id: &str) -> String {
+    format!("{}:passphrase", credential_id)
+}
+
+/// Store a password in the secrets file.
 pub fn store_password(credential_id: &str, password: &str) -> Result<(), String> {
-    password_entry(credential_id)?
-        .set_password(password)
-        .map_err(|e| e.to_string())
+    let key = password_key(credential_id);
+    let val = password.to_string();
+    with_secrets_mut(|s| { s.insert(key, val); })
 }
 
-/// Retrieve a password from the OS keychain.
-/// Returns `None` if the entry does not exist or the keychain is unavailable.
+/// Retrieve a password from the secrets file.
 pub fn get_password(credential_id: &str) -> Option<String> {
-    password_entry(credential_id).ok()?.get_password().ok()
+    with_secrets(|s| s.get(&password_key(credential_id)).cloned())
 }
 
-/// Delete a password entry from the OS keychain (best-effort).
-pub fn delete_password(credential_id: &str) {
-    if let Ok(entry) = password_entry(credential_id) {
-        let _ = entry.delete_credential();
-    }
+/// Delete a password entry.
+#[cfg(test)]
+fn delete_password(credential_id: &str) {
+    let key = password_key(credential_id);
+    let _ = with_secrets_mut(|s| { s.remove(&key); });
 }
 
-/// Store an SSH key passphrase in the OS keychain.
+/// Store an SSH key passphrase in the secrets file.
 pub fn store_passphrase(credential_id: &str, passphrase: &str) -> Result<(), String> {
-    passphrase_entry(credential_id)?
-        .set_password(passphrase)
-        .map_err(|e| e.to_string())
+    let key = passphrase_key(credential_id);
+    let val = passphrase.to_string();
+    with_secrets_mut(|s| { s.insert(key, val); })
 }
 
-/// Retrieve an SSH key passphrase from the OS keychain.
-/// Returns `None` if the entry does not exist or the keychain is unavailable.
+/// Retrieve an SSH key passphrase from the secrets file.
 pub fn get_passphrase(credential_id: &str) -> Option<String> {
-    passphrase_entry(credential_id).ok()?.get_password().ok()
+    with_secrets(|s| s.get(&passphrase_key(credential_id)).cloned())
 }
 
-/// Delete a passphrase entry from the OS keychain (best-effort).
-pub fn delete_passphrase(credential_id: &str) {
-    if let Ok(entry) = passphrase_entry(credential_id) {
-        let _ = entry.delete_credential();
-    }
+/// Delete a passphrase entry.
+#[cfg(test)]
+fn delete_passphrase(credential_id: &str) {
+    let key = passphrase_key(credential_id);
+    let _ = with_secrets_mut(|s| { s.remove(&key); });
 }
 
-/// Delete all keychain entries associated with a credential ID.
+/// Delete all secret entries associated with a credential ID.
 pub fn delete_all_for_credential(credential_id: &str) {
-    delete_password(credential_id);
-    delete_passphrase(credential_id);
+    let pk = password_key(credential_id);
+    let ppk = passphrase_key(credential_id);
+    let _ = with_secrets_mut(|s| { s.remove(&pk); s.remove(&ppk); });
 }
 
-/// Enrich a `Credential` by filling in secrets from the OS keychain.
+/// Enrich a `Credential` by filling in secrets from the secrets file.
 ///
-/// The JSON file stores empty-string placeholders for passwords and `None`
-/// for passphrases.  This function replaces those placeholders with the
-/// actual secrets retrieved from the keychain.
-///
-/// If the keychain lookup fails (e.g. first run with legacy plain-text data,
-/// or keychain unavailable), the value already in `cred.kind` is kept as-is,
-/// providing a graceful fallback for users migrating from older data files.
+/// The JSON data file stores empty-string placeholders for passwords and
+/// `None` for passphrases. This function replaces those with the actual
+/// secrets so they are available for SSH auth.
 pub fn enrich_credential(cred: &mut Credential) {
     match &cred.kind {
         CredentialKind::Password { password } if password.is_empty() => {
@@ -132,7 +181,6 @@ mod tests {
     fn enrich_credential_keeps_non_empty_password() {
         let mut cred = make_password_cred("id-1", "already-set");
         enrich_credential(&mut cred);
-        // Should not touch a non-empty password (it's the plaintext legacy value)
         if let CredentialKind::Password { password } = &cred.kind {
             assert_eq!(password, "already-set");
         } else {
@@ -152,20 +200,47 @@ mod tests {
     }
 
     #[test]
-    fn enrich_credential_empty_password_stays_empty_when_keychain_unavailable() {
-        // Use a long unique ID that cannot exist in any keychain.
+    fn enrich_credential_empty_password_stays_empty_when_no_entry() {
+        // Use a unique ID that won't exist in the secrets file.
         let mut cred =
             make_password_cred("ssx-test-no-entry-da7e3f8c-8e1b-4a2d-9b3e-1234567890ab", "");
         enrich_credential(&mut cred);
-        // Since no keychain entry exists for this ID the placeholder ("") must
-        // remain unchanged.
         if let CredentialKind::Password { password } = &cred.kind {
             assert!(
                 password.is_empty(),
-                "password should stay empty when no keychain entry exists"
+                "password should stay empty when no entry exists"
             );
         } else {
             panic!("unexpected CredentialKind variant after enrich");
         }
+    }
+
+    #[test]
+    fn store_and_retrieve_password() {
+        // Run sequentially to avoid races on the shared secrets file.
+        let id = "ssx-test-store-pw-da7e3f8c";
+        store_password(id, "hunter2").unwrap();
+        let pw = get_password(id);
+        delete_password(id);
+        assert_eq!(pw.as_deref(), Some("hunter2"));
+    }
+
+    #[test]
+    fn store_and_retrieve_passphrase() {
+        let id = "ssx-test-store-pp-da7e3f8c";
+        store_passphrase(id, "mypassphrase").unwrap();
+        let pp = get_passphrase(id);
+        delete_passphrase(id);
+        assert_eq!(pp.as_deref(), Some("mypassphrase"));
+    }
+
+    #[test]
+    fn delete_all_removes_both_entries() {
+        let id = "ssx-test-delete-all-da7e3f8c";
+        store_password(id, "pw").unwrap();
+        store_passphrase(id, "pp").unwrap();
+        delete_all_for_credential(id);
+        assert!(get_password(id).is_none());
+        assert!(get_passphrase(id).is_none());
     }
 }

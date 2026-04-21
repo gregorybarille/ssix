@@ -1,13 +1,22 @@
 import React from "react";
 import { Terminal } from "./Terminal";
+import { FailedTerminal } from "./FailedTerminal";
+import { TunnelTab } from "./TunnelTab";
 import { Button } from "./ui/button";
-import { X, Plus } from "lucide-react";
+import { X, Plus, Network } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { AppSettings } from "@/types";
+import { AppSettings, Connection } from "@/types";
 
 export interface TerminalSession {
+  /** Unique ID returned by ssh_connect, or a synthetic ID for failed sessions. */
   sessionId: string;
   connectionName: string;
+  /** Set when the connection attempt failed before a shell was opened. */
+  error?: string;
+  /** True while a retry attempt is in flight. */
+  retrying?: boolean;
+  /** The originating Connection, kept so Retry / Edit can reuse it. */
+  connection?: Connection;
 }
 
 interface TerminalTabsProps {
@@ -16,6 +25,8 @@ interface TerminalTabsProps {
   onSelectTab: (sessionId: string) => void;
   onCloseTab: (sessionId: string) => void;
   onNewTab: () => void;
+  onRetry: (conn: Connection, sessionId: string) => void;
+  onEdit: (conn: Connection, sessionId: string) => void;
   settings?: AppSettings;
 }
 
@@ -25,6 +36,8 @@ export function TerminalTabs({
   onSelectTab,
   onCloseTab,
   onNewTab,
+  onRetry,
+  onEdit,
   settings,
 }: TerminalTabsProps) {
   return (
@@ -42,6 +55,12 @@ export function TerminalTabs({
             )}
             onClick={() => onSelectTab(session.sessionId)}
           >
+            {session.error && (
+              <span className="h-1.5 w-1.5 rounded-full bg-destructive shrink-0" title="Connection failed" />
+            )}
+            {!session.error && session.connection?.type === "port_forward" && (
+              <Network className="h-3 w-3 text-muted-foreground shrink-0" />
+            )}
             <span className="truncate">{session.connectionName}</span>
             <button
               className="ml-1 rounded p-0.5 opacity-0 group-hover:opacity-100 hover:bg-destructive/20 hover:text-destructive transition-opacity"
@@ -68,16 +87,44 @@ export function TerminalTabs({
 
       {/* Terminal instances — all mounted, only active is visible */}
       <div className="flex-1 min-h-0 relative">
-        {sessions.map((session) => (
-          <Terminal
-            key={session.sessionId}
-            sessionId={session.sessionId}
-            connectionName={session.connectionName}
-            isVisible={activeTabId === session.sessionId}
-            onDisconnect={() => onCloseTab(session.sessionId)}
-            settings={settings}
-          />
-        ))}
+        {sessions.map((session) => {
+          if (session.error || session.retrying) {
+            return (
+              <FailedTerminal
+                key={session.sessionId}
+                connectionName={session.connectionName}
+                error={session.error}
+                connection={session.connection}
+                isVisible={activeTabId === session.sessionId}
+                retrying={session.retrying}
+                onRetry={(conn) => onRetry(conn, session.sessionId)}
+                onEdit={(conn) => onEdit(conn, session.sessionId)}
+                onClose={() => onCloseTab(session.sessionId)}
+              />
+            );
+          }
+          if (session.connection?.type === "port_forward") {
+            return (
+              <TunnelTab
+                key={session.sessionId}
+                sessionId={session.sessionId}
+                connection={session.connection}
+                isVisible={activeTabId === session.sessionId}
+                onDisconnect={() => onCloseTab(session.sessionId)}
+              />
+            );
+          }
+          return (
+            <Terminal
+              key={session.sessionId}
+              sessionId={session.sessionId}
+              connectionName={session.connectionName}
+              isVisible={activeTabId === session.sessionId}
+              onDisconnect={() => onCloseTab(session.sessionId)}
+              settings={settings}
+            />
+          );
+        })}
       </div>
     </div>
   );

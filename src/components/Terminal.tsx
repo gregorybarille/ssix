@@ -28,7 +28,7 @@ export function Terminal({ sessionId, connectionName, isVisible, onDisconnect, s
           fitAddonRef.current?.fit();
           const term = xtermRef.current;
           if (term) {
-            invoke("ssh_resize", { session_id: sessionId, cols: term.cols, rows: term.rows }).catch(() => {});
+            invoke("ssh_resize", { sessionId, cols: term.cols, rows: term.rows }).catch(() => {});
           }
           xtermRef.current?.focus();
         } catch {
@@ -94,12 +94,12 @@ export function Terminal({ sessionId, connectionName, isVisible, onDisconnect, s
     fitAddonRef.current = fitAddon;
 
     const { cols, rows } = term;
-    invoke("ssh_resize", { session_id: sessionId, cols, rows }).catch(() => {});
+        invoke("ssh_resize", { sessionId, cols, rows }).catch(() => {});
 
     const dataDisposable = term.onData((data) => {
       const encoder = new TextEncoder();
       const bytes = Array.from(encoder.encode(data));
-      invoke("ssh_write", { session_id: sessionId, data: bytes }).catch(() => {});
+      invoke("ssh_write", { sessionId, data: bytes }).catch(() => {});
     });
 
     const setupListeners = async () => {
@@ -131,7 +131,7 @@ export function Terminal({ sessionId, connectionName, isVisible, onDisconnect, s
       try {
         fitAddon.fit();
         const { cols, rows } = term;
-        invoke("ssh_resize", { session_id: sessionId, cols, rows }).catch(() => {});
+    invoke("ssh_resize", { sessionId, cols, rows }).catch(() => {});
       } catch {
         // ignore resize errors
       }

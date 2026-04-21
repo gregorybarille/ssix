@@ -15,24 +15,40 @@ export interface Credential {
 export type ConnectionKind =
   | { type: "direct" }
   | {
-      type: "tunnel";
+      type: "port_forward";
       gateway_host: string;
       gateway_port: number;
-      gateway_credential_id?: string;
+      gateway_credential_id: string;
+      local_port: number;
+      destination_host: string;
+      destination_port: number;
+    }
+  | {
+      type: "jump_shell";
+      gateway_host: string;
+      gateway_port: number;
+      gateway_credential_id: string;
       destination_host: string;
       destination_port: number;
     };
+
+export type ConnectionType = "direct" | "port_forward" | "jump_shell";
 
 export interface Connection {
   id: string;
   name: string;
   host: string;
   port: number;
+  /**
+   * For `direct` and `jump_shell` this is the destination credential.
+   * For `port_forward` this is unused (the gateway credential lives on the kind fields).
+   */
   credential_id?: string;
-  type: "direct" | "tunnel";
+  type: ConnectionType;
   gateway_host?: string;
   gateway_port?: number;
   gateway_credential_id?: string;
+  local_port?: number;
   destination_host?: string;
   destination_port?: number;
 }
