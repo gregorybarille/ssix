@@ -1,5 +1,10 @@
 # SSX Copilot Instructions
 
+## Documentation hygiene
+
+- **Keep `docker/README.md` in sync with `docker/docker-compose.yml`.** Any time you add, remove, or change a service, port mapping, credential, or network topology in the Compose file, update the architecture diagram, the `ssh` usage examples, and the credentials table in `docker/README.md` in the same commit/change.
+- More broadly: whenever a code or config change affects documented behaviour (ports, commands, architecture, API surface), update the relevant docs file alongside the code change. Do not leave documentation stale.
+
 ## Build and test commands
 
 - Prerequisites from the project docs: Node.js 20+, Rust stable, and Tauri CLI.

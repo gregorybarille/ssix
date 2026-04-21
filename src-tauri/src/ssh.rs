@@ -44,11 +44,21 @@ pub fn start_ssh_session(
     app_handle: AppHandle,
     session_id: String,
 ) -> Result<Sender<SessionMsg>, String> {
+    // Perform TCP connect, SSH handshake, auth, and PTY/shell setup synchronously
+    // so that any connection error is returned directly to the caller rather than
+    // being lost in a race between the background thread emitting an event and the
+    // frontend registering its listener.
+    let (session, channel) = open_shell(&host, port, &username, &auth)?;
+
     let (tx, rx): (Sender<SessionMsg>, Receiver<SessionMsg>) = mpsc::channel();
     let sid = session_id.clone();
 
     thread::spawn(move || {
-        let result = run_session(&host, port, &username, &auth, &app_handle, &sid, rx);
+        // Keep `session` alive for the lifetime of the thread so the channel
+        // remains valid.  The session is intentionally held here even though
+        // it is not used directly — dropping it would invalidate `channel`.
+        let _session = session;
+        let result = run_io_loop(channel, &app_handle, &sid, rx);
         if let Err(e) = &result {
             let _ = app_handle.emit(&format!("ssh-error-{}", sid), e.clone());
         }
@@ -58,22 +68,27 @@ pub fn start_ssh_session(
     Ok(tx)
 }
 
-fn run_session(
+/// Opens a TCP connection, performs the SSH handshake + authentication, requests a
+/// PTY and starts a shell.  Returns the session and the ready-to-use channel on
+/// success, or a descriptive error string on failure.  Everything here runs on the
+/// caller's thread so errors surface synchronously.
+fn open_shell(
     host: &str,
     port: u16,
     username: &str,
     auth: &AuthMethod,
-    app_handle: &AppHandle,
-    session_id: &str,
-    rx: Receiver<SessionMsg>,
-) -> Result<(), String> {
+) -> Result<(Session, ssh2::Channel), String> {
     let addr = format!("{}:{}", host, port);
-    let tcp = TcpStream::connect(&addr).map_err(|e| format!("TCP connect to {} failed: {}", addr, e))?;
+    let tcp = TcpStream::connect(&addr)
+        .map_err(|e| format!("TCP connect to {} failed: {}", addr, e))?;
     tcp.set_nonblocking(false).ok();
 
-    let mut session = Session::new().map_err(|e| format!("SSH session create failed: {}", e))?;
+    let mut session =
+        Session::new().map_err(|e| format!("SSH session create failed: {}", e))?;
     session.set_tcp_stream(tcp);
-    session.handshake().map_err(|e| format!("SSH handshake failed: {}", e))?;
+    session
+        .handshake()
+        .map_err(|e| format!("SSH handshake failed: {}", e))?;
 
     match auth {
         AuthMethod::Password(pw) => {
@@ -106,6 +121,15 @@ fn run_session(
 
     session.set_blocking(false);
 
+    Ok((session, channel))
+}
+
+fn run_io_loop(
+    mut channel: ssh2::Channel,
+    app_handle: &AppHandle,
+    session_id: &str,
+    rx: Receiver<SessionMsg>,
+) -> Result<(), String> {
     let output_event = format!("ssh-output-{}", session_id);
     let mut buf = [0u8; 8192];
 

@@ -30,7 +30,6 @@ function App() {
   const [searchQuery, setSearchQuery] = useState("");
   const [sessions, setSessions] = useState<TerminalSession[]>([]);
   const [activeTabId, setActiveTabId] = useState<string | null>(null);
-  const [connectError, setConnectError] = useState<string | null>(null);
   const [pickerOpen, setPickerOpen] = useState(false);
 
   const {
@@ -100,24 +99,66 @@ function App() {
     }
   };
 
-  const handleConnect = async (conn: Connection) => {
-    setConnectError(null);
+  const handleConnect = async (conn: Connection, replaceSessionId?: string) => {
+    const failedId = replaceSessionId ?? `failed-${conn.id}-${Date.now()}`;
+
+    if (!replaceSessionId) {
+      // First attempt: open a tab immediately and switch to terminals view.
+      setSessions((prev) => [
+        ...prev,
+        { sessionId: failedId, connectionName: conn.name, connection: conn, retrying: true },
+      ]);
+      setActiveTabId(failedId);
+      setView("terminals");
+    } else {
+      // Retry: mark the existing tab as retrying so the button spins.
+      setSessions((prev) =>
+        prev.map((s) =>
+          s.sessionId === replaceSessionId ? { ...s, retrying: true } : s
+        )
+      );
+    }
+
     try {
       const sessionId = await invoke<string>("ssh_connect", {
-        connection_id: conn.id,
+        connectionId: conn.id,
       });
-      const newSession: TerminalSession = { sessionId, connectionName: conn.name };
-      setSessions((prev) => [...prev, newSession]);
+      // Success: replace the placeholder/failed tab with a live session.
+      setSessions((prev) =>
+        prev.map((s) =>
+          s.sessionId === failedId ? { sessionId, connectionName: conn.name, connection: conn } : s
+        )
+      );
       setActiveTabId(sessionId);
-      setView("terminals");
     } catch (err) {
-      setConnectError(String(err));
+      // Failure: populate or update the error, clear retrying.
+      setSessions((prev) =>
+        prev.map((s) =>
+          s.sessionId === failedId
+            ? { ...s, error: String(err), retrying: false }
+            : s
+        )
+      );
+      setActiveTabId(failedId);
     }
+  };
+
+  const handleRetry = (conn: Connection, replaceSessionId: string) => {
+    handleConnect(conn, replaceSessionId);
+  };
+
+  const handleEditFromTerminal = (conn: Connection, failedSessionId: string) => {
+    // Close the failed tab and open the connection form.
+    handleCloseTab(failedSessionId);
+    setEditingConn(conn);
+    setCloningConn(null);
+    setConnFormOpen(true);
+    setView("connections");
   };
 
   const handleCloseTab = async (sessionId: string) => {
     try {
-      await invoke("ssh_disconnect", { session_id: sessionId });
+      await invoke("ssh_disconnect", { sessionId });
     } catch {
       // ignore
     }
@@ -158,6 +199,8 @@ function App() {
             onSelectTab={setActiveTabId}
             onCloseTab={handleCloseTab}
             onNewTab={handleNewTabFromTerminal}
+            onRetry={handleRetry}
+            onEdit={handleEditFromTerminal}
             settings={settings}
           />
         ) : (
@@ -184,11 +227,6 @@ function App() {
                 onSearch={handleSearch}
               />
             </div>
-            {connectError && (
-              <div className="mx-6 mt-3 px-3 py-2 rounded-md bg-destructive/10 text-destructive text-sm">
-                {connectError}
-              </div>
-            )}
             <div className="flex-1 overflow-y-auto px-4 py-2">
               <ConnectionList
                 connections={connections}

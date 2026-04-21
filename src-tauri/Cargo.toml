@@ -22,7 +22,8 @@ thiserror = "1"
 dirs-next = "2"
 ssh2 = "0.9"
 openssl-sys = { version = "0.9", features = ["vendored"] }
-keyring = "3"
+
+
 
 [profile.release]
 panic = "abort"

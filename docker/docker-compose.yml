@@ -34,6 +34,8 @@ services:
     hostname: server-c
     networks:
       - private_a
+    ports:
+      - "2203:22"
 
   server-d:
     build:
@@ -44,6 +46,8 @@ services:
     hostname: server-d
     networks:
       - private_b
+    ports:
+      - "2204:22"
 
 networks:
   public:

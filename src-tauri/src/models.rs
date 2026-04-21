@@ -18,6 +18,7 @@ pub struct Credential {
 }
 
 impl Credential {
+    #[cfg(test)]
     pub fn new(name: String, username: String, kind: CredentialKind) -> Self {
         Self {
             id: Uuid::new_v4().to_string(),
