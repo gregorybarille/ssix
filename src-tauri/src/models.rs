@@ -91,6 +91,10 @@ pub struct Connection {
     /// written to the terminal pane before the shell prompt appears.
     #[serde(default)]
     pub verbosity: u8,
+    /// Additional CLI-style flags passed to the SSH subsystem (e.g. `-C` for
+    /// compression). Parsed and applied before the handshake.
+    #[serde(default)]
+    pub extra_args: Option<String>,
 }
 
 impl Connection {
@@ -103,6 +107,7 @@ impl Connection {
             credential_id,
             kind,
             verbosity: 0,
+            extra_args: None,
         }
     }
 }
@@ -239,6 +244,7 @@ mod tests {
             port: 22,
             credential_id: Some("dest-cred".into()),
             verbosity: 0,
+            extra_args: None,
             kind: ConnectionKind::LegacyTunnel {
                 gateway_host: "gw.example".into(),
                 gateway_port: 22,
@@ -273,6 +279,7 @@ mod tests {
             port: 22,
             credential_id: None,
             verbosity: 0,
+            extra_args: None,
             kind: ConnectionKind::LegacyTunnel {
                 gateway_host: "gw.example".into(),
                 gateway_port: 22,
@@ -305,6 +312,7 @@ mod tests {
             port: 80,
             credential_id: None,
             verbosity: 0,
+            extra_args: None,
             kind: pf.clone(),
         });
         data.migrate_legacy_kinds();
@@ -335,5 +343,18 @@ mod tests {
         }"#;
         let conn: Connection = serde_json::from_str(json).unwrap();
         assert_eq!(conn.verbosity, 0);
+    }
+
+    #[test]
+    fn test_connection_extra_args_serde_default() {
+        let json = r#"{
+            "id": "x",
+            "name": "test",
+            "host": "h",
+            "port": 22,
+            "type": "direct"
+        }"#;
+        let conn: Connection = serde_json::from_str(json).unwrap();
+        assert!(conn.extra_args.is_none());
     }
 }

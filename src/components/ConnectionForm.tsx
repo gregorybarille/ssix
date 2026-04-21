@@ -39,6 +39,7 @@ const DEFAULT_FORM: Omit<Connection, "id"> = {
   credential_id: undefined,
   type: "direct",
   verbosity: 0,
+  extra_args: "",
 };
 
 export function ConnectionForm({
@@ -70,6 +71,7 @@ export function ConnectionForm({
         credential_id: connection.credential_id,
         type: connection.type,
         verbosity: connection.verbosity ?? 0,
+        extra_args: connection.extra_args ?? "",
         gateway_host: connection.gateway_host,
         gateway_port: connection.gateway_port,
         gateway_credential_id: connection.gateway_credential_id,
@@ -172,6 +174,7 @@ export function ConnectionForm({
         credential_id: credentialId,
         type: connectionType,
         verbosity: form.verbosity ?? 0,
+        extra_args: form.extra_args || undefined,
       };
 
       const data: Omit<Connection, "id"> =
@@ -532,6 +535,20 @@ export function ConnectionForm({
           )}
 
           {/* Advanced options */}
+          <div className="space-y-2">
+            <Label htmlFor="extra_args">Additional SSH Arguments</Label>
+            <Input
+              id="extra_args"
+              placeholder="-C (compression)"
+              value={form.extra_args ?? ""}
+              onChange={(e) => setForm({ ...form, extra_args: e.target.value })}
+            />
+            <p className="text-xs text-muted-foreground">
+              Pass extra flags to the SSH session (e.g. <code>-C</code> to
+              enable compression). Unknown flags are ignored.
+            </p>
+          </div>
+
           <div className="space-y-2">
             <Label htmlFor="verbosity">Verbosity Level</Label>
             <Select

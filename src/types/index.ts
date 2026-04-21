@@ -49,6 +49,8 @@ export interface Connection {
   type: ConnectionType;
   /** SSH verbosity level: 0 = silent, 1 = info, 2 = debug (libssh2 trace). */
   verbosity?: number;
+  /** Additional SSH flags, e.g. "-C" for compression. */
+  extra_args?: string;
   gateway_host?: string;
   gateway_port?: number;
   gateway_credential_id?: string;

@@ -67,12 +67,9 @@ pub fn start_ssh_session(
     app_handle: AppHandle,
     session_id: String,
     verbosity: u8,
+    extra_args: Option<String>,
 ) -> Result<Sender<SessionMsg>, String> {
-    // Perform TCP connect, SSH handshake, auth, and PTY/shell setup synchronously
-    // so that any connection error is returned directly to the caller rather than
-    // being lost in a race between the background thread emitting an event and the
-    // frontend registering its listener.
-    let (session, channel) = open_shell(&host, port, &username, &auth, verbosity)?;
+    let (session, channel) = open_shell(&host, port, &username, &auth, verbosity, &extra_args)?;
 
     let (tx, rx): (Sender<SessionMsg>, Receiver<SessionMsg>) = mpsc::channel();
     let sid = session_id.clone();
@@ -109,6 +106,7 @@ fn open_shell(
     username: &str,
     auth: &AuthMethod,
     verbosity: u8,
+    extra_args: &Option<String>,
 ) -> Result<(Session, ssh2::Channel), String> {
     let addr = format!("{}:{}", host, port);
     let tcp = TcpStream::connect(&addr)
@@ -119,9 +117,15 @@ fn open_shell(
         Session::new().map_err(|e| format!("SSH session create failed: {}", e))?;
 
     if verbosity >= 2 {
-        // Enable libssh2 trace output. Output goes to stderr and is useful
-        // when running SSX from a terminal for low-level debugging.
         session.trace(ssh2::TraceFlags::all());
+    }
+
+    // Apply extra_args before handshake. Currently only `-C` (compression)
+    // is supported; unknown flags are silently ignored.
+    if let Some(args) = extra_args {
+        if args.split_whitespace().any(|t| t == "-C") {
+            session.set_compress(true);
+        }
     }
 
     session.set_tcp_stream(tcp);
@@ -170,6 +174,7 @@ fn open_shell_over_stream(
     username: &str,
     auth: &AuthMethod,
     verbosity: u8,
+    extra_args: &Option<String>,
 ) -> Result<(Session, ssh2::Channel), String> {
     tcp.set_nonblocking(false).ok();
 
@@ -178,6 +183,12 @@ fn open_shell_over_stream(
 
     if verbosity >= 2 {
         session.trace(ssh2::TraceFlags::all());
+    }
+
+    if let Some(args) = extra_args {
+        if args.split_whitespace().any(|t| t == "-C") {
+            session.set_compress(true);
+        }
     }
 
     session.set_tcp_stream(tcp);
@@ -600,6 +611,7 @@ pub fn start_jump_shell(
     app_handle: AppHandle,
     session_id: String,
     verbosity: u8,
+    extra_args: Option<String>,
 ) -> Result<Sender<SessionMsg>, String> {
     // Bind a random free loopback port for the inner SSH session.
     let listener = TcpListener::bind("127.0.0.1:0")
@@ -681,7 +693,7 @@ pub fn start_jump_shell(
 
     let tcp_stream = connect_result?;
 
-    let (session, channel) = open_shell_over_stream(tcp_stream, &destination_username, &destination_auth, verbosity)
+    let (session, channel) = open_shell_over_stream(tcp_stream, &destination_username, &destination_auth, verbosity, &extra_args)
         .map_err(|e| format!("Destination connect via gateway failed: {}", e))?;
 
     let (tx, rx): (Sender<SessionMsg>, Receiver<SessionMsg>) = mpsc::channel();

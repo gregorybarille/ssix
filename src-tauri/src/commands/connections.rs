@@ -13,6 +13,8 @@ pub struct AddConnectionInput {
     pub kind: ConnectionKind,
     #[serde(default)]
     pub verbosity: u8,
+    #[serde(default)]
+    pub extra_args: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -26,6 +28,8 @@ pub struct UpdateConnectionInput {
     pub kind: ConnectionKind,
     #[serde(default)]
     pub verbosity: u8,
+    #[serde(default)]
+    pub extra_args: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -51,6 +55,7 @@ pub fn add_connection(input: AddConnectionInput) -> Result<Connection, String> {
     }
     let mut connection = Connection::new(input.name, input.host, input.port, input.credential_id, input.kind);
     connection.verbosity = input.verbosity;
+    connection.extra_args = input.extra_args;
     data.connections.push(connection.clone());
     save_data(&data)?;
     Ok(connection)
@@ -70,6 +75,7 @@ pub fn update_connection(input: UpdateConnectionInput) -> Result<Connection, Str
     data.connections[idx].credential_id = input.credential_id;
     data.connections[idx].kind = input.kind;
     data.connections[idx].verbosity = input.verbosity;
+    data.connections[idx].extra_args = input.extra_args;
     let updated = data.connections[idx].clone();
     save_data(&data)?;
     Ok(updated)
@@ -117,6 +123,7 @@ pub fn clone_connection(input: CloneConnectionInput) -> Result<Connection, Strin
         credential_id,
         kind: original.kind,
         verbosity: original.verbosity,
+        extra_args: original.extra_args,
     };
     data.connections.push(cloned.clone());
     save_data(&data)?;
