@@ -38,6 +38,7 @@ const DEFAULT_FORM: Omit<Connection, "id"> = {
   port: 22,
   credential_id: undefined,
   type: "direct",
+  verbosity: 0,
 };
 
 export function ConnectionForm({
@@ -68,6 +69,7 @@ export function ConnectionForm({
         port: connection.port,
         credential_id: connection.credential_id,
         type: connection.type,
+        verbosity: connection.verbosity ?? 0,
         gateway_host: connection.gateway_host,
         gateway_port: connection.gateway_port,
         gateway_credential_id: connection.gateway_credential_id,
@@ -169,6 +171,7 @@ export function ConnectionForm({
         port: effectivePort,
         credential_id: credentialId,
         type: connectionType,
+        verbosity: form.verbosity ?? 0,
       };
 
       const data: Omit<Connection, "id"> =
@@ -527,6 +530,30 @@ export function ConnectionForm({
               </Tabs>
             </div>
           )}
+
+          {/* Advanced options */}
+          <div className="space-y-2">
+            <Label htmlFor="verbosity">Verbosity Level</Label>
+            <Select
+              value={String(form.verbosity ?? 0)}
+              onValueChange={(v) =>
+                setForm({ ...form, verbosity: parseInt(v) })
+              }
+            >
+              <SelectTrigger id="verbosity">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="0">0 — Silent (default)</SelectItem>
+                <SelectItem value="1">1 — Info (connection events)</SelectItem>
+                <SelectItem value="2">2 — Debug (libssh2 trace)</SelectItem>
+              </SelectContent>
+            </Select>
+            <p className="text-xs text-muted-foreground">
+              Level 1 prints connection info to the terminal. Level 2 enables
+              low-level libssh2 tracing (verbose).
+            </p>
+          </div>
 
           {error && (
             <p className="text-sm text-destructive bg-destructive/10 px-3 py-2 rounded-md">

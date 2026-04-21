@@ -87,6 +87,10 @@ pub struct Connection {
     pub credential_id: Option<String>,
     #[serde(flatten)]
     pub kind: ConnectionKind,
+    /// SSH verbosity level (0 = silent, 1–3 = increasing detail). Output is
+    /// written to the terminal pane before the shell prompt appears.
+    #[serde(default)]
+    pub verbosity: u8,
 }
 
 impl Connection {
@@ -98,6 +102,7 @@ impl Connection {
             port,
             credential_id,
             kind,
+            verbosity: 0,
         }
     }
 }
@@ -233,6 +238,7 @@ mod tests {
             host: "internal.example".into(),
             port: 22,
             credential_id: Some("dest-cred".into()),
+            verbosity: 0,
             kind: ConnectionKind::LegacyTunnel {
                 gateway_host: "gw.example".into(),
                 gateway_port: 22,
@@ -266,6 +272,7 @@ mod tests {
             host: "internal.example".into(),
             port: 22,
             credential_id: None,
+            verbosity: 0,
             kind: ConnectionKind::LegacyTunnel {
                 gateway_host: "gw.example".into(),
                 gateway_port: 22,
@@ -297,9 +304,36 @@ mod tests {
             host: "api".into(),
             port: 80,
             credential_id: None,
+            verbosity: 0,
             kind: pf.clone(),
         });
         data.migrate_legacy_kinds();
         assert_eq!(data.connections[0].kind, pf);
+    }
+
+    #[test]
+    fn test_connection_verbosity_default_is_zero() {
+        let conn = Connection::new(
+            "test".into(),
+            "host".into(),
+            22,
+            None,
+            ConnectionKind::Direct,
+        );
+        assert_eq!(conn.verbosity, 0);
+    }
+
+    #[test]
+    fn test_connection_verbosity_serde_default() {
+        // JSON without verbosity field should deserialize with verbosity == 0.
+        let json = r#"{
+            "id": "x",
+            "name": "test",
+            "host": "h",
+            "port": 22,
+            "type": "direct"
+        }"#;
+        let conn: Connection = serde_json::from_str(json).unwrap();
+        assert_eq!(conn.verbosity, 0);
     }
 }

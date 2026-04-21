@@ -47,6 +47,8 @@ export interface Connection {
    */
   credential_id?: string;
   type: ConnectionType;
+  /** SSH verbosity level: 0 = silent, 1 = info, 2 = debug (libssh2 trace). */
+  verbosity?: number;
   gateway_host?: string;
   gateway_port?: number;
   gateway_credential_id?: string;

@@ -61,6 +61,7 @@ pub async fn ssh_connect(
                 auth,
                 app,
                 session_id.clone(),
+                conn.verbosity,
             )?
         }
         ConnectionKind::PortForward {
@@ -110,6 +111,7 @@ pub async fn ssh_connect(
                 dest_auth,
                 app,
                 session_id.clone(),
+                conn.verbosity,
             )?
         }
         ConnectionKind::LegacyTunnel { .. } => {

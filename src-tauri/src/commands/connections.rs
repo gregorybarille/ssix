@@ -11,6 +11,8 @@ pub struct AddConnectionInput {
     pub credential_id: Option<String>,
     #[serde(flatten)]
     pub kind: ConnectionKind,
+    #[serde(default)]
+    pub verbosity: u8,
 }
 
 #[derive(Debug, Deserialize)]
@@ -22,6 +24,8 @@ pub struct UpdateConnectionInput {
     pub credential_id: Option<String>,
     #[serde(flatten)]
     pub kind: ConnectionKind,
+    #[serde(default)]
+    pub verbosity: u8,
 }
 
 #[derive(Debug, Deserialize)]
@@ -45,7 +49,8 @@ pub fn add_connection(input: AddConnectionInput) -> Result<Connection, String> {
     if data.connections.iter().any(|c| c.name == input.name) {
         return Err(format!("A connection named '{}' already exists", input.name));
     }
-    let connection = Connection::new(input.name, input.host, input.port, input.credential_id, input.kind);
+    let mut connection = Connection::new(input.name, input.host, input.port, input.credential_id, input.kind);
+    connection.verbosity = input.verbosity;
     data.connections.push(connection.clone());
     save_data(&data)?;
     Ok(connection)
@@ -64,6 +69,7 @@ pub fn update_connection(input: UpdateConnectionInput) -> Result<Connection, Str
     data.connections[idx].port = input.port;
     data.connections[idx].credential_id = input.credential_id;
     data.connections[idx].kind = input.kind;
+    data.connections[idx].verbosity = input.verbosity;
     let updated = data.connections[idx].clone();
     save_data(&data)?;
     Ok(updated)
@@ -110,6 +116,7 @@ pub fn clone_connection(input: CloneConnectionInput) -> Result<Connection, Strin
         port: input.port.unwrap_or(original.port),
         credential_id,
         kind: original.kind,
+        verbosity: original.verbosity,
     };
     data.connections.push(cloned.clone());
     save_data(&data)?;
