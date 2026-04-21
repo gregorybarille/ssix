@@ -2,6 +2,7 @@ import React, { useState, useEffect } from "react";
 import { Connection, Credential, ConnectionType } from "@/types";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
+import { PasswordInput } from "./ui/password-input";
 import { Label } from "./ui/label";
 import {
   Dialog,
@@ -455,9 +456,8 @@ export function ConnectionForm({
                   </div>
                   <div className="space-y-2">
                     <Label htmlFor="inline-password">Password *</Label>
-                    <Input
+                    <PasswordInput
                       id="inline-password"
-                      type="password"
                       placeholder="••••••••"
                       value={inlinePassword}
                       onChange={(e) => setInlinePassword(e.target.value)}
@@ -489,9 +489,8 @@ export function ConnectionForm({
                   </div>
                   <div className="space-y-2">
                     <Label htmlFor="key-passphrase">Passphrase (optional)</Label>
-                    <Input
+                    <PasswordInput
                       id="key-passphrase"
-                      type="password"
                       placeholder="••••••••"
                       value={inlinePassphrase}
                       onChange={(e) => setInlinePassphrase(e.target.value)}
