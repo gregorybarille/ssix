@@ -53,7 +53,7 @@ export function ConnectionList({
           onClick={() => onSelect?.(conn)}
         >
           <div className="flex-shrink-0">
-            {conn.type === "tunnel" ? (
+            {conn.type !== "direct" ? (
               <Network className="h-5 w-5 text-muted-foreground" />
             ) : (
               <Server className="h-5 w-5 text-muted-foreground" />
@@ -62,14 +62,33 @@ export function ConnectionList({
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-2">
               <span className="font-medium text-sm truncate">{conn.name}</span>
-              {conn.type === "tunnel" && (
+              {conn.type === "port_forward" && (
                 <Badge variant="secondary" className="text-xs shrink-0">
-                  tunnel
+                  port-forward
+                </Badge>
+              )}
+              {conn.type === "jump_shell" && (
+                <Badge variant="secondary" className="text-xs shrink-0">
+                  jump-shell
                 </Badge>
               )}
             </div>
             <p className="text-xs text-muted-foreground truncate">
-              {conn.host}:{conn.port}
+              {conn.type === "port_forward" ? (
+                <>
+                  127.0.0.1:{conn.local_port} → {conn.destination_host}:
+                  {conn.destination_port} via {conn.gateway_host}
+                </>
+              ) : conn.type === "jump_shell" ? (
+                <>
+                  {conn.destination_host}:{conn.destination_port} via{" "}
+                  {conn.gateway_host}
+                </>
+              ) : (
+                <>
+                  {conn.host}:{conn.port}
+                </>
+              )}
               {getCredentialName(conn.credential_id) && (
                 <span className="ml-2 text-muted-foreground/70">
                   · {getCredentialName(conn.credential_id)}
@@ -78,7 +97,7 @@ export function ConnectionList({
             </p>
           </div>
           <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-            {onConnect && conn.type !== "tunnel" && (
+            {onConnect && (
               <Button
                 variant="ghost"
                 size="icon"

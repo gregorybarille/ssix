@@ -1,8 +1,9 @@
 import React from "react";
 import { Terminal } from "./Terminal";
 import { FailedTerminal } from "./FailedTerminal";
+import { TunnelTab } from "./TunnelTab";
 import { Button } from "./ui/button";
-import { X, Plus } from "lucide-react";
+import { X, Plus, Network } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { AppSettings, Connection } from "@/types";
 
@@ -57,6 +58,9 @@ export function TerminalTabs({
             {session.error && (
               <span className="h-1.5 w-1.5 rounded-full bg-destructive shrink-0" title="Connection failed" />
             )}
+            {!session.error && session.connection?.type === "port_forward" && (
+              <Network className="h-3 w-3 text-muted-foreground shrink-0" />
+            )}
             <span className="truncate">{session.connectionName}</span>
             <button
               className="ml-1 rounded p-0.5 opacity-0 group-hover:opacity-100 hover:bg-destructive/20 hover:text-destructive transition-opacity"
@@ -83,20 +87,34 @@ export function TerminalTabs({
 
       {/* Terminal instances — all mounted, only active is visible */}
       <div className="flex-1 min-h-0 relative">
-        {sessions.map((session) =>
-          session.error || session.retrying ? (
-            <FailedTerminal
-              key={session.sessionId}
-              connectionName={session.connectionName}
-              error={session.error}
-              connection={session.connection}
-              isVisible={activeTabId === session.sessionId}
-              retrying={session.retrying}
-              onRetry={(conn) => onRetry(conn, session.sessionId)}
-              onEdit={(conn) => onEdit(conn, session.sessionId)}
-              onClose={() => onCloseTab(session.sessionId)}
-            />
-          ) : (
+        {sessions.map((session) => {
+          if (session.error || session.retrying) {
+            return (
+              <FailedTerminal
+                key={session.sessionId}
+                connectionName={session.connectionName}
+                error={session.error}
+                connection={session.connection}
+                isVisible={activeTabId === session.sessionId}
+                retrying={session.retrying}
+                onRetry={(conn) => onRetry(conn, session.sessionId)}
+                onEdit={(conn) => onEdit(conn, session.sessionId)}
+                onClose={() => onCloseTab(session.sessionId)}
+              />
+            );
+          }
+          if (session.connection?.type === "port_forward") {
+            return (
+              <TunnelTab
+                key={session.sessionId}
+                sessionId={session.sessionId}
+                connection={session.connection}
+                isVisible={activeTabId === session.sessionId}
+                onDisconnect={() => onCloseTab(session.sessionId)}
+              />
+            );
+          }
+          return (
             <Terminal
               key={session.sessionId}
               sessionId={session.sessionId}
@@ -105,8 +123,8 @@ export function TerminalTabs({
               onDisconnect={() => onCloseTab(session.sessionId)}
               settings={settings}
             />
-          )
-        )}
+          );
+        })}
       </div>
     </div>
   );

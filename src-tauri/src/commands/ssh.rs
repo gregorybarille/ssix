@@ -1,45 +1,22 @@
 use crate::keychain;
-use crate::models::{ConnectionKind, CredentialKind};
-use crate::ssh::{start_ssh_session, AuthMethod, SessionMsg, SshState};
+use crate::models::{Connection, ConnectionKind, Credential, CredentialKind};
+use crate::ssh::{
+    start_jump_shell, start_port_forward, start_ssh_session, AuthMethod, SessionMsg, SshState,
+};
 use crate::storage;
 
-#[tauri::command]
-pub fn ssh_connect(
-    app: tauri::AppHandle,
-    state: tauri::State<'_, SshState>,
-    connection_id: String,
-) -> Result<String, String> {
-    let data = storage::load_data()?;
-    let conn = data
-        .connections
+/// Resolve a credential by id from the loaded data, enriching it with the
+/// secret material from the keychain. Returns the username and `AuthMethod`.
+fn resolve_credential(
+    credentials: &[Credential],
+    cred_id: &str,
+) -> Result<(String, AuthMethod), String> {
+    let mut cred = credentials
         .iter()
-        .find(|c| c.id == connection_id)
-        .ok_or("Connection not found")?;
-
-    let cred_id = conn
-        .credential_id
-        .as_ref()
-        .ok_or("No credential configured for this connection")?;
-
-    // Check connection kind — tunnel connections require gateway setup not yet supported
-    if let ConnectionKind::Tunnel { .. } = &conn.kind {
-        return Err(
-            "Tunnel/jump-host connections are not yet supported. \
-             Please configure a direct connection instead."
-                .to_string(),
-        );
-    }
-
-    let mut cred = data
-        .credentials
-        .iter()
-        .find(|c| c.id == *cred_id)
-        .ok_or("Credential not found")?
+        .find(|c| c.id == cred_id)
+        .ok_or_else(|| format!("Credential {} not found", cred_id))?
         .clone();
-
-    // Enrich from OS keychain so the actual password/passphrase is available.
     keychain::enrich_credential(&mut cred);
-
     let username = cred.username.clone();
     let auth = match &cred.kind {
         CredentialKind::Password { password } => AuthMethod::Password(password.clone()),
@@ -51,17 +28,99 @@ pub fn ssh_connect(
             passphrase: passphrase.clone(),
         },
     };
+    Ok((username, auth))
+}
+
+#[tauri::command]
+pub fn ssh_connect(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, SshState>,
+    connection_id: String,
+) -> Result<String, String> {
+    let data = storage::load_data()?;
+    let conn: Connection = data
+        .connections
+        .iter()
+        .find(|c| c.id == connection_id)
+        .ok_or("Connection not found")?
+        .clone();
 
     let session_id = uuid::Uuid::new_v4().to_string();
 
-    let tx = start_ssh_session(
-        conn.host.clone(),
-        conn.port,
-        username,
-        auth,
-        app,
-        session_id.clone(),
-    )?;
+    let tx = match &conn.kind {
+        ConnectionKind::Direct => {
+            let cred_id = conn
+                .credential_id
+                .as_ref()
+                .ok_or("No credential configured for this connection")?;
+            let (username, auth) = resolve_credential(&data.credentials, cred_id)?;
+            start_ssh_session(
+                conn.host.clone(),
+                conn.port,
+                username,
+                auth,
+                app,
+                session_id.clone(),
+            )?
+        }
+        ConnectionKind::PortForward {
+            gateway_host,
+            gateway_port,
+            gateway_credential_id,
+            local_port,
+            destination_host,
+            destination_port,
+        } => {
+            let (gw_user, gw_auth) =
+                resolve_credential(&data.credentials, gateway_credential_id)?;
+            start_port_forward(
+                gateway_host.clone(),
+                *gateway_port,
+                gw_user,
+                gw_auth,
+                *local_port,
+                destination_host.clone(),
+                *destination_port,
+                app,
+                session_id.clone(),
+            )?
+        }
+        ConnectionKind::JumpShell {
+            gateway_host,
+            gateway_port,
+            gateway_credential_id,
+            destination_host,
+            destination_port,
+        } => {
+            let dest_cred_id = conn
+                .credential_id
+                .as_ref()
+                .ok_or("Jump-shell connection requires a destination credential")?;
+            let (gw_user, gw_auth) =
+                resolve_credential(&data.credentials, gateway_credential_id)?;
+            let (dest_user, dest_auth) = resolve_credential(&data.credentials, dest_cred_id)?;
+            start_jump_shell(
+                gateway_host.clone(),
+                *gateway_port,
+                gw_user,
+                gw_auth,
+                destination_host.clone(),
+                *destination_port,
+                dest_user,
+                dest_auth,
+                app,
+                session_id.clone(),
+            )?
+        }
+        ConnectionKind::LegacyTunnel { .. } => {
+            // Should not happen — `storage::load_data` migrates these to JumpShell.
+            return Err(
+                "Legacy tunnel connection encountered after migration. \
+                 Please re-save this connection."
+                    .to_string(),
+            );
+        }
+    };
 
     state
         .sessions

@@ -1,12 +1,13 @@
 use std::collections::HashMap;
 use std::io::{Read, Write};
-use std::net::TcpStream;
+use std::net::{SocketAddr, TcpListener, TcpStream};
 use std::path::Path;
 use std::sync::mpsc::{self, Receiver, Sender, TryRecvError};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
 
+use serde::Serialize;
 use ssh2::Session;
 use tauri::{AppHandle, Emitter};
 
@@ -16,6 +17,18 @@ pub enum AuthMethod {
         path: String,
         passphrase: Option<String>,
     },
+}
+
+impl Clone for AuthMethod {
+    fn clone(&self) -> Self {
+        match self {
+            AuthMethod::Password(p) => AuthMethod::Password(p.clone()),
+            AuthMethod::Key { path, passphrase } => AuthMethod::Key {
+                path: path.clone(),
+                passphrase: passphrase.clone(),
+            },
+        }
+    }
 }
 
 pub enum SessionMsg {
@@ -34,6 +47,16 @@ impl SshState {
             sessions: Mutex::new(HashMap::new()),
         }
     }
+}
+
+/// Status payload emitted on `tunnel-status-{id}`.
+#[derive(Serialize, Clone)]
+pub struct TunnelStatus {
+    pub state: &'static str, // "listening" | "client_connected" | "client_closed" | "error"
+    pub local_port: u16,
+    pub destination: String,
+    pub message: Option<String>,
+    pub active_clients: usize,
 }
 
 pub fn start_ssh_session(
@@ -192,6 +215,383 @@ fn run_io_loop(
     let _ = channel.close();
     let _ = channel.wait_close();
     Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Tunneling: gateway session + port forwarding + jump-shell
+// ---------------------------------------------------------------------------
+
+/// Opens an SSH session to a gateway and authenticates. The returned session is
+/// left in *blocking* mode so callers can use `channel_direct_tcpip` reliably.
+/// Caller is responsible for any subsequent `set_blocking(false)` if needed.
+fn open_gateway_session(
+    gateway_host: &str,
+    gateway_port: u16,
+    username: &str,
+    auth: &AuthMethod,
+) -> Result<Session, String> {
+    let addr = format!("{}:{}", gateway_host, gateway_port);
+    let tcp = TcpStream::connect(&addr)
+        .map_err(|e| format!("TCP connect to gateway {} failed: {}", addr, e))?;
+    tcp.set_nonblocking(false).ok();
+
+    let mut session =
+        Session::new().map_err(|e| format!("SSH session create failed: {}", e))?;
+    session.set_tcp_stream(tcp);
+    session
+        .handshake()
+        .map_err(|e| format!("Gateway SSH handshake failed: {}", e))?;
+
+    match auth {
+        AuthMethod::Password(pw) => {
+            session
+                .userauth_password(username, pw)
+                .map_err(|e| format!("Gateway password auth failed: {}", e))?;
+        }
+        AuthMethod::Key { path, passphrase } => {
+            session
+                .userauth_pubkey_file(username, None, Path::new(path), passphrase.as_deref())
+                .map_err(|e| format!("Gateway key auth failed: {}", e))?;
+        }
+    }
+
+    if !session.authenticated() {
+        return Err("Gateway authentication failed".to_string());
+    }
+
+    Ok(session)
+}
+
+/// Forward bytes between a local TCP socket and an SSH `direct-tcpip` channel.
+/// Runs both directions on a single thread using non-blocking polling so we can
+/// detect EOF on either side without blocking the other.
+fn forward_bidi(mut local: TcpStream, mut channel: ssh2::Channel) {
+    local.set_nonblocking(true).ok();
+    let mut buf_a = [0u8; 16384];
+    let mut buf_b = [0u8; 16384];
+
+    loop {
+        let mut idle = true;
+
+        // local -> channel
+        match local.read(&mut buf_a) {
+            Ok(0) => {
+                // local closed
+                let _ = channel.send_eof();
+                let _ = channel.wait_eof();
+                let _ = channel.close();
+                let _ = channel.wait_close();
+                return;
+            }
+            Ok(n) => {
+                if channel.write_all(&buf_a[..n]).is_err() {
+                    return;
+                }
+                let _ = channel.flush();
+                idle = false;
+            }
+            Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {}
+            Err(_) => {
+                let _ = channel.close();
+                return;
+            }
+        }
+
+        // channel -> local
+        match channel.read(&mut buf_b) {
+            Ok(0) => {
+                let _ = local.shutdown(std::net::Shutdown::Both);
+                return;
+            }
+            Ok(n) => {
+                if local.write_all(&buf_b[..n]).is_err() {
+                    let _ = channel.close();
+                    return;
+                }
+                idle = false;
+            }
+            Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {}
+            Err(_) => {
+                let _ = local.shutdown(std::net::Shutdown::Both);
+                return;
+            }
+        }
+
+        if channel.eof() {
+            let _ = local.shutdown(std::net::Shutdown::Both);
+            return;
+        }
+
+        if idle {
+            thread::sleep(Duration::from_millis(10));
+        }
+    }
+}
+
+/// Bind a local TCP listener on `127.0.0.1:local_port` and forward every accepted
+/// connection through `gateway_session` to `destination_host:destination_port`.
+///
+/// Returns a `Sender<SessionMsg>` that the command layer can store in `SshState`.
+/// Only `SessionMsg::Disconnect` is meaningful for port-forward sessions; `Write`
+/// and `Resize` are ignored.
+///
+/// Errors at bind or gateway-connect time are returned synchronously.
+pub fn start_port_forward(
+    gateway_host: String,
+    gateway_port: u16,
+    gateway_username: String,
+    gateway_auth: AuthMethod,
+    local_port: u16,
+    destination_host: String,
+    destination_port: u16,
+    app_handle: AppHandle,
+    session_id: String,
+) -> Result<Sender<SessionMsg>, String> {
+    // Bind first so port-conflict errors surface immediately.
+    let bind_addr: SocketAddr = format!("127.0.0.1:{}", local_port)
+        .parse()
+        .map_err(|e: std::net::AddrParseError| e.to_string())?;
+    let listener = TcpListener::bind(bind_addr)
+        .map_err(|e| format!("Failed to bind 127.0.0.1:{}: {}", local_port, e))?;
+    listener.set_nonblocking(true).ok();
+
+    // Open gateway session up-front so auth/connect errors surface synchronously.
+    let session =
+        open_gateway_session(&gateway_host, gateway_port, &gateway_username, &gateway_auth)?;
+    // Keep gateway session in blocking mode for channel_direct_tcpip.
+    let session = Arc::new(Mutex::new(session));
+
+    let (tx, rx): (Sender<SessionMsg>, Receiver<SessionMsg>) = mpsc::channel();
+    let sid = session_id.clone();
+    let destination_label = format!("{}:{}", destination_host, destination_port);
+    let active = Arc::new(Mutex::new(0usize));
+
+    // Emit "listening" status.
+    let _ = app_handle.emit(
+        &format!("tunnel-status-{}", sid),
+        TunnelStatus {
+            state: "listening",
+            local_port,
+            destination: destination_label.clone(),
+            message: None,
+            active_clients: 0,
+        },
+    );
+
+    thread::spawn(move || {
+        loop {
+            // Drain control messages.
+            match rx.try_recv() {
+                Ok(SessionMsg::Disconnect) => break,
+                Ok(_) => {}
+                Err(TryRecvError::Empty) => {}
+                Err(TryRecvError::Disconnected) => break,
+            }
+
+            match listener.accept() {
+                Ok((local_stream, peer)) => {
+                    let session = Arc::clone(&session);
+                    let dest_host = destination_host.clone();
+                    let dest_label = destination_label.clone();
+                    let app = app_handle.clone();
+                    let sid_inner = sid.clone();
+                    let active_inner = Arc::clone(&active);
+                    let local_port_inner = local_port;
+
+                    thread::spawn(move || {
+                        let chan_result = {
+                            let sess = session.lock().unwrap();
+                            sess.channel_direct_tcpip(
+                                &dest_host,
+                                destination_port,
+                                Some((&peer.ip().to_string(), peer.port())),
+                            )
+                        };
+
+                        let channel = match chan_result {
+                            Ok(c) => c,
+                            Err(e) => {
+                                let _ = app.emit(
+                                    &format!("tunnel-status-{}", sid_inner),
+                                    TunnelStatus {
+                                        state: "error",
+                                        local_port: local_port_inner,
+                                        destination: dest_label.clone(),
+                                        message: Some(format!(
+                                            "channel_direct_tcpip failed: {}",
+                                            e
+                                        )),
+                                        active_clients: *active_inner.lock().unwrap(),
+                                    },
+                                );
+                                return;
+                            }
+                        };
+
+                        let count = {
+                            let mut g = active_inner.lock().unwrap();
+                            *g += 1;
+                            *g
+                        };
+                        let _ = app.emit(
+                            &format!("tunnel-status-{}", sid_inner),
+                            TunnelStatus {
+                                state: "client_connected",
+                                local_port: local_port_inner,
+                                destination: dest_label.clone(),
+                                message: Some(format!("from {}", peer)),
+                                active_clients: count,
+                            },
+                        );
+
+                        forward_bidi(local_stream, channel);
+
+                        let count = {
+                            let mut g = active_inner.lock().unwrap();
+                            *g = g.saturating_sub(1);
+                            *g
+                        };
+                        let _ = app.emit(
+                            &format!("tunnel-status-{}", sid_inner),
+                            TunnelStatus {
+                                state: "client_closed",
+                                local_port: local_port_inner,
+                                destination: dest_label.clone(),
+                                message: Some(format!("from {}", peer)),
+                                active_clients: count,
+                            },
+                        );
+                    });
+                }
+                Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                    thread::sleep(Duration::from_millis(50));
+                }
+                Err(e) => {
+                    let _ = app_handle.emit(
+                        &format!("tunnel-status-{}", sid),
+                        TunnelStatus {
+                            state: "error",
+                            local_port,
+                            destination: destination_label.clone(),
+                            message: Some(format!("accept failed: {}", e)),
+                            active_clients: *active.lock().unwrap(),
+                        },
+                    );
+                    break;
+                }
+            }
+        }
+
+        // Listener is dropped here. The gateway session is dropped when the last
+        // forwarder thread holding an Arc clone exits.
+        let _ = app_handle.emit(&format!("ssh-closed-{}", sid), ());
+    });
+
+    Ok(tx)
+}
+
+/// Open an SSH terminal to `destination_host:destination_port` reached *through*
+/// a gateway. Implementation: bind a random loopback port, port-forward through
+/// the gateway, then run a normal SSH session against `127.0.0.1:<random_port>`.
+///
+/// Errors at any synchronous step (bind, gateway connect, destination connect,
+/// auth, PTY/shell) surface immediately.
+pub fn start_jump_shell(
+    gateway_host: String,
+    gateway_port: u16,
+    gateway_username: String,
+    gateway_auth: AuthMethod,
+    destination_host: String,
+    destination_port: u16,
+    destination_username: String,
+    destination_auth: AuthMethod,
+    app_handle: AppHandle,
+    session_id: String,
+) -> Result<Sender<SessionMsg>, String> {
+    // Bind a random free loopback port for the inner SSH session.
+    let listener = TcpListener::bind("127.0.0.1:0")
+        .map_err(|e| format!("Failed to bind ephemeral loopback port: {}", e))?;
+    let local_addr = listener
+        .local_addr()
+        .map_err(|e| format!("local_addr() failed: {}", e))?;
+    let local_port = local_addr.port();
+    listener.set_nonblocking(true).ok();
+
+    // Open gateway session synchronously so auth errors surface now.
+    let gateway_session =
+        open_gateway_session(&gateway_host, gateway_port, &gateway_username, &gateway_auth)?;
+    let gateway_session = Arc::new(Mutex::new(gateway_session));
+
+    // Spawn the accept-and-forward loop. Unlike port_forward, we do not expose
+    // a stop channel here — the listener is closed when the inner SSH session
+    // disconnects (its socket closes, no more accepts happen, and the thread
+    // exits when it sees the listener has closed). To make that deterministic
+    // we keep the listener alive only for as long as needed: we'll close it
+    // after the first accepted connection, since a JumpShell is a single-session
+    // construct (the inner SSH session multiplexes its own channels over that
+    // one TCP connection).
+    {
+        let gateway_session = Arc::clone(&gateway_session);
+        let destination_host_inner = destination_host.clone();
+        thread::spawn(move || {
+            // Wait for the inner SSH session to connect (typically <100ms).
+            loop {
+                match listener.accept() {
+                    Ok((local_stream, peer)) => {
+                        let chan_result = {
+                            let sess = gateway_session.lock().unwrap();
+                            sess.channel_direct_tcpip(
+                                &destination_host_inner,
+                                destination_port,
+                                Some((&peer.ip().to_string(), peer.port())),
+                            )
+                        };
+                        match chan_result {
+                            Ok(channel) => {
+                                forward_bidi(local_stream, channel);
+                            }
+                            Err(_) => {
+                                let _ = local_stream.shutdown(std::net::Shutdown::Both);
+                            }
+                        }
+                        // Single-shot: drop the listener.
+                        return;
+                    }
+                    Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                        thread::sleep(Duration::from_millis(10));
+                    }
+                    Err(_) => return,
+                }
+            }
+        });
+    }
+
+    // Now open the inner SSH session against the loopback port. The forwarder
+    // above will accept this connection and bridge it through the gateway.
+    let (session, channel) = open_shell(
+        "127.0.0.1",
+        local_port,
+        &destination_username,
+        &destination_auth,
+    )
+    .map_err(|e| format!("Destination connect via gateway failed: {}", e))?;
+
+    let (tx, rx): (Sender<SessionMsg>, Receiver<SessionMsg>) = mpsc::channel();
+    let sid = session_id.clone();
+
+    thread::spawn(move || {
+        let _session = session;
+        // Hold gateway_session alive for the lifetime of the shell so the
+        // forwarder's channel_direct_tcpip stays valid.
+        let _gateway_session = gateway_session;
+        let result = run_io_loop(channel, &app_handle, &sid, rx);
+        if let Err(e) = &result {
+            let _ = app_handle.emit(&format!("ssh-error-{}", sid), e.clone());
+        }
+        let _ = app_handle.emit(&format!("ssh-closed-{}", sid), ());
+    });
+
+    Ok(tx)
 }
 
 #[cfg(test)]

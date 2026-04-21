@@ -49,7 +49,7 @@ export function ConnectPicker({
                   onOpenChange(false);
                 }}
               >
-                {conn.type === "tunnel" ? (
+                {conn.type !== "direct" ? (
                   <Network className="h-4 w-4 text-muted-foreground shrink-0" />
                 ) : (
                   <Server className="h-4 w-4 text-muted-foreground shrink-0" />
@@ -57,7 +57,11 @@ export function ConnectPicker({
                 <div className="min-w-0">
                   <p className="text-sm font-medium truncate">{conn.name}</p>
                   <p className="text-xs text-muted-foreground truncate">
-                    {conn.host}:{conn.port}
+                    {conn.type === "port_forward"
+                      ? `127.0.0.1:${conn.local_port} → ${conn.destination_host}:${conn.destination_port}`
+                      : conn.type === "jump_shell"
+                      ? `${conn.destination_host}:${conn.destination_port} via ${conn.gateway_host}`
+                      : `${conn.host}:${conn.port}`}
                     {getCredentialName(conn.credential_id) && (
                       <span className="ml-1">· {getCredentialName(conn.credential_id)}</span>
                     )}

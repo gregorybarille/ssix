@@ -13,7 +13,9 @@ pub fn load_data() -> Result<AppData, String> {
         return Ok(AppData::default());
     }
     let content = fs::read_to_string(&path).map_err(|e| e.to_string())?;
-    serde_json::from_str(&content).map_err(|e| e.to_string())
+    let mut data: AppData = serde_json::from_str(&content).map_err(|e| e.to_string())?;
+    data.migrate_legacy_kinds();
+    Ok(data)
 }
 
 pub fn save_data(data: &AppData) -> Result<(), String> {

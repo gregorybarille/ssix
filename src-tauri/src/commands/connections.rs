@@ -134,21 +134,41 @@ mod tests {
     }
 
     #[test]
-    fn test_connection_tunnel() {
-        let kind = ConnectionKind::Tunnel {
+    fn test_connection_jump_shell() {
+        let kind = ConnectionKind::JumpShell {
             gateway_host: "gateway.example.com".to_string(),
             gateway_port: 22,
-            gateway_credential_id: None,
+            gateway_credential_id: "gw-cred-1".to_string(),
             destination_host: "internal.example.com".to_string(),
             destination_port: 22,
         };
         let conn = Connection::new(
-            "tunnel-prod".to_string(),
+            "jump-prod".to_string(),
             "internal.example.com".to_string(),
             22,
+            Some("dest-cred-1".to_string()),
+            kind,
+        );
+        assert_eq!(conn.name, "jump-prod");
+    }
+
+    #[test]
+    fn test_connection_port_forward() {
+        let kind = ConnectionKind::PortForward {
+            gateway_host: "gateway.example.com".to_string(),
+            gateway_port: 22,
+            gateway_credential_id: "gw-cred-1".to_string(),
+            local_port: 8080,
+            destination_host: "api.internal".to_string(),
+            destination_port: 80,
+        };
+        let conn = Connection::new(
+            "forward-api".to_string(),
+            "api.internal".to_string(),
+            80,
             None,
             kind,
         );
-        assert_eq!(conn.name, "tunnel-prod");
+        assert_eq!(conn.name, "forward-api");
     }
 }

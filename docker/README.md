@@ -1,6 +1,6 @@
 # SSH Test Environment
 
-Docker Compose setup for testing direct and jump/tunnel SSH connections.
+Docker Compose setup for testing direct connections, port forwarding, and jump-shell SSH connections.
 
 ## Architecture
 
@@ -17,8 +17,8 @@ Host machine
 ```
 
 - All four servers are directly accessible from the host on their respective ports.
-- **server-c** is additionally reachable through **server-a** via the `private_a` internal network (for testing tunnel/jump connections).
-- **server-d** is additionally reachable through **server-b** via the `private_b` internal network (for testing tunnel/jump connections).
+- **server-c** is additionally reachable through **server-a** via the `private_a` internal network (for testing port forwarding and jump-shell connections).
+- **server-d** is additionally reachable through **server-b** via the `private_b` internal network.
 
 ## Usage
 
@@ -35,15 +35,66 @@ ssh -p 2202 userb@localhost
 ssh -p 2203 userc@localhost
 ssh -p 2204 userd@localhost
 
-# Test jump connection to server-c through server-a
+# Reference: ssh jump connection (server-c via server-a)
 ssh -J usera@localhost:2201 userc@server-c
 
-# Test jump connection to server-d through server-b
-ssh -J userb@localhost:2202 userd@server-d
+# Reference: ssh local port forward (server-c:22 via server-a, exposed on host port 9001)
+ssh -L 9001:server-c:22 usera@localhost -p 2201 -N
 
 # Stop all servers
 npm run docker:down
 ```
+
+## Testing SSX tunneling features
+
+The Docker environment is designed to validate the two SSX tunnel kinds end-to-end.
+
+### Port Forward (`ConnectionKind::PortForward`)
+
+SSX opens an SSH session to the gateway with password auth, binds `127.0.0.1:<local_port>`,
+and forwards every accepted local connection through the gateway to the destination. The
+destination need not run sshd — any TCP service works.
+
+Configure an SSX connection:
+
+| Field                | Value           |
+|----------------------|-----------------|
+| Type                 | Port Forward    |
+| Gateway Host         | `127.0.0.1`     |
+| Gateway Port         | `2201`          |
+| Gateway Credential   | usera / passa   |
+| Local Port           | `9001`          |
+| Destination Host     | `server-c`      |
+| Destination Port     | `22`            |
+
+After connecting, validate from any other shell on the host:
+
+```bash
+ssh -p 9001 userc@127.0.0.1
+```
+
+The same pattern works for forwarding non-SSH services (HTTP APIs, databases, etc.) — set
+`Destination Port` to whatever the service listens on inside the private network.
+
+### Jump Shell (`ConnectionKind::JumpShell`)
+
+SSX opens an SSH terminal to the destination *through* the gateway. No SSH keys are
+required on the gateway: SSX authenticates to both gateway and destination separately
+with their own credentials.
+
+Configure an SSX connection:
+
+| Field                  | Value         |
+|------------------------|---------------|
+| Type                   | Jump Shell    |
+| Gateway Host           | `127.0.0.1`   |
+| Gateway Port           | `2201`        |
+| Gateway Credential     | usera / passa |
+| Destination Host       | `server-c`    |
+| Destination Port       | `22`          |
+| Destination Credential | userc / passc |
+
+The terminal that opens is a shell on `server-c`, reached via `server-a`.
 
 ## Credentials
 
@@ -51,7 +102,7 @@ npm run docker:down
 
 | Server   | Hostname    | Username | Password | Host Port | Access                        |
 |----------|-------------|----------|----------|-----------|-------------------------------|
-| server-a | `127.0.0.1` | usera    | passa    | 2201      | Direct                        |
-| server-b | `127.0.0.1` | userb    | passb    | 2202      | Direct                        |
-| server-c | `127.0.0.1` | userc    | passc    | 2203      | Direct or jump via server-a   |
-| server-d | `127.0.0.1` | userd    | passd    | 2204      | Direct or jump via server-b   |
+| server-a | `127.0.0.1` | usera    | passa    | 2201      | Direct or gateway             |
+| server-b | `127.0.0.1` | userb    | passb    | 2202      | Direct or gateway             |
+| server-c | `127.0.0.1` | userc    | passc    | 2203      | Direct, port-forward, or jump via server-a |
+| server-d | `127.0.0.1` | userd    | passd    | 2204      | Direct, port-forward, or jump via server-b |
