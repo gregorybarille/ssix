@@ -40,6 +40,8 @@ function App() {
   const [searchQuery, setSearchQuery] = useState("");
   const [shellTabs, setShellTabs] = useState<TerminalTab[]>([]);
   const [activeTabId, setActiveTabId] = useState<string | null>(null);
+  const shellTabsRef = React.useRef<TerminalTab[]>([]);
+  const activeTabIdRef = React.useRef<string | null>(null);
   const [tunnelSessions, setTunnelSessions] = useState<TunnelSession[]>([]);
   const cancelledRef = React.useRef<Set<string>>(new Set());
   const [pickerOpen, setPickerOpen] = useState(false);
@@ -74,6 +76,14 @@ function App() {
   const { settings, fetchSettings, saveSettings } = useSettingsStore();
 
   useApplySettings(settings);
+
+  useEffect(() => {
+    shellTabsRef.current = shellTabs;
+  }, [shellTabs]);
+
+  useEffect(() => {
+    activeTabIdRef.current = activeTabId;
+  }, [activeTabId]);
 
   useEffect(() => {
     fetchConnections();
@@ -242,9 +252,6 @@ function App() {
 
   /* ------------------------- Shell session lifecycle ------------------------- */
 
-  // Find the active tab; null if none.
-  const activeTab = shellTabs.find((t) => t.id === activeTabId) ?? null;
-
   const addSessionToNewTab = (session: TerminalSession): string => {
     const tabId = `tab-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
     setShellTabs((prev) => [...prev, { id: tabId, mode: "single", panes: [session] }]);
@@ -253,13 +260,15 @@ function App() {
   };
 
   const addSessionToActiveTab = (session: TerminalSession, mode: "horizontal" | "vertical") => {
-    if (!activeTab || activeTab.panes.length >= 2) {
+    const currentActiveTabId = activeTabIdRef.current;
+    const currentActiveTab = shellTabsRef.current.find((t) => t.id === currentActiveTabId);
+    if (!currentActiveTabId || !currentActiveTab || currentActiveTab.panes.length >= 2) {
       addSessionToNewTab(session);
       return;
     }
     setShellTabs((prev) =>
       prev.map((t) =>
-        t.id === activeTab.id ? { ...t, mode, panes: [...t.panes, session] } : t,
+        t.id === currentActiveTabId ? { ...t, mode, panes: [...t.panes, session] } : t,
       ),
     );
   };

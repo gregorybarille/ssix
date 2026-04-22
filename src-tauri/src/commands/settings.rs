@@ -1,5 +1,5 @@
 use crate::models::AppSettings;
-use crate::storage::{load_data, save_data};
+use crate::storage::{load_data, with_data_mut};
 
 #[tauri::command]
 pub fn get_settings() -> Result<AppSettings, String> {
@@ -9,9 +9,10 @@ pub fn get_settings() -> Result<AppSettings, String> {
 
 #[tauri::command]
 pub fn save_settings(settings: AppSettings) -> Result<AppSettings, String> {
-    let mut data = load_data()?;
-    data.settings = settings.clone();
-    save_data(&data)?;
+    with_data_mut(|data| {
+        data.settings = settings.clone();
+        Ok(())
+    })?;
     Ok(settings)
 }
 

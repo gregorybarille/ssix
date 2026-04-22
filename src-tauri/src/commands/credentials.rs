@@ -1,6 +1,6 @@
 use crate::keychain;
 use crate::models::{Credential, CredentialKind};
-use crate::storage::{load_data, save_data};
+use crate::storage::{load_data, with_data_mut};
 use serde::Deserialize;
 
 #[derive(Debug, Deserialize)]
@@ -106,66 +106,71 @@ pub fn get_credentials() -> Result<Vec<Credential>, String> {
 
 #[tauri::command]
 pub fn add_credential(input: AddCredentialInput) -> Result<Credential, String> {
-    let mut data = load_data()?;
-    // Private credentials skip the unique-name check since they use
-    // auto-generated UUID-based names and are never shown in the UI list.
-    if !input.is_private && data.credentials.iter().any(|c| c.name == input.name) {
-        return Err(format!("A credential named '{}' already exists", input.name));
-    }
+    with_data_mut(|data| {
+        // Private credentials skip the unique-name check since they use
+        // auto-generated UUID-based names and are never shown in the UI list.
+        if !input.is_private && data.credentials.iter().any(|c| c.name == input.name) {
+            return Err(format!("A credential named '{}' already exists", input.name));
+        }
 
-    // Generate the ID here so we can use it as the keychain key.
-    let cred_id = uuid::Uuid::new_v4().to_string();
-    let kind_for_json = store_secrets_and_sanitize(&cred_id, &input.kind)?;
+        // Generate the ID here so we can use it as the keychain key.
+        let cred_id = uuid::Uuid::new_v4().to_string();
+        let kind_for_json = store_secrets_and_sanitize(&cred_id, &input.kind)?;
 
-    let credential = Credential {
-        id: cred_id,
-        name: input.name,
-        username: input.username,
-        kind: kind_for_json,
-        is_private: input.is_private,
-    };
+        let credential = Credential {
+            id: cred_id,
+            name: input.name,
+            username: input.username,
+            kind: kind_for_json,
+            is_private: input.is_private,
+        };
 
-    // Return the credential enriched with its secret so the caller can use it
-    // immediately (e.g. for display or connection).
-    let mut result = credential.clone();
-    keychain::enrich_credential(&mut result);
+        // Return the credential enriched with its secret so the caller can use it
+        // immediately (e.g. for display or connection).
+        let mut result = credential.clone();
+        keychain::enrich_credential(&mut result);
 
-    data.credentials.push(credential);
-    save_data(&data)?;
-    Ok(result)
+        data.credentials.push(credential);
+        Ok(result)
+    })
 }
 
 #[tauri::command]
 pub fn update_credential(input: UpdateCredentialInput) -> Result<Credential, String> {
-    let mut data = load_data()?;
-    if data.credentials.iter().any(|c| c.name == input.name && c.id != input.id) {
-        return Err(format!("A credential named '{}' already exists", input.name));
-    }
-    let idx = data
-        .credentials
-        .iter()
-        .position(|c| c.id == input.id)
-        .ok_or_else(|| "Credential not found".to_string())?;
+    with_data_mut(|data| {
+        if data
+            .credentials
+            .iter()
+            .any(|c| c.name == input.name && c.id != input.id)
+        {
+            return Err(format!("A credential named '{}' already exists", input.name));
+        }
+        let idx = data
+            .credentials
+            .iter()
+            .position(|c| c.id == input.id)
+            .ok_or_else(|| "Credential not found".to_string())?;
 
-    // Replace keychain entries with updated values.
-    keychain::delete_all_for_credential(&input.id);
-    let kind_for_json = store_secrets_and_sanitize(&input.id, &input.kind)?;
+        // Replace keychain entries with updated values.
+        keychain::delete_all_for_credential(&input.id);
+        let kind_for_json = store_secrets_and_sanitize(&input.id, &input.kind)?;
 
-    data.credentials[idx].name = input.name;
-    data.credentials[idx].username = input.username;
-    data.credentials[idx].kind = kind_for_json;
+        data.credentials[idx].name = input.name;
+        data.credentials[idx].username = input.username;
+        data.credentials[idx].kind = kind_for_json;
 
-    let mut updated = data.credentials[idx].clone();
-    save_data(&data)?;
-    keychain::enrich_credential(&mut updated);
-    Ok(updated)
+        let mut updated = data.credentials[idx].clone();
+        keychain::enrich_credential(&mut updated);
+        Ok(updated)
+    })
 }
 
 #[tauri::command]
 pub fn delete_credential(id: String) -> Result<(), String> {
-    let mut data = load_data()?;
-    data.credentials.retain(|c| c.id != id);
-    save_data(&data)?;
+    with_data_mut(|data| {
+        data.credentials.retain(|c| c.id != id);
+        Ok(())
+    })?;
     // Remove secrets from the keychain after the JSON entry is gone.
     keychain::delete_all_for_credential(&id);
     Ok(())
@@ -256,4 +261,3 @@ mod tests {
         crate::keychain::delete_all_for_credential(id);
     }
 }
-
