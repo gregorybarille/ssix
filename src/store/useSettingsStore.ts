@@ -15,6 +15,10 @@ const DEFAULT_SETTINGS: AppSettings = {
   font_family: "JetBrains Mono",
   color_scheme: "blue",
   theme: "dark",
+  connection_layout: "list",
+  credential_layout: "list",
+  tunnel_layout: "list",
+  default_open_mode: "tab",
 };
 
 export const useSettingsStore = create<SettingsState>((set) => ({

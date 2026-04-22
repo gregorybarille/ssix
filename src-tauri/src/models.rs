@@ -109,6 +109,12 @@ pub struct Connection {
     /// compression). Parsed and applied before the handshake.
     #[serde(default)]
     pub extra_args: Option<String>,
+    /// User-defined tags. Used for filtering/search. Empty by default.
+    #[serde(default)]
+    pub tags: Vec<String>,
+    /// Optional Open Color name (e.g. "blue", "violet") used as the tab accent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub color: Option<String>,
 }
 
 impl Connection {
@@ -122,25 +128,54 @@ impl Connection {
             kind,
             verbosity: 0,
             extra_args: None,
+            tags: Vec::new(),
+            color: None,
         }
     }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppSettings {
+    #[serde(default = "default_font_size")]
     pub font_size: u8,
+    #[serde(default = "default_font_family")]
     pub font_family: String,
+    #[serde(default = "default_color_scheme")]
     pub color_scheme: String,
+    #[serde(default = "default_theme")]
     pub theme: String,
+    /// Layout for the Connections list ("list" or "tile"). Defaults to "list".
+    #[serde(default = "default_layout")]
+    pub connection_layout: String,
+    /// Layout for the Credentials list ("list" or "tile"). Defaults to "list".
+    #[serde(default = "default_layout")]
+    pub credential_layout: String,
+    /// Layout for the Tunnels list ("list" or "tile"). Defaults to "list".
+    #[serde(default = "default_layout")]
+    pub tunnel_layout: String,
+    /// Default behavior when launching a new terminal: "tab", "split_right", or "split_down".
+    #[serde(default = "default_open_mode")]
+    pub default_open_mode: String,
 }
+
+fn default_font_size() -> u8 { 14 }
+fn default_font_family() -> String { "JetBrains Mono".to_string() }
+fn default_color_scheme() -> String { "blue".to_string() }
+fn default_theme() -> String { "dark".to_string() }
+fn default_layout() -> String { "list".to_string() }
+fn default_open_mode() -> String { "tab".to_string() }
 
 impl Default for AppSettings {
     fn default() -> Self {
         Self {
-            font_size: 14,
-            font_family: "JetBrains Mono".to_string(),
-            color_scheme: "blue".to_string(),
-            theme: "dark".to_string(),
+            font_size: default_font_size(),
+            font_family: default_font_family(),
+            color_scheme: default_color_scheme(),
+            theme: default_theme(),
+            connection_layout: default_layout(),
+            credential_layout: default_layout(),
+            tunnel_layout: default_layout(),
+            default_open_mode: default_open_mode(),
         }
     }
 }
@@ -259,6 +294,8 @@ mod tests {
             credential_id: Some("dest-cred".into()),
             verbosity: 0,
             extra_args: None,
+            tags: Vec::new(),
+            color: None,
             kind: ConnectionKind::LegacyTunnel {
                 gateway_host: "gw.example".into(),
                 gateway_port: 22,
@@ -294,6 +331,8 @@ mod tests {
             credential_id: None,
             verbosity: 0,
             extra_args: None,
+            tags: Vec::new(),
+            color: None,
             kind: ConnectionKind::LegacyTunnel {
                 gateway_host: "gw.example".into(),
                 gateway_port: 22,
@@ -327,6 +366,8 @@ mod tests {
             credential_id: None,
             verbosity: 0,
             extra_args: None,
+            tags: Vec::new(),
+            color: None,
             kind: pf.clone(),
         });
         data.migrate_legacy_kinds();
@@ -417,5 +458,55 @@ mod tests {
         assert!(json.contains(r#""private_key_path":"#));
         assert!(!json.contains(r#""private_key":"#));
         assert!(!json.contains(r#""passphrase":"#));
+    }
+
+    #[test]
+    fn test_connection_tags_default_empty() {
+        let json = r#"{"id":"x","name":"n","host":"h","port":22,"type":"direct"}"#;
+        let conn: Connection = serde_json::from_str(json).unwrap();
+        assert!(conn.tags.is_empty());
+        assert!(conn.color.is_none());
+    }
+
+    #[test]
+    fn test_connection_with_tags_and_color_roundtrip() {
+        let mut c = Connection::new(
+            "prod".into(), "h".into(), 22, None, ConnectionKind::Direct,
+        );
+        c.tags = vec!["prod".into(), "us-east".into()];
+        c.color = Some("violet".into());
+        let json = serde_json::to_string(&c).unwrap();
+        assert!(json.contains(r#""tags":["prod","us-east"]"#));
+        assert!(json.contains(r#""color":"violet""#));
+        let back: Connection = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.tags, c.tags);
+        assert_eq!(back.color, c.color);
+    }
+
+    #[test]
+    fn test_connection_color_omitted_when_none() {
+        let c = Connection::new(
+            "prod".into(), "h".into(), 22, None, ConnectionKind::Direct,
+        );
+        let json = serde_json::to_string(&c).unwrap();
+        assert!(!json.contains("color"));
+    }
+
+    #[test]
+    fn test_app_settings_legacy_json_loads_with_layout_defaults() {
+        // Legacy data.json without the new layout fields must still load.
+        let json = r#"{"font_size":14,"font_family":"JetBrains Mono","color_scheme":"blue","theme":"dark"}"#;
+        let s: AppSettings = serde_json::from_str(json).unwrap();
+        assert_eq!(s.connection_layout, "list");
+        assert_eq!(s.credential_layout, "list");
+        assert_eq!(s.tunnel_layout, "list");
+        assert_eq!(s.default_open_mode, "tab");
+    }
+
+    #[test]
+    fn test_app_settings_default_includes_layouts() {
+        let s = AppSettings::default();
+        assert_eq!(s.connection_layout, "list");
+        assert_eq!(s.default_open_mode, "tab");
     }
 }

@@ -84,6 +84,12 @@ pub fn start_ssh_session(
 
     let (tx, rx): (Sender<SessionMsg>, Receiver<SessionMsg>) = mpsc::channel();
     let sid = session_id.clone();
+    crate::logs::log(
+        &app_handle,
+        "info",
+        "ssh",
+        format!("session {} opened to {}@{}:{}", sid, username, host, port),
+    );
 
     thread::spawn(move || {
         // Keep `session` alive for the lifetime of the thread so the channel
@@ -99,6 +105,7 @@ pub fn start_ssh_session(
         }
         let result = run_io_loop(channel, &app_handle, &sid, rx);
         if let Err(e) = &result {
+            crate::logs::log(&app_handle, "error", "ssh", format!("session {}: {}", sid, e));
             let _ = app_handle.emit(&format!("ssh-error-{}", sid), e.clone());
         }
         let _ = app_handle.emit(&format!("ssh-closed-{}", sid), ());
@@ -605,6 +612,12 @@ pub fn start_port_forward(
                     thread::sleep(Duration::from_millis(50));
                 }
                 Err(e) => {
+                    crate::logs::log(
+                        &app_handle,
+                        "error",
+                        "tunnel",
+                        format!("session {}: accept failed: {}", sid, e),
+                    );
                     let _ = app_handle.emit(
                         &format!("tunnel-status-{}", sid),
                         TunnelStatus {
@@ -733,6 +746,15 @@ pub fn start_jump_shell(
 
     let (tx, rx): (Sender<SessionMsg>, Receiver<SessionMsg>) = mpsc::channel();
     let sid = session_id.clone();
+    crate::logs::log(
+        &app_handle,
+        "info",
+        "jump_shell",
+        format!(
+            "session {} opened: {}@{}:{} via {}:{}",
+            sid, destination_username, destination_host, destination_port, gateway_host, gateway_port
+        ),
+    );
 
     thread::spawn(move || {
         let _session = session;
@@ -748,6 +770,7 @@ pub fn start_jump_shell(
         }
         let result = run_io_loop(channel, &app_handle, &sid, rx);
         if let Err(e) = &result {
+            crate::logs::log(&app_handle, "error", "jump_shell", format!("session {}: {}", sid, e));
             let _ = app_handle.emit(&format!("ssh-error-{}", sid), e.clone());
         }
         let _ = app_handle.emit(&format!("ssh-closed-{}", sid), ());

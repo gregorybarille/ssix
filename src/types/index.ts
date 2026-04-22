@@ -59,6 +59,10 @@ export interface Connection {
   verbosity?: number;
   /** Additional SSH flags, e.g. "-C" for compression. */
   extra_args?: string;
+  /** Free-form tags used for filtering/search. Empty when omitted. */
+  tags?: string[];
+  /** Optional Open Color name used as the terminal-tab accent. */
+  color?: string;
   gateway_host?: string;
   gateway_port?: number;
   gateway_credential_id?: string;
@@ -67,11 +71,25 @@ export interface Connection {
   destination_port?: number;
 }
 
+export type LayoutMode = "list" | "tile";
+export type OpenMode = "tab" | "split_right" | "split_down";
+
 export interface AppSettings {
   font_size: number;
   font_family: string;
   color_scheme: string;
   theme: string;
+  connection_layout: LayoutMode;
+  credential_layout: LayoutMode;
+  tunnel_layout: LayoutMode;
+  default_open_mode: OpenMode;
+}
+
+export interface LogEntry {
+  ts: number;
+  level: "info" | "warn" | "error" | "debug" | string;
+  source: string;
+  message: string;
 }
 
 export const OPEN_COLORS = [

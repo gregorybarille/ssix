@@ -15,6 +15,10 @@ pub struct AddConnectionInput {
     pub verbosity: u8,
     #[serde(default)]
     pub extra_args: Option<String>,
+    #[serde(default)]
+    pub tags: Vec<String>,
+    #[serde(default)]
+    pub color: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -30,6 +34,10 @@ pub struct UpdateConnectionInput {
     pub verbosity: u8,
     #[serde(default)]
     pub extra_args: Option<String>,
+    #[serde(default)]
+    pub tags: Vec<String>,
+    #[serde(default)]
+    pub color: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -56,6 +64,8 @@ pub fn add_connection(input: AddConnectionInput) -> Result<Connection, String> {
     let mut connection = Connection::new(input.name, input.host, input.port, input.credential_id, input.kind);
     connection.verbosity = input.verbosity;
     connection.extra_args = input.extra_args;
+    connection.tags = normalize_tags(input.tags);
+    connection.color = input.color;
     data.connections.push(connection.clone());
     save_data(&data)?;
     Ok(connection)
@@ -81,6 +91,8 @@ pub fn update_connection(input: UpdateConnectionInput) -> Result<Connection, Str
     data.connections[idx].kind = input.kind;
     data.connections[idx].verbosity = input.verbosity;
     data.connections[idx].extra_args = input.extra_args;
+    data.connections[idx].tags = normalize_tags(input.tags);
+    data.connections[idx].color = input.color;
     let updated = data.connections[idx].clone();
 
     // If the credential changed and the old one was private, check whether it
@@ -215,26 +227,131 @@ pub fn clone_connection(input: CloneConnectionInput) -> Result<Connection, Strin
         kind: original.kind,
         verbosity: original.verbosity,
         extra_args: original.extra_args,
+        tags: original.tags,
+        color: original.color,
     };
     data.connections.push(cloned.clone());
     save_data(&data)?;
     Ok(cloned)
 }
 
+/// Trim, drop empties, and dedupe a tag vector while preserving first-seen order.
+fn normalize_tags(tags: Vec<String>) -> Vec<String> {
+    let mut seen = std::collections::HashSet::new();
+    let mut out = Vec::new();
+    for t in tags {
+        let trimmed = t.trim().to_string();
+        if trimmed.is_empty() {
+            continue;
+        }
+        let key = trimmed.to_lowercase();
+        if seen.insert(key) {
+            out.push(trimmed);
+        }
+    }
+    out
+}
+
 #[tauri::command]
 pub fn search_connections(query: String) -> Result<Vec<Connection>, String> {
     let data = load_data()?;
-    let q = query.to_lowercase();
-    let results = data.connections
+    let terms: Vec<String> = query
+        .split_whitespace()
+        .map(|t| t.to_lowercase())
+        .collect();
+    if terms.is_empty() {
+        return Ok(data.connections);
+    }
+    let results = data
+        .connections
         .into_iter()
-        .filter(|c| c.name.to_lowercase().contains(&q) || c.host.to_lowercase().contains(&q))
+        .filter(|c| {
+            let name = c.name.to_lowercase();
+            let host = c.host.to_lowercase();
+            let tags: Vec<String> = c.tags.iter().map(|t| t.to_lowercase()).collect();
+            terms.iter().all(|term| {
+                name.contains(term)
+                    || host.contains(term)
+                    || tags.iter().any(|t| t.contains(term))
+            })
+        })
         .collect();
     Ok(results)
 }
 
 #[cfg(test)]
 mod tests {
+    use super::*;
     use crate::models::{Connection, ConnectionKind};
+
+    #[test]
+    fn test_normalize_tags_dedupes_and_trims() {
+        let tags = vec![
+            "  Prod  ".to_string(),
+            "prod".to_string(),
+            "DB".to_string(),
+            "".to_string(),
+            "db".to_string(),
+            "us-east".to_string(),
+        ];
+        let out = normalize_tags(tags);
+        assert_eq!(out, vec!["Prod".to_string(), "DB".to_string(), "us-east".to_string()]);
+    }
+
+    fn conn_with(name: &str, host: &str, tags: Vec<&str>) -> Connection {
+        let mut c = Connection::new(
+            name.to_string(),
+            host.to_string(),
+            22,
+            None,
+            ConnectionKind::Direct,
+        );
+        c.tags = tags.iter().map(|s| s.to_string()).collect();
+        c
+    }
+
+    #[test]
+    fn test_search_filter_matches_name_host_and_tag() {
+        let conns = vec![
+            conn_with("prod-db", "10.0.0.1", vec!["prod", "db"]),
+            conn_with("staging-web", "10.0.0.2", vec!["staging", "web"]),
+            conn_with("dev-api", "10.0.0.3", vec!["dev"]),
+        ];
+        // helper that mirrors search_connections's logic on a vec
+        fn search(conns: Vec<Connection>, query: &str) -> Vec<Connection> {
+            let terms: Vec<String> = query.split_whitespace().map(|t| t.to_lowercase()).collect();
+            if terms.is_empty() { return conns; }
+            conns.into_iter().filter(|c| {
+                let name = c.name.to_lowercase();
+                let host = c.host.to_lowercase();
+                let tags: Vec<String> = c.tags.iter().map(|t| t.to_lowercase()).collect();
+                terms.iter().all(|t| name.contains(t) || host.contains(t) || tags.iter().any(|tag| tag.contains(t)))
+            }).collect()
+        }
+
+        // single tag term matches
+        let r = search(conns.clone(), "db");
+        assert_eq!(r.len(), 1);
+        assert_eq!(r[0].name, "prod-db");
+
+        // host substring match
+        let r = search(conns.clone(), "10.0.0.2");
+        assert_eq!(r.len(), 1);
+        assert_eq!(r[0].name, "staging-web");
+
+        // AND across two terms (one matches name, the other matches tag)
+        let r = search(conns.clone(), "staging web");
+        assert_eq!(r.len(), 1);
+        assert_eq!(r[0].name, "staging-web");
+
+        // term that matches none
+        let r = search(conns.clone(), "absent");
+        assert_eq!(r.len(), 0);
+
+        // empty query returns all
+        let r = search(conns.clone(), "   ");
+        assert_eq!(r.len(), 3);
+    }
 
     #[test]
     fn test_connection_new() {
@@ -248,6 +365,8 @@ mod tests {
         assert_eq!(conn.name, "prod");
         assert_eq!(conn.port, 22);
         assert!(!conn.id.is_empty());
+        assert!(conn.tags.is_empty());
+        assert!(conn.color.is_none());
     }
 
     #[test]

@@ -1,5 +1,5 @@
 import React, { useEffect } from "react";
-import { AppSettings, OPEN_COLORS, FONT_FAMILIES, FONT_SIZES } from "@/types";
+import { AppSettings, OPEN_COLORS, FONT_FAMILIES, FONT_SIZES, LayoutMode, OpenMode } from "@/types";
 import { Button } from "./ui/button";
 import { Label } from "./ui/label";
 import {
@@ -11,26 +11,12 @@ import {
 } from "./ui/select";
 import { Separator } from "./ui/separator";
 import { cn } from "@/lib/utils";
+import { COLOR_VALUES } from "@/lib/colors";
 
 interface SettingsPanelProps {
   settings: AppSettings;
   onSave: (settings: AppSettings) => Promise<void>;
 }
-
-const COLOR_VALUES: Record<string, string> = {
-  blue: "#339af0",
-  green: "#51cf66",
-  red: "#ff6b6b",
-  yellow: "#fcc419",
-  grape: "#cc5de8",
-  cyan: "#22b8cf",
-  pink: "#f06595",
-  orange: "#ff922b",
-  teal: "#20c997",
-  violet: "#7950f2",
-  indigo: "#5c7cfa",
-  lime: "#94d82d",
-};
 
 export function SettingsPanel({ settings, onSave }: SettingsPanelProps) {
   const [form, setForm] = React.useState(settings);
@@ -149,6 +135,55 @@ export function SettingsPanel({ settings, onSave }: SettingsPanelProps) {
               {theme}
             </button>
           ))}
+        </div>
+      </div>
+
+      <Separator />
+
+      <div className="space-y-4">
+        <h3 className="text-sm font-medium">Layout</h3>
+        <p className="text-xs text-muted-foreground">
+          Choose how each list is displayed.
+        </p>
+        {([
+          ["connection_layout", "Connections"],
+          ["credential_layout", "Credentials"],
+          ["tunnel_layout", "Tunnels"],
+        ] as const).map(([key, label]) => (
+          <div className="space-y-2" key={key}>
+            <Label htmlFor={key}>{label}</Label>
+            <Select
+              value={form[key]}
+              onValueChange={(v) => setForm({ ...form, [key]: v as LayoutMode })}
+            >
+              <SelectTrigger id={key}>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="list">List</SelectItem>
+                <SelectItem value="tile">Tiles</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+        ))}
+
+        <div className="space-y-2">
+          <Label htmlFor="default-open-mode">Default open mode</Label>
+          <Select
+            value={form.default_open_mode}
+            onValueChange={(v) =>
+              setForm({ ...form, default_open_mode: v as OpenMode })
+            }
+          >
+            <SelectTrigger id="default-open-mode">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="tab">New tab</SelectItem>
+              <SelectItem value="split_right">Split right</SelectItem>
+              <SelectItem value="split_down">Split down</SelectItem>
+            </SelectContent>
+          </Select>
         </div>
       </div>
 
