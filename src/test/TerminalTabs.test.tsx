@@ -1,5 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
-import { render, screen, fireEvent } from "@testing-library/react";
+import { render, screen, fireEvent, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import {
   TerminalTabs,
   TerminalSession,
@@ -17,6 +18,14 @@ vi.mock("@/components/Terminal", () => ({
       {connectionName}
     </div>
   ),
+}));
+
+// react-resizable-panels uses ResizeObserver which isn't available in jsdom.
+// Replace Group/Panel/Separator with simple div wrappers so split-pane tests work.
+vi.mock("react-resizable-panels", () => ({
+  Group: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
+  Panel: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
+  Separator: () => <div role="separator" />,
 }));
 
 const defaultProps = {
@@ -196,5 +205,158 @@ describe("TerminalTabs", () => {
     );
     fireEvent.click(screen.getByText("Edit Connection"));
     expect(onEdit).toHaveBeenCalledWith(mockConn, "failed-1");
+  });
+
+  // ─── Error indicator ──────────────────────────────────────────────────────
+
+  it("shows error indicator when the first pane has an error", () => {
+    const failedTab = tab("ft1", [
+      {
+        sessionId: "failed-1",
+        connectionName: "prod-server",
+        error: "TCP connect failed",
+        connection: mockConn,
+      },
+    ]);
+    render(
+      <TerminalTabs
+        {...defaultProps}
+        tabs={[failedTab]}
+        activeTabId="ft1"
+      />,
+    );
+    expect(
+      document.querySelector('[title="Connection failed"]'),
+    ).toBeInTheDocument();
+  });
+
+  it("shows error indicator when only the second pane has an error", () => {
+    const splitTab: TerminalTab = {
+      id: "st1",
+      mode: "horizontal",
+      panes: [
+        { sessionId: "ok-pane", connectionName: "prod-server" },
+        {
+          sessionId: "err-pane",
+          connectionName: "dev-server",
+          error: "auth failed",
+          connection: mockConn,
+        },
+      ],
+    };
+    render(
+      <TerminalTabs
+        {...defaultProps}
+        tabs={[splitTab]}
+        activeTabId="st1"
+      />,
+    );
+    expect(
+      document.querySelector('[title="Connection failed"]'),
+    ).toBeInTheDocument();
+  });
+
+  it("does not show error indicator when no pane has an error", () => {
+    render(
+      <TerminalTabs
+        {...defaultProps}
+        tabs={mockTabs}
+        activeTabId="t1"
+      />,
+    );
+    expect(
+      document.querySelector('[title="Connection failed"]'),
+    ).not.toBeInTheDocument();
+  });
+
+  // ─── Dropdown: new tab / split ────────────────────────────────────────────
+
+  it("calls onNewTab with 'tab' when New tab is clicked", async () => {
+    const onNewTab = vi.fn();
+    const user = userEvent.setup();
+    render(
+      <TerminalTabs
+        {...defaultProps}
+        tabs={mockTabs}
+        activeTabId="t1"
+        onNewTab={onNewTab}
+      />,
+    );
+    await user.click(screen.getByTitle("New connection"));
+    await waitFor(() => screen.getByText("New tab"));
+    fireEvent.click(screen.getByText("New tab"));
+    expect(onNewTab).toHaveBeenCalledWith("tab");
+  });
+
+  it("calls onNewTab with 'split_right' when Split right is clicked", async () => {
+    const onNewTab = vi.fn();
+    const user = userEvent.setup();
+    render(
+      <TerminalTabs
+        {...defaultProps}
+        tabs={mockTabs}
+        activeTabId="t1"
+        onNewTab={onNewTab}
+      />,
+    );
+    await user.click(screen.getByTitle("New connection"));
+    await waitFor(() => screen.getByText("Split right"));
+    fireEvent.click(screen.getByText("Split right"));
+    expect(onNewTab).toHaveBeenCalledWith("split_right");
+  });
+
+  it("calls onNewTab with 'split_down' when Split down is clicked", async () => {
+    const onNewTab = vi.fn();
+    const user = userEvent.setup();
+    render(
+      <TerminalTabs
+        {...defaultProps}
+        tabs={mockTabs}
+        activeTabId="t1"
+        onNewTab={onNewTab}
+      />,
+    );
+    await user.click(screen.getByTitle("New connection"));
+    await waitFor(() => screen.getByText("Split down"));
+    fireEvent.click(screen.getByText("Split down"));
+    expect(onNewTab).toHaveBeenCalledWith("split_down");
+  });
+
+  it("disables Split items when there is no active tab", async () => {
+    const user = userEvent.setup();
+    render(
+      <TerminalTabs
+        {...defaultProps}
+        tabs={[]}
+        activeTabId={null}
+      />,
+    );
+    await user.click(screen.getByTitle("New connection"));
+    await waitFor(() => screen.getByText("Split right"));
+    expect(screen.getByText("Split right").closest("[data-disabled]")).not.toBeNull();
+    expect(screen.getByText("Split down").closest("[data-disabled]")).not.toBeNull();
+  });
+
+  it("disables Split items when the active tab already has 2 panes", async () => {
+    const splitTab: TerminalTab = {
+      id: "st1",
+      mode: "horizontal",
+      panes: [
+        { sessionId: "p1", connectionName: "A" },
+        { sessionId: "p2", connectionName: "B" },
+      ],
+    };
+    const user = userEvent.setup();
+    render(
+      <TerminalTabs
+        {...defaultProps}
+        tabs={[splitTab]}
+        activeTabId="st1"
+      />,
+    );
+    await user.click(screen.getByTitle("New connection"));
+    await waitFor(() => screen.getByText("Split right"));
+    expect(screen.getByText("Split right").closest("[data-disabled]")).not.toBeNull();
+    expect(screen.getByText("Split down").closest("[data-disabled]")).not.toBeNull();
   });
 });

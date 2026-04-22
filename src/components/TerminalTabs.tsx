@@ -125,7 +125,7 @@ export function TerminalTabs({
               style={color ? { borderLeft: `3px solid ${color}` } : undefined}
               onClick={() => onSelectTab(tab.id)}
             >
-              {headSession?.error && (
+              {tab.panes.some((p) => p.error) && (
                 <span
                   className="h-1.5 w-1.5 rounded-full bg-destructive shrink-0"
                   title="Connection failed"
