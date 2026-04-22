@@ -38,6 +38,10 @@ function App() {
   const [pickerOpen, setPickerOpen] = useState(false);
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null);
   const [screenshotToast, setScreenshotToast] = useState<string | null>(null);
+  const [orphanCredDialog, setOrphanCredDialog] = useState<{
+    connId: string;
+    credId: string;
+  } | null>(null);
 
   const {
     connections,
@@ -47,6 +51,7 @@ function App() {
     deleteConnection,
     cloneConnection,
     searchConnections,
+    getOrphanPrivateCredential,
   } = useConnectionsStore();
 
   const {
@@ -77,6 +82,35 @@ function App() {
     return () => window.removeEventListener("ssx:contextmenu", handler);
   }, []);
 
+  // Smart right-click handler (registered here so it can be cleaned up on unmount / HMR).
+  //   1. input / textarea / [contenteditable] → let the native browser menu appear.
+  //   2. xterm terminal area → silently paste clipboard text into the shell.
+  //   3. Everywhere else → show the custom SSX context menu.
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      const target = e.target as Element;
+      if (target.closest("input, textarea, [contenteditable]")) return;
+      e.preventDefault();
+      if (target.closest(".xterm-screen, .xterm-rows")) {
+        navigator.clipboard.readText().then((text) => {
+          if (text) {
+            window.dispatchEvent(
+              new CustomEvent("ssx:terminal-paste", { detail: { text } })
+            );
+          }
+        }).catch(() => {});
+        return;
+      }
+      window.dispatchEvent(
+        new CustomEvent("ssx:contextmenu", {
+          detail: { x: e.clientX, y: e.clientY },
+        })
+      );
+    };
+    document.addEventListener("contextmenu", handler);
+    return () => document.removeEventListener("contextmenu", handler);
+  }, []);
+
   const handleTakeScreenshot = async () => {
     try {
       const path = await takeScreenshot();
@@ -93,6 +127,25 @@ function App() {
       await updateConnection(data as Connection);
     } else {
       await addConnection(data);
+    }
+  };
+
+  const handleDeleteConnection = async (id: string) => {
+    const orphanCredId = await getOrphanPrivateCredential(id);
+    if (orphanCredId) {
+      setOrphanCredDialog({ connId: id, credId: orphanCredId });
+    } else {
+      await deleteConnection(id);
+    }
+  };
+
+  const handleOrphanCredDialogConfirm = async (deleteCredToo: boolean) => {
+    if (!orphanCredDialog) return;
+    const { connId, credId } = orphanCredDialog;
+    setOrphanCredDialog(null);
+    await deleteConnection(connId);
+    if (deleteCredToo) {
+      await deleteCredential(credId);
     }
   };
 
@@ -285,7 +338,7 @@ function App() {
                   setCloningConn(null);
                   setConnFormOpen(true);
                 }}
-                onDelete={deleteConnection}
+                onDelete={handleDeleteConnection}
                 onClone={(conn) => {
                   setCloningConn(conn);
                   setEditingConn(null);
@@ -381,6 +434,30 @@ function App() {
       {screenshotToast && (
         <div className="fixed bottom-4 right-4 z-[9999] bg-popover border rounded-md shadow-lg px-4 py-2 text-sm max-w-xs truncate">
           📸 Saved: {screenshotToast}
+        </div>
+      )}
+
+      {/* Orphaned private credential confirmation dialog */}
+      {orphanCredDialog && (
+        <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/50">
+          <div className="bg-popover border rounded-lg shadow-xl p-6 max-w-sm w-full mx-4">
+            <h2 className="text-base font-semibold mb-2">Delete private credential?</h2>
+            <p className="text-sm text-muted-foreground mb-5">
+              This connection has a private credential that is not used by any
+              other connection. Do you want to delete it as well?
+            </p>
+            <div className="flex flex-col gap-2">
+              <Button onClick={() => handleOrphanCredDialogConfirm(true)}>
+                Delete connection and credential
+              </Button>
+              <Button variant="secondary" onClick={() => handleOrphanCredDialogConfirm(false)}>
+                Delete connection only
+              </Button>
+              <Button variant="ghost" onClick={() => setOrphanCredDialog(null)}>
+                Cancel
+              </Button>
+            </div>
+          </div>
         </div>
       )}
     </div>

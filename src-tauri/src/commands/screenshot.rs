@@ -16,14 +16,15 @@ pub fn take_screenshot(image_data: String) -> Result<String, String> {
     let desktop = dirs_next::desktop_dir()
         .ok_or_else(|| "Could not locate Desktop directory".to_string())?;
 
-    let secs = SystemTime::now()
+    let duration = SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0);
+        .unwrap_or_default();
+    let secs = duration.as_secs();
+    let millis = duration.subsec_millis();
 
     // Format as YYYYMMDD-HHMMSS using integer arithmetic (no chrono dep needed).
     let ts = format_timestamp(secs);
-    let filename = format!("ssx-screenshot-{}.png", ts);
+    let filename = format!("ssx-screenshot-{}-{:03}.png", ts, millis);
     let path = desktop.join(&filename);
 
     std::fs::write(&path, &bytes)
@@ -67,7 +68,7 @@ mod tests {
     use std::fs;
 
     #[test]
-    fn test_take_screenshot_writes_file() {
+    fn test_decode_base64_and_write_png_bytes() {
         let tmp = std::env::temp_dir().join("ssx_screenshot_test");
         fs::create_dir_all(&tmp).unwrap();
 

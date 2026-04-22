@@ -22,6 +22,7 @@ pub fn run() {
             commands::connections::delete_connection,
             commands::connections::clone_connection,
             commands::connections::search_connections,
+            commands::connections::get_orphan_private_credential,
             commands::settings::get_settings,
             commands::settings::save_settings,
             commands::ssh::ssh_connect,

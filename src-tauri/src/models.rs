@@ -87,8 +87,9 @@ pub struct Connection {
     pub credential_id: Option<String>,
     #[serde(flatten)]
     pub kind: ConnectionKind,
-    /// SSH verbosity level (0 = silent, 1–3 = increasing detail). Output is
-    /// written to the terminal pane before the shell prompt appears.
+    /// SSH verbosity level: 0 = silent, 1 = standard SSH debug output,
+    /// 2 = enables libssh2 trace (verbose). Output is written to the terminal
+    /// pane before the shell prompt appears.
     #[serde(default)]
     pub verbosity: u8,
     /// Additional CLI-style flags passed to the SSH subsystem (e.g. `-C` for

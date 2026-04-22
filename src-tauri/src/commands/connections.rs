@@ -69,14 +69,38 @@ pub fn update_connection(input: UpdateConnectionInput) -> Result<Connection, Str
     }
     let idx = data.connections.iter().position(|c| c.id == input.id)
         .ok_or_else(|| "Connection not found".to_string())?;
+
+    // Capture the old credential_id before overwriting so we can clean up
+    // an orphaned private credential if the auth method changes.
+    let old_cred_id = data.connections[idx].credential_id.clone();
+
     data.connections[idx].name = input.name;
     data.connections[idx].host = input.host;
     data.connections[idx].port = input.port;
-    data.connections[idx].credential_id = input.credential_id;
+    data.connections[idx].credential_id = input.credential_id.clone();
     data.connections[idx].kind = input.kind;
     data.connections[idx].verbosity = input.verbosity;
     data.connections[idx].extra_args = input.extra_args;
     let updated = data.connections[idx].clone();
+
+    // If the credential changed and the old one was private, check whether it
+    // is still referenced by another connection. If not, delete it so it
+    // doesn't become an invisible orphan.
+    if let Some(ref old_id) = old_cred_id {
+        if input.credential_id.as_deref() != Some(old_id.as_str()) {
+            let is_private = data.credentials.iter().any(|c| c.id == *old_id && c.is_private);
+            if is_private {
+                let still_referenced = data.connections.iter().any(|c| {
+                    c.credential_id.as_deref() == Some(old_id.as_str())
+                });
+                if !still_referenced {
+                    data.credentials.retain(|c| c.id != *old_id);
+                    crate::keychain::delete_all_for_credential(old_id);
+                }
+            }
+        }
+    }
+
     save_data(&data)?;
     Ok(updated)
 }
@@ -84,21 +108,32 @@ pub fn update_connection(input: UpdateConnectionInput) -> Result<Connection, Str
 #[tauri::command]
 pub fn delete_connection(id: String) -> Result<(), String> {
     let mut data = load_data()?;
-
-    // If the connection has a private credential, remove it too so it doesn't
-    // become an orphan that can never be seen or deleted through the UI.
-    if let Some(conn) = data.connections.iter().find(|c| c.id == id) {
-        if let Some(cred_id) = conn.credential_id.clone() {
-            if data.credentials.iter().any(|c| c.id == cred_id && c.is_private) {
-                data.credentials.retain(|c| c.id != cred_id);
-                crate::keychain::delete_all_for_credential(&cred_id);
-            }
-        }
-    }
-
     data.connections.retain(|c| c.id != id);
     save_data(&data)?;
     Ok(())
+}
+
+/// Returns the ID of the private credential associated with the given connection
+/// if that credential would become an orphan (not referenced by any other
+/// connection) when the connection is deleted.  Returns `None` if there is no
+/// private credential or if other connections still reference it.
+#[tauri::command]
+pub fn get_orphan_private_credential(conn_id: String) -> Result<Option<String>, String> {
+    let data = load_data()?;
+    let conn = data.connections.iter().find(|c| c.id == conn_id)
+        .ok_or_else(|| "Connection not found".to_string())?;
+    if let Some(ref cred_id) = conn.credential_id {
+        let is_private = data.credentials.iter().any(|c| c.id == *cred_id && c.is_private);
+        if is_private {
+            let other_refs = data.connections.iter()
+                .filter(|c| c.id != conn_id && c.credential_id.as_deref() == Some(cred_id))
+                .count();
+            if other_refs == 0 {
+                return Ok(Some(cred_id.clone()));
+            }
+        }
+    }
+    Ok(None)
 }
 
 #[tauri::command]
@@ -110,11 +145,59 @@ pub fn clone_connection(input: CloneConnectionInput) -> Result<Connection, Strin
     let original = data.connections.iter().find(|c| c.id == input.id)
         .ok_or_else(|| "Connection not found".to_string())?
         .clone();
+
+    // Resolve the credential_id for the clone.
     let credential_id = match input.credential_id {
-        Some(credential_id) if credential_id.is_empty() => None,
-        Some(credential_id) => Some(credential_id),
-        None => original.credential_id,
+        Some(ref cid) if cid.is_empty() => None,
+        Some(ref cid) => Some(cid.clone()),
+        None => {
+            // If the original connection's credential is private, duplicate it
+            // so each connection owns an independent copy instead of sharing one.
+            if let Some(ref orig_cred_id) = original.credential_id {
+                let is_private = data.credentials.iter()
+                    .any(|c| c.id == *orig_cred_id && c.is_private);
+                if is_private {
+                    if let Some(orig_cred) = data.credentials.iter().find(|c| c.id == *orig_cred_id).cloned() {
+                        let new_cred_id = Uuid::new_v4().to_string();
+                        // Copy the secret from the keychain to the new credential's entry.
+                        let new_kind = match &orig_cred.kind {
+                            crate::models::CredentialKind::Password { .. } => {
+                                let secret = crate::keychain::get_password(orig_cred_id)
+                                    .ok_or_else(|| "Failed to read password from secrets store while duplicating private credential".to_string())?;
+                                crate::keychain::store_password(&new_cred_id, &secret)?;
+                                crate::models::CredentialKind::Password { password: String::new() }
+                            }
+                            crate::models::CredentialKind::SshKey { private_key_path, .. } => {
+                                if let Some(pp) = crate::keychain::get_passphrase(orig_cred_id) {
+                                    crate::keychain::store_passphrase(&new_cred_id, &pp)?;
+                                }
+                                crate::models::CredentialKind::SshKey {
+                                    private_key_path: private_key_path.clone(),
+                                    passphrase: None,
+                                }
+                            }
+                        };
+                        let new_cred = crate::models::Credential {
+                            id: new_cred_id.clone(),
+                            name: orig_cred.name.clone(),
+                            username: orig_cred.username.clone(),
+                            kind: new_kind,
+                            is_private: true,
+                        };
+                        data.credentials.push(new_cred);
+                        Some(new_cred_id)
+                    } else {
+                        original.credential_id
+                    }
+                } else {
+                    original.credential_id
+                }
+            } else {
+                original.credential_id
+            }
+        }
     };
+
     let cloned = Connection {
         id: Uuid::new_v4().to_string(),
         name: input.new_name,

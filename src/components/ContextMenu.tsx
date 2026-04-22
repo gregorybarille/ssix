@@ -1,5 +1,5 @@
 import React, { useEffect, useRef } from "react";
-import ReactDOM from "react-dom";
+import { createPortal } from "react-dom";
 
 interface ContextMenuProps {
   position: { x: number; y: number };
@@ -58,5 +58,5 @@ export function ContextMenu({ position, onClose, onTakeScreenshot }: ContextMenu
     </div>
   );
 
-  return ReactDOM.createPortal(menu, document.body);
+  return createPortal(menu, document.body);
 }
