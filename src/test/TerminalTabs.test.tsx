@@ -333,8 +333,8 @@ describe("TerminalTabs", () => {
     );
     await user.click(screen.getByTitle("New connection"));
     await waitFor(() => screen.getByText("Split right"));
-    expect(screen.getByText("Split right").closest("[data-disabled]")).not.toBeNull();
-    expect(screen.getByText("Split down").closest("[data-disabled]")).not.toBeNull();
+    expect(screen.getByText("Split right")).toHaveAttribute("data-disabled");
+    expect(screen.getByText("Split down")).toHaveAttribute("data-disabled");
   });
 
   it("disables Split items when the active tab already has 2 panes", async () => {
@@ -356,7 +356,7 @@ describe("TerminalTabs", () => {
     );
     await user.click(screen.getByTitle("New connection"));
     await waitFor(() => screen.getByText("Split right"));
-    expect(screen.getByText("Split right").closest("[data-disabled]")).not.toBeNull();
-    expect(screen.getByText("Split down").closest("[data-disabled]")).not.toBeNull();
+    expect(screen.getByText("Split right")).toHaveAttribute("data-disabled");
+    expect(screen.getByText("Split down")).toHaveAttribute("data-disabled");
   });
 });

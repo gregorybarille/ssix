@@ -35,9 +35,9 @@ function LogList({ entries, empty }: { entries: LogEntry[]; empty: string }) {
   }
   return (
     <div className="font-mono text-xs space-y-0.5 px-2 py-2">
-      {entries.map((e) => (
+      {entries.map((e, i) => (
         <div
-          key={`${e.ts}-${e.source}-${e.message}`}
+          key={`${e.ts}-${e.source}-${e.message}-${i}`}
           className="grid grid-cols-[90px_60px_100px_1fr] gap-2 px-2 py-0.5 hover:bg-accent/30 rounded"
         >
           <span className="text-muted-foreground/70">{fmtTs(e.ts)}</span>
