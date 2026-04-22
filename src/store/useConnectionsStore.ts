@@ -14,6 +14,7 @@ interface ConnectionsState {
   cloneConnection: (id: string, newName: string, overrides?: Partial<Connection>) => Promise<void>;
   searchConnections: (query: string) => Promise<void>;
   setSearchQuery: (q: string) => void;
+  getOrphanPrivateCredential: (connId: string) => Promise<string | null>;
 }
 
 export const useConnectionsStore = create<ConnectionsState>((set) => ({
@@ -101,4 +102,12 @@ export const useConnectionsStore = create<ConnectionsState>((set) => ({
   },
 
   setSearchQuery: (q) => set({ searchQuery: q }),
+
+  getOrphanPrivateCredential: async (connId) => {
+    try {
+      return await invoke<string | null>("get_orphan_private_credential", { connId });
+    } catch {
+      return null;
+    }
+  },
 }));

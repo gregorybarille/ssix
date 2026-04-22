@@ -66,12 +66,10 @@ pub fn start_ssh_session(
     auth: AuthMethod,
     app_handle: AppHandle,
     session_id: String,
+    verbosity: u8,
+    extra_args: Option<String>,
 ) -> Result<Sender<SessionMsg>, String> {
-    // Perform TCP connect, SSH handshake, auth, and PTY/shell setup synchronously
-    // so that any connection error is returned directly to the caller rather than
-    // being lost in a race between the background thread emitting an event and the
-    // frontend registering its listener.
-    let (session, channel) = open_shell(&host, port, &username, &auth)?;
+    let (session, channel) = open_shell(&host, port, &username, &auth, verbosity, &extra_args)?;
 
     let (tx, rx): (Sender<SessionMsg>, Receiver<SessionMsg>) = mpsc::channel();
     let sid = session_id.clone();
@@ -81,6 +79,13 @@ pub fn start_ssh_session(
         // remains valid.  The session is intentionally held here even though
         // it is not used directly — dropping it would invalidate `channel`.
         let _session = session;
+        if verbosity >= 1 {
+            let msg = format!(
+                "\x1b[2m[SSX] Connected to {}:{} as {}\x1b[0m\r\n",
+                host, port, username
+            );
+            let _ = app_handle.emit(&format!("ssh-output-{}", sid), msg.into_bytes());
+        }
         let result = run_io_loop(channel, &app_handle, &sid, rx);
         if let Err(e) = &result {
             let _ = app_handle.emit(&format!("ssh-error-{}", sid), e.clone());
@@ -100,6 +105,8 @@ fn open_shell(
     port: u16,
     username: &str,
     auth: &AuthMethod,
+    verbosity: u8,
+    extra_args: &Option<String>,
 ) -> Result<(Session, ssh2::Channel), String> {
     let addr = format!("{}:{}", host, port);
     let tcp = TcpStream::connect(&addr)
@@ -108,6 +115,19 @@ fn open_shell(
 
     let mut session =
         Session::new().map_err(|e| format!("SSH session create failed: {}", e))?;
+
+    if verbosity >= 2 {
+        session.trace(ssh2::TraceFlags::all());
+    }
+
+    // Apply extra_args before handshake. Currently only `-C` (compression)
+    // is supported; unknown flags are silently ignored.
+    if let Some(args) = extra_args {
+        if args.split_whitespace().any(|t| t == "-C") {
+            session.set_compress(true);
+        }
+    }
+
     session.set_tcp_stream(tcp);
     session
         .handshake()
@@ -153,11 +173,24 @@ fn open_shell_over_stream(
     tcp: TcpStream,
     username: &str,
     auth: &AuthMethod,
+    verbosity: u8,
+    extra_args: &Option<String>,
 ) -> Result<(Session, ssh2::Channel), String> {
     tcp.set_nonblocking(false).ok();
 
     let mut session =
         Session::new().map_err(|e| format!("SSH session create failed: {}", e))?;
+
+    if verbosity >= 2 {
+        session.trace(ssh2::TraceFlags::all());
+    }
+
+    if let Some(args) = extra_args {
+        if args.split_whitespace().any(|t| t == "-C") {
+            session.set_compress(true);
+        }
+    }
+
     session.set_tcp_stream(tcp);
     session
         .handshake()
@@ -577,6 +610,8 @@ pub fn start_jump_shell(
     destination_auth: AuthMethod,
     app_handle: AppHandle,
     session_id: String,
+    verbosity: u8,
+    extra_args: Option<String>,
 ) -> Result<Sender<SessionMsg>, String> {
     // Bind a random free loopback port for the inner SSH session.
     let listener = TcpListener::bind("127.0.0.1:0")
@@ -658,7 +693,7 @@ pub fn start_jump_shell(
 
     let tcp_stream = connect_result?;
 
-    let (session, channel) = open_shell_over_stream(tcp_stream, &destination_username, &destination_auth)
+    let (session, channel) = open_shell_over_stream(tcp_stream, &destination_username, &destination_auth, verbosity, &extra_args)
         .map_err(|e| format!("Destination connect via gateway failed: {}", e))?;
 
     let (tx, rx): (Sender<SessionMsg>, Receiver<SessionMsg>) = mpsc::channel();
@@ -669,6 +704,13 @@ pub fn start_jump_shell(
         // Hold gateway_session alive for the lifetime of the shell so the
         // forwarder's channel_direct_tcpip stays valid.
         let _gateway_session = gateway_session;
+        if verbosity >= 1 {
+            let msg = format!(
+                "\x1b[2m[SSX] Connected to {}:{} via gateway {}:{} as {}\x1b[0m\r\n",
+                destination_host, destination_port, gateway_host, gateway_port, destination_username
+            );
+            let _ = app_handle.emit(&format!("ssh-output-{}", sid), msg.into_bytes());
+        }
         let result = run_io_loop(channel, &app_handle, &sid, rx);
         if let Err(e) = &result {
             let _ = app_handle.emit(&format!("ssh-error-{}", sid), e.clone());

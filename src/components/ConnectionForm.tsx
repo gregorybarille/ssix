@@ -2,6 +2,7 @@ import React, { useState, useEffect } from "react";
 import { Connection, Credential, ConnectionType } from "@/types";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
+import { PasswordInput } from "./ui/password-input";
 import { Label } from "./ui/label";
 import {
   Dialog,
@@ -37,6 +38,8 @@ const DEFAULT_FORM: Omit<Connection, "id"> = {
   port: 22,
   credential_id: undefined,
   type: "direct",
+  verbosity: 0,
+  extra_args: "",
 };
 
 export function ConnectionForm({
@@ -55,6 +58,8 @@ export function ConnectionForm({
   const [inlinePassword, setInlinePassword] = useState("");
   const [inlineKeyPath, setInlineKeyPath] = useState("");
   const [inlinePassphrase, setInlinePassphrase] = useState("");
+  const [inlineCredentialName, setInlineCredentialName] = useState("");
+  const [saveCredential, setSaveCredential] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
@@ -66,6 +71,8 @@ export function ConnectionForm({
         port: connection.port,
         credential_id: connection.credential_id,
         type: connection.type,
+        verbosity: connection.verbosity ?? 0,
+        extra_args: connection.extra_args ?? "",
         gateway_host: connection.gateway_host,
         gateway_port: connection.gateway_port,
         gateway_credential_id: connection.gateway_credential_id,
@@ -84,11 +91,34 @@ export function ConnectionForm({
     setInlinePassword("");
     setInlineKeyPath("");
     setInlinePassphrase("");
+    setInlineCredentialName("");
+    setSaveCredential(false);
     setError(null);
   }, [connection, open, isClone]);
 
   const isTunnel = connectionType !== "direct";
   const needsDestinationAuth = connectionType !== "port_forward";
+
+  const defaultCredentialName = (method: AuthMethod) => {
+    const base = form.name.trim() || "connection";
+    return method === "ssh_key" ? `${base}-key` : `${base}-cred`;
+  };
+
+  const validateNamedCredential = (method: AuthMethod) => {
+    if (!saveCredential) {
+      return;
+    }
+    const name = inlineCredentialName.trim();
+    if (!name) {
+      throw new Error("Credential name is required when saving");
+    }
+    if (credentials.some((c) => c.name === name)) {
+      throw new Error(`A credential named '${name}' already exists`);
+    }
+    if (method === "ssh_key" && !inlineKeyPath) {
+      throw new Error("Private key path is required");
+    }
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -102,22 +132,34 @@ export function ConnectionForm({
         if (authMethod === "password" && onCreateCredential) {
           if (!inlineUsername) throw new Error("Username is required");
           if (!inlinePassword) throw new Error("Password is required");
+          validateNamedCredential(authMethod);
+          const isPrivate = !saveCredential;
+          const credName = saveCredential
+            ? inlineCredentialName.trim()
+            : `inline-${crypto.randomUUID()}`;
           const cred = await onCreateCredential({
-            name: `${form.name || "connection"}-cred`,
+            name: credName,
             username: inlineUsername,
             type: "password",
             password: inlinePassword,
+            is_private: isPrivate,
           });
           credentialId = cred.id;
         } else if (authMethod === "ssh_key" && onCreateCredential) {
           if (!inlineUsername) throw new Error("Username is required");
           if (!inlineKeyPath) throw new Error("Private key path is required");
+          validateNamedCredential(authMethod);
+          const isPrivate = !saveCredential;
+          const credName = saveCredential
+            ? inlineCredentialName.trim()
+            : `inline-${crypto.randomUUID()}`;
           const cred = await onCreateCredential({
-            name: `${form.name || "connection"}-key`,
+            name: credName,
             username: inlineUsername,
             type: "ssh_key",
             private_key_path: inlineKeyPath,
             passphrase: inlinePassphrase || undefined,
+            is_private: isPrivate,
           });
           credentialId = cred.id;
         }
@@ -156,6 +198,8 @@ export function ConnectionForm({
         port: effectivePort,
         credential_id: credentialId,
         type: connectionType,
+        verbosity: form.verbosity ?? 0,
+        extra_args: form.extra_args || undefined,
       };
 
       const data: Omit<Connection, "id"> =
@@ -188,7 +232,7 @@ export function ConnectionForm({
       }
       onOpenChange(false);
     } catch (err) {
-      setError(String(err));
+      setError(err instanceof Error ? err.message : String(err));
     } finally {
       setIsSubmitting(false);
     }
@@ -455,17 +499,43 @@ export function ConnectionForm({
                   </div>
                   <div className="space-y-2">
                     <Label htmlFor="inline-password">Password *</Label>
-                    <Input
+                    <PasswordInput
                       id="inline-password"
-                      type="password"
                       placeholder="••••••••"
                       value={inlinePassword}
                       onChange={(e) => setInlinePassword(e.target.value)}
                     />
                   </div>
-                  <p className="text-xs text-muted-foreground">
-                    A credential will be auto-created and linked to this connection.
-                  </p>
+                  <label className="flex items-center gap-2 text-xs text-muted-foreground cursor-pointer select-none">
+                    <input
+                      type="checkbox"
+                      checked={saveCredential}
+                      onChange={(e) => {
+                        const checked = e.target.checked;
+                        setSaveCredential(checked);
+                        if (!checked) {
+                          setInlineCredentialName("");
+                        } else if (!inlineCredentialName) {
+                          setInlineCredentialName(defaultCredentialName("password"));
+                        }
+                      }}
+                      className="accent-primary"
+                    />
+                    Save as a named credential (visible in the Credentials list)
+                  </label>
+                  {saveCredential && (
+                    <div className="space-y-2">
+                      <Label htmlFor="password-cred-name">
+                        Credential Name *
+                      </Label>
+                      <Input
+                        id="password-cred-name"
+                        placeholder="server-cred"
+                        value={inlineCredentialName}
+                        onChange={(e) => setInlineCredentialName(e.target.value)}
+                      />
+                    </div>
+                  )}
                 </TabsContent>
 
                 <TabsContent value="ssh_key" className="space-y-3 mt-3">
@@ -489,21 +559,85 @@ export function ConnectionForm({
                   </div>
                   <div className="space-y-2">
                     <Label htmlFor="key-passphrase">Passphrase (optional)</Label>
-                    <Input
+                    <PasswordInput
                       id="key-passphrase"
-                      type="password"
                       placeholder="••••••••"
                       value={inlinePassphrase}
                       onChange={(e) => setInlinePassphrase(e.target.value)}
                     />
                   </div>
-                  <p className="text-xs text-muted-foreground">
-                    A credential will be auto-created and linked to this connection.
-                  </p>
+                  <label className="flex items-center gap-2 text-xs text-muted-foreground cursor-pointer select-none">
+                    <input
+                      type="checkbox"
+                      checked={saveCredential}
+                      onChange={(e) => {
+                        const checked = e.target.checked;
+                        setSaveCredential(checked);
+                        if (!checked) {
+                          setInlineCredentialName("");
+                        } else if (!inlineCredentialName) {
+                          setInlineCredentialName(defaultCredentialName("ssh_key"));
+                        }
+                      }}
+                      className="accent-primary"
+                    />
+                    Save as a named credential (visible in the Credentials list)
+                  </label>
+                  {saveCredential && (
+                    <div className="space-y-2">
+                      <Label htmlFor="ssh-cred-name">
+                        Credential Name *
+                      </Label>
+                      <Input
+                        id="ssh-cred-name"
+                        placeholder="server-key"
+                        value={inlineCredentialName}
+                        onChange={(e) => setInlineCredentialName(e.target.value)}
+                      />
+                    </div>
+                  )}
                 </TabsContent>
               </Tabs>
             </div>
           )}
+
+          {/* Advanced options */}
+          <div className="space-y-2">
+            <Label htmlFor="extra_args">Additional SSH Arguments</Label>
+            <Input
+              id="extra_args"
+              placeholder="-C (compression)"
+              value={form.extra_args ?? ""}
+              onChange={(e) => setForm({ ...form, extra_args: e.target.value })}
+            />
+            <p className="text-xs text-muted-foreground">
+              Pass extra flags to the SSH session (e.g. <code>-C</code> to
+              enable compression). Unknown flags are ignored.
+            </p>
+          </div>
+
+          <div className="space-y-2">
+            <Label htmlFor="verbosity">Verbosity Level</Label>
+            <Select
+              value={String(form.verbosity ?? 0)}
+              onValueChange={(v) =>
+                setForm({ ...form, verbosity: parseInt(v) })
+              }
+            >
+              <SelectTrigger id="verbosity">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="0">0 — Silent (default)</SelectItem>
+                <SelectItem value="1">1 — Info (connection events)</SelectItem>
+                <SelectItem value="2">2 — Debug (libssh2 trace)</SelectItem>
+              </SelectContent>
+            </Select>
+            <p className="text-xs text-muted-foreground">
+              Level 1 prints connection info to the terminal. Level 2 enables
+              low-level libssh2 tracing (verbose).
+            </p>
+          </div>
 
           {error && (
             <p className="text-sm text-destructive bg-destructive/10 px-3 py-2 rounded-md">

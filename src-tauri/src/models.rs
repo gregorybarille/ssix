@@ -15,6 +15,10 @@ pub struct Credential {
     pub username: String,
     #[serde(flatten)]
     pub kind: CredentialKind,
+    /// When true the credential was auto-created for inline auth and is not
+    /// shown in the credentials list. Treated as false when absent (legacy data).
+    #[serde(default)]
+    pub is_private: bool,
 }
 
 impl Credential {
@@ -25,6 +29,7 @@ impl Credential {
             name,
             username,
             kind,
+            is_private: false,
         }
     }
 }
@@ -82,6 +87,15 @@ pub struct Connection {
     pub credential_id: Option<String>,
     #[serde(flatten)]
     pub kind: ConnectionKind,
+    /// SSH verbosity level: 0 = silent, 1 = standard SSH debug output,
+    /// 2 = enables libssh2 trace (verbose). Output is written to the terminal
+    /// pane before the shell prompt appears.
+    #[serde(default)]
+    pub verbosity: u8,
+    /// Additional CLI-style flags passed to the SSH subsystem (e.g. `-C` for
+    /// compression). Parsed and applied before the handshake.
+    #[serde(default)]
+    pub extra_args: Option<String>,
 }
 
 impl Connection {
@@ -93,6 +107,8 @@ impl Connection {
             port,
             credential_id,
             kind,
+            verbosity: 0,
+            extra_args: None,
         }
     }
 }
@@ -228,6 +244,8 @@ mod tests {
             host: "internal.example".into(),
             port: 22,
             credential_id: Some("dest-cred".into()),
+            verbosity: 0,
+            extra_args: None,
             kind: ConnectionKind::LegacyTunnel {
                 gateway_host: "gw.example".into(),
                 gateway_port: 22,
@@ -261,6 +279,8 @@ mod tests {
             host: "internal.example".into(),
             port: 22,
             credential_id: None,
+            verbosity: 0,
+            extra_args: None,
             kind: ConnectionKind::LegacyTunnel {
                 gateway_host: "gw.example".into(),
                 gateway_port: 22,
@@ -292,9 +312,50 @@ mod tests {
             host: "api".into(),
             port: 80,
             credential_id: None,
+            verbosity: 0,
+            extra_args: None,
             kind: pf.clone(),
         });
         data.migrate_legacy_kinds();
         assert_eq!(data.connections[0].kind, pf);
+    }
+
+    #[test]
+    fn test_connection_verbosity_default_is_zero() {
+        let conn = Connection::new(
+            "test".into(),
+            "host".into(),
+            22,
+            None,
+            ConnectionKind::Direct,
+        );
+        assert_eq!(conn.verbosity, 0);
+    }
+
+    #[test]
+    fn test_connection_verbosity_serde_default() {
+        // JSON without verbosity field should deserialize with verbosity == 0.
+        let json = r#"{
+            "id": "x",
+            "name": "test",
+            "host": "h",
+            "port": 22,
+            "type": "direct"
+        }"#;
+        let conn: Connection = serde_json::from_str(json).unwrap();
+        assert_eq!(conn.verbosity, 0);
+    }
+
+    #[test]
+    fn test_connection_extra_args_serde_default() {
+        let json = r#"{
+            "id": "x",
+            "name": "test",
+            "host": "h",
+            "port": 22,
+            "type": "direct"
+        }"#;
+        let conn: Connection = serde_json::from_str(json).unwrap();
+        assert!(conn.extra_args.is_none());
     }
 }

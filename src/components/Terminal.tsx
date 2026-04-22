@@ -102,6 +102,21 @@ export function Terminal({ sessionId, connectionName, isVisible, onDisconnect, s
       invoke("ssh_write", { sessionId, data: bytes }).catch(() => {});
     });
 
+    const selectionDisposable = term.onSelectionChange(() => {
+      const sel = term.getSelection();
+      if (sel) {
+        navigator.clipboard.writeText(sel).catch(() => {});
+      }
+    });
+
+    // Right-click paste: main.tsx dispatches this when the user right-clicks
+    // inside the xterm canvas area and the clipboard has text.
+    const pasteHandler = (e: Event) => {
+      const text = (e as CustomEvent<{ text: string }>).detail.text;
+      if (isVisible && text) term.paste(text);
+    };
+    window.addEventListener("ssx:terminal-paste", pasteHandler);
+
     const setupListeners = async () => {
       try {
         const { listen } = await import("@tauri-apps/api/event");
@@ -140,6 +155,8 @@ export function Terminal({ sessionId, connectionName, isVisible, onDisconnect, s
 
     return () => {
       dataDisposable.dispose();
+      selectionDisposable.dispose();
+      window.removeEventListener("ssx:terminal-paste", pasteHandler);
       listenersRef.current.forEach((fn) => fn());
       resizeObserver.disconnect();
       term.dispose();

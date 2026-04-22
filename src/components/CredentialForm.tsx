@@ -2,6 +2,7 @@ import React, { useState, useEffect } from "react";
 import { Credential } from "@/types";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
+import { PasswordInput } from "./ui/password-input";
 import { Label } from "./ui/label";
 import {
   Dialog,
@@ -127,9 +128,8 @@ export function CredentialForm({
             <TabsContent value="password" className="space-y-4 mt-4">
               <div className="space-y-2">
                 <Label htmlFor="cred-password">Password</Label>
-                <Input
+                <PasswordInput
                   id="cred-password"
-                  type="password"
                   placeholder="••••••••"
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
@@ -148,9 +148,8 @@ export function CredentialForm({
               </div>
               <div className="space-y-2">
                 <Label htmlFor="cred-passphrase">Passphrase (optional)</Label>
-                <Input
+                <PasswordInput
                   id="cred-passphrase"
-                  type="password"
                   placeholder="••••••••"
                   value={passphrase}
                   onChange={(e) => setPassphrase(e.target.value)}
