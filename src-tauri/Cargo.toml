@@ -25,6 +25,7 @@ ssh2 = "0.9"
 ssh-key = { version = "0.6", features = ["ed25519", "alloc", "encryption"] }
 rand_core = { version = "0.6", features = ["getrandom"] }
 openssl-sys = { version = "0.9", features = ["vendored"] }
+once_cell = "1"
 
 
 

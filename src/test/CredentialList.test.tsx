@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { render, screen, fireEvent } from "@testing-library/react";
 import { CredentialList } from "@/components/CredentialList";
 import { Credential } from "@/types";
 
@@ -52,5 +52,87 @@ describe("CredentialList", () => {
       />
     );
     expect(screen.getByText("Password")).toBeInTheDocument();
+  });
+
+  // ─── Tile layout ──────────────────────────────────────────────────────────
+
+  it("renders a grid container in tile layout", () => {
+    render(
+      <CredentialList
+        credentials={mockCredentials}
+        onEdit={vi.fn()}
+        onDelete={vi.fn()}
+        layout="tile"
+      />
+    );
+    expect(screen.getByTestId("credential-grid")).toBeInTheDocument();
+  });
+
+  it("renders credential names in tile layout", () => {
+    render(
+      <CredentialList
+        credentials={mockCredentials}
+        onEdit={vi.fn()}
+        onDelete={vi.fn()}
+        layout="tile"
+      />
+    );
+    expect(screen.getByText("prod-key")).toBeInTheDocument();
+    expect(screen.getByText("dev-pass")).toBeInTheDocument();
+  });
+
+  it("shows SSH Key and Password badges in tile layout", () => {
+    render(
+      <CredentialList
+        credentials={mockCredentials}
+        onEdit={vi.fn()}
+        onDelete={vi.fn()}
+        layout="tile"
+      />
+    );
+    expect(screen.getByText("SSH Key")).toBeInTheDocument();
+    expect(screen.getByText("Password")).toBeInTheDocument();
+  });
+
+  it("calls onEdit when Edit is clicked in tile layout", () => {
+    const onEdit = vi.fn();
+    render(
+      <CredentialList
+        credentials={[mockCredentials[0]]}
+        onEdit={onEdit}
+        onDelete={vi.fn()}
+        layout="tile"
+      />
+    );
+    fireEvent.click(screen.getByTitle("Edit credential"));
+    expect(onEdit).toHaveBeenCalledWith(mockCredentials[0]);
+  });
+
+  it("calls onDelete when Delete is clicked in tile layout", () => {
+    const onDelete = vi.fn();
+    render(
+      <CredentialList
+        credentials={[mockCredentials[1]]}
+        onEdit={vi.fn()}
+        onDelete={onDelete}
+        layout="tile"
+      />
+    );
+    fireEvent.click(screen.getByTitle("Delete credential"));
+    expect(onDelete).toHaveBeenCalledWith(mockCredentials[1].id);
+  });
+
+  it("shows Install button only for SSH key credentials in tile layout", () => {
+    render(
+      <CredentialList
+        credentials={mockCredentials}
+        onEdit={vi.fn()}
+        onDelete={vi.fn()}
+        layout="tile"
+      />
+    );
+    // Only the ssh_key credential should have an install button
+    const installBtns = screen.getAllByTitle("Install public key on remote host");
+    expect(installBtns).toHaveLength(1);
   });
 });

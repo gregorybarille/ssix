@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from "react";
-import { Connection, Credential, ConnectionType } from "@/types";
+import { Connection, Credential, ConnectionType, OPEN_COLORS } from "@/types";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
 import { PasswordInput } from "./ui/password-input";
@@ -20,7 +20,10 @@ import {
 } from "./ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "./ui/tabs";
 import { InstallKeyDialog } from "./InstallKeyDialog";
+import { TagInput } from "./ui/tag-input";
+import { COLOR_VALUES } from "@/lib/colors";
 import { UploadCloud } from "lucide-react";
+import { cn } from "@/lib/utils";
 
 type AuthMethod = "password" | "ssh_key" | "credential";
 
@@ -42,6 +45,8 @@ const DEFAULT_FORM: Omit<Connection, "id"> = {
   type: "direct",
   verbosity: 0,
   extra_args: "",
+  tags: [],
+  color: undefined,
 };
 
 export function ConnectionForm({
@@ -75,6 +80,8 @@ export function ConnectionForm({
         type: connection.type,
         verbosity: connection.verbosity ?? 0,
         extra_args: connection.extra_args ?? "",
+        tags: connection.tags ?? [],
+        color: connection.color,
         gateway_host: connection.gateway_host,
         gateway_port: connection.gateway_port,
         gateway_credential_id: connection.gateway_credential_id,
@@ -202,6 +209,8 @@ export function ConnectionForm({
         type: connectionType,
         verbosity: form.verbosity ?? 0,
         extra_args: form.extra_args || undefined,
+        tags: form.tags ?? [],
+        color: form.color,
       };
 
       const data: Omit<Connection, "id"> =
@@ -630,6 +639,57 @@ export function ConnectionForm({
               </Tabs>
             </div>
           )}
+
+          {/* Tags */}
+          <div className="space-y-2">
+            <Label htmlFor="tags">Tags</Label>
+            <TagInput
+              id="tags"
+              value={form.tags ?? []}
+              onChange={(tags) => setForm({ ...form, tags })}
+              placeholder="Press space to add a tag"
+            />
+            <p className="text-xs text-muted-foreground">
+              Used for filtering — matches in the Connections search box.
+            </p>
+          </div>
+
+          {/* Color */}
+          <div className="space-y-2">
+            <Label>Color</Label>
+            <div className="flex flex-wrap gap-2">
+              <button
+                type="button"
+                onClick={() => setForm({ ...form, color: undefined })}
+                className={cn(
+                  "px-2 py-1 text-xs rounded-md border transition-colors",
+                  !form.color
+                    ? "border-primary bg-accent"
+                    : "border-input text-muted-foreground hover:text-foreground",
+                )}
+              >
+                None
+              </button>
+              {OPEN_COLORS.map((c) => (
+                <button
+                  key={c}
+                  type="button"
+                  title={c}
+                  onClick={() => setForm({ ...form, color: c })}
+                  className={cn(
+                    "h-7 w-7 rounded-full border transition-all",
+                    form.color === c
+                      ? "ring-2 ring-primary ring-offset-2 ring-offset-background"
+                      : "border-transparent hover:scale-110",
+                  )}
+                  style={{ backgroundColor: COLOR_VALUES[c] }}
+                />
+              ))}
+            </div>
+            <p className="text-xs text-muted-foreground">
+              Used as the terminal-tab accent.
+            </p>
+          </div>
 
           {/* Advanced options */}
           <div className="space-y-2">

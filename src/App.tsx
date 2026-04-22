@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { Sidebar } from "./components/Sidebar";
+import { Sidebar, NavItem } from "./components/Sidebar";
 import { TitleBar } from "./components/TitleBar";
 import { ConnectionList } from "./components/ConnectionList";
 import { ConnectionForm } from "./components/ConnectionForm";
@@ -7,7 +7,14 @@ import { CredentialList } from "./components/CredentialList";
 import { CredentialForm } from "./components/CredentialForm";
 import { SettingsPanel } from "./components/SettingsPanel";
 import { SearchBar } from "./components/SearchBar";
-import { TerminalTabs, TerminalSession } from "./components/TerminalTabs";
+import {
+  TerminalTabs,
+  TerminalTab,
+  TerminalSession,
+} from "./components/TerminalTabs";
+import { TunnelsView, TunnelSession } from "./components/TunnelsView";
+import { LogsView } from "./components/LogsView";
+import { LayoutToggle } from "./components/ui/layout-toggle";
 import { ConnectPicker } from "./components/ConnectPicker";
 import { ContextMenu } from "./components/ContextMenu";
 import { Button } from "./components/ui/button";
@@ -17,10 +24,11 @@ import { useSettingsStore } from "./store/useSettingsStore";
 import { useApplySettings } from "./hooks/useApplySettings";
 import { invoke } from "./lib/tauri";
 import { takeScreenshot } from "./lib/screenshot";
-import { Connection, Credential } from "./types";
+import { log as appLog } from "./lib/log";
+import { Connection, Credential, OpenMode, LayoutMode } from "./types";
 import { Plus } from "lucide-react";
 
-type View = "connections" | "credentials" | "settings" | "terminals";
+type View = NavItem;
 
 function App() {
   const [view, setView] = useState<View>("connections");
@@ -30,12 +38,14 @@ function App() {
   const [editingCred, setEditingCred] = useState<Credential | null>(null);
   const [cloningConn, setCloningConn] = useState<Connection | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
-  const [sessions, setSessions] = useState<TerminalSession[]>([]);
+  const [shellTabs, setShellTabs] = useState<TerminalTab[]>([]);
   const [activeTabId, setActiveTabId] = useState<string | null>(null);
-  // Placeholder IDs the user cancelled while ssh_connect was still in flight.
-  // We keep them in a ref so the async handler can check after awaiting.
+  const shellTabsRef = React.useRef<TerminalTab[]>([]);
+  const activeTabIdRef = React.useRef<string | null>(null);
+  const [tunnelSessions, setTunnelSessions] = useState<TunnelSession[]>([]);
   const cancelledRef = React.useRef<Set<string>>(new Set());
   const [pickerOpen, setPickerOpen] = useState(false);
+  const [pickerMode, setPickerMode] = useState<OpenMode>("tab");
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null);
   const [screenshotToast, setScreenshotToast] = useState<string | null>(null);
   const [orphanCredDialog, setOrphanCredDialog] = useState<{
@@ -68,6 +78,14 @@ function App() {
   useApplySettings(settings);
 
   useEffect(() => {
+    shellTabsRef.current = shellTabs;
+  }, [shellTabs]);
+
+  useEffect(() => {
+    activeTabIdRef.current = activeTabId;
+  }, [activeTabId]);
+
+  useEffect(() => {
     fetchConnections();
     fetchCredentials();
     fetchSettings();
@@ -82,10 +100,6 @@ function App() {
     return () => window.removeEventListener("ssx:contextmenu", handler);
   }, []);
 
-  // Smart right-click handler (registered here so it can be cleaned up on unmount / HMR).
-  //   1. input / textarea / [contenteditable] → let the native browser menu appear.
-  //   2. xterm terminal area → silently paste clipboard text into the shell.
-  //   3. Everywhere else → show the custom SSX context menu.
   useEffect(() => {
     const handler = (e: MouseEvent) => {
       const target = e.target as Element;
@@ -183,79 +197,48 @@ function App() {
     }
   };
 
-  const handleConnect = async (conn: Connection, replaceSessionId?: string) => {
-    const failedId = replaceSessionId ?? `failed-${conn.id}-${Date.now()}`;
+  /* ------------------------- Tunnel session lifecycle ------------------------- */
 
-    if (!replaceSessionId) {
-      // First attempt: open a tab immediately and switch to terminals view.
-      setSessions((prev) => [
-        ...prev,
-        { sessionId: failedId, connectionName: conn.name, connection: conn, retrying: true },
-      ]);
-      setActiveTabId(failedId);
-      setView("terminals");
-    } else {
-      // Retry: mark the existing tab as retrying so the button spins.
-      setSessions((prev) =>
-        prev.map((s) =>
-          s.sessionId === replaceSessionId ? { ...s, retrying: true } : s
-        )
-      );
-    }
-
+  const handleConnectTunnel = async (conn: Connection) => {
+    const failedId = `tunnel-${conn.id}-${Date.now()}`;
+    setTunnelSessions((prev) => [
+      ...prev,
+      { sessionId: failedId, connectionName: conn.name, connection: conn, retrying: true },
+    ]);
+    setView("tunnels");
     try {
-      const sessionId = await invoke<string>("ssh_connect", {
-        connectionId: conn.id,
-      });
-      // If the user cancelled while ssh_connect was in flight, disconnect the
-      // now-orphan backend session and leave UI state alone.
+      const sessionId = await invoke<string>("ssh_connect", { connectionId: conn.id });
       if (cancelledRef.current.has(failedId)) {
         cancelledRef.current.delete(failedId);
         invoke("ssh_disconnect", { sessionId }).catch(() => {});
         return;
       }
-      // Success: replace the placeholder/failed tab with a live session.
-      setSessions((prev) =>
+      setTunnelSessions((prev) =>
         prev.map((s) =>
-          s.sessionId === failedId ? { sessionId, connectionName: conn.name, connection: conn } : s
-        )
+          s.sessionId === failedId
+            ? { sessionId, connectionName: conn.name, connection: conn }
+            : s,
+        ),
       );
-      setActiveTabId(sessionId);
+      appLog.info("tunnel", `Started ${conn.name}`);
     } catch (err) {
       if (cancelledRef.current.has(failedId)) {
         cancelledRef.current.delete(failedId);
         return;
       }
-      // Failure: populate or update the error, clear retrying.
-      setSessions((prev) =>
+      setTunnelSessions((prev) =>
         prev.map((s) =>
           s.sessionId === failedId
             ? { ...s, error: String(err), retrying: false }
-            : s
-        )
+            : s,
+        ),
       );
-      setActiveTabId(failedId);
+      appLog.error("tunnel", `Failed to start ${conn.name}: ${String(err)}`);
     }
   };
 
-  const handleRetry = (conn: Connection, replaceSessionId: string) => {
-    handleConnect(conn, replaceSessionId);
-  };
-
-  const handleEditFromTerminal = (conn: Connection, failedSessionId: string) => {
-    // Close the failed tab and open the connection form.
-    handleCloseTab(failedSessionId);
-    setEditingConn(conn);
-    setCloningConn(null);
-    setConnFormOpen(true);
-    setView("connections");
-  };
-
-  const handleCloseTab = async (sessionId: string) => {
-    // If this is a placeholder session that's still connecting, mark it
-    // cancelled so handleConnect's resolve path cleans up any backend session
-    // that arrives after the user has closed the tab.
-    const session = sessions.find((s) => s.sessionId === sessionId);
+  const handleCloseTunnel = async (sessionId: string) => {
+    const session = tunnelSessions.find((s) => s.sessionId === sessionId);
     if (session?.retrying && !session.error) {
       cancelledRef.current.add(sessionId);
     }
@@ -264,12 +247,183 @@ function App() {
     } catch {
       // ignore
     }
-    setSessions((prev) => {
-      const remaining = prev.filter((s) => s.sessionId !== sessionId);
-      // If we closed the active tab, switch to the last remaining or go back to connections
-      if (activeTabId === sessionId) {
+    setTunnelSessions((prev) => prev.filter((s) => s.sessionId !== sessionId));
+  };
+
+  /* ------------------------- Shell session lifecycle ------------------------- */
+
+  const addSessionToNewTab = (session: TerminalSession): string => {
+    const tabId = `tab-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+    setShellTabs((prev) => [...prev, { id: tabId, mode: "single", panes: [session] }]);
+    setActiveTabId(tabId);
+    return tabId;
+  };
+
+  const addSessionToActiveTab = (session: TerminalSession, mode: "horizontal" | "vertical") => {
+    const currentActiveTabId = activeTabIdRef.current;
+    const currentActiveTab = shellTabsRef.current.find((t) => t.id === currentActiveTabId);
+    if (!currentActiveTabId || !currentActiveTab || currentActiveTab.panes.length >= 2) {
+      addSessionToNewTab(session);
+      return;
+    }
+    setShellTabs((prev) =>
+      prev.map((t) =>
+        t.id === currentActiveTabId ? { ...t, mode, panes: [...t.panes, session] } : t,
+      ),
+    );
+  };
+
+  const updateSessionEverywhere = (
+    placeholderId: string,
+    next: Partial<TerminalSession> & { sessionId?: string },
+  ) => {
+    setShellTabs((prev) =>
+      prev.map((t) => ({
+        ...t,
+        panes: t.panes.map((p) =>
+          p.sessionId === placeholderId ? { ...p, ...next } : p,
+        ),
+      })),
+    );
+  };
+
+  /**
+   * Open a connection. For port_forward, route to TunnelsView. Otherwise open
+   * a shell session in a new tab or split into the active tab.
+   */
+  const handleConnect = async (
+    conn: Connection,
+    options?: { mode?: OpenMode; replaceSessionId?: string },
+  ) => {
+    if (conn.type === "port_forward") {
+      handleConnectTunnel(conn);
+      return;
+    }
+
+    const mode: OpenMode = options?.mode ?? settings.default_open_mode ?? "tab";
+    const replaceSessionId = options?.replaceSessionId;
+    const placeholderId = replaceSessionId ?? `failed-${conn.id}-${Date.now()}`;
+    const placeholder: TerminalSession = {
+      sessionId: placeholderId,
+      connectionName: conn.name,
+      connection: conn,
+      retrying: true,
+    };
+
+    if (replaceSessionId) {
+      updateSessionEverywhere(placeholderId, { retrying: true, error: undefined });
+    } else if (mode === "split_right") {
+      addSessionToActiveTab(placeholder, "horizontal");
+      setView("terminals");
+    } else if (mode === "split_down") {
+      addSessionToActiveTab(placeholder, "vertical");
+      setView("terminals");
+    } else {
+      addSessionToNewTab(placeholder);
+      setView("terminals");
+    }
+
+    try {
+      const sessionId = await invoke<string>("ssh_connect", { connectionId: conn.id });
+      if (cancelledRef.current.has(placeholderId)) {
+        cancelledRef.current.delete(placeholderId);
+        invoke("ssh_disconnect", { sessionId }).catch(() => {});
+        return;
+      }
+      // Replace placeholder identity in-place so the pane keeps its slot.
+      setShellTabs((prev) =>
+        prev.map((t) => ({
+          ...t,
+          panes: t.panes.map((p) =>
+            p.sessionId === placeholderId
+              ? { sessionId, connectionName: conn.name, connection: conn }
+              : p,
+          ),
+        })),
+      );
+      appLog.info("ssh", `Connected to ${conn.name}`);
+    } catch (err) {
+      if (cancelledRef.current.has(placeholderId)) {
+        cancelledRef.current.delete(placeholderId);
+        return;
+      }
+      updateSessionEverywhere(placeholderId, { error: String(err), retrying: false });
+      appLog.error("ssh", `Connect failed for ${conn.name}: ${String(err)}`);
+    }
+  };
+
+  const handleRetry = (conn: Connection, replaceSessionId: string) => {
+    handleConnect(conn, { replaceSessionId });
+  };
+
+  const handleEditFromTerminal = (conn: Connection, failedSessionId: string) => {
+    handleClosePane(failedSessionId);
+    setEditingConn(conn);
+    setCloningConn(null);
+    setConnFormOpen(true);
+    setView("connections");
+  };
+
+  /** Close a single pane. If it's the only pane in a tab, the tab closes too. */
+  const handleClosePane = async (sessionId: string) => {
+    let tabClosed: string | null = null;
+    // Find the pane and clean up cancelled flag if needed.
+    for (const tab of shellTabs) {
+      const pane = tab.panes.find((p) => p.sessionId === sessionId);
+      if (pane) {
+        if (pane.retrying && !pane.error) {
+          cancelledRef.current.add(sessionId);
+        }
+        if (tab.panes.length === 1) {
+          tabClosed = tab.id;
+        }
+        break;
+      }
+    }
+    try {
+      await invoke("ssh_disconnect", { sessionId });
+    } catch {
+      // ignore
+    }
+    setShellTabs((prev) => {
+      const next = prev
+        .map((t) => {
+          const remainingPanes = t.panes.filter((p) => p.sessionId !== sessionId);
+          if (remainingPanes.length === 0) return null;
+          const newMode = remainingPanes.length === 1 ? "single" : t.mode;
+          return { ...t, mode: newMode, panes: remainingPanes } as TerminalTab;
+        })
+        .filter((t): t is TerminalTab => t !== null);
+      if (tabClosed && activeTabId === tabClosed) {
+        if (next.length > 0) {
+          setActiveTabId(next[next.length - 1].id);
+        } else {
+          setActiveTabId(null);
+          setView("connections");
+        }
+      }
+      return next;
+    });
+  };
+
+  const handleCloseTab = async (tabId: string) => {
+    const tab = shellTabs.find((t) => t.id === tabId);
+    if (!tab) return;
+    for (const pane of tab.panes) {
+      if (pane.retrying && !pane.error) {
+        cancelledRef.current.add(pane.sessionId);
+      }
+      try {
+        await invoke("ssh_disconnect", { sessionId: pane.sessionId });
+      } catch {
+        // ignore
+      }
+    }
+    setShellTabs((prev) => {
+      const remaining = prev.filter((t) => t.id !== tabId);
+      if (activeTabId === tabId) {
         if (remaining.length > 0) {
-          setActiveTabId(remaining[remaining.length - 1].sessionId);
+          setActiveTabId(remaining[remaining.length - 1].id);
         } else {
           setActiveTabId(null);
           setView("connections");
@@ -279,9 +433,24 @@ function App() {
     });
   };
 
-  const handleNewTabFromTerminal = () => {
+  const handleNewTabFromTerminal = (mode: OpenMode) => {
+    setPickerMode(mode);
     setPickerOpen(true);
   };
+
+  const handlePickerConnect = (conn: Connection) => {
+    handleConnect(conn, { mode: pickerMode });
+  };
+
+  /* ------------------------- Layout settings helpers ------------------------- */
+
+  const updateLayout = (key: "connection_layout" | "credential_layout" | "tunnel_layout", value: LayoutMode) => {
+    void saveSettings({ ...settings, [key]: value }).catch((error) => {
+      appLog("Failed to save layout settings", error);
+    });
+  };
+
+  const totalShellSessions = shellTabs.reduce((n, t) => n + t.panes.length, 0);
 
   return (
     <div className="flex flex-col h-screen bg-background text-foreground overflow-hidden">
@@ -290,16 +459,18 @@ function App() {
         <Sidebar
           active={view}
           onNavigate={(v) => setView(v as View)}
-          terminalCount={sessions.length}
+          terminalCount={totalShellSessions}
+          tunnelCount={tunnelSessions.length}
         />
 
         <main className="flex-1 flex flex-col overflow-hidden">
-        {view === "terminals" && sessions.length > 0 ? (
+        {view === "terminals" && shellTabs.length > 0 ? (
           <TerminalTabs
-            sessions={sessions}
+            tabs={shellTabs}
             activeTabId={activeTabId}
             onSelectTab={setActiveTabId}
             onCloseTab={handleCloseTab}
+            onClosePane={(_tabId, sessionId) => handleClosePane(sessionId)}
             onNewTab={handleNewTabFromTerminal}
             onRetry={handleRetry}
             onEdit={handleEditFromTerminal}
@@ -311,16 +482,22 @@ function App() {
           <>
             <div className="flex items-center justify-between px-6 py-4 border-b border-border">
               <h1 className="text-lg font-semibold">Connections</h1>
-              <Button
-                size="sm"
-                onClick={() => {
-                  setEditingConn(null);
-                  setConnFormOpen(true);
-                }}
-              >
-                <Plus className="h-4 w-4 mr-1" />
-                New Connection
-              </Button>
+              <div className="flex items-center gap-2">
+                <LayoutToggle
+                  value={settings.connection_layout}
+                  onChange={(v) => updateLayout("connection_layout", v)}
+                />
+                <Button
+                  size="sm"
+                  onClick={() => {
+                    setEditingConn(null);
+                    setConnFormOpen(true);
+                  }}
+                >
+                  <Plus className="h-4 w-4 mr-1" />
+                  New Connection
+                </Button>
+              </div>
             </div>
             <div className="px-6 py-3 border-b border-border">
               <SearchBar
@@ -333,6 +510,7 @@ function App() {
               <ConnectionList
                 connections={connections}
                 credentials={credentials}
+                layout={settings.connection_layout}
                 onEdit={(conn) => {
                   setEditingConn(conn);
                   setCloningConn(null);
@@ -344,7 +522,7 @@ function App() {
                   setEditingConn(null);
                   setConnFormOpen(true);
                 }}
-                onConnect={handleConnect}
+                onConnect={(c) => handleConnect(c)}
               />
             </div>
             <ConnectionForm
@@ -369,20 +547,27 @@ function App() {
           <>
             <div className="flex items-center justify-between px-6 py-4 border-b border-border">
               <h1 className="text-lg font-semibold">Credentials</h1>
-              <Button
-                size="sm"
-                onClick={() => {
-                  setEditingCred(null);
-                  setCredFormOpen(true);
-                }}
-              >
-                <Plus className="h-4 w-4 mr-1" />
-                New Credential
-              </Button>
+              <div className="flex items-center gap-2">
+                <LayoutToggle
+                  value={settings.credential_layout}
+                  onChange={(v) => updateLayout("credential_layout", v)}
+                />
+                <Button
+                  size="sm"
+                  onClick={() => {
+                    setEditingCred(null);
+                    setCredFormOpen(true);
+                  }}
+                >
+                  <Plus className="h-4 w-4 mr-1" />
+                  New Credential
+                </Button>
+              </div>
             </div>
             <div className="flex-1 overflow-y-auto px-4 py-2">
               <CredentialList
                 credentials={credentials}
+                layout={settings.credential_layout}
                 onEdit={(cred) => {
                   setEditingCred(cred);
                   setCredFormOpen(true);
@@ -402,6 +587,33 @@ function App() {
           </>
         )}
 
+        {view === "tunnels" && (
+          <TunnelsView
+            sessions={tunnelSessions}
+            connections={connections}
+            credentials={credentials}
+            layout={settings.tunnel_layout}
+            onLayoutChange={(v) => updateLayout("tunnel_layout", v)}
+            onCloseSession={handleCloseTunnel}
+            onConnect={(c) => handleConnect(c)}
+            onEdit={(conn) => {
+              setEditingConn(conn);
+              setCloningConn(null);
+              setConnFormOpen(true);
+              setView("connections");
+            }}
+            onDelete={handleDeleteConnection}
+            onClone={(conn) => {
+              setCloningConn(conn);
+              setEditingConn(null);
+              setConnFormOpen(true);
+              setView("connections");
+            }}
+          />
+        )}
+
+        {view === "logs" && <LogsView />}
+
         {view === "settings" && (
           <div className="flex-1 overflow-y-auto">
             <SettingsPanel settings={settings} onSave={saveSettings} />
@@ -418,7 +630,7 @@ function App() {
         onOpenChange={setPickerOpen}
         connections={connections}
         credentials={credentials}
-        onConnect={handleConnect}
+        onConnect={handlePickerConnect}
       />
 
       {/* Custom context menu */}

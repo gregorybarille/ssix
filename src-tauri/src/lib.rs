@@ -1,5 +1,6 @@
 mod commands;
 mod keychain;
+mod logs;
 mod models;
 mod ssh;
 mod storage;
@@ -33,6 +34,8 @@ pub fn run() {
             commands::ssh_keygen::ssh_install_public_key,
             commands::ssh_keygen::ssh_install_public_key_by_credential,
             commands::screenshot::take_screenshot,
+            logs::get_logs,
+            logs::clear_logs,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

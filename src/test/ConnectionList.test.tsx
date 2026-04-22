@@ -121,4 +121,136 @@ describe("ConnectionList", () => {
     );
     expect(screen.queryByTitle("Connect")).not.toBeInTheDocument();
   });
+
+  // ─── Tile layout ──────────────────────────────────────────────────────────
+
+  it("renders a grid container in tile layout", () => {
+    render(
+      <ConnectionList
+        connections={mockConnections}
+        credentials={mockCredentials}
+        onEdit={vi.fn()}
+        onDelete={vi.fn()}
+        onClone={vi.fn()}
+        layout="tile"
+      />
+    );
+    expect(screen.getByTestId("connection-grid")).toBeInTheDocument();
+  });
+
+  it("renders connection names in tile layout", () => {
+    render(
+      <ConnectionList
+        connections={mockConnections}
+        credentials={mockCredentials}
+        onEdit={vi.fn()}
+        onDelete={vi.fn()}
+        onClone={vi.fn()}
+        layout="tile"
+      />
+    );
+    expect(screen.getByText("prod-server")).toBeInTheDocument();
+    expect(screen.getByText("jump-dev")).toBeInTheDocument();
+    expect(screen.getByText("api-tunnel")).toBeInTheDocument();
+  });
+
+  it("renders tags for tagged connections in tile layout", () => {
+    const taggedConn: Connection = {
+      id: "tagged",
+      name: "tagged-server",
+      host: "10.0.0.1",
+      port: 22,
+      type: "direct",
+      tags: ["production", "k8s"],
+    };
+    render(
+      <ConnectionList
+        connections={[taggedConn]}
+        credentials={[]}
+        onEdit={vi.fn()}
+        onDelete={vi.fn()}
+        onClone={vi.fn()}
+        layout="tile"
+      />
+    );
+    expect(screen.getByText("production")).toBeInTheDocument();
+    expect(screen.getByText("k8s")).toBeInTheDocument();
+  });
+
+  it("calls onConnect when Connect is clicked in tile layout without triggering onSelect", () => {
+    const onConnect = vi.fn();
+    const onSelect = vi.fn();
+    render(
+      <ConnectionList
+        connections={[mockConnections[0]]}
+        credentials={[]}
+        onEdit={vi.fn()}
+        onDelete={vi.fn()}
+        onClone={vi.fn()}
+        onConnect={onConnect}
+        onSelect={onSelect}
+        layout="tile"
+      />
+    );
+    fireEvent.click(screen.getByTitle("Connect"));
+    expect(onConnect).toHaveBeenCalledWith(mockConnections[0]);
+    expect(onSelect).not.toHaveBeenCalled();
+  });
+
+  it("calls onClone when Clone is clicked in tile layout without triggering onSelect", () => {
+    const onClone = vi.fn();
+    const onSelect = vi.fn();
+    render(
+      <ConnectionList
+        connections={[mockConnections[0]]}
+        credentials={[]}
+        onEdit={vi.fn()}
+        onDelete={vi.fn()}
+        onClone={onClone}
+        onSelect={onSelect}
+        layout="tile"
+      />
+    );
+    fireEvent.click(screen.getByTitle("Clone connection"));
+    expect(onClone).toHaveBeenCalledWith(mockConnections[0]);
+    expect(onSelect).not.toHaveBeenCalled();
+  });
+
+  it("calls onEdit when Edit is clicked in tile layout without triggering onSelect", () => {
+    const onEdit = vi.fn();
+    const onSelect = vi.fn();
+    render(
+      <ConnectionList
+        connections={[mockConnections[0]]}
+        credentials={[]}
+        onEdit={onEdit}
+        onDelete={vi.fn()}
+        onClone={vi.fn()}
+        onSelect={onSelect}
+        layout="tile"
+      />
+    );
+    fireEvent.click(screen.getByTitle("Edit connection"));
+    expect(onEdit).toHaveBeenCalledWith(mockConnections[0]);
+    expect(onSelect).not.toHaveBeenCalled();
+  });
+
+  it("calls onDelete when Delete is clicked in tile layout without triggering onSelect", () => {
+    const onDelete = vi.fn();
+    const onSelect = vi.fn();
+    render(
+      <ConnectionList
+        connections={[mockConnections[0]]}
+        credentials={[]}
+        onEdit={vi.fn()}
+        onDelete={onDelete}
+        onClone={vi.fn()}
+        onSelect={onSelect}
+        layout="tile"
+      />
+    );
+    fireEvent.click(screen.getByTitle("Delete connection"));
+    expect(onDelete).toHaveBeenCalledWith(mockConnections[0].id);
+    expect(onSelect).not.toHaveBeenCalled();
+  });
 });
