@@ -1,7 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, fireEvent, waitFor } from "@testing-library/react";
+import { render, screen, fireEvent, waitFor, act } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import { LogsView } from "@/components/LogsView";
 import { useFrontendLogs } from "@/lib/log";
 import { LogEntry } from "@/types";
@@ -17,6 +18,8 @@ const mockFrontendEntry: LogEntry = {
   source: "app",
   message: "App started",
 };
+
+type AppLogCallback = (event: { payload: LogEntry }) => void;
 
 describe("LogsView", () => {
   beforeEach(() => {
@@ -106,5 +109,41 @@ describe("LogsView", () => {
       ).toBeInTheDocument();
     });
     expect(screen.getByRole("tab", { name: /Frontend \(1\)/ })).toBeInTheDocument();
+  });
+
+  it("appends live backend log entries via app-log event", async () => {
+    let capturedCallback: AppLogCallback | null = null;
+    vi.mocked(listen).mockImplementationOnce(async (_event, callback) => {
+      capturedCallback = callback as AppLogCallback;
+      return () => {};
+    });
+
+    render(<LogsView />);
+
+    await waitFor(() => {
+      expect(capturedCallback).not.toBeNull();
+    });
+
+    act(() => {
+      capturedCallback!({
+        payload: { ts: 1000000003000, level: "info", source: "ssh", message: "Live entry" },
+      });
+    });
+
+    expect(screen.getByText("Live entry")).toBeInTheDocument();
+  });
+
+  it("calls unlisten on unmount", async () => {
+    const unlisten = vi.fn();
+    vi.mocked(listen).mockResolvedValueOnce(unlisten);
+
+    const { unmount } = render(<LogsView />);
+
+    await waitFor(() => {
+      expect(vi.mocked(listen)).toHaveBeenCalled();
+    });
+
+    unmount();
+    expect(unlisten).toHaveBeenCalled();
   });
 });
