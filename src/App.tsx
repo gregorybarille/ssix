@@ -445,7 +445,9 @@ function App() {
   /* ------------------------- Layout settings helpers ------------------------- */
 
   const updateLayout = (key: "connection_layout" | "credential_layout" | "tunnel_layout", value: LayoutMode) => {
-    saveSettings({ ...settings, [key]: value });
+    void saveSettings({ ...settings, [key]: value }).catch((error) => {
+      appLog("Failed to save layout settings", error);
+    });
   };
 
   const totalShellSessions = shellTabs.reduce((n, t) => n + t.panes.length, 0);
