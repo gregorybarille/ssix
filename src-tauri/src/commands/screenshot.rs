@@ -1,31 +1,40 @@
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::path::Path;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use base64::{engine::general_purpose::STANDARD, Engine};
 
 #[tauri::command]
 pub fn take_screenshot(image_data: String) -> Result<String, String> {
+    let desktop = dirs_next::desktop_dir()
+        .ok_or_else(|| "Could not locate Desktop directory".to_string())?;
+    take_screenshot_into_dir(&desktop, &image_data, SystemTime::now())
+}
+
+fn take_screenshot_into_dir(
+    dir: &Path,
+    image_data: &str,
+    now: SystemTime,
+) -> Result<String, String> {
     // Strip the data-URL prefix if the caller included it.
     let b64 = image_data
         .strip_prefix("data:image/png;base64,")
-        .unwrap_or(&image_data);
+        .unwrap_or(image_data);
 
     let bytes = STANDARD
         .decode(b64)
         .map_err(|e| format!("Failed to decode image: {}", e))?;
 
-    let desktop = dirs_next::desktop_dir()
-        .ok_or_else(|| "Could not locate Desktop directory".to_string())?;
+    std::fs::create_dir_all(dir)
+        .map_err(|e| format!("Failed to create screenshot directory: {}", e))?;
 
-    let duration = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default();
+    let duration = now.duration_since(UNIX_EPOCH).unwrap_or_default();
     let secs = duration.as_secs();
     let millis = duration.subsec_millis();
 
     // Format as YYYYMMDD-HHMMSS using integer arithmetic (no chrono dep needed).
     let ts = format_timestamp(secs);
     let filename = format!("ssx-screenshot-{}-{:03}.png", ts, millis);
-    let path = desktop.join(&filename);
+    let path = dir.join(&filename);
 
     std::fs::write(&path, &bytes)
         .map_err(|e| format!("Failed to write screenshot: {}", e))?;
@@ -67,20 +76,55 @@ mod tests {
     use base64::{engine::general_purpose::STANDARD, Engine};
     use std::fs;
 
+    const PNG_BYTES: &[u8] = &[
+        0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44,
+        0x52, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x02, 0x00, 0x00, 0x00, 0x90,
+        0x77, 0x53, 0xde, 0x00, 0x00, 0x00, 0x0c, 0x49, 0x44, 0x41, 0x54, 0x08, 0xd7, 0x63, 0xf8,
+        0xcf, 0xc0, 0x00, 0x00, 0x00, 0x02, 0x00, 0x01, 0xe2, 0x21, 0xbc, 0x33, 0x00, 0x00, 0x00,
+        0x00, 0x49, 0x45, 0x4e, 0x44, 0xae, 0x42, 0x60, 0x82,
+    ];
+
+    fn png_b64() -> String {
+        STANDARD.encode(PNG_BYTES)
+    }
+
+    #[test]
+    fn take_screenshot_creates_directory_and_writes_file() {
+        let base = std::env::temp_dir().join("ssx_screenshot_missing_dir");
+        if base.exists() {
+            fs::remove_dir_all(&base).unwrap();
+        }
+        let now = UNIX_EPOCH + Duration::from_secs(1713776400) + Duration::from_millis(42);
+        let data_url = format!("data:image/png;base64,{}", png_b64());
+
+        let path_str = take_screenshot_into_dir(&base, &data_url, now).unwrap();
+        let expected = base.join("ssx-screenshot-20240422-090000-042.png");
+
+        assert_eq!(expected.to_str().unwrap(), path_str);
+        assert!(expected.exists());
+        let on_disk = fs::read(&expected).unwrap();
+        assert_eq!(on_disk, PNG_BYTES);
+
+        fs::remove_dir_all(&base).unwrap();
+    }
+
+    #[test]
+    fn take_screenshot_rejects_invalid_base64() {
+        let base = std::env::temp_dir().join("ssx_screenshot_invalid_b64");
+        let err = take_screenshot_into_dir(&base, "notbase64", SystemTime::now()).unwrap_err();
+        assert!(
+            err.starts_with("Failed to decode image"),
+            "unexpected error: {}",
+            err
+        );
+    }
+
     #[test]
     fn test_decode_base64_and_write_png_bytes() {
         let tmp = std::env::temp_dir().join("ssx_screenshot_test");
         fs::create_dir_all(&tmp).unwrap();
 
-        // Minimal 1×1 white PNG (hardcoded bytes).
-        let png_bytes: &[u8] = &[
-            0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x48,
-            0x44, 0x52, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x02, 0x00, 0x00,
-            0x00, 0x90, 0x77, 0x53, 0xde, 0x00, 0x00, 0x00, 0x0c, 0x49, 0x44, 0x41, 0x54, 0x08,
-            0xd7, 0x63, 0xf8, 0xcf, 0xc0, 0x00, 0x00, 0x00, 0x02, 0x00, 0x01, 0xe2, 0x21, 0xbc,
-            0x33, 0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4e, 0x44, 0xae, 0x42, 0x60, 0x82,
-        ];
-        let b64 = STANDARD.encode(png_bytes);
+        let b64 = png_b64();
 
         let path_str = tmp.join("test.png");
 
@@ -89,7 +133,7 @@ mod tests {
         let decoded = STANDARD.decode(&b64).unwrap();
         fs::write(&path_str, &decoded).unwrap();
         let on_disk = fs::read(&path_str).unwrap();
-        assert_eq!(on_disk, png_bytes);
+        assert_eq!(on_disk, PNG_BYTES);
         fs::remove_dir_all(tmp).unwrap();
     }
 

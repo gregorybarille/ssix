@@ -58,6 +58,7 @@ export function ConnectionForm({
   const [inlinePassword, setInlinePassword] = useState("");
   const [inlineKeyPath, setInlineKeyPath] = useState("");
   const [inlinePassphrase, setInlinePassphrase] = useState("");
+  const [inlineCredentialName, setInlineCredentialName] = useState("");
   const [saveCredential, setSaveCredential] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -90,12 +91,34 @@ export function ConnectionForm({
     setInlinePassword("");
     setInlineKeyPath("");
     setInlinePassphrase("");
+    setInlineCredentialName("");
     setSaveCredential(false);
     setError(null);
   }, [connection, open, isClone]);
 
   const isTunnel = connectionType !== "direct";
   const needsDestinationAuth = connectionType !== "port_forward";
+
+  const defaultCredentialName = (method: AuthMethod) => {
+    const base = form.name.trim() || "connection";
+    return method === "ssh_key" ? `${base}-key` : `${base}-cred`;
+  };
+
+  const validateNamedCredential = (method: AuthMethod) => {
+    if (!saveCredential) {
+      return;
+    }
+    const name = inlineCredentialName.trim();
+    if (!name) {
+      throw new Error("Credential name is required when saving");
+    }
+    if (credentials.some((c) => c.name === name)) {
+      throw new Error(`A credential named '${name}' already exists`);
+    }
+    if (method === "ssh_key" && !inlineKeyPath) {
+      throw new Error("Private key path is required");
+    }
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -109,9 +132,10 @@ export function ConnectionForm({
         if (authMethod === "password" && onCreateCredential) {
           if (!inlineUsername) throw new Error("Username is required");
           if (!inlinePassword) throw new Error("Password is required");
+          validateNamedCredential(authMethod);
           const isPrivate = !saveCredential;
           const credName = saveCredential
-            ? `${form.name || "connection"}-cred`
+            ? inlineCredentialName.trim()
             : `inline-${crypto.randomUUID()}`;
           const cred = await onCreateCredential({
             name: credName,
@@ -124,9 +148,10 @@ export function ConnectionForm({
         } else if (authMethod === "ssh_key" && onCreateCredential) {
           if (!inlineUsername) throw new Error("Username is required");
           if (!inlineKeyPath) throw new Error("Private key path is required");
+          validateNamedCredential(authMethod);
           const isPrivate = !saveCredential;
           const credName = saveCredential
-            ? `${form.name || "connection"}-key`
+            ? inlineCredentialName.trim()
             : `inline-${crypto.randomUUID()}`;
           const cred = await onCreateCredential({
             name: credName,
@@ -207,7 +232,7 @@ export function ConnectionForm({
       }
       onOpenChange(false);
     } catch (err) {
-      setError(String(err));
+      setError(err instanceof Error ? err.message : String(err));
     } finally {
       setIsSubmitting(false);
     }
@@ -485,11 +510,32 @@ export function ConnectionForm({
                     <input
                       type="checkbox"
                       checked={saveCredential}
-                      onChange={(e) => setSaveCredential(e.target.checked)}
+                      onChange={(e) => {
+                        const checked = e.target.checked;
+                        setSaveCredential(checked);
+                        if (!checked) {
+                          setInlineCredentialName("");
+                        } else if (!inlineCredentialName) {
+                          setInlineCredentialName(defaultCredentialName("password"));
+                        }
+                      }}
                       className="accent-primary"
                     />
                     Save as a named credential (visible in the Credentials list)
                   </label>
+                  {saveCredential && (
+                    <div className="space-y-2">
+                      <Label htmlFor="password-cred-name">
+                        Credential Name *
+                      </Label>
+                      <Input
+                        id="password-cred-name"
+                        placeholder="server-cred"
+                        value={inlineCredentialName}
+                        onChange={(e) => setInlineCredentialName(e.target.value)}
+                      />
+                    </div>
+                  )}
                 </TabsContent>
 
                 <TabsContent value="ssh_key" className="space-y-3 mt-3">
@@ -524,11 +570,32 @@ export function ConnectionForm({
                     <input
                       type="checkbox"
                       checked={saveCredential}
-                      onChange={(e) => setSaveCredential(e.target.checked)}
+                      onChange={(e) => {
+                        const checked = e.target.checked;
+                        setSaveCredential(checked);
+                        if (!checked) {
+                          setInlineCredentialName("");
+                        } else if (!inlineCredentialName) {
+                          setInlineCredentialName(defaultCredentialName("ssh_key"));
+                        }
+                      }}
                       className="accent-primary"
                     />
                     Save as a named credential (visible in the Credentials list)
                   </label>
+                  {saveCredential && (
+                    <div className="space-y-2">
+                      <Label htmlFor="ssh-cred-name">
+                        Credential Name *
+                      </Label>
+                      <Input
+                        id="ssh-cred-name"
+                        placeholder="server-key"
+                        value={inlineCredentialName}
+                        onChange={(e) => setInlineCredentialName(e.target.value)}
+                      />
+                    </div>
+                  )}
                 </TabsContent>
               </Tabs>
             </div>
