@@ -28,6 +28,7 @@ pub fn run() {
             commands::ssh::ssh_write,
             commands::ssh::ssh_resize,
             commands::ssh::ssh_disconnect,
+            commands::screenshot::take_screenshot,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -9,12 +9,14 @@ import { SettingsPanel } from "./components/SettingsPanel";
 import { SearchBar } from "./components/SearchBar";
 import { TerminalTabs, TerminalSession } from "./components/TerminalTabs";
 import { ConnectPicker } from "./components/ConnectPicker";
+import { ContextMenu } from "./components/ContextMenu";
 import { Button } from "./components/ui/button";
 import { useConnectionsStore } from "./store/useConnectionsStore";
 import { useCredentialsStore } from "./store/useCredentialsStore";
 import { useSettingsStore } from "./store/useSettingsStore";
 import { useApplySettings } from "./hooks/useApplySettings";
 import { invoke } from "./lib/tauri";
+import { takeScreenshot } from "./lib/screenshot";
 import { Connection, Credential } from "./types";
 import { Plus } from "lucide-react";
 
@@ -34,6 +36,8 @@ function App() {
   // We keep them in a ref so the async handler can check after awaiting.
   const cancelledRef = React.useRef<Set<string>>(new Set());
   const [pickerOpen, setPickerOpen] = useState(false);
+  const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null);
+  const [screenshotToast, setScreenshotToast] = useState<string | null>(null);
 
   const {
     connections,
@@ -63,6 +67,26 @@ function App() {
     fetchCredentials();
     fetchSettings();
   }, []);
+
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const { x, y } = (e as CustomEvent<{ x: number; y: number }>).detail;
+      setContextMenu({ x, y });
+    };
+    window.addEventListener("ssx:contextmenu", handler);
+    return () => window.removeEventListener("ssx:contextmenu", handler);
+  }, []);
+
+  const handleTakeScreenshot = async () => {
+    try {
+      const path = await takeScreenshot();
+      setScreenshotToast(path);
+      setTimeout(() => setScreenshotToast(null), 4000);
+    } catch {
+      setScreenshotToast("Screenshot failed.");
+      setTimeout(() => setScreenshotToast(null), 3000);
+    }
+  };
 
   const handleConnSubmit = async (data: Omit<Connection, "id"> | Connection) => {
     if ("id" in data) {
@@ -343,6 +367,22 @@ function App() {
         credentials={credentials}
         onConnect={handleConnect}
       />
+
+      {/* Custom context menu */}
+      {contextMenu && (
+        <ContextMenu
+          position={contextMenu}
+          onClose={() => setContextMenu(null)}
+          onTakeScreenshot={handleTakeScreenshot}
+        />
+      )}
+
+      {/* Screenshot saved toast */}
+      {screenshotToast && (
+        <div className="fixed bottom-4 right-4 z-[9999] bg-popover border rounded-md shadow-lg px-4 py-2 text-sm max-w-xs truncate">
+          📸 Saved: {screenshotToast}
+        </div>
+      )}
     </div>
   );
 }
