@@ -62,7 +62,7 @@ pub fn log_local(level: &str, source: &str, message: impl Into<String>) {
 }
 
 fn push(entry: LogEntry) {
-    let mut buf = BUFFER.lock().unwrap();
+    let mut buf = BUFFER.lock().unwrap_or_else(|e| e.into_inner());
     if buf.len() >= MAX_ENTRIES {
         buf.pop_front();
     }
