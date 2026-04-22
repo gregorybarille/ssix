@@ -167,12 +167,20 @@ pub fn clone_connection(input: CloneConnectionInput) -> Result<Connection, Strin
                                 crate::keychain::store_password(&new_cred_id, &secret)?;
                                 crate::models::CredentialKind::Password { password: String::new() }
                             }
-                            crate::models::CredentialKind::SshKey { private_key_path, .. } => {
+                            crate::models::CredentialKind::SshKey {
+                                private_key_path,
+                                private_key: _,
+                                ..
+                            } => {
                                 if let Some(pp) = crate::keychain::get_passphrase(orig_cred_id) {
                                     crate::keychain::store_passphrase(&new_cred_id, &pp)?;
                                 }
+                                if let Some(pk) = crate::keychain::get_private_key(orig_cred_id) {
+                                    crate::keychain::store_private_key(&new_cred_id, &pk)?;
+                                }
                                 crate::models::CredentialKind::SshKey {
                                     private_key_path: private_key_path.clone(),
+                                    private_key: None,
                                     passphrase: None,
                                 }
                             }

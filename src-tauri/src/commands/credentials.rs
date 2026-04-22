@@ -38,17 +38,53 @@ fn store_secrets_and_sanitize(
         }
         CredentialKind::SshKey {
             private_key_path,
+            private_key,
             passphrase,
         } => {
+            let path_set = private_key_path
+                .as_deref()
+                .map(|s| !s.trim().is_empty())
+                .unwrap_or(false);
+            let inline_set = private_key
+                .as_deref()
+                .map(|s| !s.trim().is_empty())
+                .unwrap_or(false);
+            if !path_set && !inline_set {
+                return Err(
+                    "SSH key credential requires either a private key path or inline key contents"
+                        .to_string(),
+                );
+            }
+            if path_set && inline_set {
+                return Err(
+                    "SSH key credential cannot have both a path and inline contents; choose one"
+                        .to_string(),
+                );
+            }
             if let Some(pp) = passphrase.as_deref() {
                 if !pp.is_empty() {
                     keychain::store_passphrase(credential_id, pp)?;
                 }
             }
-            Ok(CredentialKind::SshKey {
-                private_key_path: private_key_path.clone(),
-                passphrase: None,
-            })
+            if inline_set {
+                // Persist the inline key body to the secrets file and strip it
+                // from the JSON-bound copy.
+                keychain::store_private_key(
+                    credential_id,
+                    private_key.as_deref().unwrap(),
+                )?;
+                Ok(CredentialKind::SshKey {
+                    private_key_path: None,
+                    private_key: None,
+                    passphrase: None,
+                })
+            } else {
+                Ok(CredentialKind::SshKey {
+                    private_key_path: private_key_path.clone(),
+                    private_key: None,
+                    passphrase: None,
+                })
+            }
         }
     }
 }
@@ -151,7 +187,8 @@ mod tests {
     #[test]
     fn test_credential_ssh_key() {
         let kind = CredentialKind::SshKey {
-            private_key_path: "/home/user/.ssh/id_rsa".to_string(),
+            private_key_path: Some("/home/user/.ssh/id_rsa".to_string()),
+            private_key: None,
             passphrase: None,
         };
         let cred = Credential::new("my_key".to_string(), "admin".to_string(), kind);
@@ -171,6 +208,52 @@ mod tests {
         let json = r#"{"id":"1","name":"old","username":"u","type":"password","password":""}"#;
         let cred: Credential = serde_json::from_str(json).unwrap();
         assert!(!cred.is_private);
+    }
+
+    #[test]
+    fn test_sanitize_rejects_neither_path_nor_inline() {
+        let kind = CredentialKind::SshKey {
+            private_key_path: None,
+            private_key: None,
+            passphrase: None,
+        };
+        let err = super::store_secrets_and_sanitize("test-id-bad-1", &kind).unwrap_err();
+        assert!(err.to_lowercase().contains("either"));
+    }
+
+    #[test]
+    fn test_sanitize_rejects_both_path_and_inline() {
+        let kind = CredentialKind::SshKey {
+            private_key_path: Some("/tmp/x".into()),
+            private_key: Some("KEY".into()),
+            passphrase: None,
+        };
+        let err = super::store_secrets_and_sanitize("test-id-bad-2", &kind).unwrap_err();
+        assert!(err.to_lowercase().contains("both"));
+    }
+
+    #[test]
+    fn test_sanitize_inline_strips_key_and_persists_secret() {
+        let id = "test-id-sanitize-inline-da7e3f8c";
+        let kind = CredentialKind::SshKey {
+            private_key_path: None,
+            private_key: Some("INLINE-PRIVATE-KEY-CONTENT".into()),
+            passphrase: None,
+        };
+        let sanitized = super::store_secrets_and_sanitize(id, &kind).unwrap();
+        match &sanitized {
+            CredentialKind::SshKey {
+                private_key,
+                private_key_path,
+                ..
+            } => {
+                assert!(private_key.is_none());
+                assert!(private_key_path.is_none());
+            }
+            _ => panic!("unexpected kind"),
+        }
+        // Cleanup
+        crate::keychain::delete_all_for_credential(id);
     }
 }
 

@@ -4,6 +4,7 @@ import { Button } from "./ui/button";
 import { Input } from "./ui/input";
 import { PasswordInput } from "./ui/password-input";
 import { Label } from "./ui/label";
+import { Textarea } from "./ui/textarea";
 import {
   Dialog,
   DialogContent,
@@ -12,6 +13,7 @@ import {
   DialogFooter,
 } from "./ui/dialog";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "./ui/tabs";
+import { GenerateKeyDialog, GeneratedKey, KeyStorageMode } from "./GenerateKeyDialog";
 
 interface CredentialFormProps {
   open: boolean;
@@ -19,6 +21,8 @@ interface CredentialFormProps {
   credential?: Credential | null;
   onSubmit: (data: Omit<Credential, "id"> | Credential) => Promise<void>;
 }
+
+type KeySource = "path" | "inline";
 
 export function CredentialForm({
   open,
@@ -30,8 +34,12 @@ export function CredentialForm({
   const [username, setUsername] = useState("");
   const [credType, setCredType] = useState<"password" | "ssh_key">("password");
   const [password, setPassword] = useState("");
+  const [keySource, setKeySource] = useState<KeySource>("path");
   const [privateKeyPath, setPrivateKeyPath] = useState("");
+  const [privateKey, setPrivateKey] = useState("");
   const [passphrase, setPassphrase] = useState("");
+  const [generatedPublicKey, setGeneratedPublicKey] = useState<string | null>(null);
+  const [generateOpen, setGenerateOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
@@ -42,6 +50,8 @@ export function CredentialForm({
       setCredType(credential.type);
       setPassword(credential.password ?? "");
       setPrivateKeyPath(credential.private_key_path ?? "");
+      setPrivateKey(credential.private_key ?? "");
+      setKeySource(credential.private_key ? "inline" : "path");
       setPassphrase(credential.passphrase ?? "");
     } else {
       setName("");
@@ -49,26 +59,59 @@ export function CredentialForm({
       setCredType("password");
       setPassword("");
       setPrivateKeyPath("");
+      setPrivateKey("");
+      setKeySource("path");
       setPassphrase("");
     }
+    setGeneratedPublicKey(null);
     setError(null);
   }, [credential, open]);
+
+  const handleGenerated = (key: GeneratedKey, mode: KeyStorageMode) => {
+    setGeneratedPublicKey(key.public_key);
+    if (mode === "inline") {
+      setKeySource("inline");
+      setPrivateKey(key.private_key);
+      setPrivateKeyPath("");
+    } else {
+      setKeySource("path");
+      setPrivateKeyPath(key.private_key_path ?? "");
+      setPrivateKey("");
+    }
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
     setIsSubmitting(true);
     try {
-      if (credType === "ssh_key" && !privateKeyPath.trim()) {
-        throw new Error("Private key path is required");
+      let kindFields: Partial<Credential>;
+      if (credType === "password") {
+        kindFields = { password };
+      } else {
+        if (keySource === "path") {
+          if (!privateKeyPath.trim()) {
+            throw new Error("Private key path is required");
+          }
+          kindFields = {
+            private_key_path: privateKeyPath,
+            passphrase: passphrase || undefined,
+          };
+        } else {
+          if (!privateKey.trim()) {
+            throw new Error("Private key contents are required");
+          }
+          kindFields = {
+            private_key: privateKey,
+            passphrase: passphrase || undefined,
+          };
+        }
       }
       const data: Omit<Credential, "id"> = {
         name,
         username,
         type: credType,
-        ...(credType === "password"
-          ? { password }
-          : { private_key_path: privateKeyPath, passphrase: passphrase || undefined }),
+        ...kindFields,
       };
       if (credential) {
         await onSubmit({ ...data, id: credential.id });
@@ -137,15 +180,70 @@ export function CredentialForm({
               </div>
             </TabsContent>
             <TabsContent value="ssh_key" className="space-y-4 mt-4">
-              <div className="space-y-2">
-                <Label htmlFor="cred-key-path">Private Key Path *</Label>
-                <Input
-                  id="cred-key-path"
-                  placeholder="/home/user/.ssh/id_rsa"
-                  value={privateKeyPath}
-                  onChange={(e) => setPrivateKeyPath(e.target.value)}
-                />
+              <div className="flex items-center justify-between">
+                <div role="tablist" aria-label="Key source" className="inline-flex rounded-md border border-input p-0.5 bg-background">
+                  <button
+                    type="button"
+                    role="tab"
+                    aria-selected={keySource === "path"}
+                    onClick={() => setKeySource("path")}
+                    className={`px-3 py-1 text-xs rounded ${
+                      keySource === "path"
+                        ? "bg-accent text-accent-foreground"
+                        : "text-muted-foreground"
+                    }`}
+                  >
+                    Path
+                  </button>
+                  <button
+                    type="button"
+                    role="tab"
+                    aria-selected={keySource === "inline"}
+                    onClick={() => setKeySource("inline")}
+                    className={`px-3 py-1 text-xs rounded ${
+                      keySource === "inline"
+                        ? "bg-accent text-accent-foreground"
+                        : "text-muted-foreground"
+                    }`}
+                  >
+                    Paste key
+                  </button>
+                </div>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setGenerateOpen(true)}
+                >
+                  Generate key…
+                </Button>
               </div>
+              {keySource === "path" ? (
+                <div className="space-y-2">
+                  <Label htmlFor="cred-key-path">Private Key Path *</Label>
+                  <Input
+                    id="cred-key-path"
+                    placeholder="/home/user/.ssh/id_rsa"
+                    value={privateKeyPath}
+                    onChange={(e) => setPrivateKeyPath(e.target.value)}
+                  />
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  <Label htmlFor="cred-key-inline">Private Key Contents *</Label>
+                  <Textarea
+                    id="cred-key-inline"
+                    rows={6}
+                    placeholder="-----BEGIN OPENSSH PRIVATE KEY-----&#10;..."
+                    value={privateKey}
+                    onChange={(e) => setPrivateKey(e.target.value)}
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    Stored in SSX's secrets file (~/.ssx/secrets.json) and used
+                    via in-memory authentication.
+                  </p>
+                </div>
+              )}
               <div className="space-y-2">
                 <Label htmlFor="cred-passphrase">Passphrase (optional)</Label>
                 <PasswordInput
@@ -155,6 +253,29 @@ export function CredentialForm({
                   onChange={(e) => setPassphrase(e.target.value)}
                 />
               </div>
+              {generatedPublicKey && (
+                <div className="space-y-2">
+                  <Label>Public key (share this with the remote host)</Label>
+                  <div className="flex gap-2">
+                    <Textarea
+                      readOnly
+                      rows={3}
+                      value={generatedPublicKey}
+                      className="text-xs"
+                    />
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={() => {
+                        navigator.clipboard?.writeText(generatedPublicKey).catch(() => {});
+                      }}
+                    >
+                      Copy
+                    </Button>
+                  </div>
+                </div>
+              )}
             </TabsContent>
           </Tabs>
 
@@ -178,6 +299,12 @@ export function CredentialForm({
             </Button>
           </DialogFooter>
         </form>
+        <GenerateKeyDialog
+          open={generateOpen}
+          onOpenChange={setGenerateOpen}
+          nameHint={name}
+          onGenerated={handleGenerated}
+        />
       </DialogContent>
     </Dialog>
   );

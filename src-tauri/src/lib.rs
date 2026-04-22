@@ -29,6 +29,9 @@ pub fn run() {
             commands::ssh::ssh_write,
             commands::ssh::ssh_resize,
             commands::ssh::ssh_disconnect,
+            commands::ssh_keygen::generate_ssh_key,
+            commands::ssh_keygen::ssh_install_public_key,
+            commands::ssh_keygen::ssh_install_public_key_by_credential,
             commands::screenshot::take_screenshot,
         ])
         .run(tauri::generate_context!())

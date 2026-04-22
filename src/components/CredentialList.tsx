@@ -1,8 +1,9 @@
-import React from "react";
+import React, { useState } from "react";
 import { Credential } from "@/types";
 import { Button } from "./ui/button";
 import { Badge } from "./ui/badge";
-import { Key, Lock, Edit, Trash2 } from "lucide-react";
+import { Key, Lock, Edit, Trash2, UploadCloud } from "lucide-react";
+import { InstallKeyDialog } from "./InstallKeyDialog";
 
 interface CredentialListProps {
   credentials: Credential[];
@@ -15,6 +16,8 @@ export function CredentialList({
   onEdit,
   onDelete,
 }: CredentialListProps) {
+  const [installCred, setInstallCred] = useState<Credential | null>(null);
+
   if (credentials.length === 0) {
     return (
       <div className="flex flex-col items-center justify-center py-12 text-muted-foreground">
@@ -51,9 +54,23 @@ export function CredentialList({
               {cred.type === "ssh_key" && cred.private_key_path && (
                 <span className="ml-2 opacity-70">· {cred.private_key_path}</span>
               )}
+              {cred.type === "ssh_key" && cred.private_key && !cred.private_key_path && (
+                <span className="ml-2 opacity-70">· inline</span>
+              )}
             </p>
           </div>
           <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+            {cred.type === "ssh_key" && (
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-7 w-7"
+                onClick={() => setInstallCred(cred)}
+                title="Install public key on remote host"
+              >
+                <UploadCloud className="h-3.5 w-3.5" />
+              </Button>
+            )}
             <Button
               variant="ghost"
               size="icon"
@@ -75,6 +92,14 @@ export function CredentialList({
           </div>
         </div>
       ))}
+      {installCred && (
+        <InstallKeyDialog
+          open={!!installCred}
+          onOpenChange={(o) => !o && setInstallCred(null)}
+          credentialId={installCred.id}
+          defaultUsername={installCred.username}
+        />
+      )}
     </div>
   );
 }

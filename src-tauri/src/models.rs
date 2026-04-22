@@ -4,8 +4,21 @@ use uuid::Uuid;
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum CredentialKind {
-    Password { password: String },
-    SshKey { private_key_path: String, passphrase: Option<String> },
+    Password {
+        password: String,
+    },
+    /// SSH key credential. Exactly one of `private_key_path` (key on disk) or
+    /// `private_key` (inline key contents stored in the secrets file) must be
+    /// set. The unset field is `None`/absent. `passphrase` is optional in both
+    /// cases.
+    SshKey {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        private_key_path: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        private_key: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        passphrase: Option<String>,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -357,5 +370,52 @@ mod tests {
         }"#;
         let conn: Connection = serde_json::from_str(json).unwrap();
         assert!(conn.extra_args.is_none());
+    }
+
+    #[test]
+    fn test_ssh_key_legacy_path_only_deserializes() {
+        // Legacy JSON: SshKey with private_key_path as required string and no private_key field.
+        let json = r#"{"type":"ssh_key","private_key_path":"/home/u/.ssh/id_rsa","passphrase":null}"#;
+        let kind: CredentialKind = serde_json::from_str(json).unwrap();
+        match kind {
+            CredentialKind::SshKey {
+                private_key_path,
+                private_key,
+                passphrase,
+            } => {
+                assert_eq!(private_key_path.as_deref(), Some("/home/u/.ssh/id_rsa"));
+                assert!(private_key.is_none());
+                assert!(passphrase.is_none());
+            }
+            _ => panic!("expected SshKey"),
+        }
+    }
+
+    #[test]
+    fn test_ssh_key_inline_roundtrip() {
+        let kind = CredentialKind::SshKey {
+            private_key_path: None,
+            private_key: Some("-----BEGIN OPENSSH PRIVATE KEY-----\n...".into()),
+            passphrase: None,
+        };
+        let json = serde_json::to_string(&kind).unwrap();
+        assert!(json.contains(r#""type":"ssh_key""#));
+        assert!(json.contains(r#""private_key":"#));
+        assert!(!json.contains("private_key_path"));
+        let back: CredentialKind = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, kind);
+    }
+
+    #[test]
+    fn test_ssh_key_path_only_roundtrip_omits_private_key() {
+        let kind = CredentialKind::SshKey {
+            private_key_path: Some("/home/u/.ssh/id_ed25519".into()),
+            private_key: None,
+            passphrase: None,
+        };
+        let json = serde_json::to_string(&kind).unwrap();
+        assert!(json.contains(r#""private_key_path":"#));
+        assert!(!json.contains(r#""private_key":"#));
+        assert!(!json.contains(r#""passphrase":"#));
     }
 }

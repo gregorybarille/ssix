@@ -22,10 +22,23 @@ fn resolve_credential(
         CredentialKind::Password { password } => AuthMethod::Password(password.clone()),
         CredentialKind::SshKey {
             private_key_path,
+            private_key,
             passphrase,
-        } => AuthMethod::Key {
-            path: private_key_path.clone(),
-            passphrase: passphrase.clone(),
+        } => match (private_key.as_deref(), private_key_path.as_deref()) {
+            (Some(pk), _) => AuthMethod::KeyMemory {
+                private_key: pk.to_string(),
+                passphrase: passphrase.clone(),
+            },
+            (None, Some(path)) => AuthMethod::Key {
+                path: path.to_string(),
+                passphrase: passphrase.clone(),
+            },
+            (None, None) => {
+                return Err(format!(
+                    "Credential {} (ssh_key) has neither a private_key_path nor inline key",
+                    cred_id
+                ));
+            }
         },
     };
     Ok((username, auth))

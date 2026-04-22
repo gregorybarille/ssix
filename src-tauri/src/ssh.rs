@@ -17,6 +17,10 @@ pub enum AuthMethod {
         path: String,
         passphrase: Option<String>,
     },
+    KeyMemory {
+        private_key: String,
+        passphrase: Option<String>,
+    },
 }
 
 impl Clone for AuthMethod {
@@ -25,6 +29,13 @@ impl Clone for AuthMethod {
             AuthMethod::Password(p) => AuthMethod::Password(p.clone()),
             AuthMethod::Key { path, passphrase } => AuthMethod::Key {
                 path: path.clone(),
+                passphrase: passphrase.clone(),
+            },
+            AuthMethod::KeyMemory {
+                private_key,
+                passphrase,
+            } => AuthMethod::KeyMemory {
+                private_key: private_key.clone(),
                 passphrase: passphrase.clone(),
             },
         }
@@ -144,6 +155,14 @@ fn open_shell(
                 .userauth_pubkey_file(username, None, Path::new(path), passphrase.as_deref())
                 .map_err(|e| format!("Key auth failed: {}", e))?;
         }
+        AuthMethod::KeyMemory {
+            private_key,
+            passphrase,
+        } => {
+            session
+                .userauth_pubkey_memory(username, None, private_key, passphrase.as_deref())
+                .map_err(|e| format!("Key auth failed: {}", e))?;
+        }
     }
 
     if !session.authenticated() {
@@ -205,6 +224,14 @@ fn open_shell_over_stream(
         AuthMethod::Key { path, passphrase } => {
             session
                 .userauth_pubkey_file(username, None, Path::new(path), passphrase.as_deref())
+                .map_err(|e| format!("Key auth failed: {}", e))?;
+        }
+        AuthMethod::KeyMemory {
+            private_key,
+            passphrase,
+        } => {
+            session
+                .userauth_pubkey_memory(username, None, private_key, passphrase.as_deref())
                 .map_err(|e| format!("Key auth failed: {}", e))?;
         }
     }
@@ -341,6 +368,14 @@ fn open_gateway_session(
         AuthMethod::Key { path, passphrase } => {
             session
                 .userauth_pubkey_file(username, None, Path::new(path), passphrase.as_deref())
+                .map_err(|e| format!("Gateway key auth failed: {}", e))?;
+        }
+        AuthMethod::KeyMemory {
+            private_key,
+            passphrase,
+        } => {
+            session
+                .userauth_pubkey_memory(username, None, private_key, passphrase.as_deref())
                 .map_err(|e| format!("Gateway key auth failed: {}", e))?;
         }
     }

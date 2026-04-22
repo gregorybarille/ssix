@@ -19,6 +19,8 @@ import {
   SelectValue,
 } from "./ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "./ui/tabs";
+import { InstallKeyDialog } from "./InstallKeyDialog";
+import { UploadCloud } from "lucide-react";
 
 type AuthMethod = "password" | "ssh_key" | "credential";
 
@@ -244,28 +246,56 @@ export function ConnectionForm({
     ? "Edit Connection"
     : "New Connection";
 
+  const selectedCredential = credentials.find((c) => c.id === form.credential_id);
+  const canInstallKey =
+    selectedCredential?.type === "ssh_key" && form.host.trim().length > 0;
+  const [installOpen, setInstallOpen] = useState(false);
+
   const credentialPicker = (
-    <Select
-      value={form.credential_id ?? "none"}
-      onValueChange={(v) =>
-        setForm({
-          ...form,
-          credential_id: v === "none" ? undefined : v,
-        })
-      }
-    >
-      <SelectTrigger>
-        <SelectValue placeholder="Select credential..." />
-      </SelectTrigger>
-      <SelectContent>
-        <SelectItem value="none">None</SelectItem>
-        {credentials.map((cred) => (
-          <SelectItem key={cred.id} value={cred.id}>
-            {cred.name} ({cred.username})
-          </SelectItem>
-        ))}
-      </SelectContent>
-    </Select>
+    <div className="space-y-2">
+      <Select
+        value={form.credential_id ?? "none"}
+        onValueChange={(v) =>
+          setForm({
+            ...form,
+            credential_id: v === "none" ? undefined : v,
+          })
+        }
+      >
+        <SelectTrigger>
+          <SelectValue placeholder="Select credential..." />
+        </SelectTrigger>
+        <SelectContent>
+          <SelectItem value="none">None</SelectItem>
+          {credentials.map((cred) => (
+            <SelectItem key={cred.id} value={cred.id}>
+              {cred.name} ({cred.username})
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+      {canInstallKey && selectedCredential && (
+        <>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={() => setInstallOpen(true)}
+          >
+            <UploadCloud className="h-3.5 w-3.5 mr-1.5" />
+            Install on remote
+          </Button>
+          <InstallKeyDialog
+            open={installOpen}
+            onOpenChange={setInstallOpen}
+            credentialId={selectedCredential.id}
+            defaultHost={form.host}
+            defaultPort={form.port}
+            defaultUsername={selectedCredential.username}
+          />
+        </>
+      )}
+    </div>
   );
 
   const gatewayBlock = (

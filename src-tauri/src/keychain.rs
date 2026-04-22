@@ -77,6 +77,10 @@ fn passphrase_key(credential_id: &str) -> String {
     format!("{}:passphrase", credential_id)
 }
 
+fn private_key_key(credential_id: &str) -> String {
+    format!("{}:private_key", credential_id)
+}
+
 /// Store a password in the secrets file.
 pub fn store_password(credential_id: &str, password: &str) -> Result<(), String> {
     let key = password_key(credential_id);
@@ -115,11 +119,35 @@ fn delete_passphrase(credential_id: &str) {
     let _ = with_secrets_mut(|s| { s.remove(&key); });
 }
 
+/// Store an inline SSH private key (PEM/OpenSSH text) in the secrets file.
+pub fn store_private_key(credential_id: &str, private_key: &str) -> Result<(), String> {
+    let key = private_key_key(credential_id);
+    let val = private_key.to_string();
+    with_secrets_mut(|s| { s.insert(key, val); })
+}
+
+/// Retrieve an inline SSH private key from the secrets file.
+pub fn get_private_key(credential_id: &str) -> Option<String> {
+    with_secrets(|s| s.get(&private_key_key(credential_id)).cloned())
+}
+
+/// Delete an inline private key entry.
+#[cfg(test)]
+fn delete_private_key(credential_id: &str) {
+    let key = private_key_key(credential_id);
+    let _ = with_secrets_mut(|s| { s.remove(&key); });
+}
+
 /// Delete all secret entries associated with a credential ID.
 pub fn delete_all_for_credential(credential_id: &str) {
     let pk = password_key(credential_id);
     let ppk = passphrase_key(credential_id);
-    let _ = with_secrets_mut(|s| { s.remove(&pk); s.remove(&ppk); });
+    let pkk = private_key_key(credential_id);
+    let _ = with_secrets_mut(|s| {
+        s.remove(&pk);
+        s.remove(&ppk);
+        s.remove(&pkk);
+    });
 }
 
 /// Enrich a `Credential` by filling in secrets from the secrets file.
@@ -136,14 +164,22 @@ pub fn enrich_credential(cred: &mut Credential) {
         }
         CredentialKind::SshKey {
             private_key_path,
-            passphrase: None,
+            private_key,
+            passphrase,
         } => {
-            if let Some(pp) = get_passphrase(&cred.id) {
-                cred.kind = CredentialKind::SshKey {
-                    private_key_path: private_key_path.clone(),
-                    passphrase: Some(pp),
-                };
+            let mut new_pk = private_key.clone();
+            let mut new_pp = passphrase.clone();
+            if new_pk.is_none() {
+                new_pk = get_private_key(&cred.id);
             }
+            if new_pp.is_none() {
+                new_pp = get_passphrase(&cred.id);
+            }
+            cred.kind = CredentialKind::SshKey {
+                private_key_path: private_key_path.clone(),
+                private_key: new_pk,
+                passphrase: new_pp,
+            };
         }
         _ => {}
     }
@@ -172,7 +208,8 @@ mod tests {
             name: "key-test".to_string(),
             username: "user".to_string(),
             kind: CredentialKind::SshKey {
-                private_key_path: "/home/user/.ssh/id_rsa".to_string(),
+                private_key_path: Some("/home/user/.ssh/id_rsa".to_string()),
+                private_key: None,
                 passphrase: passphrase.map(str::to_string),
             },
             is_private: false,
@@ -241,8 +278,43 @@ mod tests {
         let id = "ssx-test-delete-all-da7e3f8c";
         store_password(id, "pw").unwrap();
         store_passphrase(id, "pp").unwrap();
+        store_private_key(id, "key-data").unwrap();
         delete_all_for_credential(id);
         assert!(get_password(id).is_none());
         assert!(get_passphrase(id).is_none());
+        assert!(get_private_key(id).is_none());
+    }
+
+    #[test]
+    fn store_and_retrieve_private_key() {
+        let id = "ssx-test-store-pk-da7e3f8c";
+        store_private_key(id, "INLINE-KEY").unwrap();
+        let pk = get_private_key(id);
+        delete_private_key(id);
+        assert_eq!(pk.as_deref(), Some("INLINE-KEY"));
+    }
+
+    #[test]
+    fn enrich_credential_loads_inline_private_key_from_secrets() {
+        let id = "ssx-test-enrich-pk-da7e3f8c";
+        store_private_key(id, "SECRET-KEY-BODY").unwrap();
+        let mut cred = Credential {
+            id: id.to_string(),
+            name: "k".to_string(),
+            username: "u".to_string(),
+            kind: CredentialKind::SshKey {
+                private_key_path: None,
+                private_key: None,
+                passphrase: None,
+            },
+            is_private: false,
+        };
+        enrich_credential(&mut cred);
+        delete_private_key(id);
+        if let CredentialKind::SshKey { private_key, .. } = &cred.kind {
+            assert_eq!(private_key.as_deref(), Some("SECRET-KEY-BODY"));
+        } else {
+            panic!("unexpected kind");
+        }
     }
 }

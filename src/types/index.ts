@@ -1,6 +1,11 @@
 export type CredentialKind =
   | { type: "password"; password: string }
-  | { type: "ssh_key"; private_key_path: string; passphrase?: string };
+  | {
+      type: "ssh_key";
+      private_key_path?: string;
+      private_key?: string;
+      passphrase?: string;
+    };
 
 export interface Credential {
   id: string;
@@ -8,7 +13,10 @@ export interface Credential {
   username: string;
   type: "password" | "ssh_key";
   password?: string;
+  /** Filesystem path to the private key. Mutually exclusive with `private_key`. */
   private_key_path?: string;
+  /** Inline private key contents (OpenSSH PEM). Mutually exclusive with `private_key_path`. */
+  private_key?: string;
   passphrase?: string;
   /** When true: auto-created for inline auth, not shown in the credentials list. */
   is_private?: boolean;
