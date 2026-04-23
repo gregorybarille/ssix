@@ -1,78 +1,75 @@
-# Development Guide
+# Development
 
 ## Prerequisites
 
-### Node.js 20+
+- Node.js 20+
+- Rust stable
+- Tauri CLI
 
-Download from [nodejs.org](https://nodejs.org/) or via a version manager:
-
-```bash
-# macOS (Homebrew)
-brew install node
-
-# or via nvm
-nvm install 20 && nvm use 20
-```
-
-### Rust (stable)
-
-```bash
-curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
-```
-
-After installation, restart your shell or run `source ~/.cargo/env`. Verify with:
-
-```bash
-rustc --version
-cargo --version
-```
-
-### Tauri CLI
-
-```bash
-cargo install tauri-cli --version "^2"
-```
-
-Or via npm (no Rust compilation required):
-
-```bash
-npm install -g @tauri-apps/cli
-```
-
-### System dependencies (Linux only)
-
-```bash
-sudo apt-get update && sudo apt-get install -y \
-  libwebkit2gtk-4.1-dev build-essential curl wget file \
-  libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev
-```
-
-## Setup
+Install frontend dependencies:
 
 ```bash
 npm install
 ```
 
-## Running
+Install Tauri CLI if needed:
+
+```bash
+cargo install tauri-cli --version "^2"
+```
+
+## Main Commands
 
 ```bash
 npm run tauri dev
+npm run build
+npm test
+cd src-tauri && cargo test
 ```
+
+## Repo Structure
+
+- `src/` frontend app
+- `src-tauri/` backend app
+- `docs/` product and engineering documentation
+- `docker/` local SSH test environment
+
+## Engineering Conventions
+
+- Keep frontend and backend models in sync.
+- Add tests for every new feature.
+- Prefer minimal changes over introducing extra abstractions.
+- Treat Zustand stores as the async boundary.
+- Keep components primarily presentational where possible.
 
 ## Testing
 
 Frontend:
-```bash
-npm test
-```
+
+- Vitest
+- Testing Library
+- Tauri APIs mocked centrally in `src/test/setup.ts`
 
 Backend:
-```bash
-cd src-tauri && cargo test
-```
 
-## Building
+- Rust unit tests inside the relevant modules
 
-```bash
-npm run tauri build
-```
+## Adding A New Tauri Command
+
+1. Update `src-tauri/src/models.rs` if the data model changes.
+2. Add the command in `src-tauri/src/commands/`.
+3. Register it in `src-tauri/src/lib.rs`.
+4. Mirror the shape in `src/types/index.ts`.
+5. Add store integration in `src/store/`.
+6. Wire the UI.
+7. Add frontend and/or backend tests.
+
+## Manual Verification Suggestions
+
+- Direct shell with password auth
+- Direct shell with SSH key auth
+- Jump-shell through gateway
+- Port forward and local client access
+- SCP file transfer
+- Recursive SCP directory transfer
+- Git Sync export, diff, one-click sync

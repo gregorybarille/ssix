@@ -45,6 +45,8 @@ const DEFAULT_FORM: Omit<Connection, "id"> = {
   type: "direct",
   verbosity: 0,
   extra_args: "",
+  login_command: "",
+  remote_path: "",
   tags: [],
   color: undefined,
 };
@@ -80,6 +82,8 @@ export function ConnectionForm({
         type: connection.type,
         verbosity: connection.verbosity ?? 0,
         extra_args: connection.extra_args ?? "",
+        login_command: connection.login_command ?? "",
+        remote_path: connection.remote_path ?? "",
         tags: connection.tags ?? [],
         color: connection.color,
         gateway_host: connection.gateway_host,
@@ -209,6 +213,8 @@ export function ConnectionForm({
         type: connectionType,
         verbosity: form.verbosity ?? 0,
         extra_args: form.extra_args || undefined,
+        login_command: form.login_command || undefined,
+        remote_path: form.remote_path || undefined,
         tags: form.tags ?? [],
         color: form.color,
       };
@@ -703,6 +709,32 @@ export function ConnectionForm({
             <p className="text-xs text-muted-foreground">
               Pass extra flags to the SSH session (e.g. <code>-C</code> to
               enable compression). Unknown flags are ignored.
+            </p>
+          </div>
+
+          <div className="space-y-2">
+            <Label htmlFor="login_command">Login Command</Label>
+            <Input
+              id="login_command"
+              placeholder="sudo su - deploy"
+              value={form.login_command ?? ""}
+              onChange={(e) => setForm({ ...form, login_command: e.target.value })}
+            />
+            <p className="text-xs text-muted-foreground">
+              Runs after login. Useful for switching users or bootstrapping a shell.
+            </p>
+          </div>
+
+          <div className="space-y-2">
+            <Label htmlFor="remote_path">Remote Path</Label>
+            <Input
+              id="remote_path"
+              placeholder="/srv/app"
+              value={form.remote_path ?? ""}
+              onChange={(e) => setForm({ ...form, remote_path: e.target.value })}
+            />
+            <p className="text-xs text-muted-foreground">
+              Preferred starting directory for shells and default base path for SCP transfers.
             </p>
           </div>
 

@@ -187,6 +187,48 @@ export function SettingsPanel({ settings, onSave }: SettingsPanelProps) {
         </div>
       </div>
 
+      <Separator />
+
+      <div className="space-y-4">
+        <h3 className="text-sm font-medium">Git Sync</h3>
+        <p className="text-xs text-muted-foreground">
+          Sync a sanitized copy of your SSX config to a git checkout. Secrets remain excluded.
+        </p>
+
+        <div className="space-y-2">
+          <Label htmlFor="git-sync-repo-path">Repository path</Label>
+          <input
+            id="git-sync-repo-path"
+            className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+            value={form.git_sync_repo_path ?? ""}
+            onChange={(e) => setForm({ ...form, git_sync_repo_path: e.target.value || undefined })}
+            placeholder="/Users/me/config-repo"
+          />
+        </div>
+
+        <div className="space-y-2">
+          <Label htmlFor="git-sync-remote">Remote name</Label>
+          <input
+            id="git-sync-remote"
+            className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+            value={form.git_sync_remote}
+            onChange={(e) => setForm({ ...form, git_sync_remote: e.target.value || "origin" })}
+            placeholder="origin"
+          />
+        </div>
+
+        <div className="space-y-2">
+          <Label htmlFor="git-sync-branch">Branch override</Label>
+          <input
+            id="git-sync-branch"
+            className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+            value={form.git_sync_branch ?? ""}
+            onChange={(e) => setForm({ ...form, git_sync_branch: e.target.value || undefined })}
+            placeholder="main"
+          />
+        </div>
+      </div>
+
       <div className="flex items-center gap-3">
         <Button onClick={handleSave} disabled={isSaving}>
           {isSaving ? "Saving..." : "Save Settings"}

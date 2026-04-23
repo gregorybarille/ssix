@@ -16,6 +16,10 @@ pub struct AddConnectionInput {
     #[serde(default)]
     pub extra_args: Option<String>,
     #[serde(default)]
+    pub login_command: Option<String>,
+    #[serde(default)]
+    pub remote_path: Option<String>,
+    #[serde(default)]
     pub tags: Vec<String>,
     #[serde(default)]
     pub color: Option<String>,
@@ -34,6 +38,10 @@ pub struct UpdateConnectionInput {
     pub verbosity: u8,
     #[serde(default)]
     pub extra_args: Option<String>,
+    #[serde(default)]
+    pub login_command: Option<String>,
+    #[serde(default)]
+    pub remote_path: Option<String>,
     #[serde(default)]
     pub tags: Vec<String>,
     #[serde(default)]
@@ -65,6 +73,8 @@ pub fn add_connection(input: AddConnectionInput) -> Result<Connection, String> {
             Connection::new(input.name, input.host, input.port, input.credential_id, input.kind);
         connection.verbosity = input.verbosity;
         connection.extra_args = input.extra_args;
+        connection.login_command = normalize_optional_text(input.login_command);
+        connection.remote_path = normalize_remote_path(input.remote_path);
         connection.tags = normalize_tags(input.tags);
         connection.color = input.color;
         data.connections.push(connection.clone());
@@ -99,6 +109,8 @@ pub fn update_connection(input: UpdateConnectionInput) -> Result<Connection, Str
         data.connections[idx].kind = input.kind;
         data.connections[idx].verbosity = input.verbosity;
         data.connections[idx].extra_args = input.extra_args;
+        data.connections[idx].login_command = normalize_optional_text(input.login_command);
+        data.connections[idx].remote_path = normalize_remote_path(input.remote_path);
         data.connections[idx].tags = normalize_tags(input.tags);
         data.connections[idx].color = input.color;
         let updated = data.connections[idx].clone();
@@ -248,6 +260,8 @@ pub fn clone_connection(input: CloneConnectionInput) -> Result<Connection, Strin
             kind: original.kind,
             verbosity: original.verbosity,
             extra_args: original.extra_args,
+            login_command: original.login_command,
+            remote_path: original.remote_path,
             tags: original.tags,
             color: original.color,
         };
@@ -271,6 +285,21 @@ fn normalize_tags(tags: Vec<String>) -> Vec<String> {
         }
     }
     out
+}
+
+fn normalize_optional_text(value: Option<String>) -> Option<String> {
+    value.and_then(|text| {
+        let trimmed = text.trim();
+        if trimmed.is_empty() {
+            None
+        } else {
+            Some(trimmed.to_string())
+        }
+    })
+}
+
+fn normalize_remote_path(value: Option<String>) -> Option<String> {
+    normalize_optional_text(value).map(|path| path.replace('\\', "/"))
 }
 
 #[tauri::command]
@@ -427,5 +456,19 @@ mod tests {
             kind,
         );
         assert_eq!(conn.name, "forward-api");
+    }
+
+    #[test]
+    fn test_normalize_optional_text_drops_blank_values() {
+        assert_eq!(normalize_optional_text(Some("   ".into())), None);
+        assert_eq!(normalize_optional_text(Some(" cmd ".into())), Some("cmd".into()));
+    }
+
+    #[test]
+    fn test_normalize_remote_path_prefers_forward_slashes() {
+        assert_eq!(
+            normalize_remote_path(Some(r#"  C:\Users\greg\repo  "#.into())),
+            Some("C:/Users/greg/repo".into())
+        );
     }
 }

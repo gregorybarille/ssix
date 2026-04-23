@@ -11,6 +11,7 @@ import {
   CornerDownRight,
   ChevronRight,
   Play,
+  ArrowUpDown,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { getColorHex } from "@/lib/colors";
@@ -23,6 +24,7 @@ interface ConnectionListProps {
   onClone: (connection: Connection) => void;
   onSelect?: (connection: Connection) => void;
   onConnect?: (connection: Connection) => void;
+  onScp?: (connection: Connection) => void;
   selectedId?: string;
   layout?: LayoutMode;
   /** Render a tile for each entry instead of a row. */
@@ -84,6 +86,7 @@ export function ConnectionList({
   onClone,
   onSelect,
   onConnect,
+  onScp,
   selectedId,
   layout = "list",
 }: ConnectionListProps) {
@@ -162,6 +165,20 @@ export function ConnectionList({
                     title="Connect"
                   >
                     <Play className="h-3.5 w-3.5" />
+                  </Button>
+                )}
+                {onScp && conn.type !== "port_forward" && (
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="h-7 w-7"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onScp(conn);
+                    }}
+                    title="Transfer files"
+                  >
+                    <ArrowUpDown className="h-3.5 w-3.5" />
                   </Button>
                 )}
                 <Button
@@ -257,6 +274,20 @@ export function ConnectionList({
                   title="Connect"
                 >
                   <Play className="h-3.5 w-3.5" />
+                </Button>
+              )}
+              {onScp && conn.type !== "port_forward" && (
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-7 w-7"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onScp(conn);
+                  }}
+                  title="Transfer files"
+                >
+                  <ArrowUpDown className="h-3.5 w-3.5" />
                 </Button>
               )}
               <Button
