@@ -35,6 +35,15 @@ The connection form can create inline credentials and optionally save them as na
 - retry failed sessions
 - edit source connection from failure UI
 
+### Terminal tab keyboard shortcuts
+
+The terminal tab bar is a true WAI-ARIA tablist. With focus on a tab:
+
+- **Arrow Left / Arrow Right** — move focus and selection between tabs
+- **Home / End** — jump to first / last tab
+- **Delete** or **Cmd/Ctrl+W** — close the focused tab
+- The "x" affordance on tabs is mouse-only.
+
 ## Tunnels
 
 - local port forwarding through a gateway

@@ -104,26 +104,75 @@ export function TerminalTabs({
   settings,
 }: TerminalTabsProps) {
   const [menuOpen, setMenuOpen] = useState(false);
+  const tabRefs = React.useRef(new Map<string, HTMLButtonElement>());
+
+  const focusTabAt = (index: number) => {
+    const wrapped = (index + tabs.length) % tabs.length;
+    const id = tabs[wrapped]?.id;
+    if (!id) return;
+    const el = tabRefs.current.get(id);
+    el?.focus();
+    onSelectTab(id);
+  };
+
+  const handleTabKeyDown = (
+    e: React.KeyboardEvent<HTMLButtonElement>,
+    index: number,
+  ) => {
+    if (e.key === "ArrowRight") {
+      e.preventDefault();
+      focusTabAt(index + 1);
+    } else if (e.key === "ArrowLeft") {
+      e.preventDefault();
+      focusTabAt(index - 1);
+    } else if (e.key === "Home") {
+      e.preventDefault();
+      focusTabAt(0);
+    } else if (e.key === "End") {
+      e.preventDefault();
+      focusTabAt(tabs.length - 1);
+    } else if ((e.key === "Delete" || (e.metaKey && e.key === "w")) && tabs[index]) {
+      e.preventDefault();
+      onCloseTab(tabs[index].id);
+    }
+  };
 
   return (
     <div className="flex flex-col h-full">
       {/* Tab bar */}
-      <div className="flex items-center bg-card border-b border-border min-h-[36px] overflow-x-auto">
-        {tabs.map((tab) => {
+      <div
+        role="tablist"
+        aria-label="Terminal sessions"
+        className="flex items-center bg-card border-b border-border min-h-[36px] overflow-x-auto"
+      >
+        {tabs.map((tab, idx) => {
           const headSession = tab.panes[0];
           // Use first pane's color as the tab accent.
           const color = getColorHex(headSession?.connection?.color);
+          const isActive = activeTabId === tab.id;
+          const label = tab.panes.map((p) => p.connectionName).join(" | ");
           return (
-            <div
+            <button
               key={tab.id}
+              ref={(el) => {
+                if (el) tabRefs.current.set(tab.id, el);
+                else tabRefs.current.delete(tab.id);
+              }}
+              role="tab"
+              type="button"
+              aria-selected={isActive}
+              aria-label={`Terminal ${label}${tab.mode !== "single" ? ` (${tab.mode} split)` : ""}`}
+              tabIndex={isActive ? 0 : -1}
               className={cn(
-                "group flex items-center gap-1.5 px-3 py-1.5 text-xs cursor-pointer border-r border-border shrink-0 max-w-[200px] transition-colors",
-                activeTabId === tab.id
+                "group flex items-center gap-1.5 px-3 py-1.5 text-xs cursor-pointer border-r border-border shrink-0 max-w-[200px] transition-colors text-left",
+                "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset",
+                isActive
                   ? "bg-background text-foreground"
                   : "bg-card text-muted-foreground hover:bg-accent/50 hover:text-foreground",
               )}
               style={color ? { borderLeft: `3px solid ${color}` } : undefined}
               onClick={() => onSelectTab(tab.id)}
+              onKeyDown={(e) => handleTabKeyDown(e, idx)}
             >
               {tab.panes.some((p) => p.error) && (
                 <span
@@ -132,26 +181,33 @@ export function TerminalTabs({
                   aria-hidden="true"
                 />
               )}
-              <span className="truncate">
-                {tab.panes.map((p) => p.connectionName).join(" | ")}
-              </span>
+              <span className="truncate">{label}</span>
               {tab.mode !== "single" && (
-                <span className="text-muted-foreground/60 text-[10px] shrink-0">
+                <span
+                  className="text-muted-foreground/60 text-[10px] shrink-0"
+                  aria-hidden="true"
+                >
                   ({tab.mode === "horizontal" ? "⇆" : "⇅"})
                 </span>
               )}
-              <button
-                className="ml-1 rounded p-0.5 opacity-0 group-hover:opacity-100 hover:bg-destructive/20 hover:text-destructive transition-opacity focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              {/*
+               * Visual close affordance for mouse users. Keyboard users
+               * close the focused tab with Delete (or Cmd/Ctrl+W). We
+               * intentionally avoid nesting an interactive element inside
+               * the role=tab button (invalid HTML); this span is mouse-only.
+               */}
+              <span
+                aria-hidden="true"
+                data-testid={`close-tab-${tab.id}`}
+                className="ml-1 rounded p-0.5 opacity-0 group-hover:opacity-100 hover:bg-destructive/20 hover:text-destructive transition-opacity"
                 onClick={(e) => {
                   e.stopPropagation();
                   onCloseTab(tab.id);
                 }}
-                title="Close tab"
-                aria-label={`Close tab ${tab.panes.map((p) => p.connectionName).join(", ")}`}
               >
-                <X className="h-3 w-3" aria-hidden="true" />
-              </button>
-            </div>
+                <X className="h-3 w-3" />
+              </span>
+            </button>
           );
         })}
 

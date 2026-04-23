@@ -97,7 +97,7 @@ describe("TerminalTabs", () => {
     expect(onSelectTab).toHaveBeenCalledWith("t2");
   });
 
-  it("calls onCloseTab when clicking close button on a tab", () => {
+  it("calls onCloseTab when clicking close affordance on a tab", () => {
     const onCloseTab = vi.fn();
     render(
       <TerminalTabs
@@ -107,9 +107,41 @@ describe("TerminalTabs", () => {
         onCloseTab={onCloseTab}
       />,
     );
-    const closeButtons = screen.getAllByTitle("Close tab");
-    fireEvent.click(closeButtons[1]);
+    fireEvent.click(screen.getByTestId("close-tab-t2"));
     expect(onCloseTab).toHaveBeenCalledWith("t2");
+  });
+
+  it("calls onCloseTab via Delete keypress on the focused tab", () => {
+    const onCloseTab = vi.fn();
+    render(
+      <TerminalTabs
+        {...defaultProps}
+        tabs={mockTabs}
+        activeTabId="t2"
+        onCloseTab={onCloseTab}
+      />,
+    );
+    const activeTab = screen
+      .getAllByRole("tab")
+      .find((t) => t.getAttribute("aria-selected") === "true");
+    expect(activeTab).toBeTruthy();
+    fireEvent.keyDown(activeTab!, { key: "Delete" });
+    expect(onCloseTab).toHaveBeenCalledWith("t2");
+  });
+
+  it("ArrowRight on the active tab focuses and selects the next tab", () => {
+    const onSelectTab = vi.fn();
+    render(
+      <TerminalTabs
+        {...defaultProps}
+        tabs={mockTabs}
+        activeTabId="t1"
+        onSelectTab={onSelectTab}
+      />,
+    );
+    const tabs = screen.getAllByRole("tab");
+    fireEvent.keyDown(tabs[0], { key: "ArrowRight" });
+    expect(onSelectTab).toHaveBeenCalledWith("t2");
   });
 
   it("passes isVisible=true only to the active tab's pane", () => {
