@@ -280,7 +280,12 @@ export function CredentialForm({
           </Tabs>
 
           {error && (
-            <p className="text-sm text-destructive bg-destructive/10 px-3 py-2 rounded-md">
+            <p
+              role="alert"
+              aria-live="assertive"
+              id="credential-form-error"
+              className="text-sm text-destructive bg-destructive/10 px-3 py-2 rounded-md"
+            >
               {error}
             </p>
           )}
@@ -294,7 +299,11 @@ export function CredentialForm({
             >
               Cancel
             </Button>
-            <Button type="submit" disabled={isSubmitting}>
+            <Button
+              type="submit"
+              disabled={isSubmitting}
+              aria-describedby={error ? "credential-form-error" : undefined}
+            >
               {isSubmitting ? "Saving..." : credential ? "Update" : "Create"}
             </Button>
           </DialogFooter>

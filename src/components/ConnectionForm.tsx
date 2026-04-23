@@ -762,7 +762,12 @@ export function ConnectionForm({
           </div>
 
           {error && (
-            <p className="text-sm text-destructive bg-destructive/10 px-3 py-2 rounded-md">
+            <p
+              role="alert"
+              aria-live="assertive"
+              id="connection-form-error"
+              className="text-sm text-destructive bg-destructive/10 px-3 py-2 rounded-md"
+            >
               {error}
             </p>
           )}
@@ -776,7 +781,11 @@ export function ConnectionForm({
             >
               Cancel
             </Button>
-            <Button type="submit" disabled={isSubmitting}>
+            <Button
+              type="submit"
+              disabled={isSubmitting}
+              aria-describedby={error ? "connection-form-error" : undefined}
+            >
               {isSubmitting
                 ? "Saving..."
                 : isClone
