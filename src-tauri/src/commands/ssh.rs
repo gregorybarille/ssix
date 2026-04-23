@@ -523,16 +523,68 @@ fn download_directory(
 
 fn ensure_remote_dir(ssh: &ConnectedSession, remote_path: &str) -> Result<(), String> {
     let sftp = ssh.session.sftp().map_err(|e| format!("Failed to open SFTP session: {}", e))?;
-    let mut current = String::new();
-    for part in remote_path.split('/').filter(|part| !part.is_empty()) {
-        current.push('/');
-        current.push_str(part);
-        if sftp.stat(Path::new(&current)).is_err() {
-            sftp.mkdir(Path::new(&current), 0o755)
-                .map_err(|e| format!("Failed to create remote directory {}: {}", current, e))?;
+    let home_dir = sftp
+        .realpath(Path::new("."))
+        .map_err(|e| format!("Failed to resolve remote home directory: {}", e))?;
+    let home_dir = home_dir
+        .to_str()
+        .ok_or_else(|| "Remote home directory contains invalid UTF-8".to_string())?;
+
+    for dir in directory_creation_sequence(remote_path, home_dir) {
+        if sftp.stat(Path::new(&dir)).is_err() {
+            sftp.mkdir(Path::new(&dir), 0o755)
+                .map_err(|e| format!("Failed to create remote directory {}: {}", dir, e))?;
         }
     }
     Ok(())
+}
+
+fn directory_creation_sequence(remote_path: &str, home_dir: &str) -> Vec<String> {
+    let trimmed = remote_path.trim();
+    if trimmed.is_empty() {
+        return Vec::new();
+    }
+
+    let clean_home = home_dir.trim_end_matches('/');
+    let mut segments = if trimmed.starts_with('/') {
+        Vec::new()
+    } else if clean_home.is_empty() {
+        Vec::new()
+    } else {
+        clean_home
+            .split('/')
+            .filter(|part| !part.is_empty())
+            .map(ToString::to_string)
+            .collect::<Vec<_>>()
+    };
+
+    let parts = if trimmed == "~" {
+        ""
+    } else if let Some(rest) = trimmed.strip_prefix("~/") {
+        rest
+    } else if let Some(rest) = trimmed.strip_prefix('/') {
+        rest
+    } else {
+        trimmed
+    };
+
+    let mut out = Vec::new();
+    for part in parts.split('/') {
+        let part = part.trim();
+        if part.is_empty() || part == "." {
+            continue;
+        }
+        if part == ".." {
+            if !segments.is_empty() {
+                segments.pop();
+            }
+            continue;
+        }
+        segments.push(part.to_string());
+        out.push(format!("/{}", segments.join("/")));
+    }
+
+    out
 }
 
 fn resolve_remote_target_path(base: Option<&str>, file_name: &str) -> String {
@@ -582,6 +634,24 @@ mod scp_tests {
     #[test]
     fn test_resolve_remote_target_path_defaults_to_current_directory() {
         assert_eq!(resolve_remote_target_path(None, "file.txt"), "./file.txt");
+    }
+
+    #[test]
+    fn test_directory_creation_sequence_for_relative_path_uses_home_dir() {
+        let dirs = directory_creation_sequence("logs/app", "/home/dev");
+        assert_eq!(dirs, vec!["/home/dev/logs", "/home/dev/logs/app"]);
+    }
+
+    #[test]
+    fn test_directory_creation_sequence_for_absolute_path_starts_at_root() {
+        let dirs = directory_creation_sequence("/srv/releases", "/home/dev");
+        assert_eq!(dirs, vec!["/srv", "/srv/releases"]);
+    }
+
+    #[test]
+    fn test_directory_creation_sequence_for_tilde_path_uses_home_dir() {
+        let dirs = directory_creation_sequence("~/deploy/current", "/home/dev");
+        assert_eq!(dirs, vec!["/home/dev/deploy", "/home/dev/deploy/current"]);
     }
 }
 

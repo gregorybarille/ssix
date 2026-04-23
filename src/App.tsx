@@ -98,9 +98,34 @@ function App() {
     fetchGitSyncStatus();
   }, []);
 
+  const connectionSig = React.useMemo(
+    () =>
+      connections
+        .map((c) => `${c.id}:${c.name}:${c.host}:${c.port}:${c.credential_id ?? ""}`)
+        .sort()
+        .join("|"),
+    [connections],
+  );
+
+  const credentialSig = React.useMemo(
+    () =>
+      credentials
+        .map((c) => `${c.id}:${c.name}:${c.username}:${c.type}`)
+        .sort()
+        .join("|"),
+    [credentials],
+  );
+
   useEffect(() => {
     void fetchGitSyncStatus();
-  }, [settings.git_sync_repo_path, settings.git_sync_remote, settings.git_sync_branch, connections.length]);
+  }, [
+    settings.git_sync_repo_path,
+    settings.git_sync_remote,
+    settings.git_sync_branch,
+    connectionSig,
+    credentialSig,
+    fetchGitSyncStatus,
+  ]);
 
   useEffect(() => {
     const handler = (e: Event) => {
