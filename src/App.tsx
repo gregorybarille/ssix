@@ -490,7 +490,12 @@ function App() {
 
   const updateLayout = (key: "connection_layout" | "credential_layout" | "tunnel_layout", value: LayoutMode) => {
     void saveSettings({ ...settings, [key]: value }).catch((error) => {
-      appLog("Failed to save layout settings", error);
+      appLog.error(
+        "settings",
+        `Failed to save layout settings: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
     });
   };
 
