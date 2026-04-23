@@ -59,6 +59,10 @@ export interface Connection {
   verbosity?: number;
   /** Additional SSH flags, e.g. "-C" for compression. */
   extra_args?: string;
+  /** Command to run after login, e.g. `sudo su - deploy`. */
+  login_command?: string;
+  /** Preferred starting directory on the remote host. */
+  remote_path?: string;
   /** Free-form tags used for filtering/search. Empty when omitted. */
   tags?: string[];
   /** Optional Open Color name used as the terminal-tab accent. */
@@ -83,6 +87,47 @@ export interface AppSettings {
   credential_layout: LayoutMode;
   tunnel_layout: LayoutMode;
   default_open_mode: OpenMode;
+  git_sync_repo_path?: string;
+  git_sync_remote: string;
+  git_sync_branch?: string;
+}
+
+export interface GitSyncStatus {
+  configured: boolean;
+  repo_path?: string;
+  branch?: string;
+  remote?: string;
+  has_local_changes: boolean;
+  has_remote_changes: boolean;
+  ahead: number;
+  behind: number;
+  changed_files: string[];
+}
+
+export interface GitSyncDiff {
+  staged: string;
+  unstaged: string;
+}
+
+export interface GitSyncSnapshot {
+  repo_path: string;
+  exported_files: string[];
+}
+
+export interface GitSyncRunResult {
+  steps: string[];
+  output: {
+    stdout: string;
+    stderr: string;
+    status: number;
+  };
+}
+
+export interface ScpResult {
+  local_path: string;
+  remote_path: string;
+  bytes: number;
+  entries?: number;
 }
 
 export interface LogEntry {

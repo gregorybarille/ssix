@@ -48,6 +48,37 @@ pub enum SessionMsg {
     Disconnect,
 }
 
+pub(crate) fn build_startup_command(remote_path: Option<&str>, login_command: Option<&str>) -> Option<String> {
+    let mut parts = Vec::new();
+    if let Some(path) = remote_path.map(str::trim).filter(|path| !path.is_empty()) {
+        parts.push(format!("cd {}", shell_quote(path)));
+    }
+    if let Some(command) = login_command
+        .map(str::trim)
+        .filter(|command| !command.is_empty())
+    {
+        parts.push(command.to_string());
+    }
+
+    if parts.is_empty() {
+        None
+    } else {
+        Some(parts.join(" && "))
+    }
+}
+
+fn shell_quote(value: &str) -> String {
+    format!("'{}'", value.replace('\'', r#"'\''"#))
+}
+
+fn write_startup_command(channel: &mut ssh2::Channel, startup_command: Option<&str>) {
+    if let Some(command) = startup_command {
+        let _ = channel.write_all(command.as_bytes());
+        let _ = channel.write_all(b"\n");
+        let _ = channel.flush();
+    }
+}
+
 pub struct SshState {
     pub sessions: Mutex<HashMap<String, Sender<SessionMsg>>>,
 }
@@ -79,8 +110,10 @@ pub fn start_ssh_session(
     session_id: String,
     verbosity: u8,
     extra_args: Option<String>,
+    startup_command: Option<String>,
 ) -> Result<Sender<SessionMsg>, String> {
-    let (session, channel) = open_shell(&host, port, &username, &auth, verbosity, &extra_args)?;
+    let (session, mut channel) = open_shell(&host, port, &username, &auth, verbosity, &extra_args)?;
+    write_startup_command(&mut channel, startup_command.as_deref());
 
     let (tx, rx): (Sender<SessionMsg>, Receiver<SessionMsg>) = mpsc::channel();
     let sid = session_id.clone();
@@ -114,21 +147,28 @@ pub fn start_ssh_session(
     Ok(tx)
 }
 
-/// Opens a TCP connection, performs the SSH handshake + authentication, requests a
-/// PTY and starts a shell.  Returns the session and the ready-to-use channel on
-/// success, or a descriptive error string on failure.  Everything here runs on the
-/// caller's thread so errors surface synchronously.
-fn open_shell(
+pub(crate) fn open_authenticated_session(
     host: &str,
     port: u16,
     username: &str,
     auth: &AuthMethod,
     verbosity: u8,
     extra_args: &Option<String>,
-) -> Result<(Session, ssh2::Channel), String> {
+) -> Result<Session, String> {
     let addr = format!("{}:{}", host, port);
     let tcp = TcpStream::connect(&addr)
         .map_err(|e| format!("TCP connect to {} failed: {}", addr, e))?;
+    tcp.set_nonblocking(false).ok();
+    open_authenticated_session_over_stream(tcp, username, auth, verbosity, extra_args)
+}
+
+pub(crate) fn open_authenticated_session_over_stream(
+    tcp: TcpStream,
+    username: &str,
+    auth: &AuthMethod,
+    verbosity: u8,
+    extra_args: &Option<String>,
+) -> Result<Session, String> {
     tcp.set_nonblocking(false).ok();
 
     let mut session =
@@ -138,8 +178,6 @@ fn open_shell(
         session.trace(ssh2::TraceFlags::all());
     }
 
-    // Apply extra_args before handshake. Currently only `-C` (compression)
-    // is supported; unknown flags are silently ignored.
     if let Some(args) = extra_args {
         if args.split_whitespace().any(|t| t == "-C") {
             session.set_compress(true);
@@ -175,6 +213,23 @@ fn open_shell(
     if !session.authenticated() {
         return Err("Authentication failed".to_string());
     }
+
+    Ok(session)
+}
+
+/// Opens a TCP connection, performs the SSH handshake + authentication, requests a
+/// PTY and starts a shell.  Returns the session and the ready-to-use channel on
+/// success, or a descriptive error string on failure.  Everything here runs on the
+/// caller's thread so errors surface synchronously.
+fn open_shell(
+    host: &str,
+    port: u16,
+    username: &str,
+    auth: &AuthMethod,
+    verbosity: u8,
+    extra_args: &Option<String>,
+) -> Result<(Session, ssh2::Channel), String> {
+    let session = open_authenticated_session(host, port, username, auth, verbosity, extra_args)?;
 
     let mut channel = session
         .channel_session()
@@ -202,50 +257,8 @@ fn open_shell_over_stream(
     verbosity: u8,
     extra_args: &Option<String>,
 ) -> Result<(Session, ssh2::Channel), String> {
-    tcp.set_nonblocking(false).ok();
-
-    let mut session =
-        Session::new().map_err(|e| format!("SSH session create failed: {}", e))?;
-
-    if verbosity >= 2 {
-        session.trace(ssh2::TraceFlags::all());
-    }
-
-    if let Some(args) = extra_args {
-        if args.split_whitespace().any(|t| t == "-C") {
-            session.set_compress(true);
-        }
-    }
-
-    session.set_tcp_stream(tcp);
-    session
-        .handshake()
-        .map_err(|e| format!("SSH handshake failed: {}", e))?;
-
-    match auth {
-        AuthMethod::Password(pw) => {
-            session
-                .userauth_password(username, pw)
-                .map_err(|e| format!("Password auth failed: {}", e))?;
-        }
-        AuthMethod::Key { path, passphrase } => {
-            session
-                .userauth_pubkey_file(username, None, Path::new(path), passphrase.as_deref())
-                .map_err(|e| format!("Key auth failed: {}", e))?;
-        }
-        AuthMethod::KeyMemory {
-            private_key,
-            passphrase,
-        } => {
-            session
-                .userauth_pubkey_memory(username, None, private_key, passphrase.as_deref())
-                .map_err(|e| format!("Key auth failed: {}", e))?;
-        }
-    }
-
-    if !session.authenticated() {
-        return Err("Authentication failed".to_string());
-    }
+    let session =
+        open_authenticated_session_over_stream(tcp, username, auth, verbosity, extra_args)?;
 
     let mut channel = session
         .channel_session()
@@ -341,7 +354,7 @@ fn run_io_loop(
 /// Opens an SSH session to a gateway and authenticates. The returned session is
 /// left in *blocking* mode so callers can use `channel_direct_tcpip` reliably.
 /// Caller is responsible for any subsequent `set_blocking(false)` if needed.
-fn open_gateway_session(
+pub(crate) fn open_gateway_session(
     gateway_host: &str,
     gateway_port: u16,
     username: &str,
@@ -397,7 +410,7 @@ fn open_gateway_session(
 /// Forward bytes between a local TCP socket and an SSH `direct-tcpip` channel.
 /// Runs both directions on a single thread using non-blocking polling so we can
 /// detect EOF on either side without blocking the other.
-fn forward_bidi(mut local: TcpStream, mut channel: ssh2::Channel) {
+pub(crate) fn forward_bidi(mut local: TcpStream, mut channel: ssh2::Channel) {
     // Both local and channel must be non-blocking so neither direction can
     // stall the other. local uses set_nonblocking; the channel inherits the
     // gateway session's blocking flag — callers must set_blocking(false) on
@@ -660,6 +673,7 @@ pub fn start_jump_shell(
     session_id: String,
     verbosity: u8,
     extra_args: Option<String>,
+    startup_command: Option<String>,
 ) -> Result<Sender<SessionMsg>, String> {
     // Bind a random free loopback port for the inner SSH session.
     let listener = TcpListener::bind("127.0.0.1:0")
@@ -741,8 +755,9 @@ pub fn start_jump_shell(
 
     let tcp_stream = connect_result?;
 
-    let (session, channel) = open_shell_over_stream(tcp_stream, &destination_username, &destination_auth, verbosity, &extra_args)
+    let (session, mut channel) = open_shell_over_stream(tcp_stream, &destination_username, &destination_auth, verbosity, &extra_args)
         .map_err(|e| format!("Destination connect via gateway failed: {}", e))?;
+    write_startup_command(&mut channel, startup_command.as_deref());
 
     let (tx, rx): (Sender<SessionMsg>, Receiver<SessionMsg>) = mpsc::channel();
     let sid = session_id.clone();
@@ -841,5 +856,21 @@ mod tests {
         let (tx, rx) = mpsc::channel::<SessionMsg>();
         drop(tx);
         assert!(rx.try_recv().is_err());
+    }
+
+    #[test]
+    fn test_build_startup_command_combines_remote_path_and_login_command() {
+        assert_eq!(
+            build_startup_command(Some("/srv/app"), Some("sudo su - deploy")),
+            Some("cd '/srv/app' && sudo su - deploy".into())
+        );
+    }
+
+    #[test]
+    fn test_build_startup_command_handles_quotes() {
+        assert_eq!(
+            build_startup_command(Some("/srv/it's"), None),
+            Some("cd '/srv/it'\\''s'".into())
+        );
     }
 }

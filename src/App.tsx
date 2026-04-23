@@ -14,6 +14,8 @@ import {
 } from "./components/TerminalTabs";
 import { TunnelsView, TunnelSession } from "./components/TunnelsView";
 import { LogsView } from "./components/LogsView";
+import { GitSyncView } from "./components/GitSyncView";
+import { ScpDialog } from "./components/ScpDialog";
 import { LayoutToggle } from "./components/ui/layout-toggle";
 import { ConnectPicker } from "./components/ConnectPicker";
 import { ContextMenu } from "./components/ContextMenu";
@@ -21,6 +23,7 @@ import { Button } from "./components/ui/button";
 import { useConnectionsStore } from "./store/useConnectionsStore";
 import { useCredentialsStore } from "./store/useCredentialsStore";
 import { useSettingsStore } from "./store/useSettingsStore";
+import { useGitSyncStore } from "./store/useGitSyncStore";
 import { useApplySettings } from "./hooks/useApplySettings";
 import { invoke } from "./lib/tauri";
 import { takeScreenshot } from "./lib/screenshot";
@@ -52,6 +55,8 @@ function App() {
     connId: string;
     credId: string;
   } | null>(null);
+  const [scpConnection, setScpConnection] = useState<Connection | null>(null);
+  const [scpOpen, setScpOpen] = useState(false);
 
   const {
     connections,
@@ -74,6 +79,7 @@ function App() {
   } = useCredentialsStore();
 
   const { settings, fetchSettings, saveSettings } = useSettingsStore();
+  const { status: gitSyncStatus, fetchStatus: fetchGitSyncStatus } = useGitSyncStore();
 
   useApplySettings(settings);
 
@@ -89,7 +95,12 @@ function App() {
     fetchConnections();
     fetchCredentials();
     fetchSettings();
+    fetchGitSyncStatus();
   }, []);
+
+  useEffect(() => {
+    void fetchGitSyncStatus();
+  }, [settings.git_sync_repo_path, settings.git_sync_remote, settings.git_sync_branch, connections.length]);
 
   useEffect(() => {
     const handler = (e: Event) => {
@@ -451,6 +462,7 @@ function App() {
   };
 
   const totalShellSessions = shellTabs.reduce((n, t) => n + t.panes.length, 0);
+  const gitPending = gitSyncStatus.has_local_changes || gitSyncStatus.has_remote_changes;
 
   return (
     <div className="flex flex-col h-screen bg-background text-foreground overflow-hidden">
@@ -461,6 +473,7 @@ function App() {
           onNavigate={(v) => setView(v as View)}
           terminalCount={totalShellSessions}
           tunnelCount={tunnelSessions.length}
+          gitPending={gitPending}
         />
 
         <main className="flex-1 flex flex-col overflow-hidden">
@@ -523,6 +536,10 @@ function App() {
                   setConnFormOpen(true);
                 }}
                 onConnect={(c) => handleConnect(c)}
+                onScp={(conn) => {
+                  setScpConnection(conn);
+                  setScpOpen(true);
+                }}
               />
             </div>
             <ConnectionForm
@@ -614,6 +631,8 @@ function App() {
 
         {view === "logs" && <LogsView />}
 
+        {view === "git_sync" && <GitSyncView />}
+
         {view === "settings" && (
           <div className="flex-1 overflow-y-auto">
             <SettingsPanel settings={settings} onSave={saveSettings} />
@@ -631,6 +650,12 @@ function App() {
         connections={connections}
         credentials={credentials}
         onConnect={handlePickerConnect}
+      />
+
+      <ScpDialog
+        open={scpOpen}
+        onOpenChange={setScpOpen}
+        connection={scpConnection}
       />
 
       {/* Custom context menu */}

@@ -26,11 +26,6 @@ fn load_data_unlocked() -> Result<AppData, String> {
     Ok(data)
 }
 
-pub fn save_data(data: &AppData) -> Result<(), String> {
-    let _guard = DATA_LOCK.lock().map_err(|e| e.to_string())?;
-    save_data_unlocked(data)
-}
-
 fn save_data_unlocked(data: &AppData) -> Result<(), String> {
     let path = get_data_path();
     if let Some(parent) = path.parent() {

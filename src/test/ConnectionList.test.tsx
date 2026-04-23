@@ -92,6 +92,20 @@ describe("ConnectionList", () => {
     expect(connectButtons).toHaveLength(mockConnections.length);
   });
 
+  it("renders transfer buttons only for shell-capable connections", () => {
+    render(
+      <ConnectionList
+        connections={mockConnections}
+        credentials={mockCredentials}
+        onEdit={vi.fn()}
+        onDelete={vi.fn()}
+        onClone={vi.fn()}
+        onScp={vi.fn()}
+      />
+    );
+    expect(screen.getAllByTitle("Transfer files")).toHaveLength(2);
+  });
+
   it("calls onConnect with the correct connection", () => {
     const onConnect = vi.fn();
     render(

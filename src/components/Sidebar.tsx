@@ -1,5 +1,5 @@
 import React from "react";
-import { Server, Key, TerminalSquare, Cable, ScrollText } from "lucide-react";
+import { Server, Key, TerminalSquare, Cable, ScrollText, GitBranch } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 export type NavItem =
@@ -7,6 +7,7 @@ export type NavItem =
   | "credentials"
   | "tunnels"
   | "logs"
+  | "git_sync"
   | "settings"
   | "terminals";
 
@@ -15,6 +16,7 @@ interface SidebarProps {
   onNavigate: (item: NavItem) => void;
   terminalCount?: number;
   tunnelCount?: number;
+  gitPending?: boolean;
 }
 
 const navItems: { id: NavItem; label: string; icon: React.ReactNode }[] = [
@@ -30,12 +32,14 @@ function NavButton({
   onClick,
   icon,
   badge,
+  dot,
 }: {
   active: boolean;
   label: string;
   onClick: () => void;
   icon: React.ReactNode;
   badge?: number;
+  dot?: boolean;
 }) {
   return (
     <button
@@ -54,6 +58,7 @@ function NavButton({
           {badge}
         </span>
       )}
+      {dot && <span className="absolute top-1 right-1 h-2.5 w-2.5 rounded-full bg-orange-500" />}
     </button>
   );
 }
@@ -63,6 +68,7 @@ export function Sidebar({
   onNavigate,
   terminalCount = 0,
   tunnelCount = 0,
+  gitPending = false,
 }: SidebarProps) {
   return (
     <aside className="w-16 bg-card border-r border-border flex flex-col items-center py-4 gap-2">
@@ -94,6 +100,16 @@ export function Sidebar({
           />
         </>
       )}
+
+      <div className="mt-auto pt-2">
+        <NavButton
+          active={active === "git_sync"}
+          label="Git Sync"
+          onClick={() => onNavigate("git_sync")}
+          icon={<GitBranch className="h-5 w-5" />}
+          dot={gitPending}
+        />
+      </div>
     </aside>
   );
 }

@@ -109,6 +109,12 @@ pub struct Connection {
     /// compression). Parsed and applied before the handshake.
     #[serde(default)]
     pub extra_args: Option<String>,
+    /// Command to run after the shell session opens, e.g. `sudo su - deploy`.
+    #[serde(default)]
+    pub login_command: Option<String>,
+    /// Preferred starting directory on the remote host.
+    #[serde(default)]
+    pub remote_path: Option<String>,
     /// User-defined tags. Used for filtering/search. Empty by default.
     #[serde(default)]
     pub tags: Vec<String>,
@@ -128,6 +134,8 @@ impl Connection {
             kind,
             verbosity: 0,
             extra_args: None,
+            login_command: None,
+            remote_path: None,
             tags: Vec::new(),
             color: None,
         }
@@ -156,6 +164,15 @@ pub struct AppSettings {
     /// Default behavior when launching a new terminal: "tab", "split_right", or "split_down".
     #[serde(default = "default_open_mode")]
     pub default_open_mode: String,
+    /// Filesystem path to a local git checkout used for sanitized SSX config sync.
+    #[serde(default)]
+    pub git_sync_repo_path: Option<String>,
+    /// Git remote name used for fetch/pull/push checks.
+    #[serde(default = "default_git_remote")]
+    pub git_sync_remote: String,
+    /// Optional branch override. When omitted, SSX uses the current branch.
+    #[serde(default)]
+    pub git_sync_branch: Option<String>,
 }
 
 fn default_font_size() -> u8 { 14 }
@@ -164,6 +181,7 @@ fn default_color_scheme() -> String { "blue".to_string() }
 fn default_theme() -> String { "dark".to_string() }
 fn default_layout() -> String { "list".to_string() }
 fn default_open_mode() -> String { "tab".to_string() }
+fn default_git_remote() -> String { "origin".to_string() }
 
 impl Default for AppSettings {
     fn default() -> Self {
@@ -176,6 +194,9 @@ impl Default for AppSettings {
             credential_layout: default_layout(),
             tunnel_layout: default_layout(),
             default_open_mode: default_open_mode(),
+            git_sync_repo_path: None,
+            git_sync_remote: default_git_remote(),
+            git_sync_branch: None,
         }
     }
 }
@@ -294,6 +315,8 @@ mod tests {
             credential_id: Some("dest-cred".into()),
             verbosity: 0,
             extra_args: None,
+            login_command: None,
+            remote_path: None,
             tags: Vec::new(),
             color: None,
             kind: ConnectionKind::LegacyTunnel {
@@ -331,6 +354,8 @@ mod tests {
             credential_id: None,
             verbosity: 0,
             extra_args: None,
+            login_command: None,
+            remote_path: None,
             tags: Vec::new(),
             color: None,
             kind: ConnectionKind::LegacyTunnel {
@@ -366,6 +391,8 @@ mod tests {
             credential_id: None,
             verbosity: 0,
             extra_args: None,
+            login_command: None,
+            remote_path: None,
             tags: Vec::new(),
             color: None,
             kind: pf.clone(),
@@ -411,6 +438,20 @@ mod tests {
         }"#;
         let conn: Connection = serde_json::from_str(json).unwrap();
         assert!(conn.extra_args.is_none());
+    }
+
+    #[test]
+    fn test_connection_startup_fields_serde_default() {
+        let json = r#"{
+            "id": "x",
+            "name": "test",
+            "host": "h",
+            "port": 22,
+            "type": "direct"
+        }"#;
+        let conn: Connection = serde_json::from_str(json).unwrap();
+        assert!(conn.login_command.is_none());
+        assert!(conn.remote_path.is_none());
     }
 
     #[test]
@@ -501,6 +542,8 @@ mod tests {
         assert_eq!(s.credential_layout, "list");
         assert_eq!(s.tunnel_layout, "list");
         assert_eq!(s.default_open_mode, "tab");
+        assert_eq!(s.git_sync_remote, "origin");
+        assert!(s.git_sync_repo_path.is_none());
     }
 
     #[test]
@@ -508,5 +551,6 @@ mod tests {
         let s = AppSettings::default();
         assert_eq!(s.connection_layout, "list");
         assert_eq!(s.default_open_mode, "tab");
+        assert_eq!(s.git_sync_remote, "origin");
     }
 }

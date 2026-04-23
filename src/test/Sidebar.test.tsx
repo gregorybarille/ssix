@@ -7,6 +7,7 @@ describe("Sidebar", () => {
     render(<Sidebar active="connections" onNavigate={vi.fn()} />);
     expect(screen.getByTitle("Connections")).toBeInTheDocument();
     expect(screen.getByTitle("Credentials")).toBeInTheDocument();
+    expect(screen.getByTitle("Git Sync")).toBeInTheDocument();
   });
 
   it("highlights the active nav item", () => {
@@ -45,5 +46,10 @@ describe("Sidebar", () => {
     render(<Sidebar active="terminals" onNavigate={vi.fn()} terminalCount={1} />);
     const termBtn = screen.getByTitle("Terminals (1)");
     expect(termBtn.className).toContain("bg-accent");
+  });
+
+  it("shows git sync at the bottom with pending indicator support", () => {
+    render(<Sidebar active="connections" onNavigate={vi.fn()} gitPending />);
+    expect(screen.getByTitle("Git Sync")).toBeInTheDocument();
   });
 });
