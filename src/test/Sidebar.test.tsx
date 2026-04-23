@@ -52,4 +52,27 @@ describe("Sidebar", () => {
     render(<Sidebar active="connections" onNavigate={vi.fn()} gitPending />);
     expect(screen.getByTitle("Git Sync")).toBeInTheDocument();
   });
+
+  it("exposes accessible names on nav buttons", () => {
+    render(<Sidebar active="connections" onNavigate={vi.fn()} />);
+    expect(
+      screen.getByRole("button", { name: "Connections" })
+    ).toBeInTheDocument();
+  });
+
+  it("includes badge count in the accessible name when active sessions exist", () => {
+    render(
+      <Sidebar active="connections" onNavigate={vi.fn()} terminalCount={3} />
+    );
+    expect(
+      screen.getByRole("button", { name: /Terminals, 3 active/i })
+    ).toBeInTheDocument();
+  });
+
+  it("marks the active item with aria-current", () => {
+    render(<Sidebar active="credentials" onNavigate={vi.fn()} />);
+    expect(
+      screen.getByRole("button", { name: "Credentials" })
+    ).toHaveAttribute("aria-current", "page");
+  });
 });

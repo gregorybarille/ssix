@@ -129,6 +129,7 @@ export function TerminalTabs({
                 <span
                   className="h-1.5 w-1.5 rounded-full bg-destructive shrink-0"
                   title="Connection failed"
+                  aria-hidden="true"
                 />
               )}
               <span className="truncate">
@@ -140,14 +141,15 @@ export function TerminalTabs({
                 </span>
               )}
               <button
-                className="ml-1 rounded p-0.5 opacity-0 group-hover:opacity-100 hover:bg-destructive/20 hover:text-destructive transition-opacity"
+                className="ml-1 rounded p-0.5 opacity-0 group-hover:opacity-100 hover:bg-destructive/20 hover:text-destructive transition-opacity focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                 onClick={(e) => {
                   e.stopPropagation();
                   onCloseTab(tab.id);
                 }}
                 title="Close tab"
+                aria-label={`Close tab ${tab.panes.map((p) => p.connectionName).join(", ")}`}
               >
-                <X className="h-3 w-3" />
+                <X className="h-3 w-3" aria-hidden="true" />
               </button>
             </div>
           );
@@ -160,9 +162,10 @@ export function TerminalTabs({
               size="icon"
               className="h-7 w-auto px-1 mx-1 shrink-0"
               title="New connection"
+              aria-label="Open a new tab or split"
             >
-              <Plus className="h-3.5 w-3.5" />
-              <ChevronDown className="h-3 w-3 ml-0.5" />
+              <Plus className="h-3.5 w-3.5" aria-hidden="true" />
+              <ChevronDown className="h-3 w-3 ml-0.5" aria-hidden="true" />
             </Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="start">

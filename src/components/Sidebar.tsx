@@ -44,9 +44,12 @@ function NavButton({
   return (
     <button
       title={badge ? `${label} (${badge})` : label}
+      aria-label={badge ? `${label}, ${badge} active` : label}
+      aria-current={active ? "page" : undefined}
       onClick={onClick}
       className={cn(
         "w-10 h-10 rounded-lg flex items-center justify-center transition-colors relative",
+        "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-card",
         active
           ? "bg-accent text-foreground"
           : "text-muted-foreground hover:text-foreground hover:bg-accent/50",
@@ -54,11 +57,21 @@ function NavButton({
     >
       {icon}
       {badge !== undefined && badge > 0 && (
-        <span className="absolute -top-0.5 -right-0.5 min-w-[16px] h-4 rounded-full bg-primary text-primary-foreground text-[10px] font-bold flex items-center justify-center px-1">
+        <span
+          className="absolute -top-0.5 -right-0.5 min-w-[16px] h-4 rounded-full bg-primary text-primary-foreground text-[10px] font-bold flex items-center justify-center px-1"
+          aria-hidden="true"
+        >
           {badge}
         </span>
       )}
-      {dot && <span className="absolute top-1 right-1 h-2.5 w-2.5 rounded-full bg-orange-500" />}
+      {dot && (
+        <span
+          className="absolute top-1 right-1 h-2.5 w-2.5 rounded-full bg-orange-500"
+          aria-hidden="true"
+        >
+          <span className="sr-only"> (pending changes)</span>
+        </span>
+      )}
     </button>
   );
 }

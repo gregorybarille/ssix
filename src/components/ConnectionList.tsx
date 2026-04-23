@@ -163,8 +163,9 @@ export function ConnectionList({
                       onConnect(conn);
                     }}
                     title="Connect"
+                    aria-label={`Connect to ${conn.name}`}
                   >
-                    <Play className="h-3.5 w-3.5" />
+                    <Play className="h-3.5 w-3.5" aria-hidden="true" />
                   </Button>
                 )}
                 {onScp && conn.type !== "port_forward" && (
@@ -177,8 +178,9 @@ export function ConnectionList({
                       onScp(conn);
                     }}
                     title="Transfer files"
+                    aria-label={`Transfer files to ${conn.name}`}
                   >
-                    <ArrowUpDown className="h-3.5 w-3.5" />
+                    <ArrowUpDown className="h-3.5 w-3.5" aria-hidden="true" />
                   </Button>
                 )}
                 <Button
@@ -190,8 +192,9 @@ export function ConnectionList({
                     onClone(conn);
                   }}
                   title="Clone connection"
+                  aria-label={`Clone ${conn.name}`}
                 >
-                  <Copy className="h-3.5 w-3.5" />
+                  <Copy className="h-3.5 w-3.5" aria-hidden="true" />
                 </Button>
                 <Button
                   variant="ghost"
@@ -202,8 +205,9 @@ export function ConnectionList({
                     onEdit(conn);
                   }}
                   title="Edit connection"
+                  aria-label={`Edit ${conn.name}`}
                 >
-                  <Edit className="h-3.5 w-3.5" />
+                  <Edit className="h-3.5 w-3.5" aria-hidden="true" />
                 </Button>
                 <Button
                   variant="ghost"
@@ -214,8 +218,9 @@ export function ConnectionList({
                     onDelete(conn.id);
                   }}
                   title="Delete connection"
+                  aria-label={`Delete ${conn.name}`}
                 >
-                  <Trash2 className="h-3.5 w-3.5" />
+                  <Trash2 className="h-3.5 w-3.5" aria-hidden="true" />
                 </Button>
               </div>
             </div>
@@ -272,8 +277,9 @@ export function ConnectionList({
                     onConnect(conn);
                   }}
                   title="Connect"
+                  aria-label={`Connect to ${conn.name}`}
                 >
-                  <Play className="h-3.5 w-3.5" />
+                  <Play className="h-3.5 w-3.5" aria-hidden="true" />
                 </Button>
               )}
               {onScp && conn.type !== "port_forward" && (
@@ -286,8 +292,9 @@ export function ConnectionList({
                     onScp(conn);
                   }}
                   title="Transfer files"
+                  aria-label={`Transfer files to ${conn.name}`}
                 >
-                  <ArrowUpDown className="h-3.5 w-3.5" />
+                  <ArrowUpDown className="h-3.5 w-3.5" aria-hidden="true" />
                 </Button>
               )}
               <Button
@@ -299,8 +306,9 @@ export function ConnectionList({
                   onClone(conn);
                 }}
                 title="Clone connection"
+                aria-label={`Clone ${conn.name}`}
               >
-                <Copy className="h-3.5 w-3.5" />
+                <Copy className="h-3.5 w-3.5" aria-hidden="true" />
               </Button>
               <Button
                 variant="ghost"
@@ -311,8 +319,9 @@ export function ConnectionList({
                   onEdit(conn);
                 }}
                 title="Edit connection"
+                aria-label={`Edit ${conn.name}`}
               >
-                <Edit className="h-3.5 w-3.5" />
+                <Edit className="h-3.5 w-3.5" aria-hidden="true" />
               </Button>
               <Button
                 variant="ghost"
@@ -323,8 +332,9 @@ export function ConnectionList({
                   onDelete(conn.id);
                 }}
                 title="Delete connection"
+                aria-label={`Delete ${conn.name}`}
               >
-                <Trash2 className="h-3.5 w-3.5" />
+                <Trash2 className="h-3.5 w-3.5" aria-hidden="true" />
               </Button>
             </div>
             <ChevronRight className="h-4 w-4 text-muted-foreground/40 shrink-0" />
