@@ -128,13 +128,17 @@ export function CredentialForm({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-[460px]">
-        <DialogHeader>
+      <DialogContent className="sm:max-w-[460px] max-h-[90vh] flex flex-col p-0 gap-0">
+        <DialogHeader className="px-6 pt-6 pb-3 shrink-0 border-b">
           <DialogTitle>
             {credential ? "Edit Credential" : "New Credential"}
           </DialogTitle>
         </DialogHeader>
-        <form onSubmit={handleSubmit} className="space-y-4">
+        <form
+          onSubmit={handleSubmit}
+          className="flex flex-col flex-1 min-h-0"
+        >
+          <div className="flex-1 min-h-0 overflow-y-auto px-6 py-4 space-y-4">
           <div className="space-y-2">
             <Label htmlFor="cred-name">Credential Name *</Label>
             <Input
@@ -289,8 +293,9 @@ export function CredentialForm({
               {error}
             </p>
           )}
+          </div>
 
-          <DialogFooter>
+          <DialogFooter className="px-6 py-3 border-t bg-background shrink-0">
             <Button
               type="button"
               variant="outline"

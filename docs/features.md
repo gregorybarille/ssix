@@ -113,3 +113,16 @@ Confirmation dialogs default focus to the **Cancel** button so an
 accidental Enter press never destroys data. Failed/never-opened
 sessions can be dismissed without confirmation since there is nothing
 to lose.
+
+## Form Accessibility
+
+The Connection and Credential forms surface submit/validation failures
+in an `role="alert"` region with `aria-live="assertive"`, so screen
+readers announce the error as soon as it appears. The submit button is
+wired to that error via `aria-describedby`, giving keyboard users
+context as they re-focus the action.
+
+Both dialogs use a sticky footer layout: the form body scrolls inside
+`DialogContent` while the **Cancel** / **Save** action row stays pinned
+to the bottom and never disappears, regardless of viewport height or
+expanded panels (Advanced options, inline credentials, etc.).
