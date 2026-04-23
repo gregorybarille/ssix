@@ -267,4 +267,43 @@ describe("ConnectionList", () => {
     expect(onDelete).toHaveBeenCalledWith(mockConnections[0].id);
     expect(onSelect).not.toHaveBeenCalled();
   });
+
+  // ─── Always-visible Connect CTA (P0-8) ────────────────────────────────────
+
+  it("renders Connect outside the hover-fade group in row layout", () => {
+    render(
+      <ConnectionList
+        connections={[mockConnections[0]]}
+        credentials={[]}
+        onEdit={vi.fn()}
+        onDelete={vi.fn()}
+        onClone={vi.fn()}
+        onConnect={vi.fn()}
+      />
+    );
+    const connectBtn = screen.getByTitle("Connect");
+    const editBtn = screen.getByTitle("Edit connection");
+    // Connect must NOT be a descendant of any element with the hover-fade class.
+    expect(connectBtn.closest(".opacity-0")).toBeNull();
+    // Secondary actions stay in the hover-fade group.
+    expect(editBtn.closest(".opacity-0")).not.toBeNull();
+  });
+
+  it("renders Connect outside the hover-fade group in tile layout", () => {
+    render(
+      <ConnectionList
+        connections={[mockConnections[0]]}
+        credentials={[]}
+        onEdit={vi.fn()}
+        onDelete={vi.fn()}
+        onClone={vi.fn()}
+        onConnect={vi.fn()}
+        layout="tile"
+      />
+    );
+    const connectBtn = screen.getByTitle("Connect");
+    const editBtn = screen.getByTitle("Edit connection");
+    expect(connectBtn.closest(".opacity-0")).toBeNull();
+    expect(editBtn.closest(".opacity-0")).not.toBeNull();
+  });
 });

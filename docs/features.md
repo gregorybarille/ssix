@@ -126,3 +126,13 @@ Both dialogs use a sticky footer layout: the form body scrolls inside
 `DialogContent` while the **Cancel** / **Save** action row stays pinned
 to the bottom and never disappears, regardless of viewport height or
 expanded panels (Advanced options, inline credentials, etc.).
+
+## Connection List Actions
+
+The **Connect** action (green Play icon) is the primary CTA on every
+connection row and tile and is **always visible** — it does not wait
+for hover, so the action is reachable for keyboard and touch users and
+discoverable on the very first visit. Secondary actions (Transfer
+files, Clone, Edit, Delete) remain in a hover-revealed group to keep
+the list visually quiet, and that group also expands when any of its
+buttons receives keyboard focus (`focus-within`).

@@ -152,12 +152,12 @@ export function ConnectionList({
                   ))}
                 </div>
               )}
-              <div className="flex items-center justify-end gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+              <div className="flex items-center justify-end gap-1">
                 {onConnect && (
                   <Button
                     variant="ghost"
                     size="icon"
-                    className="h-7 w-7 text-green-500 hover:text-green-600"
+                    className="h-7 w-7 text-green-500 hover:text-green-600 focus-visible:opacity-100"
                     onClick={(e) => {
                       e.stopPropagation();
                       onConnect(conn);
@@ -168,6 +168,7 @@ export function ConnectionList({
                     <Play className="h-3.5 w-3.5" aria-hidden="true" />
                   </Button>
                 )}
+                <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity">
                 {onScp && conn.type !== "port_forward" && (
                   <Button
                     variant="ghost"
@@ -222,6 +223,7 @@ export function ConnectionList({
                 >
                   <Trash2 className="h-3.5 w-3.5" aria-hidden="true" />
                 </Button>
+                </div>
               </div>
             </div>
           );
@@ -266,7 +268,7 @@ export function ConnectionList({
                 )}
               </p>
             </div>
-            <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+            <div className="flex items-center gap-1">
               {onConnect && (
                 <Button
                   variant="ghost"
@@ -282,6 +284,7 @@ export function ConnectionList({
                   <Play className="h-3.5 w-3.5" aria-hidden="true" />
                 </Button>
               )}
+              <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity">
               {onScp && conn.type !== "port_forward" && (
                 <Button
                   variant="ghost"
@@ -336,6 +339,7 @@ export function ConnectionList({
               >
                 <Trash2 className="h-3.5 w-3.5" aria-hidden="true" />
               </Button>
+              </div>
             </div>
             <ChevronRight className="h-4 w-4 text-muted-foreground/40 shrink-0" />
           </div>
