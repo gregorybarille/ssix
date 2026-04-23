@@ -20,6 +20,14 @@ import { LayoutToggle } from "./components/ui/layout-toggle";
 import { ConnectPicker } from "./components/ConnectPicker";
 import { ContextMenu } from "./components/ContextMenu";
 import { Button } from "./components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+  DialogFooter,
+} from "./components/ui/dialog";
 import { useConnectionsStore } from "./store/useConnectionsStore";
 import { useCredentialsStore } from "./store/useCredentialsStore";
 import { useSettingsStore } from "./store/useSettingsStore";
@@ -700,28 +708,42 @@ function App() {
       )}
 
       {/* Orphaned private credential confirmation dialog */}
-      {orphanCredDialog && (
-        <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/50">
-          <div className="bg-popover border rounded-lg shadow-xl p-6 max-w-sm w-full mx-4">
-            <h2 className="text-base font-semibold mb-2">Delete private credential?</h2>
-            <p className="text-sm text-muted-foreground mb-5">
+      <Dialog
+        open={!!orphanCredDialog}
+        onOpenChange={(open) => {
+          if (!open) setOrphanCredDialog(null);
+        }}
+      >
+        <DialogContent className="sm:max-w-sm">
+          <DialogHeader>
+            <DialogTitle>Delete private credential?</DialogTitle>
+            <DialogDescription>
               This connection has a private credential that is not used by any
               other connection. Do you want to delete it as well?
-            </p>
-            <div className="flex flex-col gap-2">
-              <Button onClick={() => handleOrphanCredDialogConfirm(true)}>
-                Delete connection and credential
-              </Button>
-              <Button variant="secondary" onClick={() => handleOrphanCredDialogConfirm(false)}>
-                Delete connection only
-              </Button>
-              <Button variant="ghost" onClick={() => setOrphanCredDialog(null)}>
-                Cancel
-              </Button>
-            </div>
-          </div>
-        </div>
-      )}
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter className="flex-col-reverse sm:flex-col-reverse sm:space-x-0 gap-2">
+            <Button
+              variant="ghost"
+              onClick={() => setOrphanCredDialog(null)}
+            >
+              Cancel
+            </Button>
+            <Button
+              variant="secondary"
+              onClick={() => handleOrphanCredDialogConfirm(false)}
+            >
+              Delete connection only
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={() => handleOrphanCredDialogConfirm(true)}
+            >
+              Delete connection and credential
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
