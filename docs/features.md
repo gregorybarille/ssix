@@ -90,3 +90,17 @@ See [Git Sync](git-sync.md) for details.
 - list/tile layouts per section
 - default terminal open mode
 - Git Sync repository settings
+
+## Destructive-Action Confirmations
+
+SSX shows a confirmation dialog before any destructive action:
+
+- deleting a connection
+- deleting a credential
+- closing a live terminal pane
+- closing a tab whose panes still hold a live SSH session
+
+Confirmation dialogs default focus to the **Cancel** button so an
+accidental Enter press never destroys data. Failed/never-opened
+sessions can be dismissed without confirmation since there is nothing
+to lose.

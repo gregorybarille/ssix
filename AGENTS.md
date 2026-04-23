@@ -55,6 +55,7 @@
 - New ed25519 keypairs can be generated in-app via the `generate_ssh_key` Tauri command (storage modes: default `~/.ssh/`, custom path, or inline-only).
 - `ssh_install_public_key_by_credential` performs an ssh-copy-id-style append of an SSH key credential's public key to the remote `~/.ssh/authorized_keys`, authenticated by a one-time username/password that is **never persisted**.
 - The CI workflow (`.github/workflows/test.yml`) runs frontend and backend tests separately on `main` pushes and PRs.
+- All destructive actions (delete connection, delete credential, close live terminal pane/tab) MUST go through the shared `<ConfirmDialog>` (`src/components/ConfirmDialog.tsx`). It defaults focus to **Cancel**, supports a `destructive` variant, and is built on Radix Dialog so it gets focus trap, Escape-to-close, and aria wiring for free. Never re-introduce hand-rolled `fixed inset-0` overlays.
 - Rust commands return `Result<T, String>`. Frontend stores catch the rejection, stringify it into `error`, and rethrow on mutating actions (`add/update/delete/clone`) so form components can display it. `fetch*` actions swallow the error into state instead of rethrowing.
 - The Tauri CSP in `src-tauri/tauri.conf.json` is locked to `self` + `http://localhost:1420`. Adding outbound HTTP calls from the frontend requires updating the CSP.
 

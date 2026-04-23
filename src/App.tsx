@@ -19,6 +19,7 @@ import { ScpDialog } from "./components/ScpDialog";
 import { LayoutToggle } from "./components/ui/layout-toggle";
 import { ConnectPicker } from "./components/ConnectPicker";
 import { ContextMenu } from "./components/ContextMenu";
+import { ConfirmDialog } from "./components/ConfirmDialog";
 import { Button } from "./components/ui/button";
 import {
   Dialog,
@@ -65,6 +66,12 @@ function App() {
   } | null>(null);
   const [scpConnection, setScpConnection] = useState<Connection | null>(null);
   const [scpOpen, setScpOpen] = useState(false);
+  const [confirmDeleteConn, setConfirmDeleteConn] = useState<Connection | null>(null);
+  const [confirmDeleteCred, setConfirmDeleteCred] = useState<Credential | null>(null);
+  const [confirmClosePane, setConfirmClosePane] = useState<{
+    sessionId: string;
+    name: string;
+  } | null>(null);
 
   const {
     connections,
@@ -188,7 +195,13 @@ function App() {
     }
   };
 
-  const handleDeleteConnection = async (id: string) => {
+  const handleDeleteConnection = (id: string) => {
+    const conn = connections.find((c) => c.id === id);
+    if (!conn) return;
+    setConfirmDeleteConn(conn);
+  };
+
+  const performDeleteConnection = async (id: string) => {
     const orphanCredId = await getOrphanPrivateCredential(id);
     if (orphanCredId) {
       setOrphanCredDialog({ connId: id, credId: orphanCredId });
@@ -408,6 +421,51 @@ function App() {
     setView("connections");
   };
 
+  /**
+   * Show a confirmation before closing a live (non-failed) pane. Failed
+   * panes that never opened a shell don't need confirmation — there's
+   * nothing for the user to lose.
+   */
+  const handleClosePaneRequest = (sessionId: string) => {
+    let target: { sessionId: string; name: string } | null = null;
+    for (const tab of shellTabs) {
+      const pane = tab.panes.find((p) => p.sessionId === sessionId);
+      if (pane) {
+        if (pane.error || pane.retrying) {
+          // Failed/retrying pane — close immediately.
+          void handleClosePane(sessionId);
+          return;
+        }
+        target = { sessionId, name: pane.connectionName };
+        break;
+      }
+    }
+    if (target) setConfirmClosePane(target);
+  };
+
+  const handleCloseTabRequest = (tabId: string) => {
+    const tab = shellTabs.find((t) => t.id === tabId);
+    if (!tab) return;
+    const liveCount = tab.panes.filter((p) => !p.error).length;
+    if (liveCount === 0) {
+      void handleCloseTab(tabId);
+      return;
+    }
+    if (tab.panes.length === 1) {
+      setConfirmClosePane({
+        sessionId: tab.panes[0].sessionId,
+        name: tab.panes[0].connectionName,
+      });
+      return;
+    }
+    // Multi-pane tab close: reuse the orphan-style state model
+    // by stashing all session IDs as a synthetic single confirm.
+    setConfirmClosePane({
+      sessionId: `__tab__:${tabId}`,
+      name: tab.panes.map((p) => p.connectionName).join(" + "),
+    });
+  };
+
   /** Close a single pane. If it's the only pane in a tab, the tab closes too. */
   const handleClosePane = async (sessionId: string) => {
     let tabClosed: string | null = null;
@@ -520,8 +578,10 @@ function App() {
             tabs={shellTabs}
             activeTabId={activeTabId}
             onSelectTab={setActiveTabId}
-            onCloseTab={handleCloseTab}
-            onClosePane={(_tabId, sessionId) => handleClosePane(sessionId)}
+            onCloseTab={handleCloseTabRequest}
+            onClosePane={(_tabId, sessionId) =>
+              handleClosePaneRequest(sessionId)
+            }
             onNewTab={handleNewTabFromTerminal}
             onRetry={handleRetry}
             onEdit={handleEditFromTerminal}
@@ -627,7 +687,10 @@ function App() {
                   setEditingCred(cred);
                   setCredFormOpen(true);
                 }}
-                onDelete={deleteCredential}
+                onDelete={(id) => {
+                  const cred = credentials.find((c) => c.id === id);
+                  if (cred) setConfirmDeleteCred(cred);
+                }}
               />
             </div>
             <CredentialForm
@@ -711,6 +774,77 @@ function App() {
           📸 Saved: {screenshotToast}
         </div>
       )}
+
+      {/* Delete connection confirmation */}
+      <ConfirmDialog
+        open={!!confirmDeleteConn}
+        onOpenChange={(o) => !o && setConfirmDeleteConn(null)}
+        title="Delete connection?"
+        description={
+          confirmDeleteConn ? (
+            <>
+              Permanently delete <strong>{confirmDeleteConn.name}</strong>?
+              This cannot be undone.
+            </>
+          ) : null
+        }
+        confirmLabel="Delete connection"
+        variant="destructive"
+        onConfirm={async () => {
+          if (confirmDeleteConn) {
+            await performDeleteConnection(confirmDeleteConn.id);
+          }
+        }}
+      />
+
+      {/* Delete credential confirmation */}
+      <ConfirmDialog
+        open={!!confirmDeleteCred}
+        onOpenChange={(o) => !o && setConfirmDeleteCred(null)}
+        title="Delete credential?"
+        description={
+          confirmDeleteCred ? (
+            <>
+              Delete credential <strong>{confirmDeleteCred.name}</strong>?
+              Connections that reference it will lose their saved
+              authentication.
+            </>
+          ) : null
+        }
+        confirmLabel="Delete credential"
+        variant="destructive"
+        onConfirm={async () => {
+          if (confirmDeleteCred) {
+            await deleteCredential(confirmDeleteCred.id);
+          }
+        }}
+      />
+
+      {/* Close terminal pane / tab confirmation */}
+      <ConfirmDialog
+        open={!!confirmClosePane}
+        onOpenChange={(o) => !o && setConfirmClosePane(null)}
+        title="Close terminal?"
+        description={
+          confirmClosePane ? (
+            <>
+              The session for <strong>{confirmClosePane.name}</strong> will
+              be disconnected. Any unsaved work in the shell will be lost.
+            </>
+          ) : null
+        }
+        confirmLabel="Close"
+        variant="destructive"
+        onConfirm={async () => {
+          if (!confirmClosePane) return;
+          if (confirmClosePane.sessionId.startsWith("__tab__:")) {
+            const tabId = confirmClosePane.sessionId.slice("__tab__:".length);
+            await handleCloseTab(tabId);
+          } else {
+            await handleClosePane(confirmClosePane.sessionId);
+          }
+        }}
+      />
 
       {/* Orphaned private credential confirmation dialog */}
       <Dialog
