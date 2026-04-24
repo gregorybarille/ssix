@@ -1,6 +1,7 @@
 import React, { useEffect } from "react";
 import { AppSettings, OPEN_COLORS, FONT_FAMILIES, FONT_SIZES, LayoutMode, OpenMode } from "@/types";
 import { Button } from "./ui/button";
+import { Input } from "./ui/input";
 import { Label } from "./ui/label";
 import {
   Select,
@@ -197,9 +198,8 @@ export function SettingsPanel({ settings, onSave }: SettingsPanelProps) {
 
         <div className="space-y-2">
           <Label htmlFor="git-sync-repo-path">Repository path</Label>
-          <input
+          <Input
             id="git-sync-repo-path"
-            className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
             value={form.git_sync_repo_path ?? ""}
             onChange={(e) => setForm({ ...form, git_sync_repo_path: e.target.value || undefined })}
             placeholder="/Users/me/config-repo"
@@ -208,9 +208,8 @@ export function SettingsPanel({ settings, onSave }: SettingsPanelProps) {
 
         <div className="space-y-2">
           <Label htmlFor="git-sync-remote">Remote name</Label>
-          <input
+          <Input
             id="git-sync-remote"
-            className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
             value={form.git_sync_remote}
             onChange={(e) => setForm({ ...form, git_sync_remote: e.target.value || "origin" })}
             placeholder="origin"
@@ -219,9 +218,8 @@ export function SettingsPanel({ settings, onSave }: SettingsPanelProps) {
 
         <div className="space-y-2">
           <Label htmlFor="git-sync-branch">Branch override</Label>
-          <input
+          <Input
             id="git-sync-branch"
-            className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
             value={form.git_sync_branch ?? ""}
             onChange={(e) => setForm({ ...form, git_sync_branch: e.target.value || undefined })}
             placeholder="main"
