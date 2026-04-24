@@ -104,3 +104,30 @@
   --oc-indigo-5: #5c7cfa;
   --oc-lime-5: #94d82d;
 }
+
+/*
+ * Audit-3 #3: respect prefers-reduced-motion.
+ *
+ * WCAG 2.3.3 (AAA) and the broader "Motion Animation from
+ * Interactions" guideline require that non-essential motion be
+ * suppressed when the user has expressed a preference. Tailwind's
+ * `animate-in` / `animate-out` utilities (used by Radix Dialog,
+ * Select, Dropdown, etc.) and our `transition-*` utilities both
+ * resolve to keyframes/transitions that should be neutralised here.
+ *
+ * Use `!important` because these utility classes set the same
+ * properties at the same specificity. Use `0.01ms` rather than `0s`
+ * so that JavaScript that listens for `transitionend` /
+ * `animationend` (Radix included) still receives the event and can
+ * tear down state correctly.
+ */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

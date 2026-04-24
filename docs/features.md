@@ -314,3 +314,20 @@ saved connection without leaving the keyboard:
   selected connection as the user navigates.
 - The footer reminds users of the available keys
   (`↑↓ navigate · ↵ connect · Esc close`).
+
+## Reduced Motion
+
+SSX honors the OS-level **prefers-reduced-motion** preference. When
+the user has enabled "Reduce motion" (System Settings → Accessibility
+on macOS, Settings → Ease of Access → Display on Windows, GNOME/KDE
+animation toggles on Linux), every CSS animation, transition, and
+smooth-scroll behavior is reduced to ~0ms. This includes the Radix
+Dialog open/close zoom, Select dropdown slide, terminal-tab hover
+fades, and split-pane resize transitions.
+
+The duration is set to `0.01ms` rather than `0` so that JavaScript
+that listens for `transitionend` / `animationend` events (Radix
+focus-scope teardown, our own dialog wiring) still fires reliably.
+The rule lives in `src/styles/globals.css` and is asserted by
+`src/test/reducedMotion.test.ts` — any change to the rule must keep
+those assertions green.
