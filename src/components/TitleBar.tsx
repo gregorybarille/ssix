@@ -17,25 +17,60 @@ interface TitleBarProps {
 }
 
 export function TitleBar({ onSettings, settingsActive }: TitleBarProps) {
-  const [platform, setPlatform] = useState<Platform>("macos");
+  // Detect platform synchronously in the initial state. If we deferred this
+  // to a useEffect the maximize-subscription effect below would run once
+  // with platform === "macos", hit the early return, and never subscribe to
+  // onResized on Windows/Linux until something else triggered a re-render.
+  const [platform] = useState<Platform>(() => detectPlatform());
   const [maximized, setMaximized] = useState(false);
-
-  useEffect(() => {
-    setPlatform(detectPlatform());
-  }, []);
 
   useEffect(() => {
     if (platform === "macos") return;
     let cancelled = false;
-    const checkMaximized = async () => {
+    let unlisten: (() => void) | null = null;
+
+    // Import the window module once per effect run and reuse it across
+    // the initial query and the subscription. Using a single import keeps
+    // the code clearer and avoids two separate dynamic-import overheads.
+    const run = async () => {
       try {
         const { getCurrentWindow } = await import("@tauri-apps/api/window");
-        const isMax = await getCurrentWindow().isMaximized();
-        if (!cancelled) setMaximized(isMax);
-      } catch {}
+        const w = getCurrentWindow();
+
+        const refresh = async () => {
+          try {
+            const isMax = await w.isMaximized();
+            if (!cancelled) setMaximized(isMax);
+          } catch {
+            /* swallow */
+          }
+        };
+
+        // Initial state.
+        await refresh();
+        if (cancelled) return;
+
+        // Subscribe to OS resize events. The maximize/restore icon and
+        // aria-label are driven by the subscription so the OS — not
+        // optimistic local state — is the source of truth. This catches
+        // double-click on the title bar, OS-level shortcuts (F11 /
+        // Win+Up), and window-snapping behaviour that bypasses our
+        // toggleMaximize handler.
+        unlisten = await w.onResized(() => {
+          // The resize payload only carries size; re-query the flag.
+          refresh();
+        });
+      } catch {
+        /* not running under Tauri (jsdom, future web build, etc.) */
+      }
     };
-    checkMaximized();
-    return () => { cancelled = true; };
+
+    run();
+
+    return () => {
+      cancelled = true;
+      if (unlisten) unlisten();
+    };
   }, [platform]);
 
   const windowAction = async (action: "minimize" | "toggleMaximize" | "close") => {
@@ -45,7 +80,14 @@ export function TitleBar({ onSettings, settingsActive }: TitleBarProps) {
       if (action === "minimize") await win.minimize();
       else if (action === "toggleMaximize") {
         await win.toggleMaximize();
-        setMaximized(!maximized);
+        // The onResized subscription will catch up on its own, but call
+        // refresh inline too so the icon updates immediately even on
+        // platforms that batch resize events.
+        try {
+          setMaximized(await win.isMaximized());
+        } catch {
+          /* swallow */
+        }
       } else await win.close();
     } catch {}
   };

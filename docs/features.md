@@ -109,6 +109,21 @@ See [Git Sync](git-sync.md) for details.
 - default terminal open mode
 - Git Sync repository settings
 
+## Title Bar
+
+SSX renders its own draggable title bar so it can host a Settings shortcut
+and (on Windows / Linux) the minimize / maximize / close window controls.
+
+- macOS uses the native traffic-light buttons; only the Settings button is
+  rendered on the right.
+- Windows / Linux render Minimize, Maximize/Restore, and Close buttons.
+  The Maximize button's icon and `aria-label` (`"Maximize window"` vs
+  `"Restore window"`) are driven by an `onResized` subscription on the
+  Tauri window so the OS — not optimistic local state — is the source of
+  truth. This means the icon stays correct after double-clicking the
+  title bar, after OS-level shortcuts (Win+Up, F11, Super+Up), and after
+  window-snapping behaviour that bypasses our toggleMaximize handler.
+
 ## Destructive-Action Confirmations
 
 SSX shows a confirmation dialog before any destructive action:
