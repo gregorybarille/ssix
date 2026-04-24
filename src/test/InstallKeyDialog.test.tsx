@@ -184,4 +184,65 @@ describe("InstallKeyDialog", () => {
     expect(alert).toHaveAttribute("role", "alert");
     expect(alert).toHaveAttribute("aria-live", "assertive");
   });
+
+  /*
+   * Audit-3 follow-up P2#7: after a successful install we leave
+   * the dialog open and disable Install (so the user reads the
+   * success message), but if they then edit Host/Port/Username
+   * they're targeting a *different* host and the button must
+   * re-enable. Also: the Install button label flips to "Installed"
+   * (was: still "Install" but disabled — the disabled state was
+   * not visible to AT and confused sighted users into clicking it
+   * repeatedly).
+   */
+  it("after success, button labels Installed and re-enables on host edit", async () => {
+    vi.mocked(invoke).mockResolvedValueOnce(undefined);
+    render(
+      <InstallKeyDialog
+        open
+        onOpenChange={() => {}}
+        credentialId="cred-1"
+        defaultHost="a.example"
+        defaultPort={22}
+        defaultUsername="root"
+      />,
+    );
+    fireEvent.change(screen.getByLabelText(/One-time Password/i), {
+      target: { value: "p" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: /^Install$/i }));
+    // After success, the button text is "Installed" and it's disabled.
+    const installedBtn = await screen.findByRole("button", { name: /Installed/i });
+    expect(installedBtn).toBeDisabled();
+    // Editing host re-enables the button.
+    fireEvent.change(screen.getByLabelText(/Host/i), {
+      target: { value: "b.example" },
+    });
+    const installBtn = screen.getByRole("button", { name: /^Install$/i });
+    expect(installBtn).not.toBeDisabled();
+  });
+
+  it("submit button carries aria-busy while installing", async () => {
+    let resolveInvoke: (v: undefined) => void = () => {};
+    vi.mocked(invoke).mockImplementationOnce(
+      () => new Promise<undefined>((res) => { resolveInvoke = res; }),
+    );
+    render(
+      <InstallKeyDialog
+        open
+        onOpenChange={() => {}}
+        credentialId="cred-1"
+        defaultHost="a.example"
+        defaultUsername="root"
+      />,
+    );
+    fireEvent.change(screen.getByLabelText(/One-time Password/i), {
+      target: { value: "p" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: /^Install$/i }));
+    // While the in-flight invoke is pending, the button advertises busy.
+    const busyBtn = await screen.findByRole("button", { name: /Installing/i });
+    expect(busyBtn).toHaveAttribute("aria-busy", "true");
+    resolveInvoke(undefined);
+  });
 });

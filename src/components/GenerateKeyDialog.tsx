@@ -203,7 +203,7 @@ export function GenerateKeyDialog({
             >
               Cancel
             </Button>
-            <Button type="submit" disabled={isSubmitting}>
+            <Button type="submit" disabled={isSubmitting} aria-busy={isSubmitting}>
               {isSubmitting ? "Generating..." : "Generate"}
             </Button>
           </DialogFooter>

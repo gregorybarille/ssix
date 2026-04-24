@@ -54,6 +54,31 @@ export function InstallKeyDialog({
   const [success, setSuccess] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
+  /*
+   * Audit-3 follow-up P2#7: once an install succeeds we leave the
+   * dialog open and disable the Install button (deliberate — the
+   * user just performed an irreversible remote-side change and we
+   * want them to read the success message before another action).
+   * BUT if the user then edits Host / Port / Username they're
+   * clearly preparing to install on a *different* target, and the
+   * stale `success=true` would lock them out. Reset success on any
+   * target-identity edit so the button re-enables. Wrapping the
+   * setters keeps the contract local — handlers below call
+   * editHost/editPort/editUsername instead of setHost/etc.
+   */
+  const editHost = (v: string) => {
+    if (success) setSuccess(false);
+    setHost(v);
+  };
+  const editPort = (v: string) => {
+    if (success) setSuccess(false);
+    setPort(v);
+  };
+  const editUsername = (v: string) => {
+    if (success) setSuccess(false);
+    setUsername(v);
+  };
+
   useEffect(() => {
     if (open) {
       setHost(defaultHost ?? "");
@@ -125,7 +150,7 @@ export function InstallKeyDialog({
                 id="install-host"
                 placeholder="server.example.com"
                 value={host}
-                onChange={(e) => setHost(e.target.value)}
+                onChange={(e) => editHost(e.target.value)}
               />
             </div>
             <div className="space-y-2">
@@ -137,7 +162,7 @@ export function InstallKeyDialog({
                 value={port}
                 aria-invalid={!!portError}
                 aria-describedby={portError ? "install-port-error" : undefined}
-                onChange={(e) => setPort(e.target.value)}
+                onChange={(e) => editPort(e.target.value)}
                 className={cn(portError && "border-destructive")}
               />
               {portError && (
@@ -157,7 +182,7 @@ export function InstallKeyDialog({
               id="install-user"
               placeholder="root"
               value={username}
-              onChange={(e) => setUsername(e.target.value)}
+              onChange={(e) => editUsername(e.target.value)}
             />
           </div>
           <div className="space-y-2">
@@ -201,8 +226,9 @@ export function InstallKeyDialog({
             <Button
               type="submit"
               disabled={isSubmitting || success || !!portError}
+              aria-busy={isSubmitting}
             >
-              {isSubmitting ? "Installing..." : "Install"}
+              {isSubmitting ? "Installing..." : success ? "Installed" : "Install"}
             </Button>
           </DialogFooter>
         </form>

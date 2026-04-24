@@ -1111,6 +1111,7 @@ export function ConnectionForm({
             <Button
               type="submit"
               disabled={isSubmitting}
+              aria-busy={isSubmitting}
               aria-describedby={error ? "connection-form-error" : undefined}
             >
               {isSubmitting

@@ -234,7 +234,7 @@ export function ScpDialog({ open, onOpenChange, connection }: ScpDialogProps) {
             <Button type="button" variant="outline" onClick={() => onOpenChange(false)} disabled={isSubmitting}>
               Close
             </Button>
-            <Button type="submit" disabled={isSubmitting || !connection}>
+            <Button type="submit" disabled={isSubmitting || !connection} aria-busy={isSubmitting}>
               {isSubmitting ? "Transferring..." : mode === "upload" ? "Upload" : "Download"}
             </Button>
           </DialogFooter>

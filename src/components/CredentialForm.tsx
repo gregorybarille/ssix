@@ -468,6 +468,7 @@ export function CredentialForm({
             <Button
               type="submit"
               disabled={isSubmitting}
+              aria-busy={isSubmitting}
               aria-describedby={error ? "credential-form-error" : undefined}
             >
               {isSubmitting ? "Saving..." : credential ? "Update" : "Create"}

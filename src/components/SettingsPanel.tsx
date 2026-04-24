@@ -299,7 +299,7 @@ export function SettingsPanel({ settings, onSave }: SettingsPanelProps) {
       </div>
 
       <div className="flex items-center gap-3">
-        <Button onClick={handleSave} disabled={isSaving}>
+        <Button onClick={handleSave} disabled={isSaving} aria-busy={isSaving}>
           {isSaving ? "Saving..." : "Save Settings"}
         </Button>
         {/*
