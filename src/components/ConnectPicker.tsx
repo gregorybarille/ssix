@@ -132,6 +132,11 @@ export function ConnectPicker({
   const listboxId = "connect-picker-list";
   const activeId =
     filtered.length > 0 ? `connect-picker-row-${activeIndex}` : undefined;
+  // P2-A8: WAI-ARIA 1.2 combobox pattern. The listbox is "expanded"
+  // whenever the picker has results to show — when there are no
+  // matches we still render a status message but no listbox exists,
+  // so aria-expanded is false to match what's actually in the DOM.
+  const expanded = filtered.length > 0;
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -158,7 +163,10 @@ export function ConnectPicker({
             onKeyDown={onKeyDown}
             placeholder="Search connections by name, host, or tag…"
             aria-label="Search connections"
-            aria-controls={listboxId}
+            role="combobox"
+            aria-expanded={expanded}
+            aria-autocomplete="list"
+            aria-controls={expanded ? listboxId : undefined}
             aria-activedescendant={activeId}
             className="flex-1 bg-transparent outline-none text-sm placeholder:text-muted-foreground"
           />

@@ -69,18 +69,18 @@ describe("ConnectPicker (command palette)", () => {
         onConnect={onConnect}
       />,
     );
-    expect(screen.queryByRole("searchbox", { name: /search connections/i })).toBeNull();
+    expect(screen.queryByRole("combobox", { name: /search connections/i })).toBeNull();
   });
 
   it("autofocuses the search input", () => {
     open();
-    const input = screen.getByRole("searchbox", { name: /search connections/i });
+    const input = screen.getByRole("combobox", { name: /search connections/i });
     expect(document.activeElement).toBe(input);
   });
 
   it("filters by name, host, and tag tokens (AND semantics)", () => {
     open();
-    const input = screen.getByRole("searchbox", { name: /search connections/i });
+    const input = screen.getByRole("combobox", { name: /search connections/i });
     fireEvent.change(input, { target: { value: "production db" } });
     const options = screen.getAllByRole("option");
     expect(options).toHaveLength(1);
@@ -89,7 +89,7 @@ describe("ConnectPicker (command palette)", () => {
 
   it("ArrowDown / ArrowUp wrap and update aria-selected", () => {
     open();
-    const input = screen.getByRole("searchbox", { name: /search connections/i });
+    const input = screen.getByRole("combobox", { name: /search connections/i });
     let active = screen
       .getAllByRole("option")
       .find((o) => o.getAttribute("aria-selected") === "true");
@@ -114,7 +114,7 @@ describe("ConnectPicker (command palette)", () => {
 
   it("Enter calls onConnect with the active row and closes", () => {
     open();
-    const input = screen.getByRole("searchbox", { name: /search connections/i });
+    const input = screen.getByRole("combobox", { name: /search connections/i });
     fireEvent.keyDown(input, { key: "ArrowDown" });
     fireEvent.keyDown(input, { key: "Enter" });
     expect(onConnect).toHaveBeenCalledTimes(1);
@@ -131,7 +131,7 @@ describe("ConnectPicker (command palette)", () => {
 
   it("aria-activedescendant points at the active row", () => {
     open();
-    const input = screen.getByRole("searchbox", { name: /search connections/i });
+    const input = screen.getByRole("combobox", { name: /search connections/i });
     expect(input.getAttribute("aria-activedescendant")).toBe("connect-picker-row-0");
     fireEvent.keyDown(input, { key: "ArrowDown" });
     expect(input.getAttribute("aria-activedescendant")).toBe("connect-picker-row-1");
@@ -139,8 +139,27 @@ describe("ConnectPicker (command palette)", () => {
 
   it("shows a no-matches message when query has no hits", () => {
     open();
-    const input = screen.getByRole("searchbox", { name: /search connections/i });
+    const input = screen.getByRole("combobox", { name: /search connections/i });
     fireEvent.change(input, { target: { value: "zzznomatch" } });
     expect(screen.getByText(/No matches for/)).toBeInTheDocument();
+  });
+
+  /*
+   * P2-A8: WAI-ARIA 1.2 combobox pattern. The input must expose
+   * role=combobox + aria-expanded reflecting whether the listbox is
+   * actually rendered + aria-autocomplete=list. Without these AT
+   * announces a plain textbox and never tells the user there's a
+   * listbox of suggestions to navigate.
+   */
+  it("exposes the combobox role with aria-expanded reflecting listbox visibility", () => {
+    open();
+    const input = screen.getByRole("combobox", { name: /search connections/i });
+    expect(input).toHaveAttribute("aria-expanded", "true");
+    expect(input).toHaveAttribute("aria-autocomplete", "list");
+    expect(input).toHaveAttribute("aria-controls", "connect-picker-list");
+    fireEvent.change(input, { target: { value: "zzznomatch" } });
+    // No matches => no listbox is rendered, so aria-expanded must flip.
+    expect(input).toHaveAttribute("aria-expanded", "false");
+    expect(input).not.toHaveAttribute("aria-controls");
   });
 });
