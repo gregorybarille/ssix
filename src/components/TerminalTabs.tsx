@@ -254,7 +254,7 @@ export function TerminalTabs({
                   onCloseTab(tab.id);
                 }}
               >
-                <X className="h-3 w-3" />
+                <X aria-hidden="true" className="h-3 w-3" />
               </span>
             </button>
           );
@@ -275,7 +275,7 @@ export function TerminalTabs({
           </DropdownMenuTrigger>
           <DropdownMenuContent align="start">
             <DropdownMenuItem onClick={() => onNewTab("tab")}>
-              <Plus className="h-3.5 w-3.5 mr-2" />
+              <Plus aria-hidden="true" className="h-3.5 w-3.5 mr-2" />
               New tab
             </DropdownMenuItem>
             <DropdownMenuItem
@@ -285,7 +285,7 @@ export function TerminalTabs({
                 (tabs.find((t) => t.id === activeTabId)?.panes.length ?? 0) >= 2
               }
             >
-              <SplitSquareHorizontal className="h-3.5 w-3.5 mr-2" />
+              <SplitSquareHorizontal aria-hidden="true" className="h-3.5 w-3.5 mr-2" />
               Split right
             </DropdownMenuItem>
             <DropdownMenuItem
@@ -295,7 +295,7 @@ export function TerminalTabs({
                 (tabs.find((t) => t.id === activeTabId)?.panes.length ?? 0) >= 2
               }
             >
-              <SplitSquareVertical className="h-3.5 w-3.5 mr-2" />
+              <SplitSquareVertical aria-hidden="true" className="h-3.5 w-3.5 mr-2" />
               Split down
             </DropdownMenuItem>
           </DropdownMenuContent>

@@ -108,4 +108,26 @@ describe("Sidebar", () => {
     const btn = screen.getByRole("button", { name: "Connections" });
     expect(btn).toHaveAttribute("type", "button");
   });
+
+  /*
+   * Audit-3 follow-up P3#10: the outer <aside> previously also
+   * carried aria-label="Primary navigation" while the inner <nav>
+   * was labelled "Primary". Both ended up in the AT landmark list
+   * as essentially the same item (one as 'complementary', one as
+   * 'navigation'). The <aside> is purely a visual wrapper; only
+   * the <nav> is the meaningful landmark. Pin that exactly one
+   * landmark named 'Primary' is exposed.
+   */
+  it("exposes a single Primary navigation landmark (no duplicate complementary label)", () => {
+    render(<Sidebar active="connections" onNavigate={vi.fn()} />);
+    const navMatches = screen.getAllByRole("navigation", { name: /primary/i });
+    expect(navMatches).toHaveLength(1);
+    // The <aside> wrapper (role=complementary) must NOT carry the
+    // same accessible name; otherwise AT users see two adjacent
+    // landmarks for the same control strip.
+    const complementary = screen.queryByRole("complementary", {
+      name: /primary/i,
+    });
+    expect(complementary).toBeNull();
+  });
 });

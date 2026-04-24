@@ -153,10 +153,19 @@ export function InstallKeyDialog({
           <div className="grid grid-cols-3 gap-2">
             <div className="col-span-2 space-y-2">
               <Label htmlFor="install-host">Host *</Label>
+              {/*
+                P2#6: aria-required so screen readers announce
+                'required' when focus enters the field. Visual '*'
+                in the Label is decorative — AT doesn't reliably
+                map asterisk-in-text to required-state. The blank-
+                field check below feeds aria-invalid on submit.
+              */}
               <Input
                 id="install-host"
                 placeholder="server.example.com"
                 value={host}
+                aria-required="true"
+                aria-invalid={!!error && !host.trim()}
                 onChange={(e) => editHost(e.target.value)}
               />
             </div>
@@ -189,6 +198,8 @@ export function InstallKeyDialog({
               id="install-user"
               placeholder="root"
               value={username}
+              aria-required="true"
+              aria-invalid={!!error && !username.trim()}
               onChange={(e) => editUsername(e.target.value)}
             />
           </div>
@@ -198,6 +209,8 @@ export function InstallKeyDialog({
               id="install-pw"
               placeholder="••••••••"
               value={password}
+              aria-required="true"
+              aria-invalid={!!error && !password}
               onChange={(e) => setPassword(e.target.value)}
             />
           </div>

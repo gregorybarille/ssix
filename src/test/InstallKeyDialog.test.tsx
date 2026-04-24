@@ -245,4 +245,43 @@ describe("InstallKeyDialog", () => {
     expect(busyBtn).toHaveAttribute("aria-busy", "true");
     resolveInvoke(undefined);
   });
+
+  /*
+   * Audit-3 follow-up P2#6: required text fields advertise
+   * required-state to AT via aria-required, not just a visual
+   * '*' in the label. The asterisk is announced inconsistently
+   * (some screen readers read 'asterisk', some skip it). On
+   * submit error, the corresponding empty field flips
+   * aria-invalid so AT can locate the offending control.
+   */
+  it("marks required text fields with aria-required and flips aria-invalid on blank submit", async () => {
+    vi.mocked(invoke).mockRejectedValueOnce(new Error("Username is required"));
+    render(
+      <InstallKeyDialog
+        open={true}
+        onOpenChange={() => {}}
+        credentialId="cred-1"
+      />
+    );
+
+    const host = screen.getByLabelText(/Host/i) as HTMLInputElement;
+    const user = screen.getByLabelText(/Username/i) as HTMLInputElement;
+    const pw = screen.getByLabelText(/One-time Password/i) as HTMLInputElement;
+
+    expect(host).toHaveAttribute("aria-required", "true");
+    expect(user).toHaveAttribute("aria-required", "true");
+    expect(pw).toHaveAttribute("aria-required", "true");
+
+    // Provide host so the submit doesn't bail on the inline port-only
+    // check, then submit with blank user/password and let the backend
+    // error trigger the per-field aria-invalid.
+    fireEvent.change(host, { target: { value: "example.com" } });
+    fireEvent.click(screen.getByRole("button", { name: /^Install$/i }));
+
+    await screen.findByRole("alert");
+    expect(user).toHaveAttribute("aria-invalid", "true");
+    expect(pw).toHaveAttribute("aria-invalid", "true");
+    // Host was provided so it should NOT be marked invalid.
+    expect(host).toHaveAttribute("aria-invalid", "false");
+  });
 });

@@ -134,7 +134,7 @@ export function LogsView() {
           variant="outline"
           onClick={tab === "frontend" ? clearFrontend : clearBackend}
         >
-          <Trash2 className="h-3.5 w-3.5 mr-1" />
+          <Trash2 aria-hidden="true" className="h-3.5 w-3.5 mr-1" />
           Clear
         </Button>
       </div>

@@ -99,7 +99,15 @@ export function Sidebar({
 }: SidebarProps) {
   return (
     <aside
-      aria-label="Primary navigation"
+      /*
+        Audit-3 follow-up P3#10: previously this <aside> was labelled
+        'Primary navigation' AND the inner <nav> was labelled
+        'Primary'. Both ended up in the AT landmarks list as
+        essentially the same item. The <aside> is just a visual
+        sidebar wrapper; the meaningful landmark is the <nav>.
+        Drop the aria-label here so AT only surfaces a single
+        'Primary' navigation landmark.
+      */
       className="w-16 bg-card border-r border-border flex flex-col items-center py-4 gap-2"
     >
       <div className="mb-4" aria-hidden="true">

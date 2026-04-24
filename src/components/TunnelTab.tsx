@@ -91,7 +91,7 @@ export function TunnelTab({
     >
       <div className="p-6 max-w-2xl mx-auto w-full space-y-6">
         <div className="flex items-center gap-3">
-          <Network className="h-6 w-6 text-primary" />
+          <Network aria-hidden="true" className="h-6 w-6 text-primary" />
           <div>
             <h2 className="text-lg font-semibold">{connection.name}</h2>
             <p className="text-xs text-muted-foreground">
