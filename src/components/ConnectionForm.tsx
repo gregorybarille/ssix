@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { Connection, Credential, ConnectionType, OPEN_COLORS } from "@/types";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
@@ -25,6 +25,8 @@ import { COLOR_VALUES } from "@/lib/colors";
 import { parsePort } from "@/lib/port";
 import { UploadCloud } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { useUnsavedChangesGuard } from "@/hooks/useUnsavedChangesGuard";
+import { ConfirmDialog } from "./ConfirmDialog";
 
 type AuthMethod = "password" | "ssh_key" | "credential";
 
@@ -51,6 +53,52 @@ const DEFAULT_FORM: Omit<Connection, "id"> = {
   tags: [],
   color: undefined,
 };
+
+/**
+ * Stable serialization of every piece of form state we want to track
+ * for unsaved-changes detection. Field order is fixed so the output is
+ * deterministic across renders.
+ */
+function serializeFormState(s: {
+  form: Omit<Connection, "id">;
+  portInputs: Record<string, string>;
+  connectionType: ConnectionType;
+  authMethod: AuthMethod;
+  inlineUsername: string;
+  inlinePassword: string;
+  inlineKeyPath: string;
+  inlinePassphrase: string;
+  inlineCredentialName: string;
+  saveCredential: boolean;
+}): string {
+  return JSON.stringify([
+    s.form.name,
+    s.form.host,
+    s.form.credential_id ?? null,
+    s.form.type,
+    s.form.verbosity ?? 0,
+    s.form.extra_args ?? "",
+    s.form.login_command ?? "",
+    s.form.remote_path ?? "",
+    s.form.tags ?? [],
+    s.form.color ?? null,
+    s.form.gateway_host ?? null,
+    s.form.gateway_credential_id ?? null,
+    s.form.destination_host ?? null,
+    s.form.local_port ?? null,
+    s.portInputs,
+    s.connectionType,
+    s.authMethod,
+    s.inlineUsername,
+    // We deliberately track inline secrets so typing a password and
+    // closing the dialog still warns the user.
+    s.inlinePassword,
+    s.inlineKeyPath,
+    s.inlinePassphrase,
+    s.inlineCredentialName,
+    s.saveCredential,
+  ]);
+}
 
 export function ConnectionForm({
   open,
@@ -161,6 +209,51 @@ export function ConnectionForm({
     setSaveCredential(false);
     setError(null);
   }, [connection, open, isClone]);
+
+  // Snapshot of the form state at "freshly opened" or "freshly reset"
+  // so we can detect whether the user has made any changes worth
+  // guarding on close. The snapshot is recomputed in the SAME effect
+  // that initializes the form so it always reflects the post-init
+  // values, never a stale render.
+  const baselineRef = useRef<string>("");
+  useEffect(() => {
+    // Defer to next tick so the setState calls above have flushed.
+    const id = setTimeout(() => {
+      baselineRef.current = serializeFormState({
+        form,
+        portInputs,
+        connectionType,
+        authMethod,
+        inlineUsername,
+        inlinePassword,
+        inlineKeyPath,
+        inlinePassphrase,
+        inlineCredentialName,
+        saveCredential,
+      });
+    }, 0);
+    return () => clearTimeout(id);
+    // We only want to re-baseline when the dialog opens or the
+    // backing connection changes — NOT on every keystroke.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [connection, open, isClone]);
+
+  const currentSnapshot = serializeFormState({
+    form,
+    portInputs,
+    connectionType,
+    authMethod,
+    inlineUsername,
+    inlinePassword,
+    inlineKeyPath,
+    inlinePassphrase,
+    inlineCredentialName,
+    saveCredential,
+  });
+  const dirty = open && currentSnapshot !== baselineRef.current && baselineRef.current !== "";
+
+  const guard = useUnsavedChangesGuard(dirty);
+  const requestCloseDialog = () => guard.requestClose(() => onOpenChange(false));
 
   const isTunnel = connectionType !== "direct";
   const needsDestinationAuth = connectionType !== "port_forward";
@@ -365,6 +458,9 @@ export function ConnectionForm({
       } else {
         await onSubmit(data);
       }
+      // Suppress the unsaved-changes guard for the close that follows
+      // a successful save.
+      guard.markSaved();
       onOpenChange(false);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -600,7 +696,18 @@ export function ConnectionForm({
   );
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog
+      open={open}
+      onOpenChange={(o) => {
+        if (o) {
+          onOpenChange(true);
+          return;
+        }
+        // Intercept Esc / click-outside attempts to close so we can
+        // prompt for unsaved changes.
+        requestCloseDialog();
+      }}
+    >
       <DialogContent className="sm:max-w-[560px] max-h-[90vh] flex flex-col p-0 gap-0">
         <DialogHeader className="px-6 pt-6 pb-3 shrink-0 border-b">
           <DialogTitle>{title}</DialogTitle>
@@ -977,7 +1084,7 @@ export function ConnectionForm({
             <Button
               type="button"
               variant="outline"
-              onClick={() => onOpenChange(false)}
+              onClick={requestCloseDialog}
               disabled={isSubmitting}
             >
               Cancel
@@ -998,6 +1105,18 @@ export function ConnectionForm({
           </DialogFooter>
         </form>
       </DialogContent>
+      <ConfirmDialog
+        open={guard.confirmOpen}
+        onOpenChange={(o) => {
+          if (!o) guard.cancelDiscard();
+        }}
+        title="Discard unsaved changes?"
+        description="You have unsaved changes to this connection. Discard them and close the form?"
+        confirmLabel="Discard"
+        cancelLabel="Keep editing"
+        variant="destructive"
+        onConfirm={guard.confirmDiscard}
+      />
     </Dialog>
   );
 }

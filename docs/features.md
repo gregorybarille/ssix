@@ -288,6 +288,34 @@ return (
 );
 ```
 
+## Unsaved-changes guard
+
+`ConnectionForm` and `CredentialForm` snapshot their initial state when
+the dialog opens and watch for changes via the `useUnsavedChangesGuard`
+hook (`src/hooks/useUnsavedChangesGuard.ts`). When the user attempts to
+close the dialog (Cancel button, `Esc`, or click-outside) and the form
+state differs from the baseline, a destructive `<ConfirmDialog>`
+prompts:
+
+> **Discard unsaved changes?** You have unsaved changes to this
+> connection/credential. Discard them and close the form?
+> [ Keep editing ]   [ Discard ]
+
+Choosing **Keep editing** dismisses the prompt and returns focus to the
+form; **Discard** confirms and closes the dialog.
+
+The guard self-disables for the close that immediately follows a
+successful save: submit handlers call `guard.markSaved()` before
+`onOpenChange(false)` so users never see the discard prompt after
+clicking Create/Update.
+
+The dirty check uses a stable `JSON.stringify` of every tracked field
+(including inline auth secrets in `ConnectionForm`), so typing a
+password into the inline-credential tab and trying to close also
+triggers the guard. Because the snapshot is captured one tick after
+the form initializes, no spurious "dirty" state is detected when the
+dialog first opens against an existing connection.
+
 ## Global Keyboard Shortcuts
 
 SSX listens for a small set of platform shortcuts. `Mod` is `Cmd` on

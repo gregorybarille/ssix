@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { Credential } from "@/types";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
@@ -14,6 +14,8 @@ import {
 } from "./ui/dialog";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "./ui/tabs";
 import { GenerateKeyDialog, GeneratedKey, KeyStorageMode } from "./GenerateKeyDialog";
+import { ConfirmDialog } from "./ConfirmDialog";
+import { useUnsavedChangesGuard } from "@/hooks/useUnsavedChangesGuard";
 import { pickFile } from "@/lib/dialog";
 import { FolderOpen } from "lucide-react";
 
@@ -25,6 +27,28 @@ interface CredentialFormProps {
 }
 
 type KeySource = "path" | "inline";
+
+function serializeCredentialState(s: {
+  name: string;
+  username: string;
+  credType: "password" | "ssh_key";
+  password: string;
+  keySource: KeySource;
+  privateKeyPath: string;
+  privateKey: string;
+  passphrase: string;
+}): string {
+  return JSON.stringify([
+    s.name,
+    s.username,
+    s.credType,
+    s.password,
+    s.keySource,
+    s.privateKeyPath,
+    s.privateKey,
+    s.passphrase,
+  ]);
+}
 
 export function CredentialForm({
   open,
@@ -80,6 +104,42 @@ export function CredentialForm({
     setError(null);
     setFieldErrors({});
   }, [credential, open]);
+
+  // Snapshot baseline state for unsaved-changes detection. Recomputed
+  // whenever the dialog opens or the backing credential changes.
+  const baselineRef = useRef<string>("");
+  useEffect(() => {
+    const id = setTimeout(() => {
+      baselineRef.current = serializeCredentialState({
+        name,
+        username,
+        credType,
+        password,
+        keySource,
+        privateKeyPath,
+        privateKey,
+        passphrase,
+      });
+    }, 0);
+    return () => clearTimeout(id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [credential, open]);
+
+  const currentSnapshot = serializeCredentialState({
+    name,
+    username,
+    credType,
+    password,
+    keySource,
+    privateKeyPath,
+    privateKey,
+    passphrase,
+  });
+  const dirty =
+    open && currentSnapshot !== baselineRef.current && baselineRef.current !== "";
+
+  const guard = useUnsavedChangesGuard(dirty);
+  const requestCloseDialog = () => guard.requestClose(() => onOpenChange(false));
 
   const handleGenerated = (key: GeneratedKey, mode: KeyStorageMode) => {
     setGeneratedPublicKey(key.public_key);
@@ -143,6 +203,7 @@ export function CredentialForm({
       } else {
         await onSubmit(data);
       }
+      guard.markSaved();
       onOpenChange(false);
     } catch (err) {
       setError(String(err));
@@ -152,7 +213,16 @@ export function CredentialForm({
   };
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog
+      open={open}
+      onOpenChange={(o) => {
+        if (o) {
+          onOpenChange(true);
+          return;
+        }
+        requestCloseDialog();
+      }}
+    >
       <DialogContent className="sm:max-w-[460px] max-h-[90vh] flex flex-col p-0 gap-0">
         <DialogHeader className="px-6 pt-6 pb-3 shrink-0 border-b">
           <DialogTitle>
@@ -390,7 +460,7 @@ export function CredentialForm({
             <Button
               type="button"
               variant="outline"
-              onClick={() => onOpenChange(false)}
+              onClick={requestCloseDialog}
               disabled={isSubmitting}
             >
               Cancel
@@ -411,6 +481,18 @@ export function CredentialForm({
           onGenerated={handleGenerated}
         />
       </DialogContent>
+      <ConfirmDialog
+        open={guard.confirmOpen}
+        onOpenChange={(o) => {
+          if (!o) guard.cancelDiscard();
+        }}
+        title="Discard unsaved changes?"
+        description="You have unsaved changes to this credential. Discard them and close the form?"
+        confirmLabel="Discard"
+        cancelLabel="Keep editing"
+        variant="destructive"
+        onConfirm={guard.confirmDiscard}
+      />
     </Dialog>
   );
 }
