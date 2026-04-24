@@ -182,17 +182,13 @@ fn hostname() -> Option<String> {
     std::env::var("HOSTNAME").ok().or_else(|| std::env::var("HOST").ok())
 }
 
-#[derive(Debug, Deserialize)]
-pub struct InstallPublicKeyInput {
-    pub host: String,
-    pub port: u16,
-    pub username: String,
-    /// One-time password used only to authenticate the install session. Never
-    /// persisted.
-    pub password: String,
-    /// Public key line as it should appear in `~/.ssh/authorized_keys`.
-    pub public_key: String,
-}
+// Audit-4 Phase 4: removed `InstallPublicKeyInput` and the
+// `ssh_install_public_key` command. They accepted a raw password in the
+// IPC payload, were never invoked from the frontend (which uses
+// `ssh_install_public_key_by_credential`), and were a footgun because
+// the password would be visible in any IPC log. The internal
+// `install_public_key_with_password` helper is still used by the
+// by-credential variant.
 
 /// Single-quote-escape a string for a POSIX shell: `'` becomes `'\''`.
 pub fn shell_single_quote(s: &str) -> String {
@@ -242,17 +238,11 @@ pub fn build_install_script(public_key: &str) -> String {
     )
 }
 
-#[tauri::command]
-pub fn ssh_install_public_key(input: InstallPublicKeyInput) -> Result<(), String> {
-    install_public_key_with_password(
-        &input.host,
-        input.port,
-        &input.username,
-        &input.password,
-        &input.public_key,
-    )
-}
-
+// Audit-4 Phase 4: this is the internal helper used by
+// ssh_install_public_key_by_credential. It is NOT exposed as a Tauri
+// command — the previous bare `ssh_install_public_key` command took a
+// raw password in the IPC payload and was never invoked from the
+// frontend, so it has been removed.
 fn install_public_key_with_password(
     host: &str,
     port: u16,

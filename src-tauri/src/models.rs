@@ -1,7 +1,24 @@
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+// Audit-4 Phase 6a: ts-rs is gated to test builds only (see
+// Cargo.toml). The macro reads `#[ts(...)]` attributes regardless of
+// gating, so we use `#[cfg_attr(test, derive(TS))]` and apply the
+// per-type `export_to = "../../src/types/generated/"` path so
+// `cargo test` writes the bindings into `<repo>/src/types/generated/`
+// (path is relative to the source file = `src-tauri/src/models.rs`).
+// Production builds skip ts-rs entirely.
+//
+// Bindings are committed and a snapshot test (see `models::tests`)
+// asserts the on-disk shape matches what the macro emits, so any
+// model change that the developer forgets to mirror in `index.ts`
+// shows up as a failing `cargo test`.
+#[cfg(test)]
+use ts_rs::TS;
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[cfg_attr(test, derive(TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum CredentialKind {
     Password {
@@ -22,11 +39,14 @@ pub enum CredentialKind {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(test, derive(TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 pub struct Credential {
     pub id: String,
     pub name: String,
     pub username: String,
     #[serde(flatten)]
+    #[cfg_attr(test, ts(flatten))]
     pub kind: CredentialKind,
     /// When true the credential was auto-created for inline auth and is not
     /// shown in the credentials list. Treated as false when absent (legacy data).
@@ -60,6 +80,8 @@ impl Credential {
 ///
 /// Legacy data with `type: "tunnel"` is migrated to `JumpShell` on load.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[cfg_attr(test, derive(TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ConnectionKind {
     Direct,
@@ -92,6 +114,8 @@ pub enum ConnectionKind {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(test, derive(TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 pub struct Connection {
     pub id: String,
     pub name: String,
@@ -99,6 +123,7 @@ pub struct Connection {
     pub port: u16,
     pub credential_id: Option<String>,
     #[serde(flatten)]
+    #[cfg_attr(test, ts(flatten))]
     pub kind: ConnectionKind,
     /// SSH verbosity level: 0 = silent, 1 = standard SSH debug output,
     /// 2 = enables libssh2 trace (verbose). Output is written to the terminal
@@ -107,16 +132,20 @@ pub struct Connection {
     pub verbosity: u8,
     /// Additional CLI-style flags passed to the SSH subsystem (e.g. `-C` for
     /// compression). Parsed and applied before the handshake.
-    #[serde(default)]
+    // Audit-4 Phase 4: skip_serializing_if on every Option/Vec field that
+    // already has #[serde(default)]. Round-trips identically and shaves
+    // noise from data.json for the common case (most connections leave
+    // these unset). Mirrors the existing treatment of `color`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub extra_args: Option<String>,
     /// Command to run after the shell session opens, e.g. `sudo su - deploy`.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub login_command: Option<String>,
     /// Preferred starting directory on the remote host.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub remote_path: Option<String>,
     /// User-defined tags. Used for filtering/search. Empty by default.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub tags: Vec<String>,
     /// Optional Open Color name (e.g. "blue", "violet") used as the tab accent.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -143,6 +172,8 @@ impl Connection {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(test, derive(TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 pub struct AppSettings {
     #[serde(default = "default_font_size")]
     pub font_size: u8,
@@ -208,14 +239,70 @@ impl Default for AppSettings {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(test, derive(TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 pub struct AppData {
+    /// Audit-4 Phase 6b: monotonically-increasing schema stamp. Legacy
+    /// `data.json` files written before this field existed deserialize
+    /// as version 0; `migrate_to_current()` walks them up to
+    /// `CURRENT_SCHEMA_VERSION` and re-stamps before save. Bump
+    /// `CURRENT_SCHEMA_VERSION` and add a `migrate_v{N-1}_to_v{N}`
+    /// branch any time you change the on-disk shape in a way that
+    /// requires a one-time fixup at load time.
+    #[serde(default)]
+    pub schema_version: u32,
     pub credentials: Vec<Credential>,
     pub connections: Vec<Connection>,
     pub settings: AppSettings,
 }
 
+/// Current `AppData.schema_version` written by this build.
+///
+/// Version history:
+///  - 0 — implicit; pre-Phase-6b files with no `schema_version` field.
+///        Treated identically to v1 in-memory; `migrate_legacy_kinds`
+///        already covered the LegacyTunnel → JumpShell rewrite that
+///        was the only on-disk shape change to date.
+///  - 1 — first explicit stamp. No data shape change vs v0; the
+///        version is recorded so future migrations can branch on
+///        "before/after this point" without ambiguity.
+pub const CURRENT_SCHEMA_VERSION: u32 = 1;
+
+impl Default for AppData {
+    fn default() -> Self {
+        Self {
+            schema_version: CURRENT_SCHEMA_VERSION,
+            credentials: Vec::new(),
+            connections: Vec::new(),
+            settings: AppSettings::default(),
+        }
+    }
+}
+
 impl AppData {
+    /// Run every migration from the loaded `schema_version` up to
+    /// `CURRENT_SCHEMA_VERSION` and stamp the result. Idempotent: a
+    /// file already at `CURRENT_SCHEMA_VERSION` is left untouched.
+    ///
+    /// Migration order matters: `migrate_legacy_kinds` runs first
+    /// regardless of stamp because pre-stamp files (v0) may carry the
+    /// LegacyTunnel variant that v1+ readers must not see.
+    pub fn migrate_to_current(&mut self) {
+        // Step 1: legacy variants are dropped on every load (cheap, idempotent).
+        self.migrate_legacy_kinds();
+
+        // Step 2: future-proofing scaffold. Add branches here as the
+        // schema evolves:
+        //
+        //   if self.schema_version < 2 {
+        //       // migrate v1 → v2
+        //   }
+        //   if self.schema_version < 3 { … }
+
+        self.schema_version = CURRENT_SCHEMA_VERSION;
+    }
+
     /// Migrate legacy `ConnectionKind::LegacyTunnel` entries to `JumpShell`.
     /// `LegacyTunnel.gateway_credential_id` was optional; if absent, we drop the
     /// connection's tunnel-ness and convert it to `Direct` (with a warning logged)
@@ -577,5 +664,86 @@ mod tests {
         assert_eq!(s.connection_layout, "list");
         assert_eq!(s.default_open_mode, "tab");
         assert_eq!(s.git_sync_remote, "origin");
+    }
+
+    // Audit-4 Phase 6b: schema_version stamping + migration ----------------
+
+    #[test]
+    fn test_app_data_default_stamps_current_schema_version() {
+        let data = AppData::default();
+        assert_eq!(data.schema_version, CURRENT_SCHEMA_VERSION);
+    }
+
+    #[test]
+    fn test_app_data_legacy_json_without_schema_version_loads_as_zero() {
+        // Pre-Phase-6b on-disk shape: no schema_version field.
+        let json = r#"{
+            "credentials": [],
+            "connections": [],
+            "settings": {}
+        }"#;
+        let data: AppData = serde_json::from_str(json).unwrap();
+        assert_eq!(data.schema_version, 0);
+    }
+
+    #[test]
+    fn test_migrate_to_current_stamps_version_and_clears_legacy() {
+        // Simulate a v0 file with a LegacyTunnel — the most realistic
+        // worst case for an upgrade in the wild.
+        let mut data = AppData {
+            schema_version: 0,
+            credentials: Vec::new(),
+            connections: vec![Connection {
+                id: "c1".into(),
+                name: "old".into(),
+                host: "internal.example".into(),
+                port: 22,
+                credential_id: None,
+                verbosity: 0,
+                extra_args: None,
+                login_command: None,
+                remote_path: None,
+                tags: Vec::new(),
+                color: None,
+                kind: ConnectionKind::LegacyTunnel {
+                    gateway_host: "gw.example".into(),
+                    gateway_port: 22,
+                    gateway_credential_id: Some("gw-cred".into()),
+                    destination_host: "internal.example".into(),
+                    destination_port: 22,
+                },
+            }],
+            settings: AppSettings::default(),
+        };
+
+        data.migrate_to_current();
+
+        assert_eq!(data.schema_version, CURRENT_SCHEMA_VERSION);
+        assert!(matches!(
+            data.connections[0].kind,
+            ConnectionKind::JumpShell { .. }
+        ));
+    }
+
+    #[test]
+    fn test_migrate_to_current_is_idempotent() {
+        let mut data = AppData::default();
+        data.migrate_to_current();
+        assert_eq!(data.schema_version, CURRENT_SCHEMA_VERSION);
+        // Run again — must not regress or panic.
+        data.migrate_to_current();
+        assert_eq!(data.schema_version, CURRENT_SCHEMA_VERSION);
+    }
+
+    #[test]
+    fn test_app_data_roundtrip_preserves_schema_version() {
+        let data = AppData::default();
+        let json = serde_json::to_string(&data).unwrap();
+        assert!(json.contains(&format!(
+            r#""schema_version":{}"#,
+            CURRENT_SCHEMA_VERSION
+        )));
+        let back: AppData = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.schema_version, CURRENT_SCHEMA_VERSION);
     }
 }

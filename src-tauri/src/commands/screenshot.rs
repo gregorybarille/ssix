@@ -36,7 +36,13 @@ fn take_screenshot_into_dir(
     let filename = format!("ssx-screenshot-{}-{:03}.png", ts, millis);
     let path = dir.join(&filename);
 
-    std::fs::write(&path, &bytes)
+    // Audit-4 L1: route through atomic_write so a crash mid-write
+    // can't leave a torn PNG on the user's Desktop. Screenshots are
+    // user-visible artefacts; a half-written file would silently
+    // corrupt the workflow ("why won't this image open?"). No mode
+    // override needed — atomic_write defaults to the platform default
+    // (0644 on Unix), which matches the previous fs::write behaviour.
+    crate::storage::atomic_write(&path, &bytes, None)
         .map_err(|e| format!("Failed to write screenshot: {}", e))?;
 
     path.to_str()

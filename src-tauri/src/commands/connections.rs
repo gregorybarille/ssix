@@ -3,8 +3,13 @@ use crate::storage::{load_data, with_data_mut};
 use serde::Deserialize;
 use uuid::Uuid;
 
+/// Audit-4 Dup H3: shared field set between AddConnectionInput and
+/// UpdateConnectionInput. Previously these two structs duplicated 9
+/// fields verbatim — adding a new connection attribute required editing
+/// both sites and the test suite couldn't catch a drift if only one was
+/// updated. `#[serde(flatten)]` keeps the wire format identical.
 #[derive(Debug, Deserialize)]
-pub struct AddConnectionInput {
+pub struct ConnectionFields {
     pub name: String,
     pub host: String,
     pub port: u16,
@@ -26,26 +31,16 @@ pub struct AddConnectionInput {
 }
 
 #[derive(Debug, Deserialize)]
+pub struct AddConnectionInput {
+    #[serde(flatten)]
+    pub fields: ConnectionFields,
+}
+
+#[derive(Debug, Deserialize)]
 pub struct UpdateConnectionInput {
     pub id: String,
-    pub name: String,
-    pub host: String,
-    pub port: u16,
-    pub credential_id: Option<String>,
     #[serde(flatten)]
-    pub kind: ConnectionKind,
-    #[serde(default)]
-    pub verbosity: u8,
-    #[serde(default)]
-    pub extra_args: Option<String>,
-    #[serde(default)]
-    pub login_command: Option<String>,
-    #[serde(default)]
-    pub remote_path: Option<String>,
-    #[serde(default)]
-    pub tags: Vec<String>,
-    #[serde(default)]
-    pub color: Option<String>,
+    pub fields: ConnectionFields,
 }
 
 #[derive(Debug, Deserialize)]
@@ -63,20 +58,44 @@ pub fn get_connections() -> Result<Vec<Connection>, String> {
     Ok(data.connections)
 }
 
+/// Audit-4 H6: validate user-provided connection fields BEFORE we mutate
+/// state. Without this, the frontend was the only line of defence — a
+/// hand-crafted IPC call (or a future programmatic caller) could persist
+/// blank names, blank hosts, or port 0, then silently fail at SSH-connect
+/// time with a confusing error.
+fn validate_connection_fields(name: &str, host: &str, port: u16) -> Result<(), String> {
+    let trimmed_name = name.trim();
+    if trimmed_name.is_empty() {
+        return Err("Connection name is required.".to_string());
+    }
+    if trimmed_name.chars().count() > 128 {
+        return Err("Connection name must be 128 characters or fewer.".to_string());
+    }
+    if host.trim().is_empty() {
+        return Err("Host is required.".to_string());
+    }
+    if port == 0 {
+        return Err("Port must be between 1 and 65535.".to_string());
+    }
+    Ok(())
+}
+
 #[tauri::command]
 pub fn add_connection(input: AddConnectionInput) -> Result<Connection, String> {
+    let f = input.fields;
+    validate_connection_fields(&f.name, &f.host, f.port)?;
     with_data_mut(|data| {
-        if data.connections.iter().any(|c| c.name == input.name) {
-            return Err(format!("A connection named '{}' already exists", input.name));
+        if data.connections.iter().any(|c| c.name == f.name) {
+            return Err(format!("A connection named '{}' already exists", f.name));
         }
         let mut connection =
-            Connection::new(input.name, input.host, input.port, input.credential_id, input.kind);
-        connection.verbosity = input.verbosity;
-        connection.extra_args = input.extra_args;
-        connection.login_command = normalize_optional_text(input.login_command);
-        connection.remote_path = normalize_remote_path(input.remote_path);
-        connection.tags = normalize_tags(input.tags);
-        connection.color = input.color;
+            Connection::new(f.name, f.host, f.port, f.credential_id, f.kind);
+        connection.verbosity = f.verbosity;
+        connection.extra_args = f.extra_args;
+        connection.login_command = normalize_optional_text(f.login_command);
+        connection.remote_path = normalize_remote_path(f.remote_path);
+        connection.tags = normalize_tags(f.tags);
+        connection.color = f.color;
         data.connections.push(connection.clone());
         Ok(connection)
     })
@@ -84,42 +103,45 @@ pub fn add_connection(input: AddConnectionInput) -> Result<Connection, String> {
 
 #[tauri::command]
 pub fn update_connection(input: UpdateConnectionInput) -> Result<Connection, String> {
+    let id = input.id;
+    let f = input.fields;
+    validate_connection_fields(&f.name, &f.host, f.port)?;
     with_data_mut(|data| {
         if data
             .connections
             .iter()
-            .any(|c| c.name == input.name && c.id != input.id)
+            .any(|c| c.name == f.name && c.id != id)
         {
-            return Err(format!("A connection named '{}' already exists", input.name));
+            return Err(format!("A connection named '{}' already exists", f.name));
         }
         let idx = data
             .connections
             .iter()
-            .position(|c| c.id == input.id)
+            .position(|c| c.id == id)
             .ok_or_else(|| "Connection not found".to_string())?;
 
         // Capture the old credential_id before overwriting so we can clean up
         // an orphaned private credential if the auth method changes.
         let old_cred_id = data.connections[idx].credential_id.clone();
 
-        data.connections[idx].name = input.name;
-        data.connections[idx].host = input.host;
-        data.connections[idx].port = input.port;
-        data.connections[idx].credential_id = input.credential_id.clone();
-        data.connections[idx].kind = input.kind;
-        data.connections[idx].verbosity = input.verbosity;
-        data.connections[idx].extra_args = input.extra_args;
-        data.connections[idx].login_command = normalize_optional_text(input.login_command);
-        data.connections[idx].remote_path = normalize_remote_path(input.remote_path);
-        data.connections[idx].tags = normalize_tags(input.tags);
-        data.connections[idx].color = input.color;
+        data.connections[idx].name = f.name;
+        data.connections[idx].host = f.host;
+        data.connections[idx].port = f.port;
+        data.connections[idx].credential_id = f.credential_id.clone();
+        data.connections[idx].kind = f.kind;
+        data.connections[idx].verbosity = f.verbosity;
+        data.connections[idx].extra_args = f.extra_args;
+        data.connections[idx].login_command = normalize_optional_text(f.login_command);
+        data.connections[idx].remote_path = normalize_remote_path(f.remote_path);
+        data.connections[idx].tags = normalize_tags(f.tags);
+        data.connections[idx].color = f.color;
         let updated = data.connections[idx].clone();
 
         // If the credential changed and the old one was private, check whether it
         // is still referenced by another connection. If not, delete it so it
         // doesn't become an invisible orphan.
         if let Some(ref old_id) = old_cred_id {
-            if input.credential_id.as_deref() != Some(old_id.as_str()) {
+            if f.credential_id.as_deref() != Some(old_id.as_str()) {
                 let is_private = data.credentials.iter().any(|c| c.id == *old_id && c.is_private);
                 if is_private {
                     let still_referenced = data
@@ -170,7 +192,41 @@ pub fn get_orphan_private_credential(conn_id: String) -> Result<Option<String>, 
 
 #[tauri::command]
 pub fn clone_connection(input: CloneConnectionInput) -> Result<Connection, String> {
-    with_data_mut(|data| {
+    // Audit-4 H6: validate the new name (host/port are validated below once
+    // the original is loaded and we know the effective values).
+    if input.new_name.trim().is_empty() {
+        return Err("Connection name is required.".to_string());
+    }
+    if input.new_name.trim().chars().count() > 128 {
+        return Err("Connection name must be 128 characters or fewer.".to_string());
+    }
+    if matches!(input.port, Some(0)) {
+        return Err("Port must be between 1 and 65535.".to_string());
+    }
+    if let Some(ref h) = input.host {
+        if h.trim().is_empty() {
+            return Err("Host is required.".to_string());
+        }
+    }
+
+    // Audit-4 Logic M4: previously, when cloning a connection that owned a
+    // private credential, we duplicated the secret into the keychain
+    // *inside* the `with_data_mut` closure — but `with_data_mut` only
+    // commits `data.json` *after* the closure returns. If `save_data`
+    // then failed (disk full, permissions, etc.), we'd leave orphan
+    // keychain entries pointing at a credential id that doesn't exist
+    // on disk, with no way to clean them up (the secrets-cleanup pass
+    // only runs against credentials that did make it into data.json).
+    //
+    // Fix: track every keychain id we wrote inside the closure, then
+    // delete them if `with_data_mut` returns Err. The keychain writes
+    // themselves stay inside the closure so the in-memory `data` and
+    // the keychain are in sync at the moment we serialize.
+    let written_secret_ids: std::sync::Arc<std::sync::Mutex<Vec<String>>> =
+        std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let written_secret_ids_clone = std::sync::Arc::clone(&written_secret_ids);
+
+    let result = with_data_mut(|data| {
         if data.connections.iter().any(|c| c.name == input.new_name) {
             return Err(format!("A connection named '{}' already exists", input.new_name));
         }
@@ -208,6 +264,10 @@ pub fn clone_connection(input: CloneConnectionInput) -> Result<Connection, Strin
                                         "Failed to read password from secrets store while duplicating private credential".to_string()
                                     })?;
                                     crate::keychain::store_password(&new_cred_id, &secret)?;
+                                    written_secret_ids_clone
+                                        .lock()
+                                        .map_err(|e| e.to_string())?
+                                        .push(new_cred_id.clone());
                                     crate::models::CredentialKind::Password {
                                         password: String::new(),
                                     }
@@ -219,9 +279,17 @@ pub fn clone_connection(input: CloneConnectionInput) -> Result<Connection, Strin
                                 } => {
                                     if let Some(pp) = crate::keychain::get_passphrase(orig_cred_id) {
                                         crate::keychain::store_passphrase(&new_cred_id, &pp)?;
+                                        written_secret_ids_clone
+                                            .lock()
+                                            .map_err(|e| e.to_string())?
+                                            .push(new_cred_id.clone());
                                     }
                                     if let Some(pk) = crate::keychain::get_private_key(orig_cred_id) {
                                         crate::keychain::store_private_key(&new_cred_id, &pk)?;
+                                        written_secret_ids_clone
+                                            .lock()
+                                            .map_err(|e| e.to_string())?
+                                            .push(new_cred_id.clone());
                                     }
                                     crate::models::CredentialKind::SshKey {
                                         private_key_path: private_key_path.clone(),
@@ -267,7 +335,20 @@ pub fn clone_connection(input: CloneConnectionInput) -> Result<Connection, Strin
         };
         data.connections.push(cloned.clone());
         Ok(cloned)
-    })
+    });
+
+    // If with_data_mut failed (validation Err returned from closure, or
+    // save_data failure after the closure ran), strip any keychain
+    // entries we created so the next run doesn't see ghost secrets.
+    if result.is_err() {
+        if let Ok(ids) = written_secret_ids.lock() {
+            for id in ids.iter() {
+                crate::keychain::delete_all_for_credential(id);
+            }
+        }
+    }
+
+    result
 }
 
 /// Trim, drop empties, and dedupe a tag vector while preserving first-seen order.
@@ -470,5 +551,38 @@ mod tests {
             normalize_remote_path(Some(r#"  C:\Users\greg\repo  "#.into())),
             Some("C:/Users/greg/repo".into())
         );
+    }
+
+    // Audit-4 H6 regression tests: backend validation of connection fields.
+    #[test]
+    fn test_validate_rejects_blank_name() {
+        let err = validate_connection_fields("   ", "host", 22).unwrap_err();
+        assert!(err.contains("name"), "got: {}", err);
+    }
+
+    #[test]
+    fn test_validate_rejects_blank_host() {
+        let err = validate_connection_fields("ok", "  ", 22).unwrap_err();
+        assert!(err.contains("Host"), "got: {}", err);
+    }
+
+    #[test]
+    fn test_validate_rejects_port_zero() {
+        let err = validate_connection_fields("ok", "host", 0).unwrap_err();
+        assert!(err.contains("Port"), "got: {}", err);
+    }
+
+    #[test]
+    fn test_validate_rejects_overlong_name() {
+        let long = "a".repeat(129);
+        let err = validate_connection_fields(&long, "host", 22).unwrap_err();
+        assert!(err.contains("128"), "got: {}", err);
+    }
+
+    #[test]
+    fn test_validate_accepts_typical_inputs() {
+        assert!(validate_connection_fields("prod-db", "10.0.0.1", 22).is_ok());
+        assert!(validate_connection_fields("a", "x", 1).is_ok());
+        assert!(validate_connection_fields("z", "y", 65535).is_ok());
     }
 }

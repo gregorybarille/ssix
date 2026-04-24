@@ -1,26 +1,51 @@
-import React, { useEffect, useState } from "react";
-import { Sidebar, NavItem } from "./components/Sidebar";
+import React, { Suspense, useEffect, lazy } from "react";
+import { Sidebar } from "./components/Sidebar";
 import { TitleBar } from "./components/TitleBar";
 import { ConnectionList } from "./components/ConnectionList";
 import { ConnectionForm } from "./components/ConnectionForm";
 import { CredentialList } from "./components/CredentialList";
 import { CredentialForm } from "./components/CredentialForm";
-import { SettingsPanel } from "./components/SettingsPanel";
 import { SearchBar } from "./components/SearchBar";
-import {
-  TerminalTabs,
-  TerminalTab,
-  TerminalSession,
-} from "./components/TerminalTabs";
-import { TunnelsView, TunnelSession } from "./components/TunnelsView";
-import { LogsView } from "./components/LogsView";
-import { GitSyncView } from "./components/GitSyncView";
-import { ScpDialog } from "./components/ScpDialog";
+import { TerminalTabs } from "./components/TerminalTabs";
+import { TunnelsView } from "./components/TunnelsView";
 import { LayoutToggle } from "./components/ui/layout-toggle";
 import { ConnectPicker } from "./components/ConnectPicker";
 import { ContextMenu } from "./components/ContextMenu";
 import { ConfirmDialog } from "./components/ConfirmDialog";
 import { Button } from "./components/ui/button";
+
+/**
+ * Audit-4 Phase 5e: Settings, Git-Sync, Logs and the SCP dialog are
+ * all leaf views that the user opens infrequently and that pull in
+ * sizeable component trees (settings panels, git diff renderers,
+ * log virtualization, file-transfer state). Lazy-loading them keeps
+ * the initial bundle small and shifts their cost to first use.
+ */
+const SettingsPanel = lazy(() =>
+  import("./components/SettingsPanel").then((m) => ({ default: m.SettingsPanel })),
+);
+const GitSyncView = lazy(() =>
+  import("./components/GitSyncView").then((m) => ({ default: m.GitSyncView })),
+);
+const LogsView = lazy(() =>
+  import("./components/LogsView").then((m) => ({ default: m.LogsView })),
+);
+const ScpDialog = lazy(() =>
+  import("./components/ScpDialog").then((m) => ({ default: m.ScpDialog })),
+);
+
+/**
+ * Minimal Suspense fallback for lazy-loaded views. Intentionally
+ * spartan — chunks load fast on local disk and a skeleton would
+ * just flash. Centralised so all view fallbacks look identical.
+ */
+function ViewFallback({ label }: { label: string }) {
+  return (
+    <div className="flex-1 flex items-center justify-center text-sm text-muted-foreground-soft">
+      {label}
+    </div>
+  );
+}
 import {
   Dialog,
   DialogContent,
@@ -33,46 +58,31 @@ import { useConnectionsStore } from "./store/useConnectionsStore";
 import { useCredentialsStore } from "./store/useCredentialsStore";
 import { useSettingsStore } from "./store/useSettingsStore";
 import { useGitSyncStore } from "./store/useGitSyncStore";
+import { useViewStore } from "./store/useViewStore";
+import { useDialogsStore } from "./store/useDialogsStore";
+import { useTerminalsStore } from "./store/useTerminalsStore";
+import { useTunnelsStore } from "./store/useTunnelsStore";
 import { useApplySettings } from "./hooks/useApplySettings";
 import { useGlobalShortcuts } from "./hooks/useGlobalShortcuts";
-import { invoke } from "./lib/tauri";
 import { takeScreenshot } from "./lib/screenshot";
 import { log as appLog } from "./lib/log";
-import { Connection, Credential, OpenMode, LayoutMode } from "./types";
+import { Connection, ConnectionInput, Credential, LayoutMode } from "./types";
 import { Plus } from "lucide-react";
 
-type View = NavItem;
-
+/**
+ * Audit-4 Phase 5d: App.tsx is now a pure composition layer. Terminal
+ * pane lifecycle, tunnel session lifecycle, dialog UI state and the
+ * current view live in dedicated Zustand stores. App owns only:
+ *
+ *  - the search input string (purely a controlled-form value)
+ *  - cross-store submit handlers (e.g. clone uses connections + dialogs)
+ *  - the top-level layout JSX
+ */
 function App() {
-  const [view, setView] = useState<View>("connections");
-  const [connFormOpen, setConnFormOpen] = useState(false);
-  const [credFormOpen, setCredFormOpen] = useState(false);
-  const [editingConn, setEditingConn] = useState<Connection | null>(null);
-  const [editingCred, setEditingCred] = useState<Credential | null>(null);
-  const [cloningConn, setCloningConn] = useState<Connection | null>(null);
-  const [searchQuery, setSearchQuery] = useState("");
-  const [shellTabs, setShellTabs] = useState<TerminalTab[]>([]);
-  const [activeTabId, setActiveTabId] = useState<string | null>(null);
-  const shellTabsRef = React.useRef<TerminalTab[]>([]);
-  const activeTabIdRef = React.useRef<string | null>(null);
-  const [tunnelSessions, setTunnelSessions] = useState<TunnelSession[]>([]);
-  const cancelledRef = React.useRef<Set<string>>(new Set());
-  const [pickerOpen, setPickerOpen] = useState(false);
-  const [pickerMode, setPickerMode] = useState<OpenMode>("tab");
-  const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null);
-  const [screenshotToast, setScreenshotToast] = useState<string | null>(null);
-  const [orphanCredDialog, setOrphanCredDialog] = useState<{
-    connId: string;
-    credId: string;
-  } | null>(null);
-  const [scpConnection, setScpConnection] = useState<Connection | null>(null);
-  const [scpOpen, setScpOpen] = useState(false);
-  const [confirmDeleteConn, setConfirmDeleteConn] = useState<Connection | null>(null);
-  const [confirmDeleteCred, setConfirmDeleteCred] = useState<Credential | null>(null);
-  const [confirmClosePane, setConfirmClosePane] = useState<{
-    sessionId: string;
-    name: string;
-  } | null>(null);
+  const view = useViewStore((s) => s.view);
+  const setView = useViewStore((s) => s.setView);
+
+  const [searchQuery, setSearchQuery] = React.useState("");
 
   const {
     connections,
@@ -95,17 +105,24 @@ function App() {
   } = useCredentialsStore();
 
   const { settings, fetchSettings, saveSettings } = useSettingsStore();
-  const { status: gitSyncStatus, fetchStatus: fetchGitSyncStatus } = useGitSyncStore();
+  const { status: gitSyncStatus, fetchStatus: fetchGitSyncStatus } =
+    useGitSyncStore();
+
+  // Dialog/UI state
+  const dialogs = useDialogsStore();
+
+  // Terminal & tunnel session state
+  const tabs = useTerminalsStore((s) => s.tabs);
+  const activeTabId = useTerminalsStore((s) => s.activeTabId);
+  const setActiveTabId = useTerminalsStore((s) => s.setActiveTabId);
+  const connect = useTerminalsStore((s) => s.connect);
+  const closePane = useTerminalsStore((s) => s.closePane);
+  const closeTab = useTerminalsStore((s) => s.closeTab);
+  const selectTabByIndex = useTerminalsStore((s) => s.selectTabByIndex);
+  const tunnelSessions = useTunnelsStore((s) => s.sessions);
+  const closeTunnel = useTunnelsStore((s) => s.closeTunnel);
 
   useApplySettings(settings);
-
-  useEffect(() => {
-    shellTabsRef.current = shellTabs;
-  }, [shellTabs]);
-
-  useEffect(() => {
-    activeTabIdRef.current = activeTabId;
-  }, [activeTabId]);
 
   useEffect(() => {
     fetchConnections();
@@ -114,6 +131,7 @@ function App() {
     fetchGitSyncStatus();
   }, []);
 
+  // Re-fetch git-sync status whenever the data we'd serialize changes.
   const connectionSig = React.useMemo(
     () =>
       connections
@@ -122,7 +140,6 @@ function App() {
         .join("|"),
     [connections],
   );
-
   const credentialSig = React.useMemo(
     () =>
       credentials
@@ -131,7 +148,6 @@ function App() {
         .join("|"),
     [credentials],
   );
-
   useEffect(() => {
     void fetchGitSyncStatus();
   }, [
@@ -143,14 +159,16 @@ function App() {
     fetchGitSyncStatus,
   ]);
 
+  // Custom right-click menu wiring. The dispatcher lives in a global
+  // contextmenu listener so xterm.js panes can still own the paste flow.
   useEffect(() => {
     const handler = (e: Event) => {
       const { x, y } = (e as CustomEvent<{ x: number; y: number }>).detail;
-      setContextMenu({ x, y });
+      dialogs.setContextMenu({ x, y });
     };
     window.addEventListener("ssx:contextmenu", handler);
     return () => window.removeEventListener("ssx:contextmenu", handler);
-  }, []);
+  }, [dialogs]);
 
   useEffect(() => {
     const handler = (e: MouseEvent) => {
@@ -158,39 +176,44 @@ function App() {
       if (target.closest("input, textarea, [contenteditable]")) return;
       e.preventDefault();
       if (target.closest(".xterm-screen, .xterm-rows")) {
-        navigator.clipboard.readText().then((text) => {
-          if (text) {
-            window.dispatchEvent(
-              new CustomEvent("ssx:terminal-paste", { detail: { text } })
-            );
-          }
-        }).catch(() => {});
+        navigator.clipboard
+          .readText()
+          .then((text) => {
+            if (text) {
+              window.dispatchEvent(
+                new CustomEvent("ssx:terminal-paste", { detail: { text } }),
+              );
+            }
+          })
+          .catch(() => {});
         return;
       }
       window.dispatchEvent(
         new CustomEvent("ssx:contextmenu", {
           detail: { x: e.clientX, y: e.clientY },
-        })
+        }),
       );
     };
     document.addEventListener("contextmenu", handler);
     return () => document.removeEventListener("contextmenu", handler);
   }, []);
 
+  /* ---------------------------- Submit handlers ---------------------------- */
+
   const handleTakeScreenshot = async () => {
     try {
       const path = await takeScreenshot();
-      setScreenshotToast(path);
-      setTimeout(() => setScreenshotToast(null), 4000);
+      dialogs.setScreenshotToast(path);
+      setTimeout(() => dialogs.setScreenshotToast(null), 4000);
     } catch {
-      setScreenshotToast("Screenshot failed.");
-      setTimeout(() => setScreenshotToast(null), 3000);
+      dialogs.setScreenshotToast("Screenshot failed.");
+      setTimeout(() => dialogs.setScreenshotToast(null), 3000);
     }
   };
 
-  const handleConnSubmit = async (data: Omit<Connection, "id"> | Connection) => {
+  const handleConnSubmit = async (data: ConnectionInput | Connection) => {
     if ("id" in data) {
-      await updateConnection(data as Connection);
+      await updateConnection(data);
     } else {
       await addConnection(data);
     }
@@ -199,25 +222,25 @@ function App() {
   const handleDeleteConnection = (id: string) => {
     const conn = connections.find((c) => c.id === id);
     if (!conn) return;
-    setConfirmDeleteConn(conn);
+    dialogs.setConfirmDeleteConn(conn);
   };
 
   const performDeleteConnection = async (id: string) => {
     const orphanCredId = await getOrphanPrivateCredential(id);
     if (orphanCredId) {
-      setOrphanCredDialog({ connId: id, credId: orphanCredId });
+      dialogs.setOrphanCredDialog({ connId: id, credId: orphanCredId });
     } else {
       await deleteConnection(id);
     }
   };
 
   const handleOrphanCredDialogConfirm = async (deleteCredToo: boolean) => {
-    if (!orphanCredDialog) return;
-    const { connId, credId } = orphanCredDialog;
-    setOrphanCredDialog(null);
-    await deleteConnection(connId);
+    const payload = dialogs.orphanCredDialog;
+    if (!payload) return;
+    dialogs.setOrphanCredDialog(null);
+    await deleteConnection(payload.connId);
     if (deleteCredToo) {
-      await deleteCredential(credId);
+      await deleteCredential(payload.credId);
     }
   };
 
@@ -229,9 +252,9 @@ function App() {
     }
   };
 
-  const handleCloneSubmit = async (data: Omit<Connection, "id"> | Connection) => {
-    if (cloningConn) {
-      await cloneConnection(cloningConn.id, data.name, {
+  const handleCloneSubmit = async (data: ConnectionInput | Connection) => {
+    if (dialogs.cloningConn) {
+      await cloneConnection(dialogs.cloningConn.id, data.name, {
         host: data.host,
         port: data.port,
         credential_id: data.credential_id,
@@ -239,7 +262,9 @@ function App() {
     }
   };
 
-  const handleCreateCredential = async (data: Omit<Credential, "id">): Promise<Credential> => {
+  const handleCreateCredential = async (
+    data: Omit<Credential, "id">,
+  ): Promise<Credential> => {
     if (data.is_private) {
       return await addInlineCredential(data);
     }
@@ -255,299 +280,65 @@ function App() {
     }
   };
 
-  /* ------------------------- Tunnel session lifecycle ------------------------- */
+  /* ---------------------- Terminal-driven side effects ---------------------- */
 
-  const handleConnectTunnel = async (conn: Connection) => {
-    const failedId = `tunnel-${conn.id}-${Date.now()}`;
-    setTunnelSessions((prev) => [
-      ...prev,
-      { sessionId: failedId, connectionName: conn.name, connection: conn, retrying: true },
-    ]);
-    setView("tunnels");
-    try {
-      const sessionId = await invoke<string>("ssh_connect", { connectionId: conn.id });
-      if (cancelledRef.current.has(failedId)) {
-        cancelledRef.current.delete(failedId);
-        invoke("ssh_disconnect", { sessionId }).catch(() => {});
-        return;
-      }
-      setTunnelSessions((prev) =>
-        prev.map((s) =>
-          s.sessionId === failedId
-            ? { sessionId, connectionName: conn.name, connection: conn }
-            : s,
-        ),
-      );
-      appLog.info("tunnel", `Started ${conn.name}`);
-    } catch (err) {
-      if (cancelledRef.current.has(failedId)) {
-        cancelledRef.current.delete(failedId);
-        return;
-      }
-      setTunnelSessions((prev) =>
-        prev.map((s) =>
-          s.sessionId === failedId
-            ? { ...s, error: String(err), retrying: false }
-            : s,
-        ),
-      );
-      appLog.error("tunnel", `Failed to start ${conn.name}: ${String(err)}`);
-    }
-  };
-
-  const handleCloseTunnel = async (sessionId: string) => {
-    const session = tunnelSessions.find((s) => s.sessionId === sessionId);
-    if (session?.retrying && !session.error) {
-      cancelledRef.current.add(sessionId);
-    }
-    try {
-      await invoke("ssh_disconnect", { sessionId });
-    } catch {
-      // ignore
-    }
-    setTunnelSessions((prev) => prev.filter((s) => s.sessionId !== sessionId));
-  };
-
-  /* ------------------------- Shell session lifecycle ------------------------- */
-
-  const addSessionToNewTab = (session: TerminalSession): string => {
-    const tabId = `tab-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
-    setShellTabs((prev) => [...prev, { id: tabId, mode: "single", panes: [session] }]);
-    setActiveTabId(tabId);
-    return tabId;
-  };
-
-  const addSessionToActiveTab = (session: TerminalSession, mode: "horizontal" | "vertical") => {
-    const currentActiveTabId = activeTabIdRef.current;
-    const currentActiveTab = shellTabsRef.current.find((t) => t.id === currentActiveTabId);
-    if (!currentActiveTabId || !currentActiveTab || currentActiveTab.panes.length >= 2) {
-      addSessionToNewTab(session);
-      return;
-    }
-    setShellTabs((prev) =>
-      prev.map((t) =>
-        t.id === currentActiveTabId ? { ...t, mode, panes: [...t.panes, session] } : t,
-      ),
-    );
-  };
-
-  const updateSessionEverywhere = (
-    placeholderId: string,
-    next: Partial<TerminalSession> & { sessionId?: string },
-  ) => {
-    setShellTabs((prev) =>
-      prev.map((t) => ({
-        ...t,
-        panes: t.panes.map((p) =>
-          p.sessionId === placeholderId ? { ...p, ...next } : p,
-        ),
-      })),
-    );
-  };
-
-  /**
-   * Open a connection. For port_forward, route to TunnelsView. Otherwise open
-   * a shell session in a new tab or split into the active tab.
-   */
-  const handleConnect = async (
+  const handleEditFromTerminal = (
     conn: Connection,
-    options?: { mode?: OpenMode; replaceSessionId?: string },
+    failedSessionId: string,
   ) => {
-    if (conn.type === "port_forward") {
-      handleConnectTunnel(conn);
-      return;
-    }
-
-    const mode: OpenMode = options?.mode ?? settings.default_open_mode ?? "tab";
-    const replaceSessionId = options?.replaceSessionId;
-    const placeholderId = replaceSessionId ?? `failed-${conn.id}-${Date.now()}`;
-    const placeholder: TerminalSession = {
-      sessionId: placeholderId,
-      connectionName: conn.name,
-      connection: conn,
-      retrying: true,
-    };
-
-    if (replaceSessionId) {
-      updateSessionEverywhere(placeholderId, { retrying: true, error: undefined });
-    } else if (mode === "split_right") {
-      addSessionToActiveTab(placeholder, "horizontal");
-      setView("terminals");
-    } else if (mode === "split_down") {
-      addSessionToActiveTab(placeholder, "vertical");
-      setView("terminals");
-    } else {
-      addSessionToNewTab(placeholder);
-      setView("terminals");
-    }
-
-    try {
-      const sessionId = await invoke<string>("ssh_connect", { connectionId: conn.id });
-      if (cancelledRef.current.has(placeholderId)) {
-        cancelledRef.current.delete(placeholderId);
-        invoke("ssh_disconnect", { sessionId }).catch(() => {});
-        return;
-      }
-      // Replace placeholder identity in-place so the pane keeps its slot.
-      setShellTabs((prev) =>
-        prev.map((t) => ({
-          ...t,
-          panes: t.panes.map((p) =>
-            p.sessionId === placeholderId
-              ? { sessionId, connectionName: conn.name, connection: conn }
-              : p,
-          ),
-        })),
-      );
-      appLog.info("ssh", `Connected to ${conn.name}`);
-    } catch (err) {
-      if (cancelledRef.current.has(placeholderId)) {
-        cancelledRef.current.delete(placeholderId);
-        return;
-      }
-      updateSessionEverywhere(placeholderId, { error: String(err), retrying: false });
-      appLog.error("ssh", `Connect failed for ${conn.name}: ${String(err)}`);
-    }
-  };
-
-  const handleRetry = (conn: Connection, replaceSessionId: string) => {
-    handleConnect(conn, { replaceSessionId });
-  };
-
-  const handleEditFromTerminal = (conn: Connection, failedSessionId: string) => {
-    handleClosePane(failedSessionId);
-    setEditingConn(conn);
-    setCloningConn(null);
-    setConnFormOpen(true);
+    void closePane(failedSessionId);
+    dialogs.openEditConnection(conn);
     setView("connections");
   };
 
   /**
-   * Show a confirmation before closing a live (non-failed) pane. Failed
-   * panes that never opened a shell don't need confirmation — there's
-   * nothing for the user to lose.
+   * Show a confirmation before closing a live (non-failed) pane.
+   * Failed/retrying panes never opened a real shell, so they close
+   * immediately without prompting.
    */
   const handleClosePaneRequest = (sessionId: string) => {
-    let target: { sessionId: string; name: string } | null = null;
-    for (const tab of shellTabs) {
+    for (const tab of tabs) {
       const pane = tab.panes.find((p) => p.sessionId === sessionId);
-      if (pane) {
-        if (pane.error || pane.retrying) {
-          // Failed/retrying pane — close immediately.
-          void handleClosePane(sessionId);
-          return;
-        }
-        target = { sessionId, name: pane.connectionName };
-        break;
+      if (!pane) continue;
+      if (pane.error || pane.retrying) {
+        void closePane(sessionId);
+        return;
       }
+      dialogs.setConfirmClosePane({ sessionId, name: pane.connectionName });
+      return;
     }
-    if (target) setConfirmClosePane(target);
   };
 
   const handleCloseTabRequest = (tabId: string) => {
-    const tab = shellTabs.find((t) => t.id === tabId);
+    const tab = tabs.find((t) => t.id === tabId);
     if (!tab) return;
     const liveCount = tab.panes.filter((p) => !p.error).length;
     if (liveCount === 0) {
-      void handleCloseTab(tabId);
+      void closeTab(tabId);
       return;
     }
     if (tab.panes.length === 1) {
-      setConfirmClosePane({
+      dialogs.setConfirmClosePane({
         sessionId: tab.panes[0].sessionId,
         name: tab.panes[0].connectionName,
       });
       return;
     }
-    // Multi-pane tab close: reuse the orphan-style state model
-    // by stashing all session IDs as a synthetic single confirm.
-    setConfirmClosePane({
+    // Multi-pane tab: stash all session IDs as a synthetic confirm
+    // keyed by `__tab__:<tabId>` so the confirm dialog's onConfirm
+    // can route to closeTab(tabId).
+    dialogs.setConfirmClosePane({
       sessionId: `__tab__:${tabId}`,
       name: tab.panes.map((p) => p.connectionName).join(" + "),
     });
   };
 
-  /** Close a single pane. If it's the only pane in a tab, the tab closes too. */
-  const handleClosePane = async (sessionId: string) => {
-    let tabClosed: string | null = null;
-    // Find the pane and clean up cancelled flag if needed.
-    for (const tab of shellTabs) {
-      const pane = tab.panes.find((p) => p.sessionId === sessionId);
-      if (pane) {
-        if (pane.retrying && !pane.error) {
-          cancelledRef.current.add(sessionId);
-        }
-        if (tab.panes.length === 1) {
-          tabClosed = tab.id;
-        }
-        break;
-      }
-    }
-    try {
-      await invoke("ssh_disconnect", { sessionId });
-    } catch {
-      // ignore
-    }
-    setShellTabs((prev) => {
-      const next = prev
-        .map((t) => {
-          const remainingPanes = t.panes.filter((p) => p.sessionId !== sessionId);
-          if (remainingPanes.length === 0) return null;
-          const newMode = remainingPanes.length === 1 ? "single" : t.mode;
-          return { ...t, mode: newMode, panes: remainingPanes } as TerminalTab;
-        })
-        .filter((t): t is TerminalTab => t !== null);
-      if (tabClosed && activeTabId === tabClosed) {
-        if (next.length > 0) {
-          setActiveTabId(next[next.length - 1].id);
-        } else {
-          setActiveTabId(null);
-          setView("connections");
-        }
-      }
-      return next;
-    });
-  };
+  /* ----------------------------- Layout helpers ----------------------------- */
 
-  const handleCloseTab = async (tabId: string) => {
-    const tab = shellTabs.find((t) => t.id === tabId);
-    if (!tab) return;
-    for (const pane of tab.panes) {
-      if (pane.retrying && !pane.error) {
-        cancelledRef.current.add(pane.sessionId);
-      }
-      try {
-        await invoke("ssh_disconnect", { sessionId: pane.sessionId });
-      } catch {
-        // ignore
-      }
-    }
-    setShellTabs((prev) => {
-      const remaining = prev.filter((t) => t.id !== tabId);
-      if (activeTabId === tabId) {
-        if (remaining.length > 0) {
-          setActiveTabId(remaining[remaining.length - 1].id);
-        } else {
-          setActiveTabId(null);
-          setView("connections");
-        }
-      }
-      return remaining;
-    });
-  };
-
-  const handleNewTabFromTerminal = (mode: OpenMode) => {
-    setPickerMode(mode);
-    setPickerOpen(true);
-  };
-
-  const handlePickerConnect = (conn: Connection) => {
-    handleConnect(conn, { mode: pickerMode });
-  };
-
-  /* ------------------------- Layout settings helpers ------------------------- */
-
-  const updateLayout = (key: "connection_layout" | "credential_layout" | "tunnel_layout", value: LayoutMode) => {
+  const updateLayout = (
+    key: "connection_layout" | "credential_layout" | "tunnel_layout",
+    value: LayoutMode,
+  ) => {
     void saveSettings({ ...settings, [key]: value }).catch((error) => {
       appLog.error(
         "settings",
@@ -558,227 +349,196 @@ function App() {
     });
   };
 
-  const totalShellSessions = shellTabs.reduce((n, t) => n + t.panes.length, 0);
-  const gitPending = gitSyncStatus.has_local_changes || gitSyncStatus.has_remote_changes;
+  const totalShellSessions = tabs.reduce((n, t) => n + t.panes.length, 0);
+  const gitPending =
+    gitSyncStatus.has_local_changes || gitSyncStatus.has_remote_changes;
 
-  const selectShellTabByIndex = React.useCallback(
-    (index: number) => {
-      const tab = shellTabsRef.current[index];
-      if (!tab) return;
-      setView("terminals");
-      setActiveTabId(tab.id);
-    },
-    [],
-  );
-
-  // Global keyboard shortcuts. We rebuild the map each render so the closures
-  // see fresh state without us needing to thread refs through every action.
+  // Global keyboard shortcuts — closures rebuild each render so they
+  // see fresh state without needing refs.
   useGlobalShortcuts({
-    "mod+k": () => setPickerOpen(true),
-    "mod+n": () => {
-      // The form is mounted at the App root, so we can open it from any
-      // view without first switching to "connections". The user is
-      // returned to the same view they were on after closing the form.
-      setEditingConn(null);
-      setCloningConn(null);
-      setConnFormOpen(true);
-    },
+    "mod+k": () => dialogs.setPickerOpen(true),
+    "mod+n": () => dialogs.openNewConnection(),
     "mod+,": () => setView("settings"),
     "mod+w": () => {
       if (view !== "terminals" || !activeTabId) return;
       handleCloseTabRequest(activeTabId);
     },
-    "mod+1": () => selectShellTabByIndex(0),
-    "mod+2": () => selectShellTabByIndex(1),
-    "mod+3": () => selectShellTabByIndex(2),
-    "mod+4": () => selectShellTabByIndex(3),
-    "mod+5": () => selectShellTabByIndex(4),
-    "mod+6": () => selectShellTabByIndex(5),
-    "mod+7": () => selectShellTabByIndex(6),
-    "mod+8": () => selectShellTabByIndex(7),
-    "mod+9": () => selectShellTabByIndex(8),
+    "mod+1": () => selectTabByIndex(0),
+    "mod+2": () => selectTabByIndex(1),
+    "mod+3": () => selectTabByIndex(2),
+    "mod+4": () => selectTabByIndex(3),
+    "mod+5": () => selectTabByIndex(4),
+    "mod+6": () => selectTabByIndex(5),
+    "mod+7": () => selectTabByIndex(6),
+    "mod+8": () => selectTabByIndex(7),
+    "mod+9": () => selectTabByIndex(8),
   });
 
   return (
     <div className="flex flex-col h-screen bg-background text-foreground overflow-hidden">
-      <TitleBar onSettings={() => setView("settings")} settingsActive={view === "settings"} />
+      <TitleBar
+        onSettings={() => setView("settings")}
+        settingsActive={view === "settings"}
+      />
       <div className="flex flex-1 overflow-hidden">
         <Sidebar
           active={view}
-          onNavigate={(v) => setView(v as View)}
+          onNavigate={(v) => setView(v)}
           terminalCount={totalShellSessions}
           tunnelCount={tunnelSessions.length}
           gitPending={gitPending}
         />
 
         <main className="flex-1 flex flex-col overflow-hidden">
-        {view === "terminals" && shellTabs.length > 0 ? (
-          <TerminalTabs
-            tabs={shellTabs}
-            activeTabId={activeTabId}
-            onSelectTab={setActiveTabId}
-            onCloseTab={handleCloseTabRequest}
-            onClosePane={(_tabId, sessionId) =>
-              handleClosePaneRequest(sessionId)
-            }
-            onNewTab={handleNewTabFromTerminal}
-            onRetry={handleRetry}
-            onEdit={handleEditFromTerminal}
-            settings={settings}
-          />
-        ) : (
-        <>
-        {view === "connections" && (
-          <>
-            <div className="flex items-center justify-between px-6 py-4 border-b border-border">
-              <h1 className="text-lg font-semibold">Connections</h1>
-              <div className="flex items-center gap-2">
-                <LayoutToggle
-                  value={settings.connection_layout}
-                  onChange={(v) => updateLayout("connection_layout", v)}
-                />
-                <Button
-                  size="sm"
-                  onClick={() => {
-                    setEditingConn(null);
-                    setConnFormOpen(true);
+          {view === "terminals" && tabs.length > 0 ? (
+            <TerminalTabs
+              tabs={tabs}
+              activeTabId={activeTabId}
+              onSelectTab={setActiveTabId}
+              onCloseTab={handleCloseTabRequest}
+              onClosePane={(_tabId, sessionId) =>
+                handleClosePaneRequest(sessionId)
+              }
+              onNewTab={(mode) => dialogs.openPicker(mode)}
+              onRetry={(conn, replaceSessionId) =>
+                void connect(conn, { replaceSessionId })
+              }
+              onEdit={handleEditFromTerminal}
+              settings={settings}
+            />
+          ) : (
+            <>
+              {view === "connections" && (
+                <>
+                  <div className="flex items-center justify-between px-6 py-4 border-b border-border">
+                    <h1 className="text-lg font-semibold">Connections</h1>
+                    <div className="flex items-center gap-2">
+                      <LayoutToggle
+                        value={settings.connection_layout}
+                        onChange={(v) => updateLayout("connection_layout", v)}
+                      />
+                      <Button size="sm" onClick={() => dialogs.openNewConnection()}>
+                        <Plus className="h-4 w-4 mr-1" />
+                        New Connection
+                      </Button>
+                    </div>
+                  </div>
+                  <div className="px-6 py-3 border-b border-border">
+                    <SearchBar
+                      value={searchQuery}
+                      onChange={setSearchQuery}
+                      onSearch={handleSearch}
+                    />
+                  </div>
+                  <div className="flex-1 overflow-y-auto px-4 py-2">
+                    <ConnectionList
+                      connections={connections}
+                      credentials={credentials}
+                      layout={settings.connection_layout}
+                      onEdit={(conn) => dialogs.openEditConnection(conn)}
+                      onDelete={handleDeleteConnection}
+                      onClone={(conn) => dialogs.openCloneConnection(conn)}
+                      onConnect={(c) => void connect(c)}
+                      onScp={(conn) => dialogs.openScp(conn)}
+                    />
+                  </div>
+                </>
+              )}
+
+              {view === "credentials" && (
+                <>
+                  <div className="flex items-center justify-between px-6 py-4 border-b border-border">
+                    <h1 className="text-lg font-semibold">Credentials</h1>
+                    <div className="flex items-center gap-2">
+                      <LayoutToggle
+                        value={settings.credential_layout}
+                        onChange={(v) => updateLayout("credential_layout", v)}
+                      />
+                      <Button size="sm" onClick={() => dialogs.openNewCredential()}>
+                        <Plus className="h-4 w-4 mr-1" />
+                        New Credential
+                      </Button>
+                    </div>
+                  </div>
+                  <div className="flex-1 overflow-y-auto px-4 py-2">
+                    <CredentialList
+                      credentials={credentials}
+                      layout={settings.credential_layout}
+                      onEdit={(cred) => dialogs.openEditCredential(cred)}
+                      onDelete={(id) => {
+                        const cred = credentials.find((c) => c.id === id);
+                        if (cred) dialogs.setConfirmDeleteCred(cred);
+                      }}
+                    />
+                  </div>
+                </>
+              )}
+
+              {view === "tunnels" && (
+                <TunnelsView
+                  sessions={tunnelSessions}
+                  connections={connections}
+                  credentials={credentials}
+                  layout={settings.tunnel_layout}
+                  onLayoutChange={(v) => updateLayout("tunnel_layout", v)}
+                  onCloseSession={closeTunnel}
+                  onConnect={(c) => void connect(c)}
+                  onEdit={(conn) => {
+                    dialogs.openEditConnection(conn);
+                    setView("connections");
                   }}
-                >
-                  <Plus className="h-4 w-4 mr-1" />
-                  New Connection
-                </Button>
-              </div>
-            </div>
-            <div className="px-6 py-3 border-b border-border">
-              <SearchBar
-                value={searchQuery}
-                onChange={setSearchQuery}
-                onSearch={handleSearch}
-              />
-            </div>
-            <div className="flex-1 overflow-y-auto px-4 py-2">
-              <ConnectionList
-                connections={connections}
-                credentials={credentials}
-                layout={settings.connection_layout}
-                onEdit={(conn) => {
-                  setEditingConn(conn);
-                  setCloningConn(null);
-                  setConnFormOpen(true);
-                }}
-                onDelete={handleDeleteConnection}
-                onClone={(conn) => {
-                  setCloningConn(conn);
-                  setEditingConn(null);
-                  setConnFormOpen(true);
-                }}
-                onConnect={(c) => handleConnect(c)}
-                onScp={(conn) => {
-                  setScpConnection(conn);
-                  setScpOpen(true);
-                }}
-              />
-            </div>
-          </>
-        )}
-
-        {view === "credentials" && (
-          <>
-            <div className="flex items-center justify-between px-6 py-4 border-b border-border">
-              <h1 className="text-lg font-semibold">Credentials</h1>
-              <div className="flex items-center gap-2">
-                <LayoutToggle
-                  value={settings.credential_layout}
-                  onChange={(v) => updateLayout("credential_layout", v)}
-                />
-                <Button
-                  size="sm"
-                  onClick={() => {
-                    setEditingCred(null);
-                    setCredFormOpen(true);
+                  onDelete={handleDeleteConnection}
+                  onClone={(conn) => {
+                    dialogs.openCloneConnection(conn);
+                    setView("connections");
                   }}
-                >
-                  <Plus className="h-4 w-4 mr-1" />
-                  New Credential
-                </Button>
-              </div>
-            </div>
-            <div className="flex-1 overflow-y-auto px-4 py-2">
-              <CredentialList
-                credentials={credentials}
-                layout={settings.credential_layout}
-                onEdit={(cred) => {
-                  setEditingCred(cred);
-                  setCredFormOpen(true);
-                }}
-                onDelete={(id) => {
-                  const cred = credentials.find((c) => c.id === id);
-                  if (cred) setConfirmDeleteCred(cred);
-                }}
-              />
-            </div>
-          </>
-        )}
+                />
+              )}
 
-        {view === "tunnels" && (
-          <TunnelsView
-            sessions={tunnelSessions}
-            connections={connections}
-            credentials={credentials}
-            layout={settings.tunnel_layout}
-            onLayoutChange={(v) => updateLayout("tunnel_layout", v)}
-            onCloseSession={handleCloseTunnel}
-            onConnect={(c) => handleConnect(c)}
-            onEdit={(conn) => {
-              setEditingConn(conn);
-              setCloningConn(null);
-              setConnFormOpen(true);
-              setView("connections");
-            }}
-            onDelete={handleDeleteConnection}
-            onClone={(conn) => {
-              setCloningConn(conn);
-              setEditingConn(null);
-              setConnFormOpen(true);
-              setView("connections");
-            }}
-          />
-        )}
-
-        {view === "logs" && <LogsView />}
-
-        {view === "git_sync" && <GitSyncView />}
-
-        {view === "settings" && (
-          <div className="flex-1 overflow-y-auto">
-            <SettingsPanel settings={settings} onSave={saveSettings} />
-          </div>
-        )}
-        </>
-        )}
-      </main>
+              {view === "logs" && (
+                <Suspense fallback={<ViewFallback label="Loading logs…" />}>
+                  <LogsView />
+                </Suspense>
+              )}
+              {view === "git_sync" && (
+                <Suspense fallback={<ViewFallback label="Loading git sync…" />}>
+                  <GitSyncView />
+                </Suspense>
+              )}
+              {view === "settings" && (
+                <Suspense fallback={<ViewFallback label="Loading settings…" />}>
+                  <div className="flex-1 overflow-y-auto">
+                    <SettingsPanel settings={settings} onSave={saveSettings} />
+                  </div>
+                </Suspense>
+              )}
+            </>
+          )}
+        </main>
       </div>
 
-      {/* Quick connect picker for + tab button */}
+      {/* Quick connect picker (Cmd+K, "+ tab") */}
       <ConnectPicker
-        open={pickerOpen}
-        onOpenChange={setPickerOpen}
+        open={dialogs.pickerOpen}
+        onOpenChange={dialogs.setPickerOpen}
         connections={connections}
         credentials={credentials}
-        onConnect={handlePickerConnect}
+        onConnect={(conn) => void connect(conn, { mode: dialogs.pickerMode })}
       />
 
-      <ScpDialog
-        open={scpOpen}
-        onOpenChange={setScpOpen}
-        connection={scpConnection}
-      />
+      <Suspense fallback={null}>
+        <ScpDialog
+          open={dialogs.scpOpen}
+          onOpenChange={dialogs.setScpOpen}
+          connection={dialogs.scpConnection}
+        />
+      </Suspense>
 
       {/* Custom context menu */}
-      {contextMenu && (
+      {dialogs.contextMenu && (
         <ContextMenu
-          position={contextMenu}
-          onClose={() => setContextMenu(null)}
+          position={dialogs.contextMenu}
+          onClose={() => dialogs.setContextMenu(null)}
           ariaLabel="Window actions"
           items={[
             {
@@ -791,21 +551,20 @@ function App() {
       )}
 
       {/* Screenshot saved toast */}
-      {screenshotToast && (
+      {dialogs.screenshotToast && (
         <div className="fixed bottom-4 right-4 z-[9999] bg-popover border rounded-md shadow-lg px-4 py-2 text-sm max-w-xs truncate">
-          📸 Saved: {screenshotToast}
+          📸 Saved: {dialogs.screenshotToast}
         </div>
       )}
 
-      {/* Delete connection confirmation */}
       <ConfirmDialog
-        open={!!confirmDeleteConn}
-        onOpenChange={(o) => !o && setConfirmDeleteConn(null)}
+        open={!!dialogs.confirmDeleteConn}
+        onOpenChange={(o) => !o && dialogs.setConfirmDeleteConn(null)}
         title="Delete connection?"
         description={
-          confirmDeleteConn ? (
+          dialogs.confirmDeleteConn ? (
             <>
-              Permanently delete <strong>{confirmDeleteConn.name}</strong>?
+              Permanently delete <strong>{dialogs.confirmDeleteConn.name}</strong>?
               This cannot be undone.
             </>
           ) : null
@@ -813,21 +572,20 @@ function App() {
         confirmLabel="Delete connection"
         variant="destructive"
         onConfirm={async () => {
-          if (confirmDeleteConn) {
-            await performDeleteConnection(confirmDeleteConn.id);
+          if (dialogs.confirmDeleteConn) {
+            await performDeleteConnection(dialogs.confirmDeleteConn.id);
           }
         }}
       />
 
-      {/* Delete credential confirmation */}
       <ConfirmDialog
-        open={!!confirmDeleteCred}
-        onOpenChange={(o) => !o && setConfirmDeleteCred(null)}
+        open={!!dialogs.confirmDeleteCred}
+        onOpenChange={(o) => !o && dialogs.setConfirmDeleteCred(null)}
         title="Delete credential?"
         description={
-          confirmDeleteCred ? (
+          dialogs.confirmDeleteCred ? (
             <>
-              Delete credential <strong>{confirmDeleteCred.name}</strong>?
+              Delete credential <strong>{dialogs.confirmDeleteCred.name}</strong>?
               Connections that reference it will lose their saved
               authentication.
             </>
@@ -836,21 +594,20 @@ function App() {
         confirmLabel="Delete credential"
         variant="destructive"
         onConfirm={async () => {
-          if (confirmDeleteCred) {
-            await deleteCredential(confirmDeleteCred.id);
+          if (dialogs.confirmDeleteCred) {
+            await deleteCredential(dialogs.confirmDeleteCred.id);
           }
         }}
       />
 
-      {/* Close terminal pane / tab confirmation */}
       <ConfirmDialog
-        open={!!confirmClosePane}
-        onOpenChange={(o) => !o && setConfirmClosePane(null)}
+        open={!!dialogs.confirmClosePane}
+        onOpenChange={(o) => !o && dialogs.setConfirmClosePane(null)}
         title="Close terminal?"
         description={
-          confirmClosePane ? (
+          dialogs.confirmClosePane ? (
             <>
-              The session for <strong>{confirmClosePane.name}</strong> will
+              The session for <strong>{dialogs.confirmClosePane.name}</strong> will
               be disconnected. Any unsaved work in the shell will be lost.
             </>
           ) : null
@@ -858,21 +615,22 @@ function App() {
         confirmLabel="Close"
         variant="destructive"
         onConfirm={async () => {
-          if (!confirmClosePane) return;
-          if (confirmClosePane.sessionId.startsWith("__tab__:")) {
-            const tabId = confirmClosePane.sessionId.slice("__tab__:".length);
-            await handleCloseTab(tabId);
+          const payload = dialogs.confirmClosePane;
+          if (!payload) return;
+          if (payload.sessionId.startsWith("__tab__:")) {
+            const tabId = payload.sessionId.slice("__tab__:".length);
+            await closeTab(tabId);
           } else {
-            await handleClosePane(confirmClosePane.sessionId);
+            await closePane(payload.sessionId);
           }
         }}
       />
 
-      {/* Orphaned private credential confirmation dialog */}
+      {/* Orphaned private credential prompt */}
       <Dialog
-        open={!!orphanCredDialog}
+        open={!!dialogs.orphanCredDialog}
         onOpenChange={(open) => {
-          if (!open) setOrphanCredDialog(null);
+          if (!open) dialogs.setOrphanCredDialog(null);
         }}
       >
         <DialogContent className="sm:max-w-sm">
@@ -884,10 +642,7 @@ function App() {
             </DialogDescription>
           </DialogHeader>
           <DialogFooter className="flex-col-reverse sm:flex-col-reverse sm:space-x-0 gap-2">
-            <Button
-              variant="ghost"
-              onClick={() => setOrphanCredDialog(null)}
-            >
+            <Button variant="ghost" onClick={() => dialogs.setOrphanCredDialog(null)}>
               Cancel
             </Button>
             <Button
@@ -907,38 +662,26 @@ function App() {
       </Dialog>
 
       {/*
-       * ConnectionForm and CredentialForm are mounted at the App root so
-       * they are reachable from any view (Cmd+N opens the connection
-       * form even when the user is on Logs / Settings / Tunnels, the
-       * "New Credential" picker inside ConnectionForm can open the
-       * credential form on top of the connection form, etc.). Keeping
-       * them in the connections/credentials view branches caused the
-       * dialog to mount in the same render that switched view, which
-       * made Cmd+N feel laggy and discarded any in-progress draft if
-       * the user navigated away mid-edit.
+       * ConnectionForm and CredentialForm are mounted at the App root
+       * so they are reachable from any view (Cmd+N opens the
+       * connection form even from Logs / Settings / Tunnels). Keeping
+       * them in the per-view branches caused the dialog to mount in
+       * the same render that switched view, which felt laggy and
+       * dropped any in-progress draft if the user navigated away.
        */}
       <ConnectionForm
-        open={connFormOpen}
-        onOpenChange={(open) => {
-          setConnFormOpen(open);
-          if (!open) {
-            setEditingConn(null);
-            setCloningConn(null);
-          }
-        }}
-        connection={cloningConn ?? editingConn}
+        open={dialogs.connFormOpen}
+        onOpenChange={dialogs.setConnFormOpen}
+        connection={dialogs.cloningConn ?? dialogs.editingConn}
         credentials={credentials}
-        onSubmit={cloningConn ? handleCloneSubmit : handleConnSubmit}
+        onSubmit={dialogs.cloningConn ? handleCloneSubmit : handleConnSubmit}
         onCreateCredential={handleCreateCredential}
-        isClone={!!cloningConn}
+        isClone={!!dialogs.cloningConn}
       />
       <CredentialForm
-        open={credFormOpen}
-        onOpenChange={(open) => {
-          setCredFormOpen(open);
-          if (!open) setEditingCred(null);
-        }}
-        credential={editingCred}
+        open={dialogs.credFormOpen}
+        onOpenChange={dialogs.setCredFormOpen}
+        credential={dialogs.editingCred}
         onSubmit={handleCredSubmit}
       />
     </div>

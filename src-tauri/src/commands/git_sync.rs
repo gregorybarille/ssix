@@ -98,10 +98,7 @@ pub fn git_sync_status() -> Result<GitSyncStatus, String> {
 
 #[tauri::command]
 pub fn git_sync_export_snapshot() -> Result<GitSyncSnapshot, String> {
-    let data = storage::load_data()?;
-    let repo_path = configured_repo_path(&data.settings)
-        .ok_or_else(|| "Configure a git sync repository path in Settings first".to_string())?;
-    ensure_repo_exists(&repo_path)?;
+    let (data, repo_path) = require_configured_repo()?;
     export_snapshot(&repo_path, &data)?;
 
     Ok(GitSyncSnapshot {
@@ -115,10 +112,7 @@ pub fn git_sync_export_snapshot() -> Result<GitSyncSnapshot, String> {
 
 #[tauri::command]
 pub fn git_sync_diff() -> Result<GitSyncDiff, String> {
-    let data = storage::load_data()?;
-    let repo_path = configured_repo_path(&data.settings)
-        .ok_or_else(|| "Configure a git sync repository path in Settings first".to_string())?;
-    ensure_repo_exists(&repo_path)?;
+    let (data, repo_path) = require_configured_repo()?;
     export_snapshot(&repo_path, &data)?;
 
     let unstaged = git(&repo_path, &["diff", "--", EXPORT_DIR])?.stdout;
@@ -128,10 +122,7 @@ pub fn git_sync_diff() -> Result<GitSyncDiff, String> {
 
 #[tauri::command]
 pub fn git_sync_fetch() -> Result<GitSyncActionResult, String> {
-    let data = storage::load_data()?;
-    let repo_path = configured_repo_path(&data.settings)
-        .ok_or_else(|| "Configure a git sync repository path in Settings first".to_string())?;
-    ensure_repo_exists(&repo_path)?;
+    let (data, repo_path) = require_configured_repo()?;
     let remote = data.settings.git_sync_remote.trim();
     let result = git(&repo_path, &["fetch", remote])?;
     Ok(to_action_result(result))
@@ -139,10 +130,7 @@ pub fn git_sync_fetch() -> Result<GitSyncActionResult, String> {
 
 #[tauri::command]
 pub fn git_sync_pull() -> Result<GitSyncActionResult, String> {
-    let data = storage::load_data()?;
-    let repo_path = configured_repo_path(&data.settings)
-        .ok_or_else(|| "Configure a git sync repository path in Settings first".to_string())?;
-    ensure_repo_exists(&repo_path)?;
+    let (data, repo_path) = require_configured_repo()?;
     let remote = data.settings.git_sync_remote.trim();
     let branch = branch_name(&repo_path, &data.settings)?;
     let result = git(&repo_path, &["pull", "--ff-only", remote, &branch])?;
@@ -151,10 +139,7 @@ pub fn git_sync_pull() -> Result<GitSyncActionResult, String> {
 
 #[tauri::command]
 pub fn git_sync_push() -> Result<GitSyncActionResult, String> {
-    let data = storage::load_data()?;
-    let repo_path = configured_repo_path(&data.settings)
-        .ok_or_else(|| "Configure a git sync repository path in Settings first".to_string())?;
-    ensure_repo_exists(&repo_path)?;
+    let (data, repo_path) = require_configured_repo()?;
     export_snapshot(&repo_path, &data)?;
     let remote = data.settings.git_sync_remote.trim();
     let branch = branch_name(&repo_path, &data.settings)?;
@@ -164,10 +149,7 @@ pub fn git_sync_push() -> Result<GitSyncActionResult, String> {
 
 #[tauri::command]
 pub fn git_sync_commit(input: GitSyncCommitInput) -> Result<GitSyncActionResult, String> {
-    let data = storage::load_data()?;
-    let repo_path = configured_repo_path(&data.settings)
-        .ok_or_else(|| "Configure a git sync repository path in Settings first".to_string())?;
-    ensure_repo_exists(&repo_path)?;
+    let (data, repo_path) = require_configured_repo()?;
     export_snapshot(&repo_path, &data)?;
 
     let message = input.message.trim();
@@ -191,10 +173,7 @@ pub fn git_sync_commit(input: GitSyncCommitInput) -> Result<GitSyncActionResult,
 
 #[tauri::command]
 pub fn git_sync_run() -> Result<GitSyncRunResult, String> {
-    let data = storage::load_data()?;
-    let repo_path = configured_repo_path(&data.settings)
-        .ok_or_else(|| "Configure a git sync repository path in Settings first".to_string())?;
-    ensure_repo_exists(&repo_path)?;
+    let (data, repo_path) = require_configured_repo()?;
 
     let remote = data.settings.git_sync_remote.trim().to_string();
     let branch = branch_name(&repo_path, &data.settings)?;
@@ -262,6 +241,21 @@ fn configured_repo_path(settings: &AppSettings) -> Option<PathBuf> {
         .map(PathBuf::from)
 }
 
+/// Audit-4 Dup H2: shared preamble for the 7 git-sync commands. Each one
+/// loaded data, resolved the configured repo path, asserted the repo
+/// exists with the same hard-coded message, then proceeded. Concentrating
+/// the policy here means a future change (e.g. add a `repo_locked`
+/// check, or relax the .git directory test for git worktrees) lands in
+/// one place and we can't end up with 6 commands enforcing the new rule
+/// and 1 forgotten.
+fn require_configured_repo() -> Result<(crate::models::AppData, PathBuf), String> {
+    let data = storage::load_data()?;
+    let repo_path = configured_repo_path(&data.settings)
+        .ok_or_else(|| "Configure a git sync repository path in Settings first".to_string())?;
+    ensure_repo_exists(&repo_path)?;
+    Ok((data, repo_path))
+}
+
 fn ensure_repo_exists(repo_path: &Path) -> Result<(), String> {
     if !repo_path.exists() {
         return Err(format!("Git sync repository does not exist: {}", repo_path.display()));
@@ -312,8 +306,18 @@ fn export_snapshot(repo_path: &Path, data: &AppData) -> Result<(), String> {
 
     let sanitized = sanitize_app_data(data);
     let data_json = serde_json::to_string_pretty(&sanitized).map_err(|e| e.to_string())?;
-    fs::write(export_dir.join(DATA_FILE), data_json).map_err(|e| e.to_string())?;
-    fs::write(export_dir.join(SUMMARY_FILE), render_summary(&sanitized)).map_err(|e| e.to_string())?;
+    // Audit-4 L1: route both writes through atomic_write so a crash
+    // during the export can't leave a half-written data.json or
+    // SUMMARY.md that subsequent git operations would commit as a
+    // partial snapshot.
+    crate::storage::atomic_write(&export_dir.join(DATA_FILE), data_json.as_bytes(), None)
+        .map_err(|e| e.to_string())?;
+    crate::storage::atomic_write(
+        &export_dir.join(SUMMARY_FILE),
+        render_summary(&sanitized).as_bytes(),
+        None,
+    )
+    .map_err(|e| e.to_string())?;
     Ok(())
 }
 

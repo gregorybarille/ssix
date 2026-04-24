@@ -55,11 +55,17 @@ describe("App.tsx form mounting structure", () => {
     // caused a one-render lag and discarded any in-progress edit on
     // another view. The new handler just opens the form; the view
     // switch is no longer needed because the form is App-level.
+    //
+    // Audit-4 Phase 5d: dialog state moved into useDialogsStore, so
+    // the handler now calls dialogs.openNewConnection() instead of
+    // setConnFormOpen(true). Either form satisfies the invariant.
     const handlerStart = src.indexOf('"mod+n":');
     expect(handlerStart).toBeGreaterThan(-1);
     // Look at the next 400 characters of the handler body.
     const handlerBody = src.slice(handlerStart, handlerStart + 400);
     expect(handlerBody).not.toMatch(/setView\(["']connections["']\)/);
-    expect(handlerBody).toMatch(/setConnFormOpen\(true\)/);
+    expect(handlerBody).toMatch(
+      /setConnFormOpen\(true\)|openNewConnection\(\)/,
+    );
   });
 });

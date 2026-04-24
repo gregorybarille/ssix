@@ -1,12 +1,13 @@
 import React, { useEffect, useState } from "react";
 import { listen, UnlistenFn } from "@tauri-apps/api/event";
 import { Connection } from "@/types";
+import { tunnelStatusEvent } from "@/lib/events";
 import { Button } from "./ui/button";
 import { cn } from "@/lib/utils";
 import { Network, ArrowRight, Activity, AlertCircle } from "lucide-react";
 
 /**
- * Status payload emitted on `tunnel-status-{sessionId}`. Mirror of
+ * Status payload emitted on `ssx:tunnel:status:{sessionId}`. Mirror of
  * `TunnelStatus` in `src-tauri/src/ssh.rs`.
  */
 export interface TunnelStatusPayload {
@@ -19,7 +20,13 @@ export interface TunnelStatusPayload {
 
 interface TunnelTabProps {
   sessionId: string;
-  connection: Connection;
+  /**
+   * Audit-4 Phase 4b: TunnelTab is only rendered for `port_forward`
+   * connections (the only kind that produces a tunnel). Narrowing the
+   * prop type here lets the body use `local_port`, `destination_*`,
+   * and `gateway_*` directly without union guards.
+   */
+  connection: Extract<Connection, { type: "port_forward" }>;
   isVisible: boolean;
   onDisconnect: () => void;
 }
@@ -41,13 +48,20 @@ export function TunnelTab({
   const [log, setLog] = useState<LogEntry[]>([]);
 
   useEffect(() => {
+    // Audit-4 M5: the previous implementation stored `unlisten` in a let
+    // and called it from cleanup. If the effect was torn down before the
+    // `await listen(...)` promise resolved, `unlisten` was still
+    // undefined when cleanup ran, and the listener that resolved
+    // afterward leaked silently — every tunnel reconnect added another
+    // dangling subscription. We now track the cleanup state so a late
+    // resolve disposes itself.
     let unlisten: UnlistenFn | undefined;
     let cancelled = false;
 
     (async () => {
       try {
-        unlisten = await listen<TunnelStatusPayload>(
-          `tunnel-status-${sessionId}`,
+        const fn = await listen<TunnelStatusPayload>(
+          tunnelStatusEvent(sessionId),
           (event) => {
             const payload = event.payload;
             if (cancelled) return;
@@ -67,6 +81,12 @@ export function TunnelTab({
             );
           },
         );
+        // If cleanup already ran while we were awaiting, dispose right away.
+        if (cancelled) {
+          fn();
+          return;
+        }
+        unlisten = fn;
       } catch {
         // ignore — listener wiring failure is non-fatal for the UI
       }

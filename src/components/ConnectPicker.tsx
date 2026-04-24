@@ -31,11 +31,13 @@ function endpointSubtitle(conn: Connection): string {
 
 function matches(conn: Connection, tokens: string[]): boolean {
   if (tokens.length === 0) return true;
+  // Audit-4 Phase 4b: only port_forward/jump_shell carry destination/gateway
+  // hosts; for direct connections the relevant search fields are name/host.
   const haystack = [
     conn.name,
     conn.host,
-    conn.destination_host,
-    conn.gateway_host,
+    conn.type !== "direct" ? conn.destination_host : undefined,
+    conn.type !== "direct" ? conn.gateway_host : undefined,
     ...(conn.tags ?? []),
   ]
     .filter(Boolean)

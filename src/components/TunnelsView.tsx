@@ -11,7 +11,10 @@ import { cn } from "@/lib/utils";
 export interface TunnelSession {
   sessionId: string;
   connectionName: string;
-  connection: Connection;
+  // Audit-4 Phase 4b: a tunnel session is, by construction, only ever
+  // started for a port_forward connection. Narrow at the source so
+  // <TunnelTab>'s prop type doesn't need a runtime guard.
+  connection: Extract<Connection, { type: "port_forward" }>;
   error?: string;
   retrying?: boolean;
 }

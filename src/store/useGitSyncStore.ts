@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import { invoke } from "@/lib/tauri";
-import { GitSyncDiff, GitSyncRunResult, GitSyncSnapshot, GitSyncStatus } from "@/types";
+import { GitSyncActionResult, GitSyncDiff, GitSyncRunResult, GitSyncSnapshot, GitSyncStatus } from "@/types";
+import { runAsync, runAsyncRethrow } from "@/lib/asyncAction";
 
 interface GitSyncState {
   status: GitSyncStatus;
@@ -32,6 +33,17 @@ const DEFAULT_DIFF: GitSyncDiff = {
   unstaged: "",
 };
 
+/**
+ * Audit-4 Dup H1: collapse the duplicated stdout/stderr formatting that
+ * appeared in fetchRemote/pullRemote/pushRemote/commitSnapshot.
+ */
+function formatGitOutput(
+  result: GitSyncActionResult,
+  fallback: string,
+): string {
+  return [result.stdout, result.stderr].filter(Boolean).join("\n") || fallback;
+}
+
 export const useGitSyncStore = create<GitSyncState>((set, get) => ({
   status: DEFAULT_STATUS,
   diff: DEFAULT_DIFF,
@@ -39,105 +51,75 @@ export const useGitSyncStore = create<GitSyncState>((set, get) => ({
   actionOutput: null,
   error: null,
 
-  fetchStatus: async () => {
-    set({ isLoading: true, error: null });
-    try {
+  // Audit-4 Dup H1: actions that the caller awaits and reacts to
+  // (fetchRemote, pull, push, commit, run, exportSnapshot) use
+  // runAsyncRethrow. Pure refresh actions (fetchStatus, fetchDiff)
+  // use runAsync.
+  fetchStatus: () =>
+    runAsync(set, async () => {
       const status = await invoke<GitSyncStatus>("git_sync_status");
-      set({ status, isLoading: false });
-    } catch (error) {
-      set({ error: String(error), isLoading: false });
-    }
-  },
+      set({ status });
+    }).then(() => undefined),
 
-  fetchDiff: async () => {
-    set({ isLoading: true, error: null });
-    try {
+  fetchDiff: () =>
+    runAsync(set, async () => {
       const diff = await invoke<GitSyncDiff>("git_sync_diff");
-      set({ diff, isLoading: false });
+      set({ diff });
       await get().fetchStatus();
-    } catch (error) {
-      set({ error: String(error), isLoading: false, diff: DEFAULT_DIFF });
-    }
-  },
+    }).then(() => undefined),
 
-  exportSnapshot: async () => {
-    set({ isLoading: true, error: null, actionOutput: null });
-    try {
+  exportSnapshot: () =>
+    runAsyncRethrow(set, async () => {
+      set({ actionOutput: null });
       const snapshot = await invoke<GitSyncSnapshot>("git_sync_export_snapshot");
       set({
-        isLoading: false,
         actionOutput: `Exported ${snapshot.exported_files.join(", ")} to ${snapshot.repo_path}`,
       });
       await Promise.all([get().fetchStatus(), get().fetchDiff()]);
       return snapshot;
-    } catch (error) {
-      set({ error: String(error), isLoading: false });
-      throw error;
-    }
-  },
+    }),
 
-  fetchRemote: async () => {
-    set({ isLoading: true, error: null, actionOutput: null });
-    try {
-      const result = await invoke<{ stdout: string; stderr: string }>("git_sync_fetch");
-      set({ isLoading: false, actionOutput: [result.stdout, result.stderr].filter(Boolean).join("\n") || "Fetch complete." });
+  fetchRemote: () =>
+    runAsyncRethrow(set, async () => {
+      set({ actionOutput: null });
+      const result = await invoke<GitSyncActionResult>("git_sync_fetch");
+      set({ actionOutput: formatGitOutput(result, "Fetch complete.") });
       await get().fetchStatus();
-    } catch (error) {
-      set({ error: String(error), isLoading: false });
-      throw error;
-    }
-  },
+    }),
 
-  pullRemote: async () => {
-    set({ isLoading: true, error: null, actionOutput: null });
-    try {
-      const result = await invoke<{ stdout: string; stderr: string }>("git_sync_pull");
-      set({ isLoading: false, actionOutput: [result.stdout, result.stderr].filter(Boolean).join("\n") || "Pull complete." });
+  pullRemote: () =>
+    runAsyncRethrow(set, async () => {
+      set({ actionOutput: null });
+      const result = await invoke<GitSyncActionResult>("git_sync_pull");
+      set({ actionOutput: formatGitOutput(result, "Pull complete.") });
       await Promise.all([get().fetchStatus(), get().fetchDiff()]);
-    } catch (error) {
-      set({ error: String(error), isLoading: false });
-      throw error;
-    }
-  },
+    }),
 
-  pushRemote: async () => {
-    set({ isLoading: true, error: null, actionOutput: null });
-    try {
-      const result = await invoke<{ stdout: string; stderr: string }>("git_sync_push");
-      set({ isLoading: false, actionOutput: [result.stdout, result.stderr].filter(Boolean).join("\n") || "Push complete." });
+  pushRemote: () =>
+    runAsyncRethrow(set, async () => {
+      set({ actionOutput: null });
+      const result = await invoke<GitSyncActionResult>("git_sync_push");
+      set({ actionOutput: formatGitOutput(result, "Push complete.") });
       await Promise.all([get().fetchStatus(), get().fetchDiff()]);
-    } catch (error) {
-      set({ error: String(error), isLoading: false });
-      throw error;
-    }
-  },
+    }),
 
-  commitSnapshot: async (message) => {
-    set({ isLoading: true, error: null, actionOutput: null });
-    try {
-      const result = await invoke<{ stdout: string; stderr: string }>("git_sync_commit", {
+  commitSnapshot: (message) =>
+    runAsyncRethrow(set, async () => {
+      set({ actionOutput: null });
+      const result = await invoke<GitSyncActionResult>("git_sync_commit", {
         input: { message },
       });
-      set({ isLoading: false, actionOutput: [result.stdout, result.stderr].filter(Boolean).join("\n") || "Commit complete." });
+      set({ actionOutput: formatGitOutput(result, "Commit complete.") });
       await Promise.all([get().fetchStatus(), get().fetchDiff()]);
-    } catch (error) {
-      set({ error: String(error), isLoading: false });
-      throw error;
-    }
-  },
+    }),
 
-  runSync: async () => {
-    set({ isLoading: true, error: null, actionOutput: null });
-    try {
+  runSync: () =>
+    runAsyncRethrow(set, async () => {
+      set({ actionOutput: null });
       const result = await invoke<GitSyncRunResult>("git_sync_run");
       set({
-        isLoading: false,
         actionOutput: [...result.steps, result.output.stdout].filter(Boolean).join("\n"),
       });
       await Promise.all([get().fetchStatus(), get().fetchDiff()]);
-    } catch (error) {
-      set({ error: String(error), isLoading: false });
-      throw error;
-    }
-  },
+    }),
 }));

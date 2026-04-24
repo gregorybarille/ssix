@@ -20,19 +20,32 @@ fn secrets_path() -> PathBuf {
     home.join(".ssx").join("secrets.json")
 }
 
-fn load_secrets() -> HashMap<String, String> {
+/// Read the secrets file. Returns:
+///   * `Ok(map)` on success (or empty map if the file simply doesn't exist).
+///   * `Err(msg)` if the file exists but is unreadable or unparseable.
+///
+/// **Audit-4 C1:** previously this function returned `HashMap::new()` on any
+/// read or parse error, which caused `with_secrets_mut` to atomically
+/// overwrite `~/.ssx/secrets.json` with `{just_one_entry}` — destroying
+/// every other credential's secret on a transient EIO, half-written file
+/// after a crash, or any future format change. Errors are now propagated
+/// so the caller refuses to save and the user sees a real failure.
+fn load_secrets() -> Result<HashMap<String, String>, String> {
     let path = secrets_path();
     if !path.exists() {
-        return HashMap::new();
+        return Ok(HashMap::new());
     }
-    let content = match fs::read_to_string(&path) {
-        Ok(c) => c,
-        Err(e) => {
-            eprintln!("[secrets] failed to read secrets file: {}", e);
-            return HashMap::new();
-        }
-    };
-    serde_json::from_str(&content).unwrap_or_default()
+    let content = fs::read_to_string(&path).map_err(|e| {
+        eprintln!("[secrets] failed to read secrets file: {}", e);
+        format!("failed to read secrets file: {}", e)
+    })?;
+    serde_json::from_str(&content).map_err(|e| {
+        eprintln!("[secrets] failed to parse secrets file: {}", e);
+        format!(
+            "failed to parse secrets file (refusing to save and overwrite existing entries): {}",
+            e
+        )
+    })
 }
 
 fn save_secrets(secrets: &HashMap<String, String>) -> Result<(), String> {
@@ -46,16 +59,34 @@ fn save_secrets(secrets: &HashMap<String, String>) -> Result<(), String> {
 }
 
 /// Run `f` with an exclusive lock on the secrets file.
+///
+/// On read/parse failure the returned secrets map is empty AND callers
+/// should treat the lookup as "no entry"; `with_secrets_mut` instead
+/// refuses to save when the prior load failed.
 fn with_secrets<T>(f: impl FnOnce(&mut HashMap<String, String>) -> T) -> T {
     let _guard = SECRETS_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-    let mut secrets = load_secrets();
+    let mut secrets = load_secrets().unwrap_or_else(|e| {
+        eprintln!("[secrets] load failed during read-only access: {}", e);
+        HashMap::new()
+    });
     f(&mut secrets)
 }
 
 /// Run `f` with an exclusive lock, then save the (possibly mutated) map.
+///
+/// **Audit-4 C1:** this function MUST refuse to save when the prior load
+/// failed. Otherwise a transient read error would cause us to overwrite
+/// `~/.ssx/secrets.json` with `{ just_one_entry }`, deleting every other
+/// credential's secret silently.
 fn with_secrets_mut(f: impl FnOnce(&mut HashMap<String, String>)) -> Result<(), String> {
     let _guard = SECRETS_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-    let mut secrets = load_secrets();
+    let mut secrets = load_secrets().map_err(|e| {
+        format!(
+            "Refusing to write secrets: prior load failed ({}). The secrets file may be corrupted; \
+             back up ~/.ssx/secrets.json and retry. No data was modified.",
+            e
+        )
+    })?;
     f(&mut secrets);
     save_secrets(&secrets)
 }

@@ -11,7 +11,7 @@ SSX is a Tauri v2 desktop application with a React frontend and a Rust backend.
 - `src/components/ui/` contains shared Radix-based primitives.
 - `src/store/` contains Zustand stores that act as the async boundary for the UI.
 - `src/lib/tauri.ts` lazy-loads Tauri `invoke()` so frontend tests can mock it.
-- `src/types/index.ts` mirrors backend data structures.
+- `src/types/index.ts` mirrors backend data structures. ts-rs writes a reference copy of every Rust model to `src/types/generated/` on `cargo test`; a parity test (`src/test/typesParity.test.ts`) fails when a generated field is missing from the hand-written index.ts.
 
 ### Backend
 
@@ -35,7 +35,7 @@ UI -> Zustand store -> `invoke()` -> Tauri command -> storage / SSH subsystem ->
 ## SSH Session Model
 
 - Each shell session runs on its own backend thread.
-- The backend emits `ssh-output-{id}`, `ssh-error-{id}`, and `ssh-closed-{id}` events.
+- The backend emits `ssx:ssh:output:{id}`, `ssx:ssh:error:{id}`, and `ssx:ssh:closed:{id}` events. Tunnels also emit `ssx:tunnel:status:{id}`. Event names are produced by helpers in `src-tauri/src/ssh.rs` and mirrored in `src/lib/events.ts` — both sides MUST go through these helpers.
 - The frontend keeps terminal components mounted while hidden so output is not lost when switching tabs.
 
 ## Tunnel Model
