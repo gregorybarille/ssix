@@ -576,7 +576,9 @@ function App() {
   useGlobalShortcuts({
     "mod+k": () => setPickerOpen(true),
     "mod+n": () => {
-      setView("connections");
+      // The form is mounted at the App root, so we can open it from any
+      // view without first switching to "connections". The user is
+      // returned to the same view they were on after closing the form.
       setEditingConn(null);
       setCloningConn(null);
       setConnFormOpen(true);
@@ -677,21 +679,6 @@ function App() {
                 }}
               />
             </div>
-            <ConnectionForm
-              open={connFormOpen}
-              onOpenChange={(open) => {
-                setConnFormOpen(open);
-                if (!open) {
-                  setEditingConn(null);
-                  setCloningConn(null);
-                }
-              }}
-              connection={cloningConn ?? editingConn}
-              credentials={credentials}
-              onSubmit={cloningConn ? handleCloneSubmit : handleConnSubmit}
-              onCreateCredential={handleCreateCredential}
-              isClone={!!cloningConn}
-            />
           </>
         )}
 
@@ -730,15 +717,6 @@ function App() {
                 }}
               />
             </div>
-            <CredentialForm
-              open={credFormOpen}
-              onOpenChange={(open) => {
-                setCredFormOpen(open);
-                if (!open) setEditingCred(null);
-              }}
-              credential={editingCred}
-              onSubmit={handleCredSubmit}
-            />
           </>
         )}
 
@@ -927,6 +905,42 @@ function App() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/*
+       * ConnectionForm and CredentialForm are mounted at the App root so
+       * they are reachable from any view (Cmd+N opens the connection
+       * form even when the user is on Logs / Settings / Tunnels, the
+       * "New Credential" picker inside ConnectionForm can open the
+       * credential form on top of the connection form, etc.). Keeping
+       * them in the connections/credentials view branches caused the
+       * dialog to mount in the same render that switched view, which
+       * made Cmd+N feel laggy and discarded any in-progress draft if
+       * the user navigated away mid-edit.
+       */}
+      <ConnectionForm
+        open={connFormOpen}
+        onOpenChange={(open) => {
+          setConnFormOpen(open);
+          if (!open) {
+            setEditingConn(null);
+            setCloningConn(null);
+          }
+        }}
+        connection={cloningConn ?? editingConn}
+        credentials={credentials}
+        onSubmit={cloningConn ? handleCloneSubmit : handleConnSubmit}
+        onCreateCredential={handleCreateCredential}
+        isClone={!!cloningConn}
+      />
+      <CredentialForm
+        open={credFormOpen}
+        onOpenChange={(open) => {
+          setCredFormOpen(open);
+          if (!open) setEditingCred(null);
+        }}
+        credential={editingCred}
+        onSubmit={handleCredSubmit}
+      />
     </div>
   );
 }

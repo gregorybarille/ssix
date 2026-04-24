@@ -272,7 +272,7 @@ macOS and `Ctrl` everywhere else.
 | Shortcut       | Action                                                   |
 | -------------- | -------------------------------------------------------- |
 | `Mod+K`        | Open the Connect picker                                  |
-| `Mod+N`        | New connection (switches to Connections, opens the form) |
+| `Mod+N`        | Open the New Connection form. Works from any view; the form is mounted at the App root so the user is returned to the same view they were on after closing it. |
 | `Mod+,`        | Open Settings                                            |
 | `Mod+W`        | Close the active terminal tab (with confirm if live)     |
 | `Mod+1`…`Mod+9`| Switch to terminal tab N                                 |
