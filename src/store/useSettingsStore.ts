@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import { AppSettings } from "@/types";
 import { invoke } from "@/lib/tauri";
+import { runAsync, runAsyncRethrow } from "@/lib/asyncAction";
 
 interface SettingsState {
   settings: AppSettings;
@@ -25,29 +26,21 @@ const DEFAULT_SETTINGS: AppSettings = {
   git_sync_branch: undefined,
 };
 
+// Audit-4 Dup H1: same async-action pattern as the other stores.
 export const useSettingsStore = create<SettingsState>((set) => ({
   settings: DEFAULT_SETTINGS,
   isLoading: false,
   error: null,
 
-  fetchSettings: async () => {
-    set({ isLoading: true, error: null });
-    try {
+  fetchSettings: () =>
+    runAsync(set, async () => {
       const settings = await invoke<AppSettings>("get_settings");
-      set({ settings, isLoading: false });
-    } catch (err) {
-      set({ error: String(err), isLoading: false });
-    }
-  },
+      set({ settings });
+    }).then(() => undefined),
 
-  saveSettings: async (settings) => {
-    set({ isLoading: true, error: null });
-    try {
+  saveSettings: (settings) =>
+    runAsyncRethrow(set, async () => {
       const saved = await invoke<AppSettings>("save_settings", { settings });
-      set({ settings: saved, isLoading: false });
-    } catch (err) {
-      set({ error: String(err), isLoading: false });
-      throw err;
-    }
-  },
+      set({ settings: saved });
+    }),
 }));

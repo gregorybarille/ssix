@@ -19,6 +19,7 @@ import { cn } from "@/lib/utils";
 import { getColorHex } from "@/lib/colors";
 import { useRovingFocus } from "@/hooks/useRovingFocus";
 import { ContextMenu, useContextMenu, type ContextMenuItem } from "./ContextMenu";
+import { EmptyState } from "./ui/EmptyState";
 import { buildSshCommand } from "@/lib/ssh-command";
 
 interface ConnectionListProps {
@@ -177,11 +178,11 @@ export function ConnectionList({
 
   if (connections.length === 0) {
     return (
-      <div className="flex flex-col items-center justify-center py-12 text-muted-foreground">
-        <Server className="h-12 w-12 mb-3 opacity-30" />
-        <p className="text-sm">No connections yet</p>
-        <p className="text-xs mt-1">Create your first SSH connection</p>
-      </div>
+      <EmptyState
+        icon={Server}
+        title="No connections yet"
+        hint="Create your first SSH connection"
+      />
     );
   }
 

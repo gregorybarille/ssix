@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import { Credential } from "@/types";
 import { invoke } from "@/lib/tauri";
+import { runAsync, runAsyncRethrow } from "@/lib/asyncAction";
 
 interface CredentialsState {
   credentials: Credential[];
@@ -14,69 +15,41 @@ interface CredentialsState {
   deleteCredential: (id: string) => Promise<void>;
 }
 
+// Audit-4 Dup H1: same async-action pattern as useConnectionsStore.
 export const useCredentialsStore = create<CredentialsState>((set) => ({
   credentials: [],
   isLoading: false,
   error: null,
 
-  fetchCredentials: async () => {
-    set({ isLoading: true, error: null });
-    try {
+  fetchCredentials: () =>
+    runAsync(set, async () => {
       const credentials = await invoke<Credential[]>("get_credentials");
-      set({ credentials, isLoading: false });
-    } catch (err) {
-      set({ error: String(err), isLoading: false });
-    }
-  },
+      set({ credentials });
+    }).then(() => undefined),
 
-  addCredential: async (input) => {
-    set({ isLoading: true, error: null });
-    try {
+  addCredential: (input) =>
+    runAsyncRethrow(set, async () => {
       const cred = await invoke<Credential>("add_credential", { input });
-      set((state) => ({
-        credentials: [...state.credentials, cred],
-        isLoading: false,
-      }));
+      set((state) => ({ credentials: [...state.credentials, cred] }));
       return cred;
-    } catch (err) {
-      set({ error: String(err), isLoading: false });
-      throw err;
-    }
-  },
+    }),
 
-  addInlineCredential: async (input) => {
-    try {
-      return await invoke<Credential>("add_credential", { input });
-    } catch (err) {
-      throw err;
-    }
-  },
+  // Inline (private) credentials skip the store-level loading/error
+  // tracking because they're an implementation detail of save_connection
+  // — the connection's own loading state covers the user-visible flow.
+  addInlineCredential: (input) => invoke<Credential>("add_credential", { input }),
 
-  updateCredential: async (input) => {
-    set({ isLoading: true, error: null });
-    try {
+  updateCredential: (input) =>
+    runAsyncRethrow(set, async () => {
       const cred = await invoke<Credential>("update_credential", { input });
       set((state) => ({
         credentials: state.credentials.map((c) => (c.id === cred.id ? cred : c)),
-        isLoading: false,
       }));
-    } catch (err) {
-      set({ error: String(err), isLoading: false });
-      throw err;
-    }
-  },
+    }),
 
-  deleteCredential: async (id) => {
-    set({ isLoading: true, error: null });
-    try {
+  deleteCredential: (id) =>
+    runAsyncRethrow(set, async () => {
       await invoke("delete_credential", { id });
-      set((state) => ({
-        credentials: state.credentials.filter((c) => c.id !== id),
-        isLoading: false,
-      }));
-    } catch (err) {
-      set({ error: String(err), isLoading: false });
-      throw err;
-    }
-  },
+      set((state) => ({ credentials: state.credentials.filter((c) => c.id !== id) }));
+    }),
 }));

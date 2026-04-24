@@ -4,6 +4,7 @@ import { Button } from "./ui/button";
 import { Badge } from "./ui/badge";
 import { Key, Lock, Edit, Trash2, UploadCloud } from "lucide-react";
 import { InstallKeyDialog } from "./InstallKeyDialog";
+import { EmptyState } from "./ui/EmptyState";
 import { cn } from "@/lib/utils";
 import { useRovingFocus } from "@/hooks/useRovingFocus";
 
@@ -32,16 +33,19 @@ export function CredentialList({
 
   if (credentials.length === 0) {
     return (
-      <div className="flex flex-col items-center justify-center py-12 text-muted-foreground">
-        <Key className="h-12 w-12 mb-3 opacity-30" />
-        <p className="text-sm">No credentials yet</p>
-        <p className="text-xs mt-1">Add your first SSH credential</p>
-      </div>
+      <EmptyState
+        icon={Key}
+        title="No credentials yet"
+        hint="Add your first SSH credential"
+      />
     );
   }
 
+  // Audit-4 consistency fix: include focus-within:opacity-100 so keyboard
+  // users can reveal the action buttons by tabbing into them, matching
+  // the behaviour in ConnectionList. (Previously hover-only.)
   const renderActions = (cred: Credential) => (
-    <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+    <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity">
       {cred.type === "ssh_key" && (
         <Button
           variant="ghost"

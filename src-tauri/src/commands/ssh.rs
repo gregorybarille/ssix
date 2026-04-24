@@ -53,19 +53,32 @@ fn resolve_credential(
     Ok((username, auth))
 }
 
+/// Audit-4 Dup M2: shared connection lookup used by ssh_connect, scp_upload,
+/// and scp_download. Previously each site duplicated the same `iter().find()
+/// .ok_or().clone()` chain with subtly different error messages ("Connection
+/// not found" vs "Connection not found".to_string() vs the bare &str). One
+/// helper, one error string, one place to add future logging.
+///
+/// Returns `(AppData, Connection)` so callers don't have to re-load the
+/// data when they need both (most do, e.g. for credential lookup).
+fn find_connection(connection_id: &str) -> Result<(crate::models::AppData, Connection), String> {
+    let data = storage::load_data()?;
+    let conn = data
+        .connections
+        .iter()
+        .find(|c| c.id == connection_id)
+        .ok_or_else(|| "Connection not found".to_string())?
+        .clone();
+    Ok((data, conn))
+}
+
 #[tauri::command]
 pub async fn ssh_connect(
     app: tauri::AppHandle,
     state: tauri::State<'_, SshState>,
     connection_id: String,
 ) -> Result<String, String> {
-    let data = storage::load_data()?;
-    let conn: Connection = data
-        .connections
-        .iter()
-        .find(|c| c.id == connection_id)
-        .ok_or("Connection not found")?
-        .clone();
+    let (data, conn) = find_connection(&connection_id)?;
 
     let session_id = uuid::Uuid::new_v4().to_string();
     let startup_command = build_startup_command(
@@ -191,13 +204,7 @@ pub struct ScpResult {
 
 #[tauri::command]
 pub fn scp_upload(input: ScpUploadInput) -> Result<ScpResult, String> {
-    let data = storage::load_data()?;
-    let conn = data
-        .connections
-        .iter()
-        .find(|c| c.id == input.connection_id)
-        .ok_or_else(|| "Connection not found".to_string())?
-        .clone();
+    let (data, conn) = find_connection(&input.connection_id)?;
 
     if matches!(conn.kind, ConnectionKind::PortForward { .. }) {
         return Err("SCP is not available for port-forward connections".to_string());
@@ -243,13 +250,7 @@ pub fn scp_upload(input: ScpUploadInput) -> Result<ScpResult, String> {
 
 #[tauri::command]
 pub fn scp_download(input: ScpDownloadInput) -> Result<ScpResult, String> {
-    let data = storage::load_data()?;
-    let conn = data
-        .connections
-        .iter()
-        .find(|c| c.id == input.connection_id)
-        .ok_or_else(|| "Connection not found".to_string())?
-        .clone();
+    let (data, conn) = find_connection(&input.connection_id)?;
 
     if matches!(conn.kind, ConnectionKind::PortForward { .. }) {
         return Err("SCP is not available for port-forward connections".to_string());
