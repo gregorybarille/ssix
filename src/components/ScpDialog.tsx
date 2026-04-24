@@ -173,6 +173,45 @@ export function ScpDialog({ open, onOpenChange, connection }: ScpDialogProps) {
             Transfer directories recursively
           </label>
 
+          {/*
+            Audit-3 P2#8: progress and success must be announced to
+            screen readers. Previously the only feedback was:
+              (a) the submit button's label flipping to 'Transferring...'
+                  — but AT does not reliably re-announce a button's
+                  accessible name when it changes mid-operation, and
+              (b) a static `<div>Transferred N bytes</div>` that
+                  appeared after success — which AT also does not
+                  announce because the node was being mounted, not
+                  added to a live region.
+
+            A single role=status + aria-live=polite region that's
+            ALWAYS mounted (so AT is subscribed before the text
+            arrives) carries both messages. Polite (vs assertive) is
+            correct here because the user initiated the action and
+            isn't reading something that needs interrupting; assertive
+            is reserved for the error path below.
+
+            `aria-atomic=true` ensures the entire message is
+            re-announced when content changes (e.g. busy → success),
+            not just the diff.
+          */}
+          <div
+            role="status"
+            aria-live="polite"
+            aria-atomic="true"
+            className="sr-only"
+          >
+            {isSubmitting
+              ? `${mode === "upload" ? "Uploading" : "Downloading"} — please wait.`
+              : result
+                ? `Transferred ${result.bytes} bytes${
+                    result.entries
+                      ? ` across ${result.entries} item${result.entries === 1 ? "" : "s"}`
+                      : ""
+                  } between ${result.local_path} and ${result.remote_path}.`
+                : ""}
+          </div>
+
           {result && (
             <div className="rounded-md border p-3 text-xs">
               Transferred {result.bytes} bytes

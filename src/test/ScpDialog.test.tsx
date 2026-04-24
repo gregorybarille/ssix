@@ -33,7 +33,11 @@ describe("ScpDialog", () => {
     fireEvent.click(screen.getByRole("button", { name: /upload/i }));
 
     await waitFor(() => expect(invoke).toHaveBeenCalledWith("scp_upload", expect.any(Object)));
-    expect(await screen.findByText(/Transferred 12 bytes/)).toBeInTheDocument();
+    // Audit-3 P2#8: success text now appears in two places — the
+    // visible result <div> AND the sr-only role=status live region
+    // (so AT actually announces it). Both should match.
+    const matches = await screen.findAllByText(/Transferred 12 bytes/);
+    expect(matches.length).toBeGreaterThanOrEqual(2);
   });
 
   it("passes the recursive option through", async () => {
@@ -163,16 +167,53 @@ describe("ScpDialog", () => {
     expect(box).toHaveAttribute("aria-checked", "false");
     fireEvent.click(box);
     expect(box).toHaveAttribute("aria-checked", "true");
-    // No native checkboxes should remain.
     const natives = document.querySelectorAll('input[type="checkbox"]');
-    // Radix renders a hidden <input type="checkbox"> for form
-    // participation, so we instead check that the box exposed to AT
-    // is the Radix button (its tagName is BUTTON, not INPUT).
     expect(box.tagName).toBe("BUTTON");
-    // Whatever native inputs Radix may render must be aria-hidden so
-    // AT only sees the styled button.
     natives.forEach((n) => {
       expect(n).toHaveAttribute("aria-hidden", "true");
     });
+  });
+
+  /*
+   * Audit-3 P2#8: the only visual progress signal was the submit
+   * button's label flipping to 'Transferring...', and the only
+   * success signal was a static <div>Transferred N bytes</div>
+   * appearing after the await. Neither was announced to screen
+   * readers — AT does not reliably re-announce a button's accessible
+   * name change, and a non-live <div> being mounted is silent.
+   * A role=status + aria-live=polite region (always mounted, so AT
+   * is subscribed before content arrives) carries both messages.
+   */
+  it("announces transfer success via a polite status live region", async () => {
+    vi.mocked(invoke).mockResolvedValue({
+      local_path: "/tmp/file",
+      remote_path: "/srv/app/file",
+      bytes: 4096,
+      entries: 1,
+    });
+    render(
+      <ScpDialog
+        open
+        onOpenChange={vi.fn()}
+        connection={{ id: "c1", name: "prod", host: "host", port: 22, type: "direct" }}
+      />,
+    );
+    // Live region must exist on initial render (empty), so AT is
+    // already subscribed when the message appears.
+    const status = screen.getByRole("status");
+    expect(status).toHaveAttribute("aria-live", "polite");
+    expect(status).toHaveAttribute("aria-atomic", "true");
+    expect(status.textContent).toBe("");
+
+    fireEvent.change(screen.getByLabelText(/local path/i), {
+      target: { value: "/tmp/file" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: /^upload$/i }));
+
+    await waitFor(() =>
+      expect(screen.getByRole("status")).toHaveTextContent(
+        /transferred 4096 bytes/i,
+      ),
+    );
   });
 });
