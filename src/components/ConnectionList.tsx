@@ -229,7 +229,7 @@ export function ConnectionList({
               <p className="text-xs text-muted-foreground truncate">
                 {describe(conn)}
                 {getCredentialName(conn.credential_id) && (
-                  <span className="ml-1 text-muted-foreground/70">
+                  <span className="ml-1 text-muted-foreground-soft">
                     · {getCredentialName(conn.credential_id)}
                   </span>
                 )}
@@ -378,7 +378,7 @@ export function ConnectionList({
               <p className="text-xs text-muted-foreground truncate">
                 {describe(conn)}
                 {getCredentialName(conn.credential_id) && (
-                  <span className="ml-2 text-muted-foreground/70">
+                  <span className="ml-2 text-muted-foreground-soft">
                     · {getCredentialName(conn.credential_id)}
                   </span>
                 )}
@@ -457,7 +457,7 @@ export function ConnectionList({
               </Button>
               </div>
             </div>
-            <ChevronRight className="h-4 w-4 text-muted-foreground/40 shrink-0" />
+            <ChevronRight className="h-4 w-4 text-muted-foreground-soft shrink-0" />
           </div>
         );
       })}

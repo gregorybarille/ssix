@@ -224,7 +224,7 @@ export function TerminalTabs({
               <span className="truncate">{label}</span>
               {tab.mode !== "single" && (
                 <span
-                  className="text-muted-foreground/60 text-[10px] shrink-0"
+                  className="text-muted-foreground-soft text-[10px] shrink-0"
                   aria-hidden="true"
                 >
                   ({tab.mode === "horizontal" ? "⇆" : "⇅"})

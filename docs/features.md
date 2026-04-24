@@ -101,7 +101,9 @@ See [Git Sync](git-sync.md) for details.
 
 ## Settings
 
-- theme
+- theme (light / dark; both calibrated to meet WCAG AA — body text and
+  tertiary metadata such as timestamps stay above the 4.5:1 contrast
+  ratio on both themes)
 - font family
 - font size
 - color scheme

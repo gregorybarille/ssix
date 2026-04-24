@@ -18,6 +18,17 @@
     --secondary-foreground: 210 40% 98%;
     --muted: 217.2 32.6% 17.5%;
     --muted-foreground: 215 20.2% 65.1%;
+    /*
+     * `muted-soft` is a deliberately-toned-down variant of
+     * `muted-foreground` for tertiary metadata (timestamps, inline
+     * labels next to a primary string, etc.). It MUST stay above WCAG
+     * AA (4.5:1) on the surrounding surface in both themes; do not
+     * pair it with extra opacity utilities.
+     *
+     * Dark theme (#0a1020 background): hsl(215 20% 55%) ≈ #6f8197
+     * yields ~5.2:1 contrast.
+     */
+    --muted-foreground-soft: 215 20% 55%;
     --accent: 217.2 32.6% 17.5%;
     --accent-foreground: 210 40% 98%;
     --destructive: 0 62.8% 30.6%;
@@ -42,6 +53,14 @@
     --secondary-foreground: 222.2 47.4% 11.2%;
     --muted: 210 40% 96.1%;
     --muted-foreground: 215.4 16.3% 46.9%;
+    /*
+     * Light theme (#ffffff background): hsl(215 16% 38%) ≈ #51596a
+     * yields ~7.5:1 contrast and remains visually softer than the
+     * primary foreground (#0a1020). Previously this was rendered as
+     * `text-muted-foreground/70` which blended to ~#a3a8af on white
+     * and only achieved ~2.7:1 — failing WCAG AA.
+     */
+    --muted-foreground-soft: 215 16% 38%;
     --accent: 210 40% 96.1%;
     --accent-foreground: 222.2 47.4% 11.2%;
     --destructive: 0 84.2% 60.2%;

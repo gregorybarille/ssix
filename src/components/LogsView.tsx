@@ -40,7 +40,7 @@ function LogList({ entries, empty }: { entries: LogEntry[]; empty: string }) {
           key={`${e.ts}-${e.source}-${e.message}-${i}`}
           className="grid grid-cols-[90px_60px_100px_1fr] gap-2 px-2 py-0.5 hover:bg-accent/30 rounded"
         >
-          <span className="text-muted-foreground/70">{fmtTs(e.ts)}</span>
+          <span className="text-muted-foreground-soft">{fmtTs(e.ts)}</span>
           <span className={cn("uppercase font-semibold", levelColor(e.level))}>
             {e.level}
           </span>
