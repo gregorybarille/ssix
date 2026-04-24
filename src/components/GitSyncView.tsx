@@ -4,7 +4,6 @@ import { Input } from "./ui/input";
 import { Label } from "./ui/label";
 import { Separator } from "./ui/separator";
 import { Badge } from "./ui/badge";
-import { Textarea } from "./ui/textarea";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { useGitSyncStore } from "@/store/useGitSyncStore";
 import { GitBranch, RefreshCcw, Download, Upload, FileDiff, WandSparkles } from "lucide-react";
@@ -137,14 +136,52 @@ export function GitSyncView() {
                   </p>
                 </div>
                 <div className="p-4 space-y-4">
+                  {/*
+                    Audit-3 P2#6: the diff is *text content meant to be
+                    read and copied*, not an editable form field. The
+                    previous <Textarea readOnly> still grabbed focus,
+                    polluted the right-click menu with form-control
+                    options ("Spelling and Grammar", "Substitutions"),
+                    and was announced by AT as "edit text, read-only"
+                    rather than as a code block. <pre> + role=region +
+                    aria-label is the correct semantic, keeps text
+                    selection + copy intact, and uses font-mono so
+                    diffs align column-wise.
+
+                    `tabIndex=0` keeps the block keyboard-reachable so
+                    screen-reader users can land on it and have AT
+                    announce its label and contents (a non-focusable
+                    block is invisible to keyboard navigation).
+                    `whitespace-pre` preserves diff column alignment
+                    without wrapping; `overflow-auto` gives a horizontal
+                    scrollbar for long lines instead of clipping.
+                  */}
                   <div>
-                    <p className="text-xs font-medium mb-2">Unstaged</p>
-                    <Textarea readOnly value={diff.unstaged || "No unstaged changes."} className="min-h-[220px]" />
+                    <p id="git-diff-unstaged-label" className="text-xs font-medium mb-2">
+                      Unstaged
+                    </p>
+                    <pre
+                      role="region"
+                      aria-labelledby="git-diff-unstaged-label"
+                      tabIndex={0}
+                      className="min-h-[220px] max-h-[400px] overflow-auto rounded-md border border-input bg-background px-3 py-2 text-sm font-mono whitespace-pre focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
+                    >
+                      {diff.unstaged || "No unstaged changes."}
+                    </pre>
                   </div>
                   <Separator />
                   <div>
-                    <p className="text-xs font-medium mb-2">Staged</p>
-                    <Textarea readOnly value={diff.staged || "No staged changes."} className="min-h-[220px]" />
+                    <p id="git-diff-staged-label" className="text-xs font-medium mb-2">
+                      Staged
+                    </p>
+                    <pre
+                      role="region"
+                      aria-labelledby="git-diff-staged-label"
+                      tabIndex={0}
+                      className="min-h-[220px] max-h-[400px] overflow-auto rounded-md border border-input bg-background px-3 py-2 text-sm font-mono whitespace-pre focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
+                    >
+                      {diff.staged || "No staged changes."}
+                    </pre>
                   </div>
                 </div>
               </section>

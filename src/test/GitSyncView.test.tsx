@@ -36,7 +36,10 @@ describe("GitSyncView", () => {
     render(<GitSyncView />);
     expect(screen.getByText("Git Sync")).toBeInTheDocument();
     expect(screen.getByText("Local changes")).toBeInTheDocument();
-    expect(screen.getByDisplayValue(/diff --git/)).toBeInTheDocument();
+    // Audit-3 P2#6: the diff is now a <pre> region (not a textarea),
+    // so it's queried by region role + label.
+    const unstaged = screen.getByRole("region", { name: /unstaged/i });
+    expect(unstaged.textContent).toMatch(/diff --git/);
     expect(screen.getByPlaceholderText(/sync ssx config snapshot/i)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /sync/i })).toBeInTheDocument();
   });
@@ -107,5 +110,36 @@ describe("GitSyncView", () => {
     render(<GitSyncView />);
     const field = screen.getByLabelText(/commit message/i);
     expect(field.className).toMatch(/focus-visible:ring-2/);
+  });
+
+  /*
+   * Audit-3 P2#6: the diff blocks must be semantic <pre> regions, NOT
+   * <textarea readOnly>. The textarea variant grabbed focus, polluted
+   * the right-click menu with form-control options, and was announced
+   * by AT as "edit text, read-only" rather than as a code block.
+   * Tests pin: (a) <pre> tag, (b) role=region with labelled name,
+   * (c) keyboard-focusable so screen-reader users can land on it,
+   * (d) NO <textarea> survives anywhere in the diff section.
+   */
+  it("diff blocks are semantic <pre> regions, not textareas", () => {
+    render(<GitSyncView />);
+    const unstaged = screen.getByRole("region", { name: /unstaged/i });
+    const staged = screen.getByRole("region", { name: /^staged$/i });
+    expect(unstaged.tagName).toBe("PRE");
+    expect(staged.tagName).toBe("PRE");
+    // Keyboard-reachable so AT can announce label + content.
+    expect(unstaged).toHaveAttribute("tabindex", "0");
+    expect(staged).toHaveAttribute("tabindex", "0");
+    // No <textarea> should remain in the document.
+    expect(document.querySelector("textarea")).toBeNull();
+  });
+
+  it("renders the empty-state placeholder when there is no diff text", () => {
+    useGitSyncStore.setState({ diff: { staged: "", unstaged: "" } });
+    render(<GitSyncView />);
+    const unstaged = screen.getByRole("region", { name: /unstaged/i });
+    const staged = screen.getByRole("region", { name: /^staged$/i });
+    expect(unstaged.textContent).toMatch(/no unstaged changes/i);
+    expect(staged.textContent).toMatch(/no staged changes/i);
   });
 });
