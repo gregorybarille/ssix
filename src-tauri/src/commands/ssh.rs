@@ -390,7 +390,7 @@ fn bridge_via_gateway(
             match listener.accept() {
                 Ok((local_stream, peer)) => {
                     let chan_result = {
-                        let sess = gateway_session.lock().unwrap();
+                        let sess = crate::ssh::lock_recover(&gateway_session);
                         sess.channel_direct_tcpip(
                             &destination_host,
                             destination_port,
@@ -399,12 +399,12 @@ fn bridge_via_gateway(
                     };
                     match chan_result {
                         Ok(channel) => {
-                            gateway_session.lock().unwrap().set_blocking(false);
+                            crate::ssh::lock_recover(&gateway_session).set_blocking(false);
                             barrier.wait();
                             forward_bidi(local_stream, channel);
                         }
                         Err(e) => {
-                            *forward_err.lock().unwrap() =
+                            *crate::ssh::lock_recover(&forward_err) =
                                 Some(format!("channel_direct_tcpip failed: {}", e));
                             let _ = local_stream.shutdown(std::net::Shutdown::Both);
                             barrier.wait();
@@ -412,7 +412,7 @@ fn bridge_via_gateway(
                     }
                 }
                 Err(e) => {
-                    *forward_err.lock().unwrap() = Some(format!("accept() failed: {}", e));
+                    *crate::ssh::lock_recover(&forward_err) = Some(format!("accept() failed: {}", e));
                     barrier.wait();
                 }
             }
@@ -422,7 +422,7 @@ fn bridge_via_gateway(
     let stream = TcpStream::connect(("127.0.0.1", local_addr.port()))
         .map_err(|e| format!("Failed to connect inner SSH session: {}", e))?;
     barrier.wait();
-    if let Some(err) = forward_err.lock().unwrap().take() {
+    if let Some(err) = crate::ssh::lock_recover(&forward_err).take() {
         return Err(format!("Destination connect via gateway failed: {}", err));
     }
     Ok(stream)

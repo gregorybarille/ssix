@@ -91,6 +91,31 @@ impl SshState {
     }
 }
 
+/// Lock a `Mutex<T>` and recover transparently from poisoning.
+///
+/// Audit-3 P1#3: every spawned tunnel/jump-shell worker in this module
+/// previously called `lock().unwrap()` on the shared session/active/
+/// forward_err mutexes. A panic anywhere in those threads (e.g.
+/// `forward_bidi` panicking on a malformed peer addr) would poison the
+/// mutex and the *next* thread's `.lock().unwrap()` would propagate the
+/// panic — taking down every tunnel sharing that mutex with no
+/// user-visible error.
+///
+/// `PoisonError::into_inner` gives us the guarded value back; the only
+/// thing we lose is the "previous panic happened" signal, which we'd
+/// have lost anyway because the original panic was already unwound.
+/// Callers that care about the poison case (e.g. to emit a UI event)
+/// can use `Mutex::is_poisoned` before calling this helper.
+///
+/// Note: the long-lived `SshState.sessions` mutex in `commands/ssh.rs`
+/// keeps `lock().map_err(|e| e.to_string())?` because there the caller
+/// has a `Result` channel back to the frontend and we'd rather surface
+/// the error than silently swallow a possible state corruption.
+#[inline]
+pub(crate) fn lock_recover<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
+    m.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
 /// Status payload emitted on `tunnel-status-{id}`.
 #[derive(Serialize, Clone)]
 pub struct TunnelStatus {
@@ -558,7 +583,7 @@ pub fn start_port_forward(
 
                     thread::spawn(move || {
                         let chan_result = {
-                            let sess = session.lock().unwrap();
+                            let sess = lock_recover(&session);
                             sess.channel_direct_tcpip(
                                 &dest_host,
                                 destination_port,
@@ -579,7 +604,7 @@ pub fn start_port_forward(
                                             "channel_direct_tcpip failed: {}",
                                             e
                                         )),
-                                        active_clients: *active_inner.lock().unwrap(),
+                                        active_clients: *lock_recover(&active_inner),
                                     },
                                 );
                                 return;
@@ -587,7 +612,7 @@ pub fn start_port_forward(
                         };
 
                         let count = {
-                            let mut g = active_inner.lock().unwrap();
+                            let mut g = lock_recover(&active_inner);
                             *g += 1;
                             *g
                         };
@@ -605,7 +630,7 @@ pub fn start_port_forward(
                         forward_bidi(local_stream, channel);
 
                         let count = {
-                            let mut g = active_inner.lock().unwrap();
+                            let mut g = lock_recover(&active_inner);
                             *g = g.saturating_sub(1);
                             *g
                         };
@@ -638,7 +663,7 @@ pub fn start_port_forward(
                             local_port,
                             destination: destination_label.clone(),
                             message: Some(format!("accept failed: {}", e)),
-                            active_clients: *active.lock().unwrap(),
+                            active_clients: *lock_recover(&active),
                         },
                     );
                     break;
@@ -710,7 +735,7 @@ pub fn start_jump_shell(
             match listener.accept() {
                 Ok((local_stream, peer)) => {
                     let chan_result = {
-                        let sess = gateway_session.lock().unwrap();
+                        let sess = lock_recover(&gateway_session);
                         sess.channel_direct_tcpip(
                             &destination_host_inner,
                             destination_port,
@@ -722,13 +747,13 @@ pub fn start_jump_shell(
                             // Must switch to non-blocking before forward_bidi so
                             // channel.read() doesn't block and deadlock with the
                             // handshake on the main thread.
-                            gateway_session.lock().unwrap().set_blocking(false);
+                            lock_recover(&gateway_session).set_blocking(false);
                             // Signal the main thread: the bridge is live, open_shell may proceed.
                             barrier.wait();
                             forward_bidi(local_stream, channel);
                         }
                         Err(e) => {
-                            *forward_err.lock().unwrap() =
+                            *lock_recover(&forward_err) =
                                 Some(format!("channel_direct_tcpip failed: {}", e));
                             let _ = local_stream.shutdown(std::net::Shutdown::Both);
                             barrier.wait();
@@ -736,7 +761,7 @@ pub fn start_jump_shell(
                     }
                 }
                 Err(e) => {
-                    *forward_err.lock().unwrap() = Some(format!("accept() failed: {}", e));
+                    *lock_recover(&forward_err) = Some(format!("accept() failed: {}", e));
                     barrier.wait();
                 }
             }
@@ -749,7 +774,7 @@ pub fn start_jump_shell(
     // Wait for the forwarder to finish bridging before starting the SSH handshake.
     barrier.wait();
 
-    if let Some(err) = forward_err.lock().unwrap().take() {
+    if let Some(err) = lock_recover(&forward_err).take() {
         return Err(format!("Destination connect via gateway failed: {}", err));
     }
 
@@ -872,5 +897,65 @@ mod tests {
             build_startup_command(Some("/srv/it's"), None),
             Some("cd '/srv/it'\\''s'".into())
         );
+    }
+
+    /// Audit-3 P1#3: poisoned mutex must NOT take down sibling worker
+    /// threads. Before this fix, a panic in any tunnel forwarder thread
+    /// poisoned the shared `session` / `active` / `forward_err` mutex
+    /// and every subsequent `.lock().unwrap()` call propagated a fresh
+    /// panic — cascading until every tunnel using that mutex was dead.
+    #[test]
+    fn test_lock_recover_returns_value_after_poison() {
+        use std::panic::{catch_unwind, AssertUnwindSafe};
+        use std::sync::Arc;
+
+        let m = Arc::new(Mutex::new(42usize));
+        let m_inner = Arc::clone(&m);
+        let _ = catch_unwind(AssertUnwindSafe(|| {
+            let _g = m_inner.lock().unwrap();
+            panic!("simulate forwarder thread panic while holding lock");
+        }));
+
+        assert!(m.is_poisoned(), "precondition: mutex should be poisoned");
+
+        // The whole point: a sibling thread can still read/write.
+        {
+            let g = lock_recover(&m);
+            assert_eq!(*g, 42, "lock_recover must return the inner value");
+        }
+        {
+            let mut g = lock_recover(&m);
+            *g = 99;
+        }
+        assert_eq!(*lock_recover(&m), 99);
+    }
+
+    #[test]
+    fn test_lock_recover_works_on_unpoisoned_mutex() {
+        let m = Mutex::new(String::from("hello"));
+        let g = lock_recover(&m);
+        assert_eq!(*g, "hello");
+    }
+
+    #[test]
+    fn test_lock_recover_does_not_panic_under_thread_panic() {
+        // Poison the mutex from one thread, lock from another. Without
+        // lock_recover, the second thread would panic.
+        use std::sync::Arc;
+
+        let m = Arc::new(Mutex::new(0u32));
+        let m_panic = Arc::clone(&m);
+        let _ = thread::spawn(move || {
+            let _g = m_panic.lock().unwrap();
+            panic!("dying thread");
+        })
+        .join();
+
+        assert!(m.is_poisoned());
+
+        // Recovery must not panic.
+        let mut g = lock_recover(&m);
+        *g += 1;
+        assert_eq!(*g, 1);
     }
 }
