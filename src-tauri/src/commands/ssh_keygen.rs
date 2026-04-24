@@ -199,8 +199,27 @@ pub fn shell_single_quote(s: &str) -> String {
 /// Build the idempotent shell command that installs `public_key` into
 /// `~/.ssh/authorized_keys`. Extracted as a pure function so it can be
 /// unit-tested without a real SSH connection.
+///
+/// Properties:
+/// - **Idempotent.** `grep -qxF` checks for the exact line before
+///   appending; running the script repeatedly never produces duplicate
+///   entries.
+/// - **Newline-safe at EOF.** If `authorized_keys` exists but lacks a
+///   trailing newline, the script prepends one before appending so the
+///   new entry is not concatenated onto the previous (otherwise valid)
+///   key. We use `tail -c1` rather than `wc -l` because the latter
+///   reports the count of complete lines, hiding the missing-newline
+///   case.
+/// - **CRLF / trailing-whitespace tolerant on input.** The supplied
+///   public key is trimmed of trailing `\r` and `\n` so a key copied
+///   from a Windows clipboard or read from a file with CRLF line
+///   endings is still recognised as the same line by `grep -qxF`.
+/// - **Permissions enforced.** `~/.ssh` is chmod 700, the file 600
+///   (matching ssh-copy-id), so a freshly created file passes the
+///   default sshd `StrictModes` check.
 pub fn build_install_script(public_key: &str) -> String {
-    // Trim trailing newlines so the literal we append is exactly one line.
+    // Trim trailing newlines AND carriage returns so the literal we
+    // append is exactly one line (and CRLF input matches LF entries).
     let key_line = public_key.trim_end_matches(|c| c == '\n' || c == '\r');
     let q = shell_single_quote(key_line);
     format!(
@@ -210,6 +229,10 @@ pub fn build_install_script(public_key: &str) -> String {
          touch \"$HOME/.ssh/authorized_keys\"; \
          chmod 600 \"$HOME/.ssh/authorized_keys\"; \
          if ! grep -qxF -- {q} \"$HOME/.ssh/authorized_keys\"; then \
+           if [ -s \"$HOME/.ssh/authorized_keys\" ] \
+              && [ \"$(tail -c1 \"$HOME/.ssh/authorized_keys\" | od -An -c | tr -d ' ')\" != \"\\n\" ]; then \
+             printf '\\n' >> \"$HOME/.ssh/authorized_keys\"; \
+           fi; \
            printf '%s\\n' {q} >> \"$HOME/.ssh/authorized_keys\"; \
          fi"
     )
@@ -440,6 +463,57 @@ mod tests {
         let script = build_install_script(key);
         assert!(!script.contains("x\n'"));
         assert!(script.contains("'ssh-ed25519 AAAA x'"));
+    }
+
+    #[test]
+    fn build_install_script_strips_trailing_crlf_for_grep_match() {
+        // A key copied from a Windows clipboard or read from a CRLF
+        // file should match the same literal that grep -qxF compares
+        // against the (LF-only) line in authorized_keys.
+        let key = "ssh-ed25519 AAAA x\r\n";
+        let script = build_install_script(key);
+        assert!(script.contains("'ssh-ed25519 AAAA x'"));
+        assert!(!script.contains("\\r"));
+    }
+
+    #[test]
+    fn build_install_script_uses_grep_qxf_for_idempotency() {
+        // Re-asserts the property: running this script twice must not
+        // produce duplicate authorized_keys entries. We check the
+        // exact-line, fixed-string match flags rather than running the
+        // shell.
+        let script = build_install_script("ssh-ed25519 AAAA test@host");
+        // -q (quiet), -x (whole-line), -F (fixed string).
+        assert!(
+            script.contains("grep -qxF"),
+            "missing exact-line guard; running twice would duplicate entries"
+        );
+        // The append is gated by the negated grep result.
+        assert!(script.contains("if ! grep -qxF"));
+    }
+
+    #[test]
+    fn build_install_script_prepends_newline_when_authorized_keys_lacks_eof_lf() {
+        // If authorized_keys exists with no trailing newline, appending
+        // a new entry would concatenate it onto the previous line and
+        // corrupt the previous entry. The script must detect this and
+        // emit a leading '\n' before the new entry.
+        let script = build_install_script("ssh-ed25519 AAAA new@host");
+        assert!(
+            script.contains("tail -c1"),
+            "must inspect the last byte of authorized_keys to detect missing EOF newline"
+        );
+        // Guards: the file must exist AND be non-empty before we look.
+        assert!(script.contains("[ -s \"$HOME/.ssh/authorized_keys\" ]"));
+        // The corrective newline is a literal printf '\n'.
+        assert!(script.contains("printf '\\n' >> \"$HOME/.ssh/authorized_keys\""));
+    }
+
+    #[test]
+    fn build_install_script_enforces_ssh_dir_and_file_modes() {
+        let script = build_install_script("ssh-ed25519 AAAA x");
+        assert!(script.contains("chmod 700 \"$HOME/.ssh\""));
+        assert!(script.contains("chmod 600 \"$HOME/.ssh/authorized_keys\""));
     }
 
     #[test]
