@@ -140,6 +140,16 @@ accidental Enter press never destroys data. Failed/never-opened
 sessions can be dismissed without confirmation since there is nothing
 to lose.
 
+When a dialog closes — whether through Cancel, Confirm, the Escape
+key, or clicking outside — focus returns to the control that opened
+it. This holds even when the dialog is opened from React state rather
+than via `<DialogTrigger>` (the pattern used everywhere in SSX), which
+the stock Radix focus-restore can't always handle on its own. The
+shared `<DialogContent>` primitive in `src/components/ui/dialog.tsx`
+tracks the last interactive element the user touched outside any open
+dialog (via document-level `focusin` and `pointerdown` capture
+listeners) and restores focus to it on close.
+
 ## Form Accessibility
 
 The Connection and Credential forms surface submit/validation failures

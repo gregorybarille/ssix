@@ -40,6 +40,9 @@ export function ConfirmDialog({
   onConfirm,
 }: ConfirmDialogProps) {
   const [busy, setBusy] = React.useState(false);
+  // Focus-return on close is implemented in the shared <DialogContent>
+  // primitive (Audit-3 #2) so every dialog in the app benefits without
+  // per-call wiring.
 
   const handleConfirm = async () => {
     if (busy) return;
