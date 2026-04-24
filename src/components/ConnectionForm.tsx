@@ -950,12 +950,14 @@ export function ConnectionForm({
               <SelectContent>
                 <SelectItem value="0">0 — Silent (default)</SelectItem>
                 <SelectItem value="1">1 — Info (connection events)</SelectItem>
-                <SelectItem value="2">2 — Debug (libssh2 trace)</SelectItem>
+                <SelectItem value="2">2 — Debug (full SSH protocol trace)</SelectItem>
               </SelectContent>
             </Select>
             <p className="text-xs text-muted-foreground">
-              Level 1 prints connection info to the terminal. Level 2 enables
-              low-level libssh2 tracing (verbose).
+              Level 1 prints connection lifecycle messages (handshake,
+              authentication, channel open) to the terminal. Level 2 also
+              emits a low-level SSH protocol trace — useful for diagnosing
+              auth or transport failures, but very noisy.
             </p>
           </div>
 
