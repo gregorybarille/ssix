@@ -19,6 +19,11 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "./ui/dropdown-menu";
+import {
+  ContextMenu,
+  useContextMenu,
+  type ContextMenuItem,
+} from "./ContextMenu";
 
 export interface TerminalSession {
   /** Unique ID returned by ssh_connect, or a synthetic ID for failed sessions. */
@@ -104,52 +109,179 @@ export function TerminalTabs({
   settings,
 }: TerminalTabsProps) {
   const [menuOpen, setMenuOpen] = useState(false);
+  const tabRefs = React.useRef(new Map<string, HTMLButtonElement>());
+
+  // Right-click context menu for terminal tabs.
+  const ctx = useContextMenu();
+  const [ctxTabId, setCtxTabId] = React.useState<string | null>(null);
+  const openTabContextMenu = (e: React.MouseEvent, tabId: string) => {
+    setCtxTabId(tabId);
+    ctx.open(e);
+  };
+  const buildTabItems = (tabId: string): ContextMenuItem[] => {
+    const idx = tabs.findIndex((t) => t.id === tabId);
+    const tab = tabs[idx];
+    if (!tab) return [];
+    const otherTabs = tabs.filter((t) => t.id !== tabId);
+    const tabsToRight = tabs.slice(idx + 1);
+    return [
+      {
+        label: "Close tab",
+        icon: <X className="h-3.5 w-3.5" />,
+        onClick: () => onCloseTab(tabId),
+      },
+      {
+        label: "Close other tabs",
+        icon: <X className="h-3.5 w-3.5" />,
+        disabled: otherTabs.length === 0,
+        onClick: () => otherTabs.forEach((t) => onCloseTab(t.id)),
+      },
+      {
+        label: "Close tabs to the right",
+        icon: <X className="h-3.5 w-3.5" />,
+        disabled: tabsToRight.length === 0,
+        onClick: () => tabsToRight.forEach((t) => onCloseTab(t.id)),
+      },
+    ];
+  };
+
+  const focusTabAt = (index: number) => {
+    const wrapped = (index + tabs.length) % tabs.length;
+    const id = tabs[wrapped]?.id;
+    if (!id) return;
+    const el = tabRefs.current.get(id);
+    el?.focus();
+    onSelectTab(id);
+  };
+
+  const handleTabKeyDown = (
+    e: React.KeyboardEvent<HTMLButtonElement>,
+    index: number,
+  ) => {
+    if (e.key === "ArrowRight") {
+      e.preventDefault();
+      focusTabAt(index + 1);
+    } else if (e.key === "ArrowLeft") {
+      e.preventDefault();
+      focusTabAt(index - 1);
+    } else if (e.key === "Home") {
+      e.preventDefault();
+      focusTabAt(0);
+    } else if (e.key === "End") {
+      e.preventDefault();
+      focusTabAt(tabs.length - 1);
+    } else if ((e.key === "Delete" || (e.metaKey && e.key === "w")) && tabs[index]) {
+      e.preventDefault();
+      onCloseTab(tabs[index].id);
+    } else if (((e.shiftKey && e.key === "F10") || e.key === "ContextMenu") && tabs[index]) {
+      // Keyboard alternative for the right-click context menu
+      // (WCAG 2.1.1 — every mouse-only path must have a keyboard
+      // equivalent). Anchor the menu to the bottom-left of the focused
+      // tab button.
+      e.preventDefault();
+      e.stopPropagation();
+      setCtxTabId(tabs[index].id);
+      ctx.openAt(e.currentTarget);
+    }
+  };
 
   return (
     <div className="flex flex-col h-full">
       {/* Tab bar */}
-      <div className="flex items-center bg-card border-b border-border min-h-[36px] overflow-x-auto">
-        {tabs.map((tab) => {
+      <div
+        role="tablist"
+        aria-label="Terminal sessions"
+        className="flex items-center bg-card border-b border-border min-h-[36px] overflow-x-auto"
+      >
+        {tabs.map((tab, idx) => {
           const headSession = tab.panes[0];
           // Use first pane's color as the tab accent.
           const color = getColorHex(headSession?.connection?.color);
+          const isActive = activeTabId === tab.id;
+          const label = tab.panes.map((p) => p.connectionName).join(" | ");
+          /*
+           * Audit-3 follow-up P1#1: any pane in this tab with an
+           * error contributes a 'failed' suffix to the tab's
+           * accessible name. Without this, a screen-reader user
+           * cycling through tabs has no way to know which one
+           * needs attention — the visible red dot at line 226
+           * is aria-hidden because it's a decorative glyph.
+           */
+          const hasFailure = tab.panes.some((p) => p.error);
+          const splitSuffix =
+            tab.mode !== "single" ? ` (${tab.mode} split)` : "";
+          const failureSuffix = hasFailure ? " — connection failed" : "";
+          /*
+           * Audit-3 follow-up P2#5: append the keyboard close hint
+           * to the active tab's accessible name. The visible "x"
+           * is mouse-only (aria-hidden because nesting an
+           * interactive element inside a role="tab" button is
+           * invalid HTML), so AT users have no way to discover
+           * Delete / Cmd+W from the visible UI. Only annotate the
+           * focused/active tab to avoid spamming the announcement
+           * for every tab in the list.
+           */
+          const closeHintSuffix = isActive
+            ? " — press Delete to close"
+            : "";
           return (
-            <div
+            <button
               key={tab.id}
+              ref={(el) => {
+                if (el) tabRefs.current.set(tab.id, el);
+                else tabRefs.current.delete(tab.id);
+              }}
+              role="tab"
+              type="button"
+              aria-selected={isActive}
+              aria-label={`Terminal ${label}${splitSuffix}${failureSuffix}${closeHintSuffix}`}
+              tabIndex={isActive ? 0 : -1}
               className={cn(
-                "group flex items-center gap-1.5 px-3 py-1.5 text-xs cursor-pointer border-r border-border shrink-0 max-w-[200px] transition-colors",
-                activeTabId === tab.id
+                "group flex items-center gap-1.5 px-3 py-1.5 text-xs cursor-pointer border-r border-border shrink-0 max-w-[200px] transition-colors text-left",
+                "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset",
+                isActive
                   ? "bg-background text-foreground"
                   : "bg-card text-muted-foreground hover:bg-accent/50 hover:text-foreground",
               )}
               style={color ? { borderLeft: `3px solid ${color}` } : undefined}
               onClick={() => onSelectTab(tab.id)}
+              onContextMenu={(e) => openTabContextMenu(e, tab.id)}
+              onKeyDown={(e) => handleTabKeyDown(e, idx)}
             >
               {tab.panes.some((p) => p.error) && (
                 <span
                   className="h-1.5 w-1.5 rounded-full bg-destructive shrink-0"
                   title="Connection failed"
+                  aria-hidden="true"
                 />
               )}
-              <span className="truncate">
-                {tab.panes.map((p) => p.connectionName).join(" | ")}
-              </span>
+              <span className="truncate">{label}</span>
               {tab.mode !== "single" && (
-                <span className="text-muted-foreground/60 text-[10px] shrink-0">
+                <span
+                  className="text-muted-foreground-soft text-[10px] shrink-0"
+                  aria-hidden="true"
+                >
                   ({tab.mode === "horizontal" ? "⇆" : "⇅"})
                 </span>
               )}
-              <button
+              {/*
+               * Visual close affordance for mouse users. Keyboard users
+               * close the focused tab with Delete (or Cmd/Ctrl+W). We
+               * intentionally avoid nesting an interactive element inside
+               * the role=tab button (invalid HTML); this span is mouse-only.
+               */}
+              <span
+                aria-hidden="true"
+                data-testid={`close-tab-${tab.id}`}
                 className="ml-1 rounded p-0.5 opacity-0 group-hover:opacity-100 hover:bg-destructive/20 hover:text-destructive transition-opacity"
                 onClick={(e) => {
                   e.stopPropagation();
                   onCloseTab(tab.id);
                 }}
-                title="Close tab"
               >
-                <X className="h-3 w-3" />
-              </button>
-            </div>
+                <X aria-hidden="true" className="h-3 w-3" />
+              </span>
+            </button>
           );
         })}
 
@@ -159,15 +291,16 @@ export function TerminalTabs({
               variant="ghost"
               size="icon"
               className="h-7 w-auto px-1 mx-1 shrink-0"
-              title="New connection"
+              title="Open a new tab or split"
+              aria-label="Open a new tab or split"
             >
-              <Plus className="h-3.5 w-3.5" />
-              <ChevronDown className="h-3 w-3 ml-0.5" />
+              <Plus className="h-3.5 w-3.5" aria-hidden="true" />
+              <ChevronDown className="h-3 w-3 ml-0.5" aria-hidden="true" />
             </Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="start">
             <DropdownMenuItem onClick={() => onNewTab("tab")}>
-              <Plus className="h-3.5 w-3.5 mr-2" />
+              <Plus aria-hidden="true" className="h-3.5 w-3.5 mr-2" />
               New tab
             </DropdownMenuItem>
             <DropdownMenuItem
@@ -177,7 +310,7 @@ export function TerminalTabs({
                 (tabs.find((t) => t.id === activeTabId)?.panes.length ?? 0) >= 2
               }
             >
-              <SplitSquareHorizontal className="h-3.5 w-3.5 mr-2" />
+              <SplitSquareHorizontal aria-hidden="true" className="h-3.5 w-3.5 mr-2" />
               Split right
             </DropdownMenuItem>
             <DropdownMenuItem
@@ -187,7 +320,7 @@ export function TerminalTabs({
                 (tabs.find((t) => t.id === activeTabId)?.panes.length ?? 0) >= 2
               }
             >
-              <SplitSquareVertical className="h-3.5 w-3.5 mr-2" />
+              <SplitSquareVertical aria-hidden="true" className="h-3.5 w-3.5 mr-2" />
               Split down
             </DropdownMenuItem>
           </DropdownMenuContent>
@@ -256,6 +389,17 @@ export function TerminalTabs({
           );
         })}
       </div>
+      {ctx.state && ctxTabId && (
+        <ContextMenu
+          position={ctx.state}
+          onClose={() => {
+            ctx.close();
+            setCtxTabId(null);
+          }}
+          ariaLabel="Tab actions"
+          items={buildTabItems(ctxTabId)}
+        />
+      )}
     </div>
   );
 }

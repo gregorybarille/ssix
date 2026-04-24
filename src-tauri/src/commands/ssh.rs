@@ -275,7 +275,14 @@ pub fn scp_download(input: ScpDownloadInput) -> Result<ScpResult, String> {
         if let Some(parent) = Path::new(&input.local_path).parent() {
             fs::create_dir_all(parent).map_err(|e| e.to_string())?;
         }
-        fs::write(&input.local_path, &bytes).map_err(|e| e.to_string())?;
+        // Audit-3 P2#13: route SCP downloads through the atomic
+        // writer so a process crash mid-transfer cannot leave a
+        // half-written file at the destination path. Without this,
+        // a partial download would silently overwrite a previously
+        // good local file. No mode is forced — local file
+        // permissions follow the user's umask via the temp file.
+        crate::storage::atomic_write(Path::new(&input.local_path), &bytes, None)
+            .map_err(|e| e.to_string())?;
         (size, Some(1))
     };
 
@@ -390,7 +397,7 @@ fn bridge_via_gateway(
             match listener.accept() {
                 Ok((local_stream, peer)) => {
                     let chan_result = {
-                        let sess = gateway_session.lock().unwrap();
+                        let sess = crate::ssh::lock_recover(&gateway_session);
                         sess.channel_direct_tcpip(
                             &destination_host,
                             destination_port,
@@ -399,12 +406,12 @@ fn bridge_via_gateway(
                     };
                     match chan_result {
                         Ok(channel) => {
-                            gateway_session.lock().unwrap().set_blocking(false);
+                            crate::ssh::lock_recover(&gateway_session).set_blocking(false);
                             barrier.wait();
                             forward_bidi(local_stream, channel);
                         }
                         Err(e) => {
-                            *forward_err.lock().unwrap() =
+                            *crate::ssh::lock_recover(&forward_err) =
                                 Some(format!("channel_direct_tcpip failed: {}", e));
                             let _ = local_stream.shutdown(std::net::Shutdown::Both);
                             barrier.wait();
@@ -412,7 +419,7 @@ fn bridge_via_gateway(
                     }
                 }
                 Err(e) => {
-                    *forward_err.lock().unwrap() = Some(format!("accept() failed: {}", e));
+                    *crate::ssh::lock_recover(&forward_err) = Some(format!("accept() failed: {}", e));
                     barrier.wait();
                 }
             }
@@ -422,7 +429,7 @@ fn bridge_via_gateway(
     let stream = TcpStream::connect(("127.0.0.1", local_addr.port()))
         .map_err(|e| format!("Failed to connect inner SSH session: {}", e))?;
     barrier.wait();
-    if let Some(err) = forward_err.lock().unwrap().take() {
+    if let Some(err) = crate::ssh::lock_recover(&forward_err).take() {
         return Err(format!("Destination connect via gateway failed: {}", err));
     }
     Ok(stream)
@@ -513,7 +520,14 @@ fn download_directory(
             if let Some(parent) = child_local.parent() {
                 fs::create_dir_all(parent).map_err(|e| e.to_string())?;
             }
-            fs::write(&child_local, &bytes).map_err(|e| e.to_string())?;
+            // Audit-3 P2#13: same crash-safety as the single-file
+            // SCP download path above. Recursive transfers are even
+            // more vulnerable because a crash partway through writes
+            // the partial child to disk while the parent counter
+            // continues incrementing — leaving a corrupt directory
+            // tree that's hard to detect.
+            crate::storage::atomic_write(&child_local, &bytes, None)
+                .map_err(|e| e.to_string())?;
             stats.bytes += size;
             stats.entries += 1;
         }

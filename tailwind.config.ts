@@ -33,6 +33,9 @@ const config: Config = {
         muted: {
           DEFAULT: "hsl(var(--muted))",
           foreground: "hsl(var(--muted-foreground))",
+          // Tertiary metadata. Already meets WCAG AA on both themes;
+          // do NOT pair with extra opacity utilities like `/70`.
+          "foreground-soft": "hsl(var(--muted-foreground-soft))",
         },
         accent: {
           DEFAULT: "hsl(var(--accent))",

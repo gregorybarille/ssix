@@ -88,7 +88,7 @@ describe("ConnectionList", () => {
         onConnect={vi.fn()}
       />
     );
-    const connectButtons = screen.getAllByTitle("Connect");
+    const connectButtons = screen.getAllByRole("button", { name: /^Connect to / });
     expect(connectButtons).toHaveLength(mockConnections.length);
   });
 
@@ -103,7 +103,7 @@ describe("ConnectionList", () => {
         onScp={vi.fn()}
       />
     );
-    expect(screen.getAllByTitle("Transfer files")).toHaveLength(2);
+    expect(screen.getAllByRole("button", { name: /^Transfer files to / })).toHaveLength(2);
   });
 
   it("calls onConnect with the correct connection", () => {
@@ -118,7 +118,7 @@ describe("ConnectionList", () => {
         onConnect={onConnect}
       />
     );
-    const connectButtons = screen.getAllByTitle("Connect");
+    const connectButtons = screen.getAllByRole("button", { name: /^Connect to / });
     fireEvent.click(connectButtons[0]);
     expect(onConnect).toHaveBeenCalledWith(mockConnections[0]);
   });
@@ -206,7 +206,7 @@ describe("ConnectionList", () => {
         layout="tile"
       />
     );
-    fireEvent.click(screen.getByTitle("Connect"));
+    fireEvent.click(screen.getByRole("button", { name: /^Connect to / }));
     expect(onConnect).toHaveBeenCalledWith(mockConnections[0]);
     expect(onSelect).not.toHaveBeenCalled();
   });
@@ -225,7 +225,7 @@ describe("ConnectionList", () => {
         layout="tile"
       />
     );
-    fireEvent.click(screen.getByTitle("Clone connection"));
+    fireEvent.click(screen.getByRole("button", { name: /^Clone / }));
     expect(onClone).toHaveBeenCalledWith(mockConnections[0]);
     expect(onSelect).not.toHaveBeenCalled();
   });
@@ -244,7 +244,7 @@ describe("ConnectionList", () => {
         layout="tile"
       />
     );
-    fireEvent.click(screen.getByTitle("Edit connection"));
+    fireEvent.click(screen.getByRole("button", { name: /^Edit / }));
     expect(onEdit).toHaveBeenCalledWith(mockConnections[0]);
     expect(onSelect).not.toHaveBeenCalled();
   });
@@ -263,8 +263,47 @@ describe("ConnectionList", () => {
         layout="tile"
       />
     );
-    fireEvent.click(screen.getByTitle("Delete connection"));
+    fireEvent.click(screen.getByRole("button", { name: /^Delete / }));
     expect(onDelete).toHaveBeenCalledWith(mockConnections[0].id);
     expect(onSelect).not.toHaveBeenCalled();
+  });
+
+  // ─── Always-visible Connect CTA (P0-8) ────────────────────────────────────
+
+  it("renders Connect outside the hover-fade group in row layout", () => {
+    render(
+      <ConnectionList
+        connections={[mockConnections[0]]}
+        credentials={[]}
+        onEdit={vi.fn()}
+        onDelete={vi.fn()}
+        onClone={vi.fn()}
+        onConnect={vi.fn()}
+      />
+    );
+    const connectBtn = screen.getByRole("button", { name: /^Connect to / });
+    const editBtn = screen.getByRole("button", { name: /^Edit / });
+    // Connect must NOT be a descendant of any element with the hover-fade class.
+    expect(connectBtn.closest(".opacity-0")).toBeNull();
+    // Secondary actions stay in the hover-fade group.
+    expect(editBtn.closest(".opacity-0")).not.toBeNull();
+  });
+
+  it("renders Connect outside the hover-fade group in tile layout", () => {
+    render(
+      <ConnectionList
+        connections={[mockConnections[0]]}
+        credentials={[]}
+        onEdit={vi.fn()}
+        onDelete={vi.fn()}
+        onClone={vi.fn()}
+        onConnect={vi.fn()}
+        layout="tile"
+      />
+    );
+    const connectBtn = screen.getByRole("button", { name: /^Connect to / });
+    const editBtn = screen.getByRole("button", { name: /^Edit / });
+    expect(connectBtn.closest(".opacity-0")).toBeNull();
+    expect(editBtn.closest(".opacity-0")).not.toBeNull();
   });
 });

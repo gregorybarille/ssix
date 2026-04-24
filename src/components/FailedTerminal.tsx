@@ -30,8 +30,27 @@ export function FailedTerminal({
       style={{ display: isVisible ? "flex" : "none" }}
     >
       <div className="flex flex-col items-center gap-4 max-w-md w-full mx-6 text-center">
-        <AlertCircle className={`h-10 w-10 shrink-0 ${error ? "text-destructive" : "text-muted-foreground"}`} />
-        <div>
+        <AlertCircle
+          aria-hidden="true"
+          className={`h-10 w-10 shrink-0 ${error ? "text-destructive" : "text-muted-foreground"}`}
+        />
+        {/*
+          Audit-3 P3#15: connection failures must be announced to
+          screen readers. Previously the error message was a plain
+          <p> — silent to AT. The whole status block (heading + the
+          backend's error string) lives in role=alert + aria-live=
+          assertive so it is announced as soon as the FailedTerminal
+          mounts (or the message changes between connect attempts).
+          The connecting-state heading is non-disruptive; we only
+          mark the live region assertive when an actual error has
+          been reported. While connecting, role=status keeps screen
+          readers informed politely without interrupting them.
+        */}
+        <div
+          role={error ? "alert" : "status"}
+          aria-live={error ? "assertive" : "polite"}
+          aria-atomic="true"
+        >
           <p className="text-sm font-semibold text-foreground mb-1">
             {error ? `Could not connect to ${connectionName}` : `Connecting to ${connectionName}…`}
           </p>

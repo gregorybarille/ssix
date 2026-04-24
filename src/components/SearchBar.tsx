@@ -32,12 +32,17 @@ export function SearchBar({
 
   return (
     <div className={cn("relative", className)}>
-      <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+      <Search
+        className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground"
+        aria-hidden="true"
+      />
       <Input
         className="pl-9 pr-9"
+        type="search"
         placeholder={placeholder}
         value={value}
         onChange={handleChange}
+        aria-label={placeholder}
       />
       {value && (
         <Button
@@ -45,8 +50,10 @@ export function SearchBar({
           size="icon"
           className="absolute right-1 top-1/2 -translate-y-1/2 h-7 w-7"
           onClick={handleClear}
+          title="Clear search"
+          aria-label="Clear search"
         >
-          <X className="h-3.5 w-3.5" />
+          <X className="h-3.5 w-3.5" aria-hidden="true" />
         </Button>
       )}
     </div>

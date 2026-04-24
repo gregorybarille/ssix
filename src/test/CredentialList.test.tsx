@@ -104,7 +104,7 @@ describe("CredentialList", () => {
         layout="tile"
       />
     );
-    fireEvent.click(screen.getByTitle("Edit credential"));
+    fireEvent.click(screen.getByRole("button", { name: /^Edit credential / }));
     expect(onEdit).toHaveBeenCalledWith(mockCredentials[0]);
   });
 
@@ -118,7 +118,7 @@ describe("CredentialList", () => {
         layout="tile"
       />
     );
-    fireEvent.click(screen.getByTitle("Delete credential"));
+    fireEvent.click(screen.getByRole("button", { name: /^Delete credential / }));
     expect(onDelete).toHaveBeenCalledWith(mockCredentials[1].id);
   });
 
@@ -132,7 +132,7 @@ describe("CredentialList", () => {
       />
     );
     // Only the ssh_key credential should have an install button
-    const installBtns = screen.getAllByTitle("Install public key on remote host");
+    const installBtns = screen.getAllByRole("button", { name: /^Install public key for / });
     expect(installBtns).toHaveLength(1);
   });
 });

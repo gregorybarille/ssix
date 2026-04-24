@@ -79,7 +79,7 @@ describe("TerminalTabs", () => {
         activeTabId="t1"
       />,
     );
-    expect(screen.getByTitle("New connection")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Open a new tab or split" })).toBeInTheDocument();
   });
 
   it("calls onSelectTab when clicking a tab", () => {
@@ -97,7 +97,7 @@ describe("TerminalTabs", () => {
     expect(onSelectTab).toHaveBeenCalledWith("t2");
   });
 
-  it("calls onCloseTab when clicking close button on a tab", () => {
+  it("calls onCloseTab when clicking close affordance on a tab", () => {
     const onCloseTab = vi.fn();
     render(
       <TerminalTabs
@@ -107,9 +107,41 @@ describe("TerminalTabs", () => {
         onCloseTab={onCloseTab}
       />,
     );
-    const closeButtons = screen.getAllByTitle("Close tab");
-    fireEvent.click(closeButtons[1]);
+    fireEvent.click(screen.getByTestId("close-tab-t2"));
     expect(onCloseTab).toHaveBeenCalledWith("t2");
+  });
+
+  it("calls onCloseTab via Delete keypress on the focused tab", () => {
+    const onCloseTab = vi.fn();
+    render(
+      <TerminalTabs
+        {...defaultProps}
+        tabs={mockTabs}
+        activeTabId="t2"
+        onCloseTab={onCloseTab}
+      />,
+    );
+    const activeTab = screen
+      .getAllByRole("tab")
+      .find((t) => t.getAttribute("aria-selected") === "true");
+    expect(activeTab).toBeTruthy();
+    fireEvent.keyDown(activeTab!, { key: "Delete" });
+    expect(onCloseTab).toHaveBeenCalledWith("t2");
+  });
+
+  it("ArrowRight on the active tab focuses and selects the next tab", () => {
+    const onSelectTab = vi.fn();
+    render(
+      <TerminalTabs
+        {...defaultProps}
+        tabs={mockTabs}
+        activeTabId="t1"
+        onSelectTab={onSelectTab}
+      />,
+    );
+    const tabs = screen.getAllByRole("tab");
+    fireEvent.keyDown(tabs[0], { key: "ArrowRight" });
+    expect(onSelectTab).toHaveBeenCalledWith("t2");
   });
 
   it("passes isVisible=true only to the active tab's pane", () => {
@@ -133,7 +165,7 @@ describe("TerminalTabs", () => {
         activeTabId={null}
       />,
     );
-    expect(screen.getByTitle("New connection")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Open a new tab or split" })).toBeInTheDocument();
   });
 
   it("renders FailedTerminal with Retry and Edit buttons for errored sessions", () => {
@@ -282,7 +314,7 @@ describe("TerminalTabs", () => {
         onNewTab={onNewTab}
       />,
     );
-    await user.click(screen.getByTitle("New connection"));
+    await user.click(screen.getByRole("button", { name: "Open a new tab or split" }));
     await waitFor(() => screen.getByText("New tab"));
     fireEvent.click(screen.getByText("New tab"));
     expect(onNewTab).toHaveBeenCalledWith("tab");
@@ -299,7 +331,7 @@ describe("TerminalTabs", () => {
         onNewTab={onNewTab}
       />,
     );
-    await user.click(screen.getByTitle("New connection"));
+    await user.click(screen.getByRole("button", { name: "Open a new tab or split" }));
     await waitFor(() => screen.getByText("Split right"));
     fireEvent.click(screen.getByText("Split right"));
     expect(onNewTab).toHaveBeenCalledWith("split_right");
@@ -316,7 +348,7 @@ describe("TerminalTabs", () => {
         onNewTab={onNewTab}
       />,
     );
-    await user.click(screen.getByTitle("New connection"));
+    await user.click(screen.getByRole("button", { name: "Open a new tab or split" }));
     await waitFor(() => screen.getByText("Split down"));
     fireEvent.click(screen.getByText("Split down"));
     expect(onNewTab).toHaveBeenCalledWith("split_down");
@@ -331,7 +363,7 @@ describe("TerminalTabs", () => {
         activeTabId={null}
       />,
     );
-    await user.click(screen.getByTitle("New connection"));
+    await user.click(screen.getByRole("button", { name: "Open a new tab or split" }));
     await waitFor(() => screen.getByText("Split right"));
     expect(screen.getByText("Split right")).toHaveAttribute("data-disabled");
     expect(screen.getByText("Split down")).toHaveAttribute("data-disabled");
@@ -354,9 +386,153 @@ describe("TerminalTabs", () => {
         activeTabId="st1"
       />,
     );
-    await user.click(screen.getByTitle("New connection"));
+    await user.click(screen.getByRole("button", { name: "Open a new tab or split" }));
     await waitFor(() => screen.getByText("Split right"));
     expect(screen.getByText("Split right")).toHaveAttribute("data-disabled");
     expect(screen.getByText("Split down")).toHaveAttribute("data-disabled");
+  });
+
+  describe("right-click context menu", () => {
+    it("opens with Close / Close others / Close to the right on a tab", () => {
+      render(
+        <TerminalTabs {...defaultProps} tabs={mockTabs} activeTabId="t1" />,
+      );
+      fireEvent.contextMenu(screen.getByRole("tab", { name: /prod-server/ }));
+      expect(screen.getByRole("menu")).toBeInTheDocument();
+      expect(
+        screen.getByRole("menuitem", { name: "Close tab" }),
+      ).toBeInTheDocument();
+      expect(
+        screen.getByRole("menuitem", { name: /close other tabs/i }),
+      ).toBeInTheDocument();
+      expect(
+        screen.getByRole("menuitem", { name: /close tabs to the right/i }),
+      ).toBeInTheDocument();
+    });
+
+    it("Close tab invokes onCloseTab with the right id", async () => {
+      const onCloseTab = vi.fn();
+      render(
+        <TerminalTabs
+          {...defaultProps}
+          onCloseTab={onCloseTab}
+          tabs={mockTabs}
+          activeTabId="t1"
+        />,
+      );
+      fireEvent.contextMenu(screen.getByRole("tab", { name: /staging-server/ }));
+      fireEvent.click(screen.getByRole("menuitem", { name: "Close tab" }));
+      await waitFor(() => expect(onCloseTab).toHaveBeenCalledWith("t2"));
+    });
+
+    it("Close other tabs invokes onCloseTab once per other tab", async () => {
+      const onCloseTab = vi.fn();
+      render(
+        <TerminalTabs
+          {...defaultProps}
+          onCloseTab={onCloseTab}
+          tabs={mockTabs}
+          activeTabId="t2"
+        />,
+      );
+      fireEvent.contextMenu(screen.getByRole("tab", { name: /staging-server/ }));
+      fireEvent.click(
+        screen.getByRole("menuitem", { name: /close other tabs/i }),
+      );
+      await waitFor(() => expect(onCloseTab).toHaveBeenCalledTimes(2));
+      expect(onCloseTab).toHaveBeenCalledWith("t1");
+      expect(onCloseTab).toHaveBeenCalledWith("t3");
+    });
+
+    it("disables Close to the right on the last tab", () => {
+      render(
+        <TerminalTabs {...defaultProps} tabs={mockTabs} activeTabId="t3" />,
+      );
+      fireEvent.contextMenu(screen.getByRole("tab", { name: /dev-server/ }));
+      expect(
+        screen.getByRole("menuitem", { name: /close tabs to the right/i }),
+      ).toBeDisabled();
+    });
+  });
+
+  /*
+   * Audit-3 follow-up P1#1: any pane in a tab whose .error is set
+   * causes the visible red dot at the leading edge of the tab.
+   * Without a corresponding 'connection failed' suffix in the tab's
+   * accessible name, AT users have no way to know which tab needs
+   * attention. Pin the suffix in the aria-label.
+   */
+  describe("a11y: failed-pane state in tab accessible name", () => {
+    it("appends 'connection failed' to the tab's aria-label when any pane has an error", () => {
+      const failingTabs: TerminalTab[] = [
+        tab("t1", [{ sessionId: "sess-1", connectionName: "prod-server" }]),
+        tab("t2", [
+          {
+            sessionId: "sess-2",
+            connectionName: "staging-server",
+            error: "Authentication failed",
+          },
+        ]),
+      ];
+      render(
+        <TerminalTabs
+          tabs={failingTabs}
+          activeTabId="t1"
+          connections={[mockConn]}
+          {...defaultProps}
+        />,
+      );
+      // Healthy tab keeps the plain label (the active tab also gets
+      // the close-hint suffix — see the close-discoverability
+      // describe block below).
+      expect(
+        screen.getByRole("tab", {
+          name: /^Terminal prod-server( — press Delete to close)?$/,
+        }),
+      ).toBeInTheDocument();
+      // Failing tab announces the failure state.
+      expect(
+        screen.getByRole("tab", {
+          name: /Terminal staging-server.*connection failed/i,
+        }),
+      ).toBeInTheDocument();
+    });
+  });
+
+  /*
+   * Audit-3 follow-up P2#5: the visible "x" close affordance is
+   * mouse-only (aria-hidden, since nesting an interactive element
+   * inside a role="tab" button is invalid HTML). The keyboard
+   * shortcuts (Delete / Cmd+W) had no equivalent discoverability
+   * for AT users. The active tab now appends "— press Delete to
+   * close" to its aria-label so screen-reader users learn the
+   * shortcut without needing external docs. Only the active tab
+   * gets the suffix to avoid spamming every tab in the announcement.
+   */
+  describe("a11y: keyboard close-shortcut discoverability", () => {
+    it("appends the close hint to the active tab's aria-label only", () => {
+      const tabs: TerminalTab[] = [
+        tab("t1", [{ sessionId: "sess-1", connectionName: "alpha" }]),
+        tab("t2", [{ sessionId: "sess-2", connectionName: "bravo" }]),
+      ];
+      render(
+        <TerminalTabs
+          tabs={tabs}
+          activeTabId="t1"
+          connections={[mockConn]}
+          {...defaultProps}
+        />,
+      );
+      // Active tab carries the hint.
+      expect(
+        screen.getByRole("tab", {
+          name: "Terminal alpha — press Delete to close",
+        }),
+      ).toBeInTheDocument();
+      // Inactive tab does NOT carry the hint.
+      expect(
+        screen.getByRole("tab", { name: "Terminal bravo" }),
+      ).toBeInTheDocument();
+    });
   });
 });

@@ -146,4 +146,36 @@ describe("LogsView", () => {
     unmount();
     expect(unlisten).toHaveBeenCalled();
   });
+
+  /*
+   * P2-A2: levels must be distinguishable without color (WCAG 1.4.1).
+   * Each level renders as a bordered badge with a leading aria-hidden
+   * glyph; color is supplementary, not the only signal.
+   */
+  it("renders each log level as a bordered badge with a non-color glyph", async () => {
+    vi.mocked(invoke).mockResolvedValueOnce([
+      { ts: 1000000000000, level: "info", source: "ssh", message: "i-msg" },
+      { ts: 1000000001000, level: "warn", source: "ssh", message: "w-msg" },
+      { ts: 1000000002000, level: "error", source: "ssh", message: "e-msg" },
+    ]);
+    render(<LogsView />);
+    await waitFor(() =>
+      expect(screen.getByText("i-msg")).toBeInTheDocument(),
+    );
+    // The level label is rendered inside an inline-flex bordered span;
+    // walk up from the visible text label to confirm the box class
+    // and the presence of an aria-hidden glyph sibling.
+    for (const [label, glyph] of [
+      ["info", "\u2139"],
+      ["warn", "\u25B2"],
+      ["error", "\u2715"],
+    ]) {
+      const labelEl = screen.getByText(label);
+      // The badge wraps both the glyph and the label.
+      expect(labelEl.className).toMatch(/border/);
+      const glyphEl = labelEl.querySelector('[aria-hidden="true"]');
+      expect(glyphEl).not.toBeNull();
+      expect(glyphEl?.textContent).toBe(glyph);
+    }
+  });
 });

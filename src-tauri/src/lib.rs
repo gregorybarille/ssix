@@ -11,6 +11,7 @@ use ssh::SshState;
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
+        .plugin(tauri_plugin_dialog::init())
         .manage(SshState::new())
         .invoke_handler(tauri::generate_handler![
             commands::credentials::get_credentials,

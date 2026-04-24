@@ -4,11 +4,13 @@ import { Button } from "./ui/button";
 import { Input } from "./ui/input";
 import { PasswordInput } from "./ui/password-input";
 import { Label } from "./ui/label";
+import { RadioGroup, RadioGroupItem } from "./ui/radio-group";
 import {
   Dialog,
   DialogContent,
   DialogHeader,
   DialogTitle,
+  DialogDescription,
   DialogFooter,
 } from "./ui/dialog";
 
@@ -83,60 +85,68 @@ export function GenerateKeyDialog({
       <DialogContent className="sm:max-w-[460px]">
         <DialogHeader>
           <DialogTitle>Generate SSH Key</DialogTitle>
+          {/* P1#5: sr-only description so the dialog has a wired aria-describedby. */}
+          <DialogDescription className="sr-only">
+            Generate a new ed25519 SSH key pair and choose where to store it.
+          </DialogDescription>
         </DialogHeader>
         <form onSubmit={handleGenerate} className="space-y-4">
           <div className="space-y-2">
-            <Label>Storage</Label>
-            <div className="space-y-2">
+            {/*
+              Audit-3 P2#9: storage picker is a single-choice picker
+              and so MUST be a proper WAI-ARIA radiogroup, not three
+              hand-rolled <input type=radio> with `accent-primary`.
+              Native radios render different glyphs per-OS, ignore
+              theme tokens, and have no consistent focus ring. The
+              shared <RadioGroup> primitive (Radix-backed) gives us
+              role=radiogroup + role=radio + arrow-key navigation +
+              focus-visible ring + theme tokens. The visible chip is
+              just the styled child of <RadioGroupItem>.
+            */}
+            <Label id="key-storage-heading">Storage</Label>
+            <RadioGroup
+              value={storage}
+              onValueChange={(v) => setStorage(v as KeyStorageMode)}
+              aria-labelledby="key-storage-heading"
+              className="space-y-2"
+            >
               <label className="flex items-start gap-2 cursor-pointer text-sm">
-                <input
-                  type="radio"
-                  name="key-storage"
+                <RadioGroupItem
                   value="default"
-                  checked={storage === "default"}
-                  onChange={() => setStorage("default")}
-                  className="mt-1 accent-primary"
+                  className="mt-1 h-4 w-4 rounded-full border border-input bg-background data-[state=checked]:border-primary data-[state=checked]:bg-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
                 />
                 <span>
                   <span className="font-medium">Default</span>
-                  <span className="block text-xs text-muted-foreground">
+                  <span className="block text-xs text-muted-foreground-soft">
                     Write to ~/.ssh/ with a generated filename.
                   </span>
                 </span>
               </label>
               <label className="flex items-start gap-2 cursor-pointer text-sm">
-                <input
-                  type="radio"
-                  name="key-storage"
+                <RadioGroupItem
                   value="custom_path"
-                  checked={storage === "custom_path"}
-                  onChange={() => setStorage("custom_path")}
-                  className="mt-1 accent-primary"
+                  className="mt-1 h-4 w-4 rounded-full border border-input bg-background data-[state=checked]:border-primary data-[state=checked]:bg-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
                 />
                 <span>
                   <span className="font-medium">Custom path</span>
-                  <span className="block text-xs text-muted-foreground">
+                  <span className="block text-xs text-muted-foreground-soft">
                     Choose where to write the private key file (and `.pub`).
                   </span>
                 </span>
               </label>
               <label className="flex items-start gap-2 cursor-pointer text-sm">
-                <input
-                  type="radio"
-                  name="key-storage"
+                <RadioGroupItem
                   value="inline"
-                  checked={storage === "inline"}
-                  onChange={() => setStorage("inline")}
-                  className="mt-1 accent-primary"
+                  className="mt-1 h-4 w-4 rounded-full border border-input bg-background data-[state=checked]:border-primary data-[state=checked]:bg-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
                 />
                 <span>
                   <span className="font-medium">Inline (no file on disk)</span>
-                  <span className="block text-xs text-muted-foreground">
+                  <span className="block text-xs text-muted-foreground-soft">
                     Store the key inside SSX's secrets file only.
                   </span>
                 </span>
               </label>
-            </div>
+            </RadioGroup>
           </div>
 
           {storage === "custom_path" && (
@@ -147,7 +157,28 @@ export function GenerateKeyDialog({
                 placeholder="/home/me/.ssh/id_ed25519_custom"
                 value={customPath}
                 onChange={(e) => setCustomPath(e.target.value)}
+                aria-required="true"
+                aria-invalid={!!error && !customPath.trim()}
+                aria-describedby="key-custom-path-hint"
               />
+              {/*
+                Audit-3 follow-up P3#7: when 'Custom path' is
+                selected, the visible field has no instructional
+                copy beyond the placeholder. The placeholder
+                disappears as soon as the user types, leaving AT
+                users with no context about what file gets
+                written. The hint is always present so the
+                aria-describedby wiring is unconditional.
+              */}
+              <p
+                id="key-custom-path-hint"
+                className="text-xs text-muted-foreground"
+              >
+                Absolute path for the private key. SSX writes both
+                this file (mode 600) and a sibling{" "}
+                <code>.pub</code> file (mode 644). The directory
+                must already exist.
+              </p>
             </div>
           )}
 
@@ -156,6 +187,7 @@ export function GenerateKeyDialog({
             <PasswordInput
               id="key-passphrase-gen"
               placeholder="••••••••"
+              autoComplete="new-password"
               value={passphrase}
               onChange={(e) => setPassphrase(e.target.value)}
             />
@@ -172,7 +204,18 @@ export function GenerateKeyDialog({
           </div>
 
           {error && (
-            <p className="text-sm text-destructive bg-destructive/10 px-3 py-2 rounded-md">
+            /*
+              Audit-3 P2#10: error was a plain styled <p> — silent
+              to screen readers. Submit-blocking errors must be
+              role=alert + aria-live=assertive (per the AGENTS.md
+              chrome contract). text-destructive resolves to the
+              AA-safe --destructive-text token.
+            */
+            <p
+              role="alert"
+              aria-live="assertive"
+              className="text-sm text-destructive bg-destructive/10 px-3 py-2 rounded-md"
+            >
               {error}
             </p>
           )}
@@ -186,7 +229,7 @@ export function GenerateKeyDialog({
             >
               Cancel
             </Button>
-            <Button type="submit" disabled={isSubmitting}>
+            <Button type="submit" disabled={isSubmitting} aria-busy={isSubmitting}>
               {isSubmitting ? "Generating..." : "Generate"}
             </Button>
           </DialogFooter>
