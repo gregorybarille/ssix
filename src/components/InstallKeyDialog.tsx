@@ -95,8 +95,10 @@ export function InstallKeyDialog({
       });
       setSuccess(true);
       onSuccess?.();
-      // Auto-close shortly after success so the user sees confirmation.
-      setTimeout(() => onOpenChange(false), 800);
+      // P2-A10: do NOT auto-close. The previous 800ms setTimeout
+      // raced with the user reading the success message and
+      // dismissed the dialog before assistive tech could finish
+      // announcing it. The user closes via "Close" or "Done".
     } catch (err) {
       setError(String(err));
     } finally {
@@ -169,12 +171,20 @@ export function InstallKeyDialog({
           </div>
 
           {error && (
-            <p className="text-sm text-destructive bg-destructive/10 px-3 py-2 rounded-md">
+            <p
+              role="alert"
+              aria-live="assertive"
+              className="text-sm text-destructive bg-destructive/10 px-3 py-2 rounded-md"
+            >
               {error}
             </p>
           )}
           {success && (
-            <p className="text-sm text-green-600 bg-green-500/10 px-3 py-2 rounded-md">
+            <p
+              role="status"
+              aria-live="polite"
+              className="text-sm text-green-600 bg-green-500/10 px-3 py-2 rounded-md"
+            >
               Public key installed successfully.
             </p>
           )}
@@ -186,7 +196,7 @@ export function InstallKeyDialog({
               onClick={() => onOpenChange(false)}
               disabled={isSubmitting}
             >
-              Close
+              {success ? "Done" : "Close"}
             </Button>
             <Button
               type="submit"

@@ -108,7 +108,6 @@ describe("InstallKeyDialog", () => {
   });
 
   it("does NOT silently coerce non-numeric port input to 22", async () => {
-    vi.mocked(invoke).mockResolvedValueOnce(undefined);
     render(
       <InstallKeyDialog
         open={true}
@@ -128,5 +127,61 @@ describe("InstallKeyDialog", () => {
     // Submit must NOT have been dispatched with a fallback port.
     expect(vi.mocked(invoke)).not.toHaveBeenCalled();
     expect(screen.getByRole("alert")).toHaveTextContent(/whole number/i);
+  });
+
+  /*
+   * P2-A10: success message must live in role=status / aria-live=polite
+   * (not in the visual-only green box of the previous version), and the
+   * dialog must NOT auto-close — the prior 800ms setTimeout raced AT
+   * announcement and dismissed the dialog mid-message. The user closes
+   * via the "Done" button.
+   */
+  it("renders success in role=status with aria-live=polite and does NOT auto-close", async () => {
+    vi.mocked(invoke).mockResolvedValueOnce(undefined);
+    const onOpenChange = vi.fn();
+    render(
+      <InstallKeyDialog
+        open={true}
+        onOpenChange={onOpenChange}
+        credentialId="cred-1"
+        defaultHost="h"
+        defaultUsername="u"
+      />,
+    );
+    fireEvent.change(screen.getByLabelText(/One-time Password/i), {
+      target: { value: "x" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: /^Install$/i }));
+    const status = await screen.findByRole("status");
+    expect(status).toHaveTextContent(/installed successfully/i);
+    expect(status).toHaveAttribute("aria-live", "polite");
+    // Wait longer than the previous 800ms auto-close window. The
+    // dialog must remain open until the user dismisses it.
+    await new Promise((r) => setTimeout(r, 1000));
+    expect(onOpenChange).not.toHaveBeenCalled();
+    // Footer cancel button now reads "Done" once success is shown.
+    expect(
+      screen.getByRole("button", { name: /^Done$/i }),
+    ).toBeInTheDocument();
+  });
+
+  it("renders submit error in role=alert with aria-live=assertive", async () => {
+    vi.mocked(invoke).mockRejectedValueOnce("auth failed");
+    render(
+      <InstallKeyDialog
+        open={true}
+        onOpenChange={() => {}}
+        credentialId="cred-1"
+        defaultHost="h"
+        defaultUsername="u"
+      />,
+    );
+    fireEvent.change(screen.getByLabelText(/One-time Password/i), {
+      target: { value: "x" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: /^Install$/i }));
+    const alert = await screen.findByText(/auth failed/i);
+    expect(alert).toHaveAttribute("role", "alert");
+    expect(alert).toHaveAttribute("aria-live", "assertive");
   });
 });
