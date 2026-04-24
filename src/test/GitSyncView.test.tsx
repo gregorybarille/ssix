@@ -142,4 +142,38 @@ describe("GitSyncView", () => {
     expect(unstaged.textContent).toMatch(/no unstaged changes/i);
     expect(staged.textContent).toMatch(/no staged changes/i);
   });
+
+  /*
+   * Audit-3 follow-up P1#3: every git operation runs against the
+   * filesystem and possibly the network. AT users need:
+   *  • A live region for the post-action info banner (actionOutput).
+   *  • A separate live region for fatal errors that interrupts.
+   *  • aria-busy on every toolbar button while isLoading.
+   */
+  it("actionOutput renders inside role=status + aria-live=polite", () => {
+    useGitSyncStore.setState({ actionOutput: "Pulled 3 commits from origin/main" });
+    render(<GitSyncView />);
+    const status = screen.getByRole("status");
+    expect(status).toHaveAttribute("aria-live", "polite");
+    expect(status).toHaveAttribute("aria-atomic", "true");
+    expect(status.textContent).toMatch(/Pulled 3 commits/);
+  });
+
+  it("error renders inside role=alert + aria-live=assertive", () => {
+    useGitSyncStore.setState({ error: "remote: rejected" });
+    render(<GitSyncView />);
+    const alert = screen.getByRole("alert");
+    expect(alert).toHaveAttribute("aria-live", "assertive");
+    expect(alert.textContent).toMatch(/remote: rejected/);
+  });
+
+  it("toolbar buttons carry aria-busy while a sync is running", () => {
+    useGitSyncStore.setState({ isLoading: true });
+    render(<GitSyncView />);
+    // Each toolbar button should be aria-busy=true.
+    for (const name of [/^sync$/i, /^fetch$/i, /^pull$/i, /^push$/i]) {
+      const btn = screen.getByRole("button", { name });
+      expect(btn).toHaveAttribute("aria-busy", "true");
+    }
+  });
 });
