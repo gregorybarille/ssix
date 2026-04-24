@@ -164,6 +164,12 @@ pub struct AppSettings {
     /// Default behavior when launching a new terminal: "tab", "split_right", or "split_down".
     #[serde(default = "default_open_mode")]
     pub default_open_mode: String,
+    /// When true, selecting text in a terminal pane immediately copies it to
+    /// the system clipboard (classic xterm behavior). Defaults to `false` so
+    /// that selecting text never silently overwrites the user's clipboard.
+    /// Cmd/Ctrl+C still copies the active selection regardless of this flag.
+    #[serde(default)]
+    pub auto_copy_selection: bool,
     /// Filesystem path to a local git checkout used for sanitized SSX config sync.
     #[serde(default)]
     pub git_sync_repo_path: Option<String>,
@@ -194,6 +200,7 @@ impl Default for AppSettings {
             credential_layout: default_layout(),
             tunnel_layout: default_layout(),
             default_open_mode: default_open_mode(),
+            auto_copy_selection: false,
             git_sync_repo_path: None,
             git_sync_remote: default_git_remote(),
             git_sync_branch: None,
@@ -544,6 +551,24 @@ mod tests {
         assert_eq!(s.default_open_mode, "tab");
         assert_eq!(s.git_sync_remote, "origin");
         assert!(s.git_sync_repo_path.is_none());
+        assert!(!s.auto_copy_selection, "legacy data must default to opt-in auto-copy=false");
+    }
+
+    #[test]
+    fn test_app_settings_default_auto_copy_selection_is_false() {
+        let s = AppSettings::default();
+        assert!(!s.auto_copy_selection,
+            "default must be off — selecting text MUST NOT silently overwrite the clipboard");
+    }
+
+    #[test]
+    fn test_app_settings_auto_copy_selection_roundtrip() {
+        let mut s = AppSettings::default();
+        s.auto_copy_selection = true;
+        let json = serde_json::to_string(&s).unwrap();
+        assert!(json.contains(r#""auto_copy_selection":true"#));
+        let back: AppSettings = serde_json::from_str(&json).unwrap();
+        assert!(back.auto_copy_selection);
     }
 
     #[test]

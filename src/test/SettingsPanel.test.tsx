@@ -12,6 +12,7 @@ const defaults: AppSettings = {
   credential_layout: "list",
   tunnel_layout: "list",
   default_open_mode: "tab",
+  auto_copy_selection: false,
   git_sync_remote: "origin",
 };
 
@@ -52,5 +53,38 @@ describe("SettingsPanel", () => {
     await waitFor(() =>
       expect(screen.getByRole("status")).toHaveTextContent(/settings saved/i),
     );
+  });
+
+  /*
+   * Audit-3 P1#1: the auto-copy-on-selection toggle must default to OFF
+   * (so the existing user contract — "highlighting text never silently
+   * overwrites my clipboard" — is preserved on first run) and must be
+   * exposed as a real `role="switch"` with an accessible name + helpful
+   * description, not a hand-rolled checkbox.
+   */
+  it("renders auto-copy-selection as a labeled, off-by-default switch", () => {
+    render(<SettingsPanel settings={defaults} onSave={vi.fn()} />);
+    const toggle = screen.getByRole("switch", {
+      name: /copy selection to clipboard automatically/i,
+    });
+    expect(toggle).toHaveAttribute("aria-checked", "false");
+    // Must have a description (aria-describedby points at the helper text).
+    const describedBy = toggle.getAttribute("aria-describedby");
+    expect(describedBy).toBeTruthy();
+    const description = document.getElementById(describedBy!);
+    expect(description?.textContent).toMatch(/cmd\/ctrl\+c still copies/i);
+  });
+
+  it("flips the auto-copy switch and saves the new value", async () => {
+    const onSave = vi.fn().mockResolvedValue(undefined);
+    render(<SettingsPanel settings={defaults} onSave={onSave} />);
+    const toggle = screen.getByRole("switch", {
+      name: /copy selection to clipboard/i,
+    });
+    fireEvent.click(toggle);
+    expect(toggle).toHaveAttribute("aria-checked", "true");
+    fireEvent.click(screen.getByRole("button", { name: /save settings/i }));
+    await waitFor(() => expect(onSave).toHaveBeenCalledTimes(1));
+    expect(onSave.mock.calls[0][0].auto_copy_selection).toBe(true);
   });
 });

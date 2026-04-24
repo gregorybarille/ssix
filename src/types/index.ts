@@ -87,6 +87,15 @@ export interface AppSettings {
   credential_layout: LayoutMode;
   tunnel_layout: LayoutMode;
   default_open_mode: OpenMode;
+  /**
+   * When true, selecting text in a terminal pane immediately copies it to the
+   * system clipboard (xterm-style auto-copy). Defaults to `false` so that
+   * highlighting text never silently overwrites the user's existing clipboard
+   * — a privacy-relevant footgun on macOS where the convention is explicit
+   * Cmd+C. Cmd/Ctrl+C still copies the active selection regardless of this
+   * setting.
+   */
+  auto_copy_selection: boolean;
   git_sync_repo_path?: string;
   git_sync_remote: string;
   git_sync_branch?: string;

@@ -19,6 +19,7 @@ const DEFAULT_SETTINGS: AppSettings = {
   credential_layout: "list",
   tunnel_layout: "list",
   default_open_mode: "tab",
+  auto_copy_selection: false,
   git_sync_repo_path: undefined,
   git_sync_remote: "origin",
   git_sync_branch: undefined,

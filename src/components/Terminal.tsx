@@ -18,6 +18,12 @@ export function Terminal({ sessionId, connectionName, isVisible, onDisconnect, s
   const xtermRef = useRef<XTerm | null>(null);
   const fitAddonRef = useRef<FitAddon | null>(null);
   const listenersRef = useRef<Array<() => void>>([]);
+  // Read by `onSelectionChange` so the setting toggle takes effect live
+  // without requiring the terminal to remount.
+  const autoCopyEnabledRef = useRef<boolean>(settings?.auto_copy_selection ?? false);
+  useEffect(() => {
+    autoCopyEnabledRef.current = settings?.auto_copy_selection ?? false;
+  }, [settings?.auto_copy_selection]);
 
   // Refit when becoming visible
   useEffect(() => {
@@ -96,13 +102,77 @@ export function Terminal({ sessionId, connectionName, isVisible, onDisconnect, s
     const { cols, rows } = term;
         invoke("ssh_resize", { sessionId, cols, rows }).catch(() => {});
 
+    /**
+     * P1#1: Cmd/Ctrl+C copies the active xterm selection to the system
+     * clipboard *only* when the user explicitly invokes the shortcut. We
+     * return `false` from `attachCustomKeyEventHandler` to swallow the
+     * event so xterm doesn't also forward Ctrl+C as SIGINT to the remote
+     * shell when there's a selection to copy (matching iTerm/Terminal.app
+     * convention). When there is no selection, the keystroke flows through
+     * to xterm's default `onData` handler, which writes Ctrl+C to the
+     * remote shell as expected.
+     *
+     * Also handles Cmd/Ctrl+V paste so that keyboard paste works on macOS
+     * (xterm's default Ctrl+V on macOS is captured by the WebView).
+     */
+    term.attachCustomKeyEventHandler((e) => {
+      if (e.type !== "keydown") return true;
+      const mod = e.metaKey || e.ctrlKey;
+      if (!mod || e.altKey) return true;
+      const key = e.key.toLowerCase();
+      if (key === "c") {
+        const sel = term.getSelection();
+        if (sel.length > 0) {
+          navigator.clipboard.writeText(sel).catch(() => {});
+          return false; // swallow — don't also send SIGINT
+        }
+        return true; // no selection → forward Ctrl+C to remote as SIGINT
+      }
+      if (key === "v") {
+        navigator.clipboard
+          .readText()
+          .then((text) => { if (text) term.paste(text); })
+          .catch(() => {});
+        return false;
+      }
+      return true;
+    });
+
+    /**
+     * P1#2: Surface ssh_write failures inline in the terminal. A rejected
+     * ssh_write means the backend session thread is gone (panic, channel
+     * dropped, lost tx in SshState) — the user keeps typing into a dead
+     * terminal otherwise. We render a single red banner the first time it
+     * happens per session so we don't spam on every keystroke after the
+     * connection is dead. The `ssh-closed-{id}` event will follow shortly
+     * afterward and trigger `onDisconnect()`.
+     */
+    let writeFailed = false;
     const dataDisposable = term.onData((data) => {
       const encoder = new TextEncoder();
       const bytes = Array.from(encoder.encode(data));
-      invoke("ssh_write", { sessionId, data: bytes }).catch(() => {});
+      invoke("ssh_write", { sessionId, data: bytes }).catch((err) => {
+        if (!writeFailed) {
+          writeFailed = true;
+          const msg = typeof err === "string" ? err : String(err ?? "session lost");
+          term.write(`\r\n\x1b[31mInput dropped — SSH session lost: ${msg}\x1b[0m\r\n`);
+        }
+      });
     });
 
+    /**
+     * P1#1 (auto-copy-selection setting): when `settings.auto_copy_selection`
+     * is true (off by default), reproduce the classic xterm behavior of
+     * copying every selection to the clipboard immediately. This is the
+     * legacy SSX behavior — preserved behind a setting for users who want
+     * it, but no longer the default since it silently overwrites the
+     * clipboard on highlight (a privacy/UX foot-gun on macOS).
+     *
+     * `autoCopyEnabledRef` is read inside the disposable so the toggle
+     * takes effect without re-mounting the terminal.
+     */
     const selectionDisposable = term.onSelectionChange(() => {
+      if (!autoCopyEnabledRef.current) return;
       const sel = term.getSelection();
       if (sel) {
         navigator.clipboard.writeText(sel).catch(() => {});
