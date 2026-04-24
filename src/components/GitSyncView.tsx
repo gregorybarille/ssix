@@ -1,5 +1,7 @@
 import React, { useEffect } from "react";
 import { Button } from "./ui/button";
+import { Input } from "./ui/input";
+import { Label } from "./ui/label";
 import { Separator } from "./ui/separator";
 import { Badge } from "./ui/badge";
 import { Textarea } from "./ui/textarea";
@@ -91,13 +93,12 @@ export function GitSyncView() {
                 </Button>
               </div>
               <div className="space-y-2">
-                <label htmlFor="git-commit-message" className="text-xs font-medium">
+                <Label htmlFor="git-commit-message" className="text-xs font-medium">
                   Commit message
-                </label>
+                </Label>
                 <div className="flex gap-2">
-                  <input
+                  <Input
                     id="git-commit-message"
-                    className="flex h-9 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
                     placeholder="sync ssx config snapshot"
                     value={commitMessage}
                     onChange={(e) => setCommitMessage(e.target.value)}

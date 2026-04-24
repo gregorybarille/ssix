@@ -96,4 +96,16 @@ describe("GitSyncView", () => {
     );
     expect(pullRemote).not.toHaveBeenCalled();
   });
+
+  /*
+   * P2-A5: the commit-message field used a hand-rolled <input> with
+   * its own className. Asserting against the shared <Input>'s
+   * focus-visible:ring-2 class catches a future regression that
+   * silently bypasses theme tokens / focus rings.
+   */
+  it("commit message field uses the shared <Input> primitive (focus-ring class present)", () => {
+    render(<GitSyncView />);
+    const field = screen.getByLabelText(/commit message/i);
+    expect(field.className).toMatch(/focus-visible:ring-2/);
+  });
 });
