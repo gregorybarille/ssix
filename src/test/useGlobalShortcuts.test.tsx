@@ -2,6 +2,11 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { renderHook } from "@testing-library/react";
 import { useGlobalShortcuts, isTypingSurface } from "@/hooks/useGlobalShortcuts";
 
+// Mirror the same platform detection used by the hook so tests are
+// platform-independent: on macOS jsdom/CI the mod key is Meta, elsewhere Ctrl.
+const isMac = /Mac|iPhone|iPad|iPod/i.test(navigator.platform || "");
+const MOD = isMac ? "metaKey" : "ctrlKey";
+
 function dispatch(opts: Partial<KeyboardEventInit & { key: string; target?: HTMLElement }>) {
   const { target, ...init } = opts;
   const event = new KeyboardEvent("keydown", {
@@ -27,7 +32,7 @@ describe("useGlobalShortcuts", () => {
   it("fires the matching mod+key handler and prevents default", () => {
     const onK = vi.fn();
     renderHook(() => useGlobalShortcuts({ "mod+k": onK }));
-    const evt = dispatch({ key: "k", ctrlKey: true, metaKey: false });
+    const evt = dispatch({ key: "k", [MOD]: true });
     expect(onK).toHaveBeenCalledTimes(1);
     expect(evt.defaultPrevented).toBe(true);
   });
@@ -45,7 +50,7 @@ describe("useGlobalShortcuts", () => {
     renderHook(() =>
       useGlobalShortcuts({ "mod+n": plain, "mod+shift+n": shifted }),
     );
-    dispatch({ key: "n", ctrlKey: true, shiftKey: true });
+    dispatch({ key: "n", [MOD]: true, shiftKey: true });
     expect(plain).not.toHaveBeenCalled();
     expect(shifted).toHaveBeenCalledTimes(1);
   });
@@ -55,7 +60,7 @@ describe("useGlobalShortcuts", () => {
     renderHook(() => useGlobalShortcuts({ "mod+k": onK }));
     const input = document.createElement("input");
     document.body.appendChild(input);
-    dispatch({ key: "k", ctrlKey: true, target: input });
+    dispatch({ key: "k", [MOD]: true, target: input });
     expect(onK).not.toHaveBeenCalled();
   });
 
@@ -66,7 +71,7 @@ describe("useGlobalShortcuts", () => {
     );
     const input = document.createElement("input");
     document.body.appendChild(input);
-    dispatch({ key: "k", ctrlKey: true, target: input });
+    dispatch({ key: "k", [MOD]: true, target: input });
     expect(handler).toHaveBeenCalledTimes(1);
   });
 
@@ -79,7 +84,7 @@ describe("useGlobalShortcuts", () => {
     helper.className = "xterm-helper-textarea";
     xterm.appendChild(helper);
     document.body.appendChild(xterm);
-    dispatch({ key: "w", ctrlKey: true, target: helper });
+    dispatch({ key: "w", [MOD]: true, target: helper });
     expect(onW).not.toHaveBeenCalled();
   });
 

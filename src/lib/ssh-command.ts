@@ -63,7 +63,7 @@ export function buildSshCommand(
       gwPort === 22
         ? (connection.gateway_host ?? "")
         : `${connection.gateway_host ?? ""}:${gwPort}`;
-    push("-J", q(userAt(gwCred?.username, jumpHost)));
+    push("-J", userAt(gwCred?.username, jumpHost));
     const idFile = identity(destCred);
     if (idFile) push("-i", q(idFile));
     const destPort = connection.destination_port ?? 22;
