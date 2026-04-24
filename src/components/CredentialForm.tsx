@@ -43,6 +43,17 @@ export function CredentialForm({
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
+  // Inline per-field errors. Keys mirror the input identifiers.
+  type FieldKey = "name" | "username" | "key_path" | "key_inline";
+  const [fieldErrors, setFieldErrors] = useState<Partial<Record<FieldKey, string>>>({});
+  const clearFieldError = (key: FieldKey) =>
+    setFieldErrors((errs) => {
+      if (!errs[key]) return errs;
+      const next = { ...errs };
+      delete next[key];
+      return next;
+    });
+
   useEffect(() => {
     if (credential) {
       setName(credential.name);
@@ -65,6 +76,7 @@ export function CredentialForm({
     }
     setGeneratedPublicKey(null);
     setError(null);
+    setFieldErrors({});
   }, [credential, open]);
 
   const handleGenerated = (key: GeneratedKey, mode: KeyStorageMode) => {
@@ -85,22 +97,33 @@ export function CredentialForm({
     setError(null);
     setIsSubmitting(true);
     try {
+      // Required-field preflight: collect all problems at once so the
+      // user sees every issue inline instead of one-at-a-time.
+      const newFieldErrors: Partial<Record<FieldKey, string>> = {};
+      if (!name.trim()) newFieldErrors.name = "Credential name is required";
+      if (!username.trim()) newFieldErrors.username = "Username is required";
+      if (credType === "ssh_key") {
+        if (keySource === "path" && !privateKeyPath.trim()) {
+          newFieldErrors.key_path = "Private key path is required";
+        } else if (keySource === "inline" && !privateKey.trim()) {
+          newFieldErrors.key_inline = "Private key contents are required";
+        }
+      }
+      if (Object.keys(newFieldErrors).length > 0) {
+        setFieldErrors(newFieldErrors);
+        throw new Error("Please fix the highlighted fields");
+      }
+
       let kindFields: Partial<Credential>;
       if (credType === "password") {
         kindFields = { password };
       } else {
         if (keySource === "path") {
-          if (!privateKeyPath.trim()) {
-            throw new Error("Private key path is required");
-          }
           kindFields = {
             private_key_path: privateKeyPath,
             passphrase: passphrase || undefined,
           };
         } else {
-          if (!privateKey.trim()) {
-            throw new Error("Private key contents are required");
-          }
           kindFields = {
             private_key: privateKey,
             passphrase: passphrase || undefined,
@@ -145,9 +168,19 @@ export function CredentialForm({
               id="cred-name"
               placeholder="my-server-key"
               value={name}
-              onChange={(e) => setName(e.target.value)}
+              onChange={(e) => {
+                setName(e.target.value);
+                clearFieldError("name");
+              }}
               required
+              aria-invalid={fieldErrors.name ? true : undefined}
+              aria-describedby={fieldErrors.name ? "cred-name-error" : undefined}
             />
+            {fieldErrors.name && (
+              <p id="cred-name-error" role="alert" className="text-xs text-destructive">
+                {fieldErrors.name}
+              </p>
+            )}
           </div>
           <div className="space-y-2">
             <Label htmlFor="cred-username">Username *</Label>
@@ -155,9 +188,19 @@ export function CredentialForm({
               id="cred-username"
               placeholder="ubuntu"
               value={username}
-              onChange={(e) => setUsername(e.target.value)}
+              onChange={(e) => {
+                setUsername(e.target.value);
+                clearFieldError("username");
+              }}
               required
+              aria-invalid={fieldErrors.username ? true : undefined}
+              aria-describedby={fieldErrors.username ? "cred-username-error" : undefined}
             />
+            {fieldErrors.username && (
+              <p id="cred-username-error" role="alert" className="text-xs text-destructive">
+                {fieldErrors.username}
+              </p>
+            )}
           </div>
 
           <Tabs
@@ -229,8 +272,18 @@ export function CredentialForm({
                     id="cred-key-path"
                     placeholder="/home/user/.ssh/id_rsa"
                     value={privateKeyPath}
-                    onChange={(e) => setPrivateKeyPath(e.target.value)}
+                    onChange={(e) => {
+                      setPrivateKeyPath(e.target.value);
+                      clearFieldError("key_path");
+                    }}
+                    aria-invalid={fieldErrors.key_path ? true : undefined}
+                    aria-describedby={fieldErrors.key_path ? "cred-key-path-error" : undefined}
                   />
+                  {fieldErrors.key_path && (
+                    <p id="cred-key-path-error" role="alert" className="text-xs text-destructive">
+                      {fieldErrors.key_path}
+                    </p>
+                  )}
                 </div>
               ) : (
                 <div className="space-y-2">
@@ -240,8 +293,18 @@ export function CredentialForm({
                     rows={6}
                     placeholder="-----BEGIN OPENSSH PRIVATE KEY-----&#10;..."
                     value={privateKey}
-                    onChange={(e) => setPrivateKey(e.target.value)}
+                    onChange={(e) => {
+                      setPrivateKey(e.target.value);
+                      clearFieldError("key_inline");
+                    }}
+                    aria-invalid={fieldErrors.key_inline ? true : undefined}
+                    aria-describedby={fieldErrors.key_inline ? "cred-key-inline-error" : undefined}
                   />
+                  {fieldErrors.key_inline && (
+                    <p id="cred-key-inline-error" role="alert" className="text-xs text-destructive">
+                      {fieldErrors.key_inline}
+                    </p>
+                  )}
                   <p className="text-xs text-muted-foreground">
                     Stored in SSX's secrets file (~/.ssx/secrets.json) and used
                     via in-memory authentication.

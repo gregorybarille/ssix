@@ -143,6 +143,23 @@ parse strictly via the `parsePort` helper in `src/lib/port.ts`:
   `aria-invalid="true"` plus an `aria-describedby` link to its inline
   `role="alert"` error.
 
+### Required field validation
+
+Required text fields use the same per-field inline-error pattern as
+ports. On submit the form collects every problem at once and surfaces
+each one next to its input:
+
+- ConnectionForm: **Connection Name**, **Host** (direct), **Gateway
+  Host** + **Gateway Credential** + **Destination Host** (tunnels).
+- CredentialForm: **Credential Name**, **Username**, and either
+  **Private Key Path** or **Private Key Contents** when the SSH Key
+  tab is active.
+
+The offending input gets `aria-invalid="true"` and an
+`aria-describedby` link to a sibling `role="alert"` message; typing
+into the input clears the error immediately so the validation feels
+responsive instead of nagging.
+
 ## Connection List Actions
 
 The **Connect** action (green Play icon) is the primary CTA on every

@@ -85,6 +85,24 @@ export function ConnectionForm({
   });
   const [portErrors, setPortErrors] = useState<Partial<Record<PortKey, string>>>({});
 
+  // Inline per-field errors for required text fields. Keyed by the field
+  // name (`name`, `host`, `gateway_host`, `destination_host`,
+  // `gateway_credential_id`). Cleared as the user edits.
+  type FieldKey =
+    | "name"
+    | "host"
+    | "gateway_host"
+    | "destination_host"
+    | "gateway_credential_id";
+  const [fieldErrors, setFieldErrors] = useState<Partial<Record<FieldKey, string>>>({});
+  const clearFieldError = (key: FieldKey) =>
+    setFieldErrors((errs) => {
+      if (!errs[key]) return errs;
+      const next = { ...errs };
+      delete next[key];
+      return next;
+    });
+
   const updatePort = (key: PortKey, raw: string) => {
     setPortInputs((p) => ({ ...p, [key]: raw }));
     const parsed = parsePort(raw);
@@ -134,6 +152,7 @@ export function ConnectionForm({
       setAuthMethod("credential");
     }
     setPortErrors({});
+    setFieldErrors({});
     setInlineUsername("");
     setInlinePassword("");
     setInlineKeyPath("");
@@ -262,15 +281,33 @@ export function ConnectionForm({
         credentialId = undefined;
       }
 
-      // Validation per kind.
-      if (isTunnel) {
-        if (!formWithPorts.gateway_host)
-          throw new Error("Gateway host is required");
-        if (!formWithPorts.gateway_credential_id)
-          throw new Error("Gateway credential is required");
-        if (!formWithPorts.destination_host)
-          throw new Error("Destination host is required");
+      // Required text fields (name + host(s) + gateway credential).
+      // Collect all of them so the user sees every problem at once
+      // instead of one-at-a-time throw cycling.
+      const newFieldErrors: Partial<Record<FieldKey, string>> = {};
+      if (!formWithPorts.name.trim()) {
+        newFieldErrors.name = "Connection name is required";
       }
+      if (connectionType === "direct" && !formWithPorts.host.trim()) {
+        newFieldErrors.host = "Host is required";
+      }
+      if (isTunnel) {
+        if (!formWithPorts.gateway_host || !formWithPorts.gateway_host.trim()) {
+          newFieldErrors.gateway_host = "Gateway host is required";
+        }
+        if (!formWithPorts.gateway_credential_id) {
+          newFieldErrors.gateway_credential_id = "Gateway credential is required";
+        }
+        if (!formWithPorts.destination_host || !formWithPorts.destination_host.trim()) {
+          newFieldErrors.destination_host = "Destination host is required";
+        }
+      }
+      if (Object.keys(newFieldErrors).length > 0) {
+        setFieldErrors(newFieldErrors);
+        throw new Error("Please fix the highlighted fields");
+      }
+
+      // Validation per kind.
       if (connectionType === "port_forward") {
         if (!formWithPorts.local_port)
           throw new Error("Local port is required for port forwarding");
@@ -404,10 +441,18 @@ export function ConnectionForm({
             id="gateway_host"
             placeholder="gateway.example.com"
             value={form.gateway_host ?? ""}
-            onChange={(e) =>
-              setForm({ ...form, gateway_host: e.target.value })
-            }
+            onChange={(e) => {
+              setForm({ ...form, gateway_host: e.target.value });
+              clearFieldError("gateway_host");
+            }}
+            aria-invalid={fieldErrors.gateway_host ? true : undefined}
+            aria-describedby={fieldErrors.gateway_host ? "gateway_host-error" : undefined}
           />
+          {fieldErrors.gateway_host && (
+            <p id="gateway_host-error" role="alert" className="text-xs text-destructive">
+              {fieldErrors.gateway_host}
+            </p>
+          )}
         </div>
         <div className="space-y-2">
           <Label htmlFor="gateway_port">Gateway Port</Label>
@@ -436,14 +481,21 @@ export function ConnectionForm({
         <Label htmlFor="gateway_credential">Gateway Credential *</Label>
         <Select
           value={form.gateway_credential_id ?? "none"}
-          onValueChange={(v) =>
+          onValueChange={(v) => {
             setForm({
               ...form,
               gateway_credential_id: v === "none" ? undefined : v,
-            })
-          }
+            });
+            clearFieldError("gateway_credential_id");
+          }}
         >
-          <SelectTrigger id="gateway_credential">
+          <SelectTrigger
+            id="gateway_credential"
+            aria-invalid={fieldErrors.gateway_credential_id ? true : undefined}
+            aria-describedby={
+              fieldErrors.gateway_credential_id ? "gateway_credential-error" : undefined
+            }
+          >
             <SelectValue placeholder="Select credential..." />
           </SelectTrigger>
           <SelectContent>
@@ -455,6 +507,11 @@ export function ConnectionForm({
             ))}
           </SelectContent>
         </Select>
+        {fieldErrors.gateway_credential_id && (
+          <p id="gateway_credential-error" role="alert" className="text-xs text-destructive">
+            {fieldErrors.gateway_credential_id}
+          </p>
+        )}
       </div>
     </div>
   );
@@ -473,10 +530,20 @@ export function ConnectionForm({
                 : "internal.example.com"
             }
             value={form.destination_host ?? ""}
-            onChange={(e) =>
-              setForm({ ...form, destination_host: e.target.value })
+            onChange={(e) => {
+              setForm({ ...form, destination_host: e.target.value });
+              clearFieldError("destination_host");
+            }}
+            aria-invalid={fieldErrors.destination_host ? true : undefined}
+            aria-describedby={
+              fieldErrors.destination_host ? "destination_host-error" : undefined
             }
           />
+          {fieldErrors.destination_host && (
+            <p id="destination_host-error" role="alert" className="text-xs text-destructive">
+              {fieldErrors.destination_host}
+            </p>
+          )}
         </div>
         <div className="space-y-2">
           <Label htmlFor="destination_port">Destination Port</Label>
@@ -567,9 +634,19 @@ export function ConnectionForm({
               id="name"
               placeholder="my-server"
               value={form.name}
-              onChange={(e) => setForm({ ...form, name: e.target.value })}
+              onChange={(e) => {
+                setForm({ ...form, name: e.target.value });
+                clearFieldError("name");
+              }}
               required
+              aria-invalid={fieldErrors.name ? true : undefined}
+              aria-describedby={fieldErrors.name ? "name-error" : undefined}
             />
+            {fieldErrors.name && (
+              <p id="name-error" role="alert" className="text-xs text-destructive">
+                {fieldErrors.name}
+              </p>
+            )}
           </div>
 
           {/* Direct: top-level host/port */}
@@ -581,9 +658,19 @@ export function ConnectionForm({
                   id="host"
                   placeholder="192.168.1.1"
                   value={form.host}
-                  onChange={(e) => setForm({ ...form, host: e.target.value })}
+                  onChange={(e) => {
+                    setForm({ ...form, host: e.target.value });
+                    clearFieldError("host");
+                  }}
                   required
+                  aria-invalid={fieldErrors.host ? true : undefined}
+                  aria-describedby={fieldErrors.host ? "host-error" : undefined}
                 />
+                {fieldErrors.host && (
+                  <p id="host-error" role="alert" className="text-xs text-destructive">
+                    {fieldErrors.host}
+                  </p>
+                )}
               </div>
               <div className="space-y-2">
                 <Label htmlFor="port">Port</Label>
