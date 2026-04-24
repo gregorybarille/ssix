@@ -4,10 +4,24 @@ import userEvent from "@testing-library/user-event";
 import { TunnelsView, TunnelSession } from "@/components/TunnelsView";
 import { Connection, Credential } from "@/types";
 
-// Stub out TunnelTab so we don't need Tauri event APIs in tests
+// Stub out TunnelTab so we don't need Tauri event APIs in tests.
+// The stub still surfaces the inner "Stop tunnel" affordance bound
+// to the wired-in `onDisconnect`, so we can assert that TunnelsView
+// routes that callback through the same ConfirmDialog as the row's
+// X button (Audit-3 P2#12).
 vi.mock("@/components/TunnelTab", () => ({
-  TunnelTab: ({ sessionId }: { sessionId: string }) => (
-    <div data-testid={`tunnel-tab-${sessionId}`} />
+  TunnelTab: ({
+    sessionId,
+    onDisconnect,
+  }: {
+    sessionId: string;
+    onDisconnect: () => void;
+  }) => (
+    <div data-testid={`tunnel-tab-${sessionId}`}>
+      <button type="button" onClick={onDisconnect}>
+        Stop tunnel
+      </button>
+    </div>
   ),
 }));
 
@@ -127,6 +141,39 @@ describe("TunnelsView", () => {
     );
     await user.click(screen.getByRole("button", { name: "Cancel" }));
     expect(onCloseSession).not.toHaveBeenCalled();
+  });
+
+  /*
+   * Audit-3 P2#12: the inner "Stop tunnel" button inside <TunnelTab>
+   * (the destructive button at the bottom of each session pane) MUST
+   * also route through the same ConfirmDialog as the row's X button.
+   * Both are destructive actions on a live session and AGENTS.md
+   * contract requires them to be confirmed. Pin both code paths so a
+   * future refactor that wires `onDisconnect` directly to the
+   * dispatcher cannot regress this.
+   */
+  it("inner 'Stop tunnel' button also opens the confirm dialog (Audit-3 P2#12)", async () => {
+    const user = userEvent.setup();
+    const onCloseSession = vi.fn();
+    const sessions: TunnelSession[] = [
+      {
+        sessionId: "s-stop",
+        connectionName: "api-tunnel",
+        connection: portForwardConn,
+      },
+    ];
+    render(
+      <TunnelsView {...defaultProps} sessions={sessions} onCloseSession={onCloseSession} />,
+    );
+    await user.click(screen.getByRole("button", { name: /^stop tunnel$/i }));
+    // The confirm dialog must appear (NOT a direct disconnect).
+    expect(
+      screen.getByText(/Disconnecting "api-tunnel" will drop/i),
+    ).toBeInTheDocument();
+    expect(onCloseSession).not.toHaveBeenCalled();
+    // Confirming proceeds.
+    await user.click(screen.getByRole("button", { name: "Disconnect" }));
+    expect(onCloseSession).toHaveBeenCalledWith("s-stop");
   });
 
   it("filters tunnel definitions to port_forward connections only", () => {

@@ -192,6 +192,18 @@ export function TunnelTab({
         </div>
 
         <div className="flex justify-end">
+          {/*
+            Audit-3 P2#12: this is a destructive action on a live
+            session — disconnecting drops every TCP connection
+            currently using the forwarded port. Per the AGENTS.md
+            destructive-action contract, `onDisconnect` is REQUIRED
+            to open a <ConfirmDialog> in the caller (see
+            TunnelsView.setPendingClose). Do NOT wire this prop
+            directly to a state-mutating dispatch — go through the
+            confirm flow. The contract is pinned by the
+            "Stop tunnel button opens the confirm dialog" test in
+            TunnelsView.test.tsx.
+          */}
           <Button variant="destructive" size="sm" onClick={onDisconnect}>
             Stop tunnel
           </Button>
