@@ -280,8 +280,21 @@ fn bridge_via_gateway(
         });
     }
 
-    let stream = TcpStream::connect(("127.0.0.1", local_addr.port()))
-        .map_err(|e| format!("Failed to connect inner SSH session: {}", e))?;
+    let connect_result = TcpStream::connect(("127.0.0.1", local_addr.port()))
+        .map_err(|e| format!("Failed to connect inner SSH session: {}", e));
+
+    // Mirror the H5 fix from start_jump_shell: if TcpStream::connect() failed
+    // the spawned forwarder is still blocked in listener.accept() and will
+    // never reach barrier.wait(). Do a best-effort self-connect so accept()
+    // wakes up and the thread can exit, then return the real error without
+    // touching the barrier (which would deadlock the main thread).
+    let stream = match connect_result {
+        Ok(s) => s,
+        Err(e) => {
+            let _ = TcpStream::connect(("127.0.0.1", local_addr.port()));
+            return Err(e);
+        }
+    };
     barrier.wait();
     if let Some(err) = crate::ssh::lock_recover(&forward_err).take() {
         return Err(format!("Destination connect via gateway failed: {}", err));
