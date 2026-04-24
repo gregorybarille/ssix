@@ -8,13 +8,22 @@ type PasswordInputProps = Omit<React.InputHTMLAttributes<HTMLInputElement>, "typ
   className?: string;
 };
 
-export function PasswordInput({ className, ...props }: PasswordInputProps) {
+/*
+ * P2-A7: default `autoComplete="current-password"` so password managers
+ * (1Password, Bitwarden, Keychain) recognize the field. Callers creating
+ * a new credential should pass `autoComplete="new-password"`. The
+ * visibility toggle exposes its state via `aria-pressed` so screen
+ * readers announce "Show password, toggle button, not pressed" /
+ * "pressed" — the visual icon swap is not enough on its own.
+ */
+export function PasswordInput({ className, autoComplete, ...props }: PasswordInputProps) {
   const [visible, setVisible] = useState(false);
 
   return (
     <div className="relative">
       <Input
         {...props}
+        autoComplete={autoComplete ?? "current-password"}
         type={visible ? "text" : "password"}
         className={cn("pr-10", className)}
       />
@@ -25,6 +34,7 @@ export function PasswordInput({ className, ...props }: PasswordInputProps) {
         className="absolute right-0 top-0 h-full w-10 px-0 text-muted-foreground hover:text-foreground"
         onClick={() => setVisible((v) => !v)}
         aria-label={visible ? "Hide password" : "Show password"}
+        aria-pressed={visible}
       >
         {visible ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
       </Button>

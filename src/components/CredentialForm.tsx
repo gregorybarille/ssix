@@ -223,6 +223,7 @@ export function CredentialForm({
                 <PasswordInput
                   id="cred-password"
                   placeholder="••••••••"
+                  autoComplete="new-password"
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                 />
@@ -342,6 +343,7 @@ export function CredentialForm({
                 <PasswordInput
                   id="cred-passphrase"
                   placeholder="••••••••"
+                  autoComplete="new-password"
                   value={passphrase}
                   onChange={(e) => setPassphrase(e.target.value)}
                 />

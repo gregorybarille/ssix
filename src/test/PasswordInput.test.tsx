@@ -32,4 +32,31 @@ describe("PasswordInput", () => {
     const toggle = screen.getByRole("button");
     expect(toggle.getAttribute("type")).toBe("button");
   });
+
+  /*
+   * P2-A7: defaulting autoComplete lets password managers recognize
+   * the field. The visibility toggle's pressed state must be exposed
+   * via aria-pressed — the icon swap alone is not announced by AT.
+   */
+  it("defaults autoComplete to current-password and respects an override", () => {
+    const { rerender } = render(<PasswordInput id="pw" value="" onChange={() => {}} />);
+    expect(document.querySelector("input")?.getAttribute("autocomplete")).toBe(
+      "current-password",
+    );
+    rerender(
+      <PasswordInput id="pw" value="" onChange={() => {}} autoComplete="new-password" />,
+    );
+    expect(document.querySelector("input")?.getAttribute("autocomplete")).toBe(
+      "new-password",
+    );
+  });
+
+  it("exposes the visibility toggle's state via aria-pressed", () => {
+    render(<PasswordInput id="pw" value="secret" onChange={() => {}} />);
+    const toggle = screen.getByRole("button", { name: /show password/i });
+    expect(toggle).toHaveAttribute("aria-pressed", "false");
+    fireEvent.click(toggle);
+    const toggleNow = screen.getByRole("button", { name: /hide password/i });
+    expect(toggleNow).toHaveAttribute("aria-pressed", "true");
+  });
 });

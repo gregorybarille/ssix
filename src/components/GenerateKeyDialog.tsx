@@ -156,6 +156,7 @@ export function GenerateKeyDialog({
             <PasswordInput
               id="key-passphrase-gen"
               placeholder="••••••••"
+              autoComplete="new-password"
               value={passphrase}
               onChange={(e) => setPassphrase(e.target.value)}
             />
