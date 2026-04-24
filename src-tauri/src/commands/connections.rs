@@ -208,7 +208,25 @@ pub fn clone_connection(input: CloneConnectionInput) -> Result<Connection, Strin
             return Err("Host is required.".to_string());
         }
     }
-    with_data_mut(|data| {
+
+    // Audit-4 Logic M4: previously, when cloning a connection that owned a
+    // private credential, we duplicated the secret into the keychain
+    // *inside* the `with_data_mut` closure — but `with_data_mut` only
+    // commits `data.json` *after* the closure returns. If `save_data`
+    // then failed (disk full, permissions, etc.), we'd leave orphan
+    // keychain entries pointing at a credential id that doesn't exist
+    // on disk, with no way to clean them up (the secrets-cleanup pass
+    // only runs against credentials that did make it into data.json).
+    //
+    // Fix: track every keychain id we wrote inside the closure, then
+    // delete them if `with_data_mut` returns Err. The keychain writes
+    // themselves stay inside the closure so the in-memory `data` and
+    // the keychain are in sync at the moment we serialize.
+    let written_secret_ids: std::sync::Arc<std::sync::Mutex<Vec<String>>> =
+        std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let written_secret_ids_clone = std::sync::Arc::clone(&written_secret_ids);
+
+    let result = with_data_mut(|data| {
         if data.connections.iter().any(|c| c.name == input.new_name) {
             return Err(format!("A connection named '{}' already exists", input.new_name));
         }
@@ -246,6 +264,10 @@ pub fn clone_connection(input: CloneConnectionInput) -> Result<Connection, Strin
                                         "Failed to read password from secrets store while duplicating private credential".to_string()
                                     })?;
                                     crate::keychain::store_password(&new_cred_id, &secret)?;
+                                    written_secret_ids_clone
+                                        .lock()
+                                        .map_err(|e| e.to_string())?
+                                        .push(new_cred_id.clone());
                                     crate::models::CredentialKind::Password {
                                         password: String::new(),
                                     }
@@ -257,9 +279,17 @@ pub fn clone_connection(input: CloneConnectionInput) -> Result<Connection, Strin
                                 } => {
                                     if let Some(pp) = crate::keychain::get_passphrase(orig_cred_id) {
                                         crate::keychain::store_passphrase(&new_cred_id, &pp)?;
+                                        written_secret_ids_clone
+                                            .lock()
+                                            .map_err(|e| e.to_string())?
+                                            .push(new_cred_id.clone());
                                     }
                                     if let Some(pk) = crate::keychain::get_private_key(orig_cred_id) {
                                         crate::keychain::store_private_key(&new_cred_id, &pk)?;
+                                        written_secret_ids_clone
+                                            .lock()
+                                            .map_err(|e| e.to_string())?
+                                            .push(new_cred_id.clone());
                                     }
                                     crate::models::CredentialKind::SshKey {
                                         private_key_path: private_key_path.clone(),
@@ -305,7 +335,20 @@ pub fn clone_connection(input: CloneConnectionInput) -> Result<Connection, Strin
         };
         data.connections.push(cloned.clone());
         Ok(cloned)
-    })
+    });
+
+    // If with_data_mut failed (validation Err returned from closure, or
+    // save_data failure after the closure ran), strip any keychain
+    // entries we created so the next run doesn't see ghost secrets.
+    if result.is_err() {
+        if let Ok(ids) = written_secret_ids.lock() {
+            for id in ids.iter() {
+                crate::keychain::delete_all_for_credential(id);
+            }
+        }
+    }
+
+    result
 }
 
 /// Trim, drop empties, and dedupe a tag vector while preserving first-seen order.

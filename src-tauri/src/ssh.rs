@@ -1,4 +1,3 @@
-use std::collections::HashMap;
 use std::io::{Read, Write};
 use std::net::{SocketAddr, TcpListener, TcpStream, ToSocketAddrs};
 use std::path::Path;
@@ -79,14 +78,26 @@ fn write_startup_command(channel: &mut ssh2::Channel, startup_command: Option<&s
     }
 }
 
+/// Session registry. The `sessions` map is keyed by the UUID we hand back
+/// to the frontend on `ssh_connect` and stores the worker thread's
+/// `Sender<SessionMsg>` so subsequent `ssh_write` / `ssh_resize` /
+/// `ssh_disconnect` commands can talk to it.
+///
+/// Audit-4 Phase 5b: previously a `Mutex<HashMap>`, which serialised
+/// every command across every session. Under load (many tunnels +
+/// concurrent terminal input) the mutex was the contention hotspot and
+/// a panic in any command would poison every other session. `DashMap`
+/// shards internally so each session's slot can be locked
+/// independently, and a panic mid-mutation only affects that one
+/// shard. The frontend-facing API is unchanged.
 pub struct SshState {
-    pub sessions: Mutex<HashMap<String, Sender<SessionMsg>>>,
+    pub sessions: dashmap::DashMap<String, Sender<SessionMsg>>,
 }
 
 impl SshState {
     pub fn new() -> Self {
         Self {
-            sessions: Mutex::new(HashMap::new()),
+            sessions: dashmap::DashMap::new(),
         }
     }
 }
@@ -877,8 +888,7 @@ mod tests {
     #[test]
     fn test_ssh_state_new() {
         let state = SshState::new();
-        let sessions = state.sessions.lock().unwrap();
-        assert!(sessions.is_empty());
+        assert!(state.sessions.is_empty());
     }
 
     #[test]
@@ -886,18 +896,12 @@ mod tests {
         let state = SshState::new();
         let (tx, _rx) = mpsc::channel::<SessionMsg>();
 
-        {
-            let mut sessions = state.sessions.lock().unwrap();
-            sessions.insert("test-session".to_string(), tx);
-            assert_eq!(sessions.len(), 1);
-            assert!(sessions.contains_key("test-session"));
-        }
+        state.sessions.insert("test-session".to_string(), tx);
+        assert_eq!(state.sessions.len(), 1);
+        assert!(state.sessions.contains_key("test-session"));
 
-        {
-            let mut sessions = state.sessions.lock().unwrap();
-            sessions.remove("test-session");
-            assert!(sessions.is_empty());
-        }
+        state.sessions.remove("test-session");
+        assert!(state.sessions.is_empty());
     }
 
     #[test]
