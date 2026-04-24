@@ -10,6 +10,7 @@ import {
   DialogContent,
   DialogHeader,
   DialogTitle,
+  DialogDescription,
   DialogFooter,
 } from "./ui/dialog";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "./ui/tabs";
@@ -228,6 +229,12 @@ export function CredentialForm({
           <DialogTitle>
             {credential ? "Edit Credential" : "New Credential"}
           </DialogTitle>
+          {/* P1#5: sr-only description so the dialog has a wired aria-describedby. */}
+          <DialogDescription className="sr-only">
+            {credential
+              ? "Edit the username and authentication for this credential."
+              : "Configure a new credential: username and authentication (password or SSH key)."}
+          </DialogDescription>
         </DialogHeader>
         <form
           onSubmit={handleSubmit}

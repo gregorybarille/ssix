@@ -129,11 +129,23 @@ const DialogContent = React.forwardRef<
         {...props}
       >
         {/*
-         * Empty fallback description so Radix doesn't warn when callers omit
-         * <DialogDescription>. Callers that DO include a real DialogDescription
-         * will replace this via the aria-describedby wiring Radix sets up.
-         */}
-        <DialogPrimitive.Description className="sr-only" />
+          Audit-3 follow-up P1#5: NO empty fallback DialogDescription
+          here. Previously this primitive rendered an empty sr-only
+          <DialogPrimitive.Description /> to silence Radix's
+          missing-description warning. That broke the wiring: Radix's
+          Description provides a stable id via context, and both the
+          empty fallback and any caller-rendered <DialogDescription>
+          end up sharing that id. Per HTML, getElementById() returns
+          the FIRST matching element — i.e. the empty fallback —
+          which means screen readers got an empty description even
+          when the caller rendered a real one.
+
+          Every dialog in SSX must now render a real <DialogDescription>
+          (or pass `aria-describedby={undefined}` if the dialog truly
+          has no descriptive prose, which is rare). The console
+          warning Radix emits is the intended signal that a dialog
+          needs prose for accessibility.
+        */}
         {children}
         <DialogClose className="absolute right-4 top-4 rounded-sm opacity-70 ring-offset-background transition-opacity hover:opacity-100 focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 disabled:pointer-events-none data-[state=open]:bg-accent data-[state=open]:text-muted-foreground">
           <X className="h-4 w-4" />

@@ -6,7 +6,7 @@ import { Input } from "./ui/input";
 import { Label } from "./ui/label";
 import { Tabs, TabsList, TabsTrigger } from "./ui/tabs";
 import { Checkbox } from "./ui/checkbox";
-import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "./ui/dialog";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "./ui/dialog";
 import { cn } from "@/lib/utils";
 
 interface ScpDialogProps {
@@ -93,6 +93,10 @@ export function ScpDialog({ open, onOpenChange, connection }: ScpDialogProps) {
       <DialogContent className="sm:max-w-[500px]">
         <DialogHeader>
           <DialogTitle>SCP {connection ? `for ${connection.name}` : ""}</DialogTitle>
+          {/* P1#5: sr-only description so the dialog has a wired aria-describedby. */}
+          <DialogDescription className="sr-only">
+            Transfer files between your machine and the remote host over SSH/SCP.
+          </DialogDescription>
         </DialogHeader>
         <form onSubmit={handleSubmit} className="space-y-4" noValidate>
           <Tabs value={mode} onValueChange={(v) => setMode(v as "upload" | "download")}>

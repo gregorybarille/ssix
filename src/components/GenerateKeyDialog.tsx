@@ -10,6 +10,7 @@ import {
   DialogContent,
   DialogHeader,
   DialogTitle,
+  DialogDescription,
   DialogFooter,
 } from "./ui/dialog";
 
@@ -84,6 +85,10 @@ export function GenerateKeyDialog({
       <DialogContent className="sm:max-w-[460px]">
         <DialogHeader>
           <DialogTitle>Generate SSH Key</DialogTitle>
+          {/* P1#5: sr-only description so the dialog has a wired aria-describedby. */}
+          <DialogDescription className="sr-only">
+            Generate a new ed25519 SSH key pair and choose where to store it.
+          </DialogDescription>
         </DialogHeader>
         <form onSubmit={handleGenerate} className="space-y-4">
           <div className="space-y-2">

@@ -9,6 +9,7 @@ import {
   DialogContent,
   DialogHeader,
   DialogTitle,
+  DialogDescription,
   DialogFooter,
 } from "./ui/dialog";
 import { parsePort } from "@/lib/port";
@@ -136,13 +137,19 @@ export function InstallKeyDialog({
       <DialogContent className="sm:max-w-[420px]">
         <DialogHeader>
           <DialogTitle>Install Public Key on Remote</DialogTitle>
-        </DialogHeader>
-        <form onSubmit={handleSubmit} className="space-y-4">
-          <p className="text-xs text-muted-foreground">
+          {/*
+            Audit-3 follow-up P1#5: prose moved into DialogDescription
+            so it's wired into the dialog's aria-describedby and
+            announced when the dialog opens. Was a stand-alone <p>
+            with no association.
+          */}
+          <DialogDescription className="text-xs">
             Connects once with the password below to append this credential's
             public key to <code>~/.ssh/authorized_keys</code>. The password is
             not saved.
-          </p>
+          </DialogDescription>
+        </DialogHeader>
+        <form onSubmit={handleSubmit} className="space-y-4">
           <div className="grid grid-cols-3 gap-2">
             <div className="col-span-2 space-y-2">
               <Label htmlFor="install-host">Host *</Label>

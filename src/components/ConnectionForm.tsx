@@ -9,6 +9,7 @@ import {
   DialogContent,
   DialogHeader,
   DialogTitle,
+  DialogDescription,
   DialogFooter,
 } from "./ui/dialog";
 import {
@@ -712,6 +713,14 @@ export function ConnectionForm({
       <DialogContent className="sm:max-w-[560px] max-h-[90vh] flex flex-col p-0 gap-0">
         <DialogHeader className="px-6 pt-6 pb-3 shrink-0 border-b">
           <DialogTitle>{title}</DialogTitle>
+          {/* P1#5: sr-only description so the dialog has a wired aria-describedby. */}
+          <DialogDescription className="sr-only">
+            {connection
+              ? isClone
+                ? "Duplicate this connection's settings into a new entry."
+                : "Edit the host, authentication, and other settings for this connection."
+              : "Configure a new SSH connection: host, port, authentication, and optional advanced settings."}
+          </DialogDescription>
         </DialogHeader>
         <form
           onSubmit={handleSubmit}
