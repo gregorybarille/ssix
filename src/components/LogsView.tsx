@@ -7,16 +7,37 @@ import { useFrontendLogs } from "@/lib/log";
 import { Trash2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
-function levelColor(level: string) {
+/**
+ * P2-A2: log levels were previously distinguished only by foreground
+ * color (red / yellow / blue / muted). The text label "ERROR" /
+ * "WARN" already carried the meaning, but visual prominence relied on
+ * color alone, which is a WCAG 1.4.1 (Use of Color) papercut for
+ * colorblind users. We now render each level as a bordered badge with
+ * a leading glyph; color is supplementary, never the sole channel.
+ */
+function levelBadgeClass(level: string) {
   switch (level) {
     case "error":
-      return "text-destructive";
+      return "border-destructive/60 bg-destructive/10 text-destructive";
     case "warn":
-      return "text-yellow-500";
+      return "border-yellow-500/60 bg-yellow-500/10 text-yellow-600 dark:text-yellow-400";
     case "info":
-      return "text-blue-400";
+      return "border-blue-500/60 bg-blue-500/10 text-blue-600 dark:text-blue-300";
     default:
-      return "text-muted-foreground";
+      return "border-border bg-muted text-muted-foreground";
+  }
+}
+
+function levelGlyph(level: string) {
+  switch (level) {
+    case "error":
+      return "\u2715"; // ✕
+    case "warn":
+      return "\u25B2"; // ▲
+    case "info":
+      return "\u2139"; // ℹ
+    default:
+      return "\u00B7"; // ·
   }
 }
 
@@ -38,10 +59,16 @@ function LogList({ entries, empty }: { entries: LogEntry[]; empty: string }) {
       {entries.map((e, i) => (
         <div
           key={`${e.ts}-${e.source}-${e.message}-${i}`}
-          className="grid grid-cols-[90px_60px_100px_1fr] gap-2 px-2 py-0.5 hover:bg-accent/30 rounded"
+          className="grid grid-cols-[90px_72px_100px_1fr] gap-2 px-2 py-0.5 hover:bg-accent/30 rounded items-start"
         >
           <span className="text-muted-foreground-soft">{fmtTs(e.ts)}</span>
-          <span className={cn("uppercase font-semibold", levelColor(e.level))}>
+          <span
+            className={cn(
+              "inline-flex items-center justify-center gap-1 rounded border px-1.5 py-0 text-[10px] font-semibold uppercase leading-4",
+              levelBadgeClass(e.level),
+            )}
+          >
+            <span aria-hidden="true">{levelGlyph(e.level)}</span>
             {e.level}
           </span>
           <span className="text-muted-foreground truncate">{e.source}</span>
