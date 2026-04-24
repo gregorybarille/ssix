@@ -75,4 +75,37 @@ describe("Sidebar", () => {
       screen.getByRole("button", { name: "Credentials" })
     ).toHaveAttribute("aria-current", "page");
   });
+
+  /*
+   * Audit-3 #1: prior implementation buried "(pending changes)" inside
+   * an aria-hidden parent, so AT users had no way to distinguish a
+   * dirty git state from a clean one. The dot must contribute to the
+   * button's accessible name.
+   */
+  it("includes 'pending changes' in the accessible name when gitPending is true", () => {
+    render(<Sidebar active="connections" onNavigate={vi.fn()} gitPending />);
+    expect(
+      screen.getByRole("button", { name: /Git Sync, pending changes/i }),
+    ).toBeInTheDocument();
+  });
+
+  it("does NOT mention pending changes when gitPending is false", () => {
+    render(<Sidebar active="connections" onNavigate={vi.fn()} />);
+    const btn = screen.getByRole("button", { name: "Git Sync" });
+    expect(btn.getAttribute("aria-label")).toBe("Git Sync");
+  });
+
+  it("renders nav buttons inside a labeled <nav> landmark", () => {
+    render(<Sidebar active="connections" onNavigate={vi.fn()} />);
+    // <nav> elements have implicit role="navigation"
+    expect(
+      screen.getByRole("navigation", { name: /primary/i }),
+    ).toBeInTheDocument();
+  });
+
+  it("uses type=button on nav buttons (defensive vs implicit form submit)", () => {
+    render(<Sidebar active="connections" onNavigate={vi.fn()} />);
+    const btn = screen.getByRole("button", { name: "Connections" });
+    expect(btn).toHaveAttribute("type", "button");
+  });
 });

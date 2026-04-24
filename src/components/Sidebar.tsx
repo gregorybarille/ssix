@@ -41,10 +41,26 @@ function NavButton({
   badge?: number;
   dot?: boolean;
 }) {
+  /*
+   * Audit-3 #1: the only accessible name for these icon-only buttons
+   * is aria-label, so it must encode every state a sighted user can
+   * see. Previously the orange "pending changes" dot was conveyed via
+   * an sr-only <span> nested inside an aria-hidden parent — aria-hidden
+   * cascades, so the sr-only text was silently swallowed and an AT
+   * user heard "Git Sync" with no hint that a sync was pending.
+   */
+  const accessibleName = [
+    label,
+    badge !== undefined && badge > 0 ? `${badge} active` : null,
+    dot ? "pending changes" : null,
+  ]
+    .filter(Boolean)
+    .join(", ");
   return (
     <button
+      type="button"
       title={badge ? `${label} (${badge})` : label}
-      aria-label={badge ? `${label}, ${badge} active` : label}
+      aria-label={accessibleName}
       aria-current={active ? "page" : undefined}
       onClick={onClick}
       className={cn(
@@ -68,9 +84,7 @@ function NavButton({
         <span
           className="absolute top-1 right-1 h-2.5 w-2.5 rounded-full bg-orange-500"
           aria-hidden="true"
-        >
-          <span className="sr-only"> (pending changes)</span>
-        </span>
+        />
       )}
     </button>
   );
@@ -84,45 +98,53 @@ export function Sidebar({
   gitPending = false,
 }: SidebarProps) {
   return (
-    <aside className="w-16 bg-card border-r border-border flex flex-col items-center py-4 gap-2">
-      <div className="mb-4">
+    <aside
+      aria-label="Primary navigation"
+      className="w-16 bg-card border-r border-border flex flex-col items-center py-4 gap-2"
+    >
+      <div className="mb-4" aria-hidden="true">
         <div className="w-8 h-8 rounded-lg bg-primary flex items-center justify-center">
           <span className="text-primary-foreground font-bold text-sm">S</span>
         </div>
       </div>
-      {navItems.map(({ id, label, icon }) => (
-        <NavButton
-          key={id}
-          active={active === id}
-          label={label}
-          onClick={() => onNavigate(id)}
-          icon={icon}
-          badge={id === "tunnels" ? tunnelCount : undefined}
-        />
-      ))}
-
-      {terminalCount > 0 && (
-        <>
-          <div className="w-6 border-t border-border my-1" />
+      <nav aria-label="Primary" className="contents">
+        {navItems.map(({ id, label, icon }) => (
           <NavButton
-            active={active === "terminals"}
-            label="Terminals"
-            onClick={() => onNavigate("terminals")}
-            icon={<TerminalSquare className="h-5 w-5" />}
-            badge={terminalCount}
+            key={id}
+            active={active === id}
+            label={label}
+            onClick={() => onNavigate(id)}
+            icon={icon}
+            badge={id === "tunnels" ? tunnelCount : undefined}
           />
-        </>
-      )}
+        ))}
 
-      <div className="mt-auto pt-2">
-        <NavButton
-          active={active === "git_sync"}
-          label="Git Sync"
-          onClick={() => onNavigate("git_sync")}
-          icon={<GitBranch className="h-5 w-5" />}
-          dot={gitPending}
-        />
-      </div>
+        {terminalCount > 0 && (
+          <>
+            <div
+              className="w-6 border-t border-border my-1"
+              aria-hidden="true"
+            />
+            <NavButton
+              active={active === "terminals"}
+              label="Terminals"
+              onClick={() => onNavigate("terminals")}
+              icon={<TerminalSquare className="h-5 w-5" />}
+              badge={terminalCount}
+            />
+          </>
+        )}
+
+        <div className="mt-auto pt-2">
+          <NavButton
+            active={active === "git_sync"}
+            label="Git Sync"
+            onClick={() => onNavigate("git_sync")}
+            icon={<GitBranch className="h-5 w-5" />}
+            dot={gitPending}
+          />
+        </div>
+      </nav>
     </aside>
   );
 }
