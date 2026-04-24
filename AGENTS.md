@@ -48,7 +48,7 @@
 
 ## Architecture Rules
 
-- **Backend**: Single IPC handler crate, async-safe Rust (tokio), no global mutable state
+- **Backend**: Single IPC handler crate; SSH/session lifecycle uses OS threads + `mpsc`; shared app state is managed centrally (for example `SshState` and other managed globals) with disciplined locking
 - **Frontend**: Feature-sliced by domain; Zustand slices per feature; no prop drilling >2 levels
 - **Separation**: Commands are pure (no UI logic); state is local-first
 - **Scalability**: Lazy-load React routes; keep wasm-bindgen surface minimal
