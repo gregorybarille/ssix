@@ -5,6 +5,7 @@ import { Button } from "./ui/button";
 import { Input } from "./ui/input";
 import { Label } from "./ui/label";
 import { Tabs, TabsList, TabsTrigger } from "./ui/tabs";
+import { Checkbox } from "./ui/checkbox";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "./ui/dialog";
 import { cn } from "@/lib/utils";
 
@@ -152,12 +153,22 @@ export function ScpDialog({ open, onOpenChange, connection }: ScpDialogProps) {
             </p>
           </div>
 
+          {/*
+            Audit-3 P2#7: was a hand-rolled <input type="checkbox">
+            with `accent-primary`. The native checkbox renders a
+            different glyph on every OS (small filled square on macOS,
+            tiny check on Windows, blue check on Linux), ignores our
+            theme tokens, and has no consistent focus ring. The shared
+            <Checkbox> primitive (Radix-backed) gives us the same
+            visual + focus-visible ring + theme tokens used everywhere
+            else, plus role=checkbox + aria-checked + Space activation
+            for free. The label still wraps so a click on the text
+            toggles the box.
+          */}
           <label className="flex items-center gap-2 text-sm cursor-pointer">
-            <input
-              type="checkbox"
+            <Checkbox
               checked={recursive}
-              onChange={(e) => setRecursive(e.target.checked)}
-              className="accent-primary"
+              onCheckedChange={(v) => setRecursive(v === true)}
             />
             Transfer directories recursively
           </label>

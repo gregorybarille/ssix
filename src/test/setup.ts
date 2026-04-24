@@ -1,5 +1,18 @@
 import "@testing-library/jest-dom";
 
+// Audit-3 P2#7: jsdom does not implement ResizeObserver, but several
+// Radix primitives (Checkbox via useSize, Select, etc.) construct one
+// on mount. Provide a no-op polyfill so tests that render those
+// primitives don't crash with "ReferenceError: ResizeObserver is not
+// defined" inside React's commit phase. Real browsers ship the API.
+if (typeof globalThis.ResizeObserver === "undefined") {
+  globalThis.ResizeObserver = class {
+    observe() {}
+    unobserve() {}
+    disconnect() {}
+  } as unknown as typeof ResizeObserver;
+}
+
 vi.mock("@tauri-apps/api/core", () => ({
   invoke: vi.fn(),
 }));

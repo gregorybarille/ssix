@@ -138,4 +138,41 @@ describe("ScpDialog", () => {
     expect(alert).toHaveTextContent(/permission denied/i);
     expect(alert).toHaveAttribute("aria-live", "assertive");
   });
+
+  /*
+   * Audit-3 P2#7: the recursive toggle was a hand-rolled native
+   * <input type="checkbox"> with `accent-primary`, which renders a
+   * different glyph on every OS, ignores theme tokens, and has no
+   * consistent focus ring. It now goes through the shared <Checkbox>
+   * primitive (Radix-backed). Pin the structural a11y contract:
+   * role=checkbox, aria-checked toggling, label-via-wrapper still
+   * binds the accessible name. NO native <input type=checkbox> should
+   * remain in the dialog.
+   */
+  it("recursive toggle uses the shared Checkbox primitive (role=checkbox)", () => {
+    render(
+      <ScpDialog
+        open
+        onOpenChange={vi.fn()}
+        connection={{ id: "c1", name: "prod", host: "host", port: 22, type: "direct" }}
+      />,
+    );
+    const box = screen.getByRole("checkbox", {
+      name: /transfer directories recursively/i,
+    });
+    expect(box).toHaveAttribute("aria-checked", "false");
+    fireEvent.click(box);
+    expect(box).toHaveAttribute("aria-checked", "true");
+    // No native checkboxes should remain.
+    const natives = document.querySelectorAll('input[type="checkbox"]');
+    // Radix renders a hidden <input type="checkbox"> for form
+    // participation, so we instead check that the box exposed to AT
+    // is the Radix button (its tagName is BUTTON, not INPUT).
+    expect(box.tagName).toBe("BUTTON");
+    // Whatever native inputs Radix may render must be aria-hidden so
+    // AT only sees the styled button.
+    natives.forEach((n) => {
+      expect(n).toHaveAttribute("aria-hidden", "true");
+    });
+  });
 });
