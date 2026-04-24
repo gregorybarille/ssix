@@ -15,6 +15,7 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { getColorHex } from "@/lib/colors";
+import { useRovingFocus } from "@/hooks/useRovingFocus";
 
 interface ConnectionListProps {
   connections: Connection[];
@@ -95,6 +96,22 @@ export function ConnectionList({
     return credentials.find((c) => c.id === credId)?.name ?? null;
   };
 
+  // Roving tabindex + keyboard activation for the list / grid. Enter / Space
+  // on a row prefers onSelect (caller-controlled selection); if no onSelect
+  // is wired, fall back to onConnect (the primary action). Action buttons
+  // inside the row keep their own focus and aren't intercepted.
+  const activateRow = (index: number) => {
+    const conn = connections[index];
+    if (!conn) return;
+    if (onSelect) onSelect(conn);
+    else if (onConnect) onConnect(conn);
+  };
+  const roving = useRovingFocus({
+    itemCount: connections.length,
+    onActivate: activateRow,
+    orientation: layout === "tile" ? "grid" : "vertical",
+  });
+
   if (connections.length === 0) {
     return (
       <div className="flex flex-col items-center justify-center py-12 text-muted-foreground">
@@ -110,15 +127,24 @@ export function ConnectionList({
       <div
         className="grid gap-3"
         data-testid="connection-grid"
+        role="list"
+        aria-label="Connections"
+        onKeyDown={roving.onKeyDown}
         style={{ gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))" }}
       >
-        {connections.map((conn) => {
+        {connections.map((conn, index) => {
           const color = getColorHex(conn.color);
+          const itemProps = roving.getItemProps(index);
           return (
             <div
               key={conn.id}
+              {...itemProps}
+              role="listitem"
+              aria-label={`${conn.name}${conn.tags && conn.tags.length > 0 ? `, tagged ${conn.tags.join(", ")}` : ""}`}
+              aria-selected={selectedId === conn.id || undefined}
               className={cn(
                 "group rounded-lg border p-3 cursor-pointer transition-colors hover:bg-accent flex flex-col gap-2",
+                "focus:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background",
                 selectedId === conn.id && "bg-accent",
               )}
               style={
@@ -233,14 +259,25 @@ export function ConnectionList({
   }
 
   return (
-    <div className="space-y-1">
-      {connections.map((conn) => {
+    <div
+      className="space-y-1"
+      role="list"
+      aria-label="Connections"
+      onKeyDown={roving.onKeyDown}
+    >
+      {connections.map((conn, index) => {
         const color = getColorHex(conn.color);
+        const itemProps = roving.getItemProps(index);
         return (
           <div
             key={conn.id}
+            {...itemProps}
+            role="listitem"
+            aria-label={`${conn.name}${conn.tags && conn.tags.length > 0 ? `, tagged ${conn.tags.join(", ")}` : ""}`}
+            aria-selected={selectedId === conn.id || undefined}
             className={cn(
               "group flex items-center gap-3 rounded-lg p-3 cursor-pointer transition-colors hover:bg-accent",
+              "focus:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background",
               selectedId === conn.id && "bg-accent",
             )}
             style={color ? { borderLeft: `3px solid ${color}` } : undefined}

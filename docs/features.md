@@ -137,6 +137,31 @@ files, Clone, Edit, Delete) remain in a hover-revealed group to keep
 the list visually quiet, and that group also expands when any of its
 buttons receives keyboard focus (`focus-within`).
 
+### List Keyboard Navigation
+
+The connection list and the credential list both implement a roving
+tabindex pattern (via the shared `useRovingFocus` hook in
+`src/hooks/useRovingFocus.ts`):
+
+- Only one row is in the page tab order at a time. `Tab` enters the
+  list onto the current row; `Tab` again moves out of the list to the
+  next focusable element.
+- `↑` / `↓` move the focused row, wrapping at the ends. `Home` / `End`
+  jump to the first/last row. In tile layout `←` / `→` work as well.
+- `↵` or `Space` activates the row. On a connection this calls the
+  same selection handler the click does (or falls back to **Connect**
+  if no selection handler is wired). On a credential it opens the
+  **Edit** form.
+- Action buttons inside a row (Edit / Clone / Delete / Connect / etc.)
+  keep their own focus and their own keyboard semantics — pressing
+  `↵` while focused on **Delete** activates Delete, not row selection.
+- Each row exposes `role="listitem"` inside a `role="list"` container
+  with an `aria-label` that includes the connection/credential name and
+  any tags, so screen readers announce the row clearly.
+- The focus ring uses the same `focus-visible:ring-2 ring-ring`
+  treatment as the rest of the app, so keyboard users always see where
+  they are.
+
 ## Global Keyboard Shortcuts
 
 SSX listens for a small set of platform shortcuts. `Mod` is `Cmd` on
