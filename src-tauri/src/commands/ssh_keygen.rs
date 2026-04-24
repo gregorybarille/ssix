@@ -103,17 +103,21 @@ fn write_key_files(
             let _ = std::fs::set_permissions(parent, std::fs::Permissions::from_mode(0o700));
         }
     }
-    std::fs::write(path, private_pem).map_err(|e| format!("write private key: {}", e))?;
+    // Audit-3 P2#13: route the key file writes through
+    // `crate::storage::atomic_write` so a crash mid-write cannot
+    // strand a half-written private key on disk (which would later
+    // be silently re-used by ssh2 and reject every connection).
+    // `atomic_write` applies the requested Unix mode to the temp
+    // BEFORE the payload is written, so the temp itself is never
+    // world-readable — even if the process crashes between
+    // `create_new` and the rename.
+    let private_bytes = private_pem.as_bytes().to_vec();
+    crate::storage::atomic_write(path, &private_bytes, Some(0o600))
+        .map_err(|e| format!("write private key: {}", e))?;
     let pub_path = path.with_extension("pub");
-    std::fs::write(&pub_path, public_line).map_err(|e| format!("write public key: {}", e))?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))
-            .map_err(|e| format!("chmod 600 private: {}", e))?;
-        std::fs::set_permissions(&pub_path, std::fs::Permissions::from_mode(0o644))
-            .map_err(|e| format!("chmod 644 public: {}", e))?;
-    }
+    let public_bytes = public_line.as_bytes().to_vec();
+    crate::storage::atomic_write(&pub_path, &public_bytes, Some(0o644))
+        .map_err(|e| format!("write public key: {}", e))?;
     Ok(())
 }
 
@@ -559,6 +563,18 @@ mod tests {
             use std::os::unix::fs::PermissionsExt;
             let mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
             assert_eq!(mode, 0o600);
+            // Audit-3 P2#13: also pin the public-key mode. The
+            // atomic_write helper applies the requested mode to the
+            // temp BEFORE the payload is written, so a mid-write
+            // crash never leaks a private key as world-readable.
+            // The .pub file is always 0o644 (world-readable is
+            // intentional — it's the public half).
+            let pub_mode = std::fs::metadata(path.with_extension("pub"))
+                .unwrap()
+                .permissions()
+                .mode()
+                & 0o777;
+            assert_eq!(pub_mode, 0o644);
         }
         // Refuse to overwrite.
         let err = generate_ssh_key(GenerateSshKeyInput {

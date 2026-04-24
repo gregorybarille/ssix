@@ -275,7 +275,14 @@ pub fn scp_download(input: ScpDownloadInput) -> Result<ScpResult, String> {
         if let Some(parent) = Path::new(&input.local_path).parent() {
             fs::create_dir_all(parent).map_err(|e| e.to_string())?;
         }
-        fs::write(&input.local_path, &bytes).map_err(|e| e.to_string())?;
+        // Audit-3 P2#13: route SCP downloads through the atomic
+        // writer so a process crash mid-transfer cannot leave a
+        // half-written file at the destination path. Without this,
+        // a partial download would silently overwrite a previously
+        // good local file. No mode is forced — local file
+        // permissions follow the user's umask via the temp file.
+        crate::storage::atomic_write(Path::new(&input.local_path), &bytes, None)
+            .map_err(|e| e.to_string())?;
         (size, Some(1))
     };
 
@@ -513,7 +520,14 @@ fn download_directory(
             if let Some(parent) = child_local.parent() {
                 fs::create_dir_all(parent).map_err(|e| e.to_string())?;
             }
-            fs::write(&child_local, &bytes).map_err(|e| e.to_string())?;
+            // Audit-3 P2#13: same crash-safety as the single-file
+            // SCP download path above. Recursive transfers are even
+            // more vulnerable because a crash partway through writes
+            // the partial child to disk while the parent counter
+            // continues incrementing — leaving a corrupt directory
+            // tree that's hard to detect.
+            crate::storage::atomic_write(&child_local, &bytes, None)
+                .map_err(|e| e.to_string())?;
             stats.bytes += size;
             stats.entries += 1;
         }
