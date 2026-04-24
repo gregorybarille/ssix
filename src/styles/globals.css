@@ -33,6 +33,25 @@
     --accent-foreground: 210 40% 98%;
     --destructive: 0 62.8% 30.6%;
     --destructive-foreground: 210 40% 98%;
+    /*
+     * `destructive-text` is a deliberately-lighter variant of
+     * `destructive` for use as a TEXT color on neutral surfaces
+     * (errors, destructive context-menu items, trash icons).
+     *
+     * The base `destructive` token is tuned to be a button BACKGROUND
+     * (paired with `destructive-foreground` white text), so it sits
+     * around L=30 on dark theme — fine for a button, but only ~2:1
+     * on the dark app background, which fails WCAG AA badly when used
+     * directly as text via `text-destructive`.
+     *
+     * Tailwind's `text-destructive` utility is remapped further down
+     * (in @layer utilities) to read this variable instead.
+     *
+     * Dark theme: hsl(0 84.2% 72%) ≈ #f49191 yields ≥ 5.5:1 on every
+     * surface in the app (background, card, popover, accent, and the
+     * common `bg-destructive/10` overlay).
+     */
+    --destructive-text: 0 84.2% 72%;
     --border: 217.2 32.6% 17.5%;
     --input: 217.2 32.6% 17.5%;
     --ring: 212.7 26.8% 83.9%;
@@ -65,9 +84,38 @@
     --accent-foreground: 222.2 47.4% 11.2%;
     --destructive: 0 84.2% 60.2%;
     --destructive-foreground: 210 40% 98%;
+    /*
+     * Light theme: hsl(0 72% 35%) ≈ #9b1e1e yields ≥ 7.5:1 on every
+     * surface (white background, muted #f1f5f9, accent, etc.).
+     * The previous `--destructive` value used directly as text only
+     * achieved 3.76:1 on white — failing WCAG AA.
+     */
+    --destructive-text: 0 72% 35%;
     --border: 214.3 31.8% 91.4%;
     --input: 214.3 31.8% 91.4%;
     --ring: 222.2 84% 4.9%;
+  }
+}
+
+@layer utilities {
+  /*
+   * Audit-3 #4: remap `text-destructive` (and `*:text-destructive`
+   * variants) to use `--destructive-text` rather than the
+   * button-tuned `--destructive`. This keeps button styles
+   * (`bg-destructive` + `text-destructive-foreground`) untouched
+   * while giving every text/icon usage a WCAG AA-compliant color.
+   */
+  .text-destructive {
+    color: hsl(var(--destructive-text)) !important;
+  }
+  .hover\:text-destructive:hover {
+    color: hsl(var(--destructive-text)) !important;
+  }
+  .focus\:text-destructive:focus {
+    color: hsl(var(--destructive-text)) !important;
+  }
+  .group:hover .group-hover\:text-destructive {
+    color: hsl(var(--destructive-text)) !important;
   }
 }
 

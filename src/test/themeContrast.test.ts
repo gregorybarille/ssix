@@ -71,14 +71,34 @@ const TOKENS = {
     foreground: "222.2 84% 4.9%",
     mutedForeground: "215.4 16.3% 46.9%",
     mutedForegroundSoft: "215 16% 38%",
+    accent: "210 40% 96.1%",
+    popover: "0 0% 100%",
+    destructive: "0 84.2% 60.2%",
+    destructiveText: "0 72% 35%",
   },
   dark: {
     background: "222.2 84% 4.9%",
     foreground: "210 40% 98%",
     mutedForeground: "215 20.2% 65.1%",
     mutedForegroundSoft: "215 20% 55%",
+    accent: "217.2 32.6% 17.5%",
+    popover: "217.2 32.6% 10%",
+    destructive: "0 62.8% 30.6%",
+    destructiveText: "0 84.2% 72%",
   },
 } as const;
+
+function blend(
+  fg: [number, number, number],
+  alpha: number,
+  bg: [number, number, number],
+): [number, number, number] {
+  return [
+    fg[0] * alpha + bg[0] * (1 - alpha),
+    fg[1] * alpha + bg[1] * (1 - alpha),
+    fg[2] * alpha + bg[2] * (1 - alpha),
+  ];
+}
 
 describe("Theme color contrast", () => {
   it("light: muted-foreground-soft on background meets WCAG AA (>= 4.5:1)", () => {
@@ -125,6 +145,75 @@ describe("Theme color contrast", () => {
     const ratio = contrast(blended, rgbForToken(TOKENS.light.background));
     // Captures the original failure (~2.7:1) so we don't accidentally
     // re-introduce the pattern.
+    expect(ratio).toBeLessThan(4.5);
+  });
+
+  /*
+   * Audit-3 #4: `text-destructive` semantic.
+   *
+   * `--destructive` is tuned to be a button BACKGROUND (paired with
+   * white text), so on dark theme it sits around L=30 and only
+   * achieves ~2:1 against the dark surfaces — which is why we
+   * introduced `--destructive-text`. Lock both themes to AA on every
+   * surface where text-destructive actually appears.
+   */
+  it("dark: destructive-text on background meets WCAG AA (>= 4.5:1)", () => {
+    const ratio = contrast(
+      rgbForToken(TOKENS.dark.destructiveText),
+      rgbForToken(TOKENS.dark.background),
+    );
+    expect(ratio).toBeGreaterThanOrEqual(4.5);
+  });
+
+  it("dark: destructive-text on accent (row hover, menu hover) meets WCAG AA", () => {
+    const ratio = contrast(
+      rgbForToken(TOKENS.dark.destructiveText),
+      rgbForToken(TOKENS.dark.accent),
+    );
+    expect(ratio).toBeGreaterThanOrEqual(4.5);
+  });
+
+  it("dark: destructive-text on popover meets WCAG AA", () => {
+    const ratio = contrast(
+      rgbForToken(TOKENS.dark.destructiveText),
+      rgbForToken(TOKENS.dark.popover),
+    );
+    expect(ratio).toBeGreaterThanOrEqual(4.5);
+  });
+
+  it("dark: destructive-text on bg-destructive/10 over background meets WCAG AA", () => {
+    const tinted = blend(
+      rgbForToken(TOKENS.dark.destructive),
+      0.1,
+      rgbForToken(TOKENS.dark.background),
+    );
+    const ratio = contrast(rgbForToken(TOKENS.dark.destructiveText), tinted);
+    expect(ratio).toBeGreaterThanOrEqual(4.5);
+  });
+
+  it("light: destructive-text on background meets WCAG AA", () => {
+    const ratio = contrast(
+      rgbForToken(TOKENS.light.destructiveText),
+      rgbForToken(TOKENS.light.background),
+    );
+    expect(ratio).toBeGreaterThanOrEqual(4.5);
+  });
+
+  it("light: destructive-text on accent meets WCAG AA", () => {
+    const ratio = contrast(
+      rgbForToken(TOKENS.light.destructiveText),
+      rgbForToken(TOKENS.light.accent),
+    );
+    expect(ratio).toBeGreaterThanOrEqual(4.5);
+  });
+
+  it("regression: dark `--destructive` (button bg) used as text FAILS AA on dark background", () => {
+    const ratio = contrast(
+      rgbForToken(TOKENS.dark.destructive),
+      rgbForToken(TOKENS.dark.background),
+    );
+    // Captures the original failure (~2.0:1) so we don't accidentally
+    // re-route text-destructive back to the button-tuned token.
     expect(ratio).toBeLessThan(4.5);
   });
 });
