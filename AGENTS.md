@@ -1,116 +1,82 @@
 # SSX Copilot Instructions
 
-## Documentation hygiene
+> **Docs index** — keep all docs in sync with code; never leave documentation stale.
+> - `docs/architecture.md` — system diagrams and data-flow
+> - `docs/development.md` — prerequisites, dev setup, build pipeline
+> - `docs/features.md` — feature catalogue and keyboard shortcuts
+> - `docs/file-transfer.md` — SCP/file transfer behaviour and constraints
+> - `docs/git-sync.md` — git-sync export feature
+> - `docs/troubleshooting.md` — common failure modes and fixes
 
-- **Keep `docker/README.md` in sync with `docker/docker-compose.yml`.** Any time you add, remove, or change a service, port mapping, credential, or network topology in the Compose file, update the architecture diagram, the `ssh` usage examples, and the credentials table in `docker/README.md` in the same commit/change.
-- More broadly: whenever a code or config change affects documented behaviour (ports, commands, architecture, API surface), update the relevant docs file alongside the code change. Do not leave documentation stale.
+## Build & Test
 
-## Build and test commands
+| Command | Purpose |
+|---|---|
+| `npm install` | Install frontend deps |
+| `npm run tauri dev` | Dev mode (Node 20+, Rust stable, Tauri CLI required) |
+| `npm test` | Vitest frontend suite |
+| `npm test -- --run src/test/utils.test.ts` | Single test file |
+| `cd src-tauri && cargo test` | Rust backend tests |
 
-- Prerequisites from the project docs: Node.js 20+, Rust stable, and Tauri CLI.
-- `npm install` installs the frontend/tooling dependencies.
-- `npm run tauri dev` starts the desktop app in development mode.
-- `npm run build` builds the frontend bundle with `tsc && vite build`.
-- `npm run tauri build` builds the packaged Tauri desktop app. Tauri runs `npm run build` first.
-- `npm test` runs the Vitest frontend suite.
-- `npm test -- --run src/test/utils.test.ts` runs a single frontend test file.
-- `npm test -- -t "cn utility"` runs a single frontend test by name.
-- `cd src-tauri && cargo test` runs the Rust backend tests.
-- `cd src-tauri && cargo test test_default_settings` runs a single Rust test by name.
+## Architecture
 
-## High-level architecture
+- **Tauri v2** desktop app: React/Vite frontend (`src/`) + Rust backend (`src-tauri/`)
+- **Frontend state**: Zustand stores in `src/store/` call Tauri via `src/lib/tauri.ts` (lazy-loaded for test mocking)
+- **Backend commands**: `src-tauri/src/commands/` → registered in `lib.rs` `invoke_handler![]`
+- **SSH sessions**: `ssh2` crate, one thread per session, `mpsc` channels, events `ssh-{output|error|closed}-{id}`
+- **Terminal**: xterm.js, stays mounted when hidden; tunnels live in `TunnelsView`, not the terminal tab bar
+- **Persistence**: File-based at `~/.ssx/data.json`. All writes MUST use `atomic_write()` — never `fs::write` directly
+- **Models**: `src/types/index.ts` ↔ `src-tauri/src/models.rs` must stay in sync (snake_case throughout)
+- **IDs**: Generated server-side with `uuid::Uuid::new_v4()`; frontend never generates IDs
 
-- This repository is a Tauri v2 desktop app with a React/Vite frontend in `src/` and a Rust backend in `src-tauri/`.
-- `src/App.tsx` is the top-level coordinator for the main views: connections, credentials, tunnels, logs, settings, and terminals. It owns dialog/open state, terminal/tunnel session lifecycles, and wires list and form components to the stores.
-- Frontend data access is centralized in the Zustand stores under `src/store/`. Each store calls Tauri commands through `src/lib/tauri.ts`, which lazy-loads `@tauri-apps/api/core` so tests can mock it.
-- The Rust side registers the command surface in `src-tauri/src/lib.rs`. The command modules in `src-tauri/src/commands/` implement CRUD/search behavior for connections, credentials, settings, and SSH session management.
-- SSH connections use the `ssh2` crate. `src-tauri/src/ssh.rs` spawns a dedicated thread per session with `mpsc` channels for I/O. The session thread emits Tauri events (`ssh-output-{id}`, `ssh-error-{id}`, `ssh-closed-{id}`) and receives commands (`Write`, `Resize`, `Disconnect`) via `SessionMsg`.
-- The frontend terminal uses xterm.js (`@xterm/xterm`). The `Terminal` component stays mounted even when hidden (tabbed away) to keep receiving SSH output. `TerminalTabs` renders a tab bar with all active shell sessions; the sidebar shows a terminal icon with a badge count when sessions are open. Port-forward (tunnel) sessions are displayed in a separate `TunnelsView` reached via the **Tunnels** sidebar entry, not in the terminal tab bar.
-- **Terminal clipboard contract.** Selecting text in a terminal pane MUST NOT silently overwrite the user's clipboard. The classic xterm "select-to-copy" behavior is gated behind `AppSettings.auto_copy_selection` (off by default — flip in Settings → Terminal). Cmd/Ctrl+C with a non-empty selection always copies (via `attachCustomKeyEventHandler` in `Terminal.tsx`) and *swallows* the keystroke so xterm doesn't also forward Ctrl+C as SIGINT (matches iTerm/Terminal.app); Cmd/Ctrl+C with an empty selection passes through so SIGINT still reaches the remote shell. Cmd/Ctrl+V triggers `navigator.clipboard.readText()` → `term.paste()`. The `autoCopyEnabledRef` is a ref synced via a small effect so toggling the setting takes effect live without remounting the terminal. The full contract is pinned by `src/test/TerminalAutoCopy.test.ts`. ALSO: when `ssh_write` rejects (session thread gone, channel dropped), Terminal renders a single red `Input dropped — SSH session lost: …` banner and sets a `writeFailed` latch so subsequent keystrokes don't spam the buffer. Don't replace the latch with a per-keystroke notice.
-- Persistence is file-based, not database-backed: `src-tauri/src/storage.rs` loads and saves a single `AppData` document at `~/.ssx/data.json`. **All writes to user-data files (`data.json`, `secrets.json`), all SCP downloads, and all key-file outputs (private/public key pairs) MUST go through `crate::storage::atomic_write(path, bytes, mode)`** — never `fs::write` directly. `atomic_write` writes to a hidden sibling temp file in the same directory (so `rename(2)` is guaranteed atomic on the same filesystem), `sync_all`s the file, applies the requested Unix mode (e.g. `0o600` for secrets and private keys, `0o644` for public keys, `None` for SCP downloads which inherit the umask) BEFORE writing the payload (so a crash mid-write cannot leak a world-readable temp), atomically renames over the target, and `fsync`s the parent directory on Unix so the rename itself is durable across power loss. Temp filenames embed pid + nanos + a per-process atomic counter so concurrent writers in the same process never collide on `create_new(true)`. The crash-safety + mode-application + concurrency contract is pinned by tests in `storage::tests::atomic_write_*`. Current callers: `keychain.rs::save_secrets` (mode 0o600), `commands/ssh_keygen.rs::write_key_pair` (mode 0o600 + 0o644), `commands/ssh.rs` SCP download paths (mode None). The `0o644` invariant on `.pub` files is also pinned by `commands::ssh_keygen::tests::generate_ssh_key_custom_path_writes_files_and_refuses_overwrite`.
-- The data model is shared across the frontend and backend. `src/types/index.ts` and `src-tauri/src/models.rs` describe the same JSON payload, so shape changes need to stay synchronized across both layers.
-- A diagnostics log buffer (capped ring of 1000 entries) lives in `src-tauri/src/logs.rs`. The backend pushes entries via `crate::logs::log(app, level, source, msg)` which both stores and emits an `app-log` Tauri event. The frontend `LogsView` (Logs sidebar entry) shows a Backend tab fed by `get_logs` + `app-log` and a Frontend tab fed by the in-memory store in `src/lib/log.ts`. Each log row's level is rendered as a bordered badge (`levelBadgeClass` + `levelGlyph` in `LogsView.tsx`) with a leading `aria-hidden` glyph (`✕` / `▲` / `ℹ` / `·`); color is supplementary so the row is still distinguishable for colorblind users (WCAG 1.4.1). When adding a new level, extend BOTH helpers — never lean on color alone.
-- Tauri config in `src-tauri/tauri.conf.json` uses Vite on port `1420` during development and packages `dist/` for production. Platform-specific configs (`tauri.macos.conf.json`, etc.) are auto-merged.
+## Adding a Tauri Command (end-to-end)
 
-## Key conventions
+1. `src-tauri/src/models.rs` — add/extend serde struct/enum
+2. `src-tauri/src/commands/<area>.rs` — `load_data` → mutate → `save_data`, return `Result<T, String>`
+3. `src-tauri/src/lib.rs` — register in `generate_handler![]`, `.manage()` if needed
+4. `src/types/index.ts` — mirror Rust shape with snake_case fields
+5. `src/store/use<Area>Store.ts` — `invoke("command_name", {...})` + update state
+6. Wire into `App.tsx` or relevant component
+7. **Tests are mandatory** — `npm test` + `cargo test` must pass before a feature is complete
 
-- **Every new feature must include tests.** Frontend features need Vitest + Testing Library tests in `src/test/`. Rust features need `#[cfg(test)]` unit tests in the relevant module. Do not consider a feature complete until its tests pass.
-- Keep the frontend and backend models in sync. Connections, credentials, and settings use the same snake_case field names in TypeScript and Rust because that shape is passed directly through Tauri and persisted to JSON.
-- Credential and connection variants are encoded as tagged unions with a `type` field (`password` / `ssh_key`, `direct` / `tunnel`). Preserve that wire format instead of introducing camelCase adapters.
-- Treat the Zustand stores as the async boundary. Components are mostly presentational; create/update/delete/search operations should go through the stores, which call Tauri commands and update local state.
-- Forms keep local draft state and local error UI. They close their dialogs only after the awaited submit handler succeeds.
-- Connection cloning is its own flow, not just a normal edit: `App.tsx` tracks `cloningConn`, `ConnectionForm` receives `isClone`, and the backend has a dedicated `clone_connection` command.
-- Search is backend-driven through `search_connections`. Clearing the search box should refetch the full list instead of applying a client-side reset.
-- Styling uses Tailwind utility classes with Radix UI primitives. Reuse the shared `cn()` helper from `src/lib/utils.ts` for class merging and keep theme/color work aligned with `src/styles/globals.css` and the constants in `src/types/index.ts`. For tertiary metadata (timestamps, inline labels next to a primary string, decorative tag glyphs) use the `text-muted-foreground-soft` utility — NOT `text-muted-foreground/70` or any other opacity blend on the muted token. The soft token is calibrated to meet WCAG AA (≥ 4.5:1) on both themes; pairing the existing muted-foreground with `/N` opacity utilities silently fails AA on the light theme (the original `/70` blended to ~2.7:1 on white). The contrast guarantee is asserted in `src/test/themeContrast.test.ts` — any change to the HSL triplets in `globals.css` must keep those tests green. Likewise, `text-destructive` is remapped (in `globals.css` `@layer utilities`) to read `--destructive-text` rather than the button-tuned `--destructive` token, because the latter sits at L≈30 on dark theme and only achieves ~2:1 against the dark surfaces. Any new error/destructive text MUST use `text-destructive` (which now resolves to the AA-safe color); never inline-color destructive text from `--destructive` or hex literals.
-- Frontend tests use Vitest + Testing Library in `jsdom`, with Tauri invocations mocked centrally in `src/test/setup.ts`.
-- UI components under `src/components/ui/` are shadcn/ui-style primitives built on Radix UI. They accept a `className` prop and compose with `cn()`. Prefer extending these over adding new third-party component libraries.
-- ALWAYS use the shared form primitives — `<Input>` (`src/components/ui/input.tsx`), `<Textarea>`, `<Label>`, `<Button>`, `<PasswordInput>`, `<Checkbox>` (`src/components/ui/checkbox.tsx`, Radix-backed) — for any text/number/password/checkbox field instead of hand-rolling a `<input className="flex h-10 w-full rounded-md border ...">` or a `<input type="checkbox" className="accent-primary">`. Native `<input type="checkbox">` renders differently on every OS, has no consistent focus-visible ring, ignores theme tokens, and silently drops the indeterminate state — pair `<Checkbox id=...>` with a `<Label htmlFor=...>` so click-on-label still works. Icon-only `<button>` controls (e.g. `LayoutToggle` list/tile, titlebar min/max/close) MUST carry an explicit `aria-label` — `title=` alone is not exposed reliably to AT and not at all on touch devices, so a screen-reader user otherwise hears "button, pressed" with no semantic name. The decorative lucide glyph inside such a button must also carry `aria-hidden="true"` so AT does not append the icon's auto-derived name to the aria-label and double up the announcement. The shared primitives carry the focus-visible ring, theme tokens, disabled styling, and (for `PasswordInput`) the visibility toggle + `autoComplete` defaults. A bare `<input>` silently bypasses all of those and drifts on every Tailwind upgrade. The same rule applies to confirmation/announcement chrome: destructive prompts go through `<ConfirmDialog>`, transient success messages live in a `role="status"` + `aria-live="polite"` element, and submit-blocking errors live in a `role="alert"` + `aria-live="assertive"` element — never style-only. Single-choice pickers (color swatches, theme picker, storage-mode picker, etc.) MUST go through the shared `<RadioGroup>` + `<RadioGroupItem>` primitives in `src/components/ui/radio-group.tsx` (Radix-backed), NOT a hand-rolled `<button>` grid. Hand-rolled grids are announced by AT as N unrelated buttons rather than as a labeled radio group with one selected option, and they give keyboard users no arrow-key navigation. The visible swatch/chip is just the styled child of `<RadioGroupItem>`; use `data-[state=checked]:` Tailwind variants for selected styling. Pass `aria-labelledby` (pointing at the section heading) so the group has an accessible name, and set `orientation="horizontal"` for visually-horizontal pickers so ArrowLeft/ArrowRight navigate (Radix's default vertical orientation also accepts ArrowUp/Down). **Required text/password fields MUST carry `aria-required="true"`** — a visible `*` in the label is decorative and screen readers do not reliably map asterisk-in-text to required-state. When a submit fails because a specific required field was blank, flip `aria-invalid="true"` on that field so AT users can locate the offending control (the InstallKeyDialog gates host/username/password aria-invalid on `!!error && !value.trim()`). Decorative lucide-react icons sitting next to a labelled control (e.g. the `Network`/`ArrowRight`/`Cable` glyphs in TunnelTab/TunnelsView, the close-`X` inside a "Close tab" button) MUST carry `aria-hidden="true"` so AT doesn't double-announce the icon's auto-derived name alongside the parent's accessible name. Icons rendered inside the shared `<ContextMenuItem icon={...}>` slot are already wrapped in `aria-hidden` by the primitive — don't add it twice.
-- Rust command functions follow the pattern: deserialize an input struct, call `load_data()`, mutate, call `save_data()`, and return the result or `Err(String)`. New commands must also be registered in the `invoke_handler!` macro in `src-tauri/src/lib.rs`.
-- IDs are generated server-side using `uuid::Uuid::new_v4()`. The frontend never generates IDs; it sends data without `id` for creates and with `id` for updates.
-- SSH sessions are managed via `SshState` (a `Mutex<HashMap<String, Sender<SessionMsg>>>`) in Tauri managed state. Each session runs on a dedicated thread. The session ID is a UUID returned by `ssh_connect` and used as the key for `ssh_write`, `ssh_resize`, `ssh_disconnect`, and all event names.
-- **Worker-thread mutex hygiene.** Every shared `Mutex<T>` accessed by spawned tunnel/jump-shell threads (gateway `Session`, active-client counters, `forward_err` carry-back) MUST be locked through `crate::ssh::lock_recover(&m)` rather than `m.lock().unwrap()`. A panic inside any forwarder thread (e.g. `forward_bidi` panicking on a malformed peer) poisons the mutex, and the next `.lock().unwrap()` propagates a fresh panic — cascading until every tunnel sharing that mutex is dead with no UI signal. `lock_recover` returns the inner value via `PoisonError::into_inner`. The long-lived `SshState.sessions` mutex on the Tauri managed-state path is the exception: there `lock().map_err(|e| e.to_string())?` is correct because the caller has a `Result` channel back to the frontend and we'd rather surface the corruption than swallow it. The recovery contract is pinned by `test_lock_recover_*` in `ssh.rs`.
-- The terminal tab lifecycle: connecting a non-tunnel connection adds a `TerminalTab` (with one or two `panes`) to `shellTabs` in `App.tsx` and switches to the terminals view. Closing a pane calls `ssh_disconnect`; closing a tab disconnects all its panes. All `Terminal` components stay mounted; only the active tab/pane receives `isVisible=true`. The tab bar is a real WAI-ARIA tablist (`role="tablist"` + `role="tab"`); use ArrowLeft/ArrowRight/Home/End to move focus and Delete (or Cmd/Ctrl+W) to close the focused tab. The visible "x" affordance is a mouse-only `aria-hidden` span — keyboard users use the keyboard close shortcuts.
-- Tabs may host single-level splits: `TerminalTab.mode` is `"single" | "horizontal" | "vertical"` and `panes` has length 1 or 2. The `+` button in `TerminalTabs` opens a popover offering **New tab / Split right / Split down**; the default action follows `AppSettings.default_open_mode`. Splits use `react-resizable-panels` (`Group` / `Panel` / `Separator`) — note v4's exports are `Group`/`Separator`, not `PanelGroup`/`PanelResizeHandle`.
-- `Connection` carries optional `tags: string[]` and `color?: string` (one of `OPEN_COLORS`). Tags are edited via the `TagInput` chip control (Enter or Comma commits — Space is intentionally NOT a commit key so multi-word tags like "needs review" work; Backspace removes the last chip when the buffer is empty); the chip strip is wrapped in `role="list"` with one `role="listitem"` per chip. `search_connections` AND-tokenizes the query and matches each token against name/host/any tag (case-insensitive). The color is applied as a left-border accent on connection rows/tiles and on the corresponding terminal tab; the swatch→hex map is the single source in `src/lib/colors.ts`.
-- `AppSettings` exposes per-category layout toggles (`connection_layout`, `credential_layout`, `tunnel_layout`: `"list" | "tile"`) plus `default_open_mode` (`"tab" | "split_right" | "split_down"`). All four use `#[serde(default)]` so existing `data.json` files load unchanged. The `LayoutToggle` component at the top of each list view writes through to `useSettingsStore`, and the same fields can be edited in the Settings panel.
-- The connection form supports three auth methods: saved credential (dropdown), inline password, and inline SSH key. Inline auth auto-creates a credential via `onCreateCredential` before saving the connection.
-- SSH key credentials may store the key as either a filesystem path (`private_key_path`) **or** inline contents (`private_key`, persisted in `~/.ssx/secrets.json`). Exactly one of the two must be set; this is enforced by `store_secrets_and_sanitize`. Inline keys are authenticated via ssh2's `userauth_pubkey_memory` — no temp files.
-- New ed25519 keypairs can be generated in-app via the `generate_ssh_key` Tauri command (storage modes: default `~/.ssh/`, custom path, or inline-only).
-- `ssh_install_public_key_by_credential` performs an ssh-copy-id-style append of an SSH key credential's public key to the remote `~/.ssh/authorized_keys`, authenticated by a one-time username/password that is **never persisted**. The remote shell script (`build_install_script` in `commands/ssh_keygen.rs`) is **idempotent** (`grep -qxF` exact-line guard — running it twice never duplicates entries), **CRLF-tolerant on input** (trims trailing `\r\n` so a Windows-clipboard key still matches the existing LF-only line), and **EOF-newline-safe** (uses `tail -c1` to detect when `authorized_keys` lacks a trailing `\n` and prepends one before appending so the new entry is not concatenated onto the previous key). It also enforces `chmod 700 ~/.ssh` and `chmod 600 ~/.ssh/authorized_keys` so a fresh remote passes sshd's `StrictModes` check. These properties are pinned by unit tests in `commands/ssh_keygen.rs::tests` — extend them when changing the script template.
-- The CI workflow (`.github/workflows/test.yml`) runs frontend and backend tests separately on `main` pushes and PRs.
-- All destructive actions (delete connection, delete credential, close live terminal pane/tab, **disconnect a live tunnel session**) MUST go through the shared `<ConfirmDialog>` (`src/components/ConfirmDialog.tsx`). It defaults focus to **Cancel**, supports a `destructive` variant, and is built on Radix Dialog so it gets focus trap, Escape-to-close, and aria wiring for free. Never re-introduce hand-rolled `fixed inset-0` overlays.
-- All Radix dialogs in SSX are opened from React state (no `<DialogTrigger>` element). Stock Radix focus-restore reads `document.activeElement` at content-mount time and frequently lands focus on `<body>` because button clicks don't always retain focus before a synchronously-opening dialog mounts. The shared `<DialogContent>` (`src/components/ui/dialog.tsx`) installs document-level `focusin` + `pointerdown` capture listeners (lazily, once) and remembers the most recent interactive element OUTSIDE any open dialog (`role="dialog"` ancestry filter). On close it focuses that element if it's still `isConnected`. Stale references (RTL cleanup, parent re-mount) are dropped on read. Do NOT replace this with `document.activeElement`-only logic, and do NOT add per-call `onCloseAutoFocus` handlers unless you genuinely need to redirect focus elsewhere — call `event.preventDefault()` in your handler if so. The contract is asserted by the focus-return tests in `src/test/ConfirmDialog.test.tsx`.
-- Every Radix dialog MUST render a real `<DialogDescription>` (visible or `className="sr-only"`) so screen readers announce descriptive prose along with the title on open. The shared `<DialogContent>` USED to render an empty sr-only `DialogPrimitive.Description` to silence Radix's missing-description console warning, but that broke the wiring: Radix gives both the empty fallback and the caller-rendered Description the SAME id from context, and per HTML `getElementById()` returns the FIRST matching element — i.e. the empty fallback — so AT users got an empty announcement even when the caller rendered a real description. The fallback was removed (Audit-3 follow-up P1#5). New dialogs must include a `<DialogDescription>`; the contract is pinned by `src/test/DialogAriaDescribedBy.test.tsx`. Every dialog's `aria-describedby` is asserted to point at an element whose `textContent` is non-empty.
-- SSX honors `prefers-reduced-motion: reduce` via a global rule in `src/styles/globals.css` that neutralises animation/transition durations to `0.01ms` and disables smooth scroll. Use `0.01ms` (NOT `0s`) so `transitionend` / `animationend` listeners still fire — Radix's focus-scope teardown depends on this. The rule covers `*, *::before, *::after`. The structural contract is asserted by `src/test/reducedMotion.test.ts`. Do not add component-level "fast-path" branches that bypass this rule; if a specific animation is essential (e.g. a loading spinner), add an `@media (prefers-reduced-motion: no-preference)` exception inside `globals.css` instead of inline overrides.
-- All right-click context menus MUST go through the shared `<ContextMenu>` primitive + `useContextMenu()` hook in `src/components/ContextMenu.tsx`. It accepts a typed `items: ContextMenuItem[]` array (selectable items with `label` / `onClick` / optional `icon` / `disabled` / `destructive`, or `{ separator: true }`), portals into `document.body`, clamps to the viewport, and ships with full keyboard support (Arrow/Home/End/Enter/Space/Escape, focus first enabled item on open, skip disabled in nav, close on outside click + window blur). The hook also exposes `onKeyDown` (opens the menu on `Shift+F10` or the dedicated `ContextMenu` key, anchored to the bottom-left of the trigger element) and `openAt(element)` for programmatic opens — wire `onKeyDown={ctx.onKeyDown}` on every focusable trigger so keyboard users have a WCAG 2.1.1 equivalent for right-click. When the menu closes, focus is restored to the element that had focus when it opened (snapshot taken at mount, validated with `isConnected` before restore). Never hand-roll a floating `role="menu"`. The "Copy SSH command" item on connection rows uses `buildSshCommand` from `src/lib/ssh-command.ts` — extend that helper rather than re-implementing the CLI string per call site.
-- Global keyboard shortcuts go through the `useGlobalShortcuts` hook (`src/hooks/useGlobalShortcuts.ts`). Combos are written as `mod+key` (with optional `shift`/`alt`); `mod` resolves to `Cmd` on macOS and `Ctrl` elsewhere. The hook auto-skips bindings while focus is in an input/textarea/contenteditable/`.xterm` instance — pass `{ handler, allowInTypingSurface: true }` only if a shortcut MUST fire while typing. App-wide bindings are registered in `App.tsx`; document any new ones in `docs/features.md` under "Global Keyboard Shortcuts".
-- Keyboard navigation across a flat list of rows (connections, credentials, future tunnel rows, etc.) goes through the shared `useRovingFocus` hook (`src/hooks/useRovingFocus.ts`). It implements the WAI-ARIA roving-tabindex pattern: exactly one row is `tabIndex=0`, ArrowUp/Down (and ArrowLeft/Right when `orientation: "grid"`) move focus and wrap, Home/End jump to ends, and Enter/Space invoke `onActivate`. Rows render with `role="listitem"` inside a `role="list"` container that owns the `onKeyDown`. The hook resolves the originating row by matching `event.target` against the registered item refs, so it never races React state and never intercepts keystrokes that originated on a nested control (action button, input, etc.).
-- Port number inputs MUST go through `parsePort` (`src/lib/port.ts`). Never use `parseInt(input) || 22`-style fallbacks — they silently corrupt mid-typing input and hide out-of-range values. Render port fields as `type="text" inputMode="numeric"` controlled by a string state, validate on change, and surface inline errors via `aria-invalid` + `aria-describedby` pointing at a `role="alert"` `<p>` next to the input. Block submit until every active port validates.
-- Rust commands return `Result<T, String>`. Frontend stores catch the rejection, stringify it into `error`, and rethrow on mutating actions (`add/update/delete/clone`) so form components can display it. `fetch*` actions swallow the error into state instead of rethrowing.
-- The Tauri CSP in `src-tauri/tauri.conf.json` is locked to `self` + `http://localhost:1420`. Adding outbound HTTP calls from the frontend requires updating the CSP.
-- Native OS dialogs (file picker, save dialog, message boxes) go through the shared `pickFile` helper in `src/lib/dialog.ts`, which lazy-imports `@tauri-apps/plugin-dialog`. The plugin is registered in `src-tauri/src/lib.rs` (`tauri_plugin_dialog::init()`) and gated by the `dialog:allow-open` permission in `src-tauri/capabilities/default.json`. Adding new dialog operations (save, message) requires extending the helper AND granting the matching permission (`dialog:allow-save`, `dialog:allow-message`, etc.) — never call the plugin directly from a component so tests can mock the helper.
-- The custom title bar (`src/components/TitleBar.tsx`) detects platform synchronously in the initial `useState` (NOT in a `useEffect`), otherwise the first render runs with the default `"macos"` value, the maximize-subscription effect's early-return fires, and the `onResized` listener never registers on Windows/Linux. The Maximize/Restore icon and `aria-label` are driven by an `onResized` subscription that re-queries `isMaximized()` — the resize payload only carries size, not the maximized flag. When dynamically importing `@tauri-apps/api/window` from inside an effect, do it ONCE per effect run and reuse the resolved module: two parallel `await import("@tauri-apps/api/window")` calls in the same effect tick can resolve to different module instances under Vitest, so consolidate the import into a single `run()` and call `getCurrentWindow()` once. Default Tauri window mocks live in `src/test/setup.ts` and expose their spies via `globalThis.__windowMocks` for tests to manipulate.
-- `<ConnectionForm>` and `<CredentialForm>` are mounted at the App root (just before the closing `</div>` in `App.tsx`), NOT inside the `view === "connections"` / `view === "credentials"` branches. This lets `Cmd+N` open the connection form from any view (Logs, Settings, Tunnels, Terminals) without first switching views and without losing an in-progress draft if the user navigates away mid-edit. The structural invariant is asserted in `src/test/AppFormMounting.test.ts` — if you intentionally re-introduce a per-view form (e.g. an inline editor) update those assertions in the same change.
-- Both forms run an unsaved-changes guard via `useUnsavedChangesGuard` (`src/hooks/useUnsavedChangesGuard.ts`). The forms baseline a `JSON.stringify` snapshot of every tracked field (including inline auth secrets) one tick after the dialog opens, recompute it each render, and intercept Cancel/Esc/click-outside via a wrapper `requestCloseDialog()` that opens a destructive `<ConfirmDialog>` ("Discard unsaved changes?") when dirty. Submit handlers MUST call `guard.markSaved()` immediately before `onOpenChange(false)` so the post-save close skips the prompt. When adding new editable state to either form, extend the corresponding `serializeFormState` / `serializeCredentialState` helper — fields not in the snapshot won't trigger the guard.
+## Code Reuse (Mandatory)
 
-## Adding a new Tauri command (end-to-end)
+- **Before writing new code**, check `src/utils/`, `src/lib/`, `src/hooks/` — import and reuse existing helpers
+- Extract any logic duplicated >5 lines to `src/utils/` immediately
+- No copy-paste logic across Rust crates or React components
+- Run a duplication check (`jscpd` or similar) before committing
 
-A feature that touches both layers typically needs edits in all of these spots:
+## Architecture Rules
 
-1. `src-tauri/src/models.rs` — add or extend the serde-annotated struct/enum.
-2. `src-tauri/src/commands/<area>.rs` — define the input struct and `#[tauri::command]` function using the `load_data` → mutate → `save_data` pattern. For SSH commands that need `AppHandle` or managed state, use `app: tauri::AppHandle` and `state: tauri::State<'_, SshState>` parameters.
-3. `src-tauri/src/lib.rs` — register the new command inside `tauri::generate_handler![...]`. If the command needs managed state, ensure it's added via `.manage()`.
-4. `src/types/index.ts` — mirror the Rust shape with matching snake_case field names.
-5. `src/store/use<Area>Store.ts` — add the action that calls `invoke("command_name", { ... })` and updates store state.
-6. `src/App.tsx` or the relevant component — wire the store action into the UI.
-7. Add backend tests in the command's `#[cfg(test)] mod tests` block and, if applicable, frontend tests under `src/test/`.
+- **Backend**: Single IPC handler crate, async-safe Rust (tokio), no global mutable state
+- **Frontend**: Feature-sliced by domain; Zustand slices per feature; no prop drilling >2 levels
+- **Separation**: Commands are pure (no UI logic); state is local-first
+- **Scalability**: Lazy-load React routes; keep wasm-bindgen surface minimal
 
-**Important:** Tests are mandatory, not optional. Run `npm test` and `cd src-tauri && cargo test` before considering any feature complete.
+## Review Checklist (apply to every change)
 
-## Recommended MCP server: Playwright
+1. **Logic**: No dead code paths; validate IPC payloads in both directions
+2. **Tests**: 80% coverage on IPC + critical paths; types match (`ts-rs` for Rust/TS sync)
+3. **Consistency**: Error shapes identical across frontend/backend; reference `docs/architecture.md`
+4. **Docs**: Update `docker/README.md` when `docker-compose.yml` changes; update relevant docs for any API/port/command change
 
-Playwright MCP gives Copilot browser automation for visually testing the React frontend. Since this is a Tauri app, you can use it against the Vite dev server at `http://localhost:1420` to inspect rendered UI, fill forms, and verify behavior interactively.
+## Key Conventions
 
-To add it to your Copilot CLI, run `/mcp add` inside a session and configure:
+- **UI primitives**: Always use shared components (`<Input>`, `<Button>`, `<Checkbox>`, `<PasswordInput>`, `<RadioGroup>`, `<ConfirmDialog>`, `<ContextMenu>`) — never hand-roll
+- **Accessibility**: Every icon-only button needs `aria-label`; decorative icons need `aria-hidden="true"`; every dialog needs `<DialogDescription>`; required fields need `aria-required="true"`
+- **Styling**: Use `text-muted-foreground-soft` for tertiary metadata (not `/70` opacity blends); use `text-destructive` for error text (never `--destructive` or hex)
+- **Forms**: Mount `<ConnectionForm>` / `<CredentialForm>` at App root (not per-view); use `useUnsavedChangesGuard`; call `guard.markSaved()` before closing on success
+- **Destructive actions**: Always go through `<ConfirmDialog>`; never hand-roll overlays
+- **Dialogs**: Opened from React state (no `<DialogTrigger>`); `<DialogContent>` handles focus-restore automatically
+- **Mutex hygiene**: Use `lock_recover(&m)` in worker threads; `lock().map_err(...)?` on the managed-state path
+- **Port inputs**: Use `parsePort` from `src/lib/port.ts` — never `parseInt(input) || 22`
+- **Keyboard shortcuts**: Register via `useGlobalShortcuts`; document new ones in `docs/features.md`
+- **Context menus**: Always use `<ContextMenu>` + `useContextMenu()`; wire `onKeyDown` on every trigger
+- **Reduced motion**: Handled globally in `globals.css` with `0.01ms` (not `0s`) — never add component-level bypasses
 
-```
-Name:    playwright
-Type:    local
-Command: npx
-Args:    @playwright/mcp@latest
-```
+## Playwright MCP (optional, for visual testing)
 
-Or add it directly to `~/.copilot/mcp-config.json`:
-
+Point at `http://localhost:1420` (run `npm run dev` first). Add to `~/.copilot/mcp-config.json`:
 ```json
-{
-  "mcpServers": {
-    "playwright": {
-      "command": "npx",
-      "args": ["@playwright/mcp@latest"]
-    }
-  }
-}
+{ "mcpServers": { "playwright": { "command": "npx", "args": ["@playwright/mcp@latest"] } } }
 ```
-
-Start the Vite dev server first with `npm run dev`, then Copilot can use Playwright to navigate `http://localhost:1420` and interact with the SSX UI.
