@@ -34,6 +34,7 @@ import { useCredentialsStore } from "./store/useCredentialsStore";
 import { useSettingsStore } from "./store/useSettingsStore";
 import { useGitSyncStore } from "./store/useGitSyncStore";
 import { useApplySettings } from "./hooks/useApplySettings";
+import { useGlobalShortcuts } from "./hooks/useGlobalShortcuts";
 import { invoke } from "./lib/tauri";
 import { takeScreenshot } from "./lib/screenshot";
 import { log as appLog } from "./lib/log";
@@ -559,6 +560,42 @@ function App() {
 
   const totalShellSessions = shellTabs.reduce((n, t) => n + t.panes.length, 0);
   const gitPending = gitSyncStatus.has_local_changes || gitSyncStatus.has_remote_changes;
+
+  const selectShellTabByIndex = React.useCallback(
+    (index: number) => {
+      const tab = shellTabsRef.current[index];
+      if (!tab) return;
+      setView("terminals");
+      setActiveTabId(tab.id);
+    },
+    [],
+  );
+
+  // Global keyboard shortcuts. We rebuild the map each render so the closures
+  // see fresh state without us needing to thread refs through every action.
+  useGlobalShortcuts({
+    "mod+k": () => setPickerOpen(true),
+    "mod+n": () => {
+      setView("connections");
+      setEditingConn(null);
+      setCloningConn(null);
+      setConnFormOpen(true);
+    },
+    "mod+,": () => setView("settings"),
+    "mod+w": () => {
+      if (view !== "terminals" || !activeTabId) return;
+      handleCloseTabRequest(activeTabId);
+    },
+    "mod+1": () => selectShellTabByIndex(0),
+    "mod+2": () => selectShellTabByIndex(1),
+    "mod+3": () => selectShellTabByIndex(2),
+    "mod+4": () => selectShellTabByIndex(3),
+    "mod+5": () => selectShellTabByIndex(4),
+    "mod+6": () => selectShellTabByIndex(5),
+    "mod+7": () => selectShellTabByIndex(6),
+    "mod+8": () => selectShellTabByIndex(7),
+    "mod+9": () => selectShellTabByIndex(8),
+  });
 
   return (
     <div className="flex flex-col h-screen bg-background text-foreground overflow-hidden">

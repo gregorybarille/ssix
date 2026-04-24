@@ -136,3 +136,26 @@ discoverable on the very first visit. Secondary actions (Transfer
 files, Clone, Edit, Delete) remain in a hover-revealed group to keep
 the list visually quiet, and that group also expands when any of its
 buttons receives keyboard focus (`focus-within`).
+
+## Global Keyboard Shortcuts
+
+SSX listens for a small set of platform shortcuts. `Mod` is `Cmd` on
+macOS and `Ctrl` everywhere else.
+
+| Shortcut       | Action                                                   |
+| -------------- | -------------------------------------------------------- |
+| `Mod+K`        | Open the Connect picker                                  |
+| `Mod+N`        | New connection (switches to Connections, opens the form) |
+| `Mod+,`        | Open Settings                                            |
+| `Mod+W`        | Close the active terminal tab (with confirm if live)     |
+| `Mod+1`…`Mod+9`| Switch to terminal tab N                                 |
+
+Shortcuts are suppressed when focus is in an input, textarea,
+`contenteditable` element, or anywhere inside an `xterm` instance, so
+typing in the shell or filling forms is never intercepted. To avoid
+swallowing well-known terminal readline bindings, combos that mix
+`Ctrl` and `Cmd` simultaneously are ignored.
+
+The terminal tab strip itself also implements its own WAI-ARIA
+keyboard model (Arrow keys, Home/End, Delete) — see the Terminals
+section.
