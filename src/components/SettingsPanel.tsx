@@ -14,6 +14,7 @@ import { Separator } from "./ui/separator";
 import { Switch } from "./ui/switch";
 import { RadioGroup, RadioGroupItem } from "./ui/radio-group";
 import { cn } from "@/lib/utils";
+import { Check } from "lucide-react";
 import { COLOR_VALUES } from "@/lib/colors";
 
 interface SettingsPanelProps {
@@ -51,8 +52,12 @@ export function SettingsPanel({ settings, onSave }: SettingsPanelProps) {
       </div>
       <Separator />
 
-      <div className="space-y-4">
-        <h3 className="text-sm font-medium">Font</h3>
+      <div
+        className="space-y-4"
+        role="group"
+        aria-labelledby="settings-font-heading"
+      >
+        <h3 id="settings-font-heading" className="text-sm font-medium">Font</h3>
 
         <div className="space-y-2">
           <Label htmlFor="font-family">Font Family</Label>
@@ -181,9 +186,17 @@ export function SettingsPanel({ settings, onSave }: SettingsPanelProps) {
 
       <Separator />
 
-      <div className="space-y-4">
-        <h3 className="text-sm font-medium">Layout</h3>
-        <p className="text-xs text-muted-foreground">
+      <div
+        className="space-y-4"
+        role="group"
+        aria-labelledby="settings-layout-heading"
+        aria-describedby="settings-layout-desc"
+      >
+        <h3 id="settings-layout-heading" className="text-sm font-medium">Layout</h3>
+        <p
+          id="settings-layout-desc"
+          className="text-xs text-muted-foreground"
+        >
           Choose how each list is displayed.
         </p>
         {([
@@ -230,8 +243,12 @@ export function SettingsPanel({ settings, onSave }: SettingsPanelProps) {
 
       <Separator />
 
-      <div className="space-y-4">
-        <h3 className="text-sm font-medium">Terminal</h3>
+      <div
+        className="space-y-4"
+        role="group"
+        aria-labelledby="settings-terminal-heading"
+      >
+        <h3 id="settings-terminal-heading" className="text-sm font-medium">Terminal</h3>
         {/*
           P1#1: classic xterm "selecting copies to clipboard" behavior is
           opt-in (default off). Defaulting it ON would silently overwrite
@@ -261,9 +278,17 @@ export function SettingsPanel({ settings, onSave }: SettingsPanelProps) {
 
       <Separator />
 
-      <div className="space-y-4">
-        <h3 className="text-sm font-medium">Git Sync</h3>
-        <p className="text-xs text-muted-foreground">
+      <div
+        className="space-y-4"
+        role="group"
+        aria-labelledby="settings-git-sync-heading"
+        aria-describedby="settings-git-sync-desc"
+      >
+        <h3 id="settings-git-sync-heading" className="text-sm font-medium">Git Sync</h3>
+        <p
+          id="settings-git-sync-desc"
+          className="text-xs text-muted-foreground"
+        >
           Sync a sanitized copy of your SSX config to a git checkout. Secrets remain excluded.
         </p>
 
@@ -307,13 +332,24 @@ export function SettingsPanel({ settings, onSave }: SettingsPanelProps) {
           + aria-live=polite is the standard "transient confirmation"
           pattern; visual color alone is invisible to AT and to color-
           blind users on this background.
+
+          Audit-3 follow-up P3#9: AGENTS.md mandates that color is
+          supplementary — every status row must carry a glyph (or
+          chip styling) so colorblind users get the same signal.
+          The Check icon is rendered with aria-hidden because the
+          status text already announces the meaning to AT.
         */}
         <span
           role="status"
           aria-live="polite"
-          className="text-sm text-green-500"
+          className="text-sm text-green-600 dark:text-green-400 inline-flex items-center gap-1.5"
         >
-          {saved ? "Settings saved!" : ""}
+          {saved && (
+            <>
+              <Check aria-hidden="true" className="h-3.5 w-3.5" />
+              Settings saved!
+            </>
+          )}
         </span>
       </div>
     </div>

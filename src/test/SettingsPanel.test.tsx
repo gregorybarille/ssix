@@ -161,4 +161,63 @@ describe("SettingsPanel", () => {
    * silently violated; the keyboard contract is inherited from the
    * Radix primitive we now compose.
    */
+
+  /*
+   * Audit-3 follow-up P2#6: each settings section is now a
+   * role=group with aria-labelledby pointing at its <h3> heading.
+   * Sighted users see a heading; AT users hear "Layout group" /
+   * "Git Sync group" when navigating into a section, which gives
+   * the cluster of selects/inputs the same parent context.
+   * Layout + Git Sync also carry aria-describedby so the intro
+   * <p> is announced as the group description.
+   */
+  it("wraps each settings cluster in a labelled group", () => {
+    render(
+      <SettingsPanel
+        settings={defaults}
+        onSave={vi.fn(async () => {})}
+      />,
+    );
+    // One labelled group per heading; the headings ('Font',
+    // 'Theme', 'Layout', 'Terminal', 'Git Sync', plus the color
+    // scheme) all expose accessible names.
+    expect(screen.getByRole("group", { name: /^font$/i })).toBeInTheDocument();
+    expect(screen.getByRole("group", { name: /^layout$/i })).toBeInTheDocument();
+    expect(
+      screen.getByRole("group", { name: /^terminal$/i }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("group", { name: /^git sync$/i }),
+    ).toBeInTheDocument();
+
+    // Layout has a description that reaches AT.
+    const layoutGroup = screen.getByRole("group", { name: /^layout$/i });
+    const describedBy = layoutGroup.getAttribute("aria-describedby");
+    expect(describedBy).toBeTruthy();
+    const desc = document.getElementById(describedBy!);
+    expect(desc?.textContent ?? "").toMatch(/how each list is displayed/i);
+  });
+
+  /*
+   * Audit-3 follow-up P3#9: the success status text used to rely on
+   * green color alone. Per AGENTS.md ('color is supplementary'),
+   * a leading checkmark glyph is required so colorblind users get
+   * the same affirmative cue. The Check icon is decorative
+   * (aria-hidden) because the role=status text already carries
+   * the meaning to AT.
+   */
+  it("renders a leading check glyph next to the saved-status text", async () => {
+    const onSave = vi.fn(async () => {});
+    render(<SettingsPanel settings={defaults} onSave={onSave} />);
+
+    fireEvent.click(screen.getByRole("button", { name: /save/i }));
+    await waitFor(() => expect(onSave).toHaveBeenCalled());
+
+    const status = await screen.findByRole("status");
+    expect(status).toHaveTextContent(/settings saved/i);
+    // The status row should contain a decorative SVG (the lucide
+    // Check glyph). svg elements are not exposed to AT but are
+    // present in the DOM.
+    expect(status.querySelector("svg")).not.toBeNull();
+  });
 });
