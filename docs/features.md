@@ -82,7 +82,8 @@ See [Git Sync](git-sync.md) for details.
 
 - backend logs
 - frontend logs
-- screenshot capture from the custom context menu
+- screenshot capture from the **Window actions** context menu (right-click
+  any empty area of the window, outside an input or terminal selection)
 
 ## SSH Key Utilities
 
@@ -194,6 +195,49 @@ tabindex pattern (via the shared `useRovingFocus` hook in
 - The focus ring uses the same `focus-visible:ring-2 ring-ring`
   treatment as the rest of the app, so keyboard users always see where
   they are.
+
+### Right-click context menus
+
+Right-clicking surfaces a contextual action menu rendered by the shared
+`ContextMenu` primitive in `src/components/ContextMenu.tsx`. The
+primitive is keyboard-navigable end-to-end:
+
+- Opens at the cursor position (clamped inside the viewport so it never
+  spawns off-screen) and moves keyboard focus to the first enabled item.
+- `↑` / `↓` move between items, `Home` / `End` jump to ends, disabled
+  items are skipped automatically.
+- `↵` / `Space` activate the focused item; `Esc`, click-outside, or the
+  window losing focus close the menu.
+- Items can be marked `destructive: true` to render in the destructive
+  color, or `disabled: true` to be skipped, and `{ separator: true }`
+  inserts a visual divider with `role="separator"`.
+
+Wired surfaces today:
+
+- **Connection rows / tiles** — Connect, Edit, Clone, Transfer files
+  (hidden for tunnels), separator, Copy SSH command, separator, Delete
+  (destructive). "Copy SSH command" builds a portable `ssh` invocation
+  from the connection + selected credential via `buildSshCommand` in
+  `src/lib/ssh-command.ts` and writes it to the clipboard.
+- **Terminal tabs** — Close tab, Close other tabs, Close tabs to the
+  right (the latter two are disabled when they would be no-ops).
+- **Window background** — Take screenshot (legacy behavior preserved
+  from the original screenshot-only menu, now powered by the same
+  primitive).
+
+For new consumers, prefer the `useContextMenu()` hook:
+
+```tsx
+const ctx = useContextMenu();
+return (
+  <>
+    <div onContextMenu={ctx.open}>right-click me</div>
+    {ctx.state && (
+      <ContextMenu position={ctx.state} onClose={ctx.close} items={...} />
+    )}
+  </>
+);
+```
 
 ## Global Keyboard Shortcuts
 

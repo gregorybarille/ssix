@@ -391,4 +391,67 @@ describe("TerminalTabs", () => {
     expect(screen.getByText("Split right")).toHaveAttribute("data-disabled");
     expect(screen.getByText("Split down")).toHaveAttribute("data-disabled");
   });
+
+  describe("right-click context menu", () => {
+    it("opens with Close / Close others / Close to the right on a tab", () => {
+      render(
+        <TerminalTabs {...defaultProps} tabs={mockTabs} activeTabId="t1" />,
+      );
+      fireEvent.contextMenu(screen.getByRole("tab", { name: /prod-server/ }));
+      expect(screen.getByRole("menu")).toBeInTheDocument();
+      expect(
+        screen.getByRole("menuitem", { name: "Close tab" }),
+      ).toBeInTheDocument();
+      expect(
+        screen.getByRole("menuitem", { name: /close other tabs/i }),
+      ).toBeInTheDocument();
+      expect(
+        screen.getByRole("menuitem", { name: /close tabs to the right/i }),
+      ).toBeInTheDocument();
+    });
+
+    it("Close tab invokes onCloseTab with the right id", async () => {
+      const onCloseTab = vi.fn();
+      render(
+        <TerminalTabs
+          {...defaultProps}
+          onCloseTab={onCloseTab}
+          tabs={mockTabs}
+          activeTabId="t1"
+        />,
+      );
+      fireEvent.contextMenu(screen.getByRole("tab", { name: /staging-server/ }));
+      fireEvent.click(screen.getByRole("menuitem", { name: "Close tab" }));
+      await waitFor(() => expect(onCloseTab).toHaveBeenCalledWith("t2"));
+    });
+
+    it("Close other tabs invokes onCloseTab once per other tab", async () => {
+      const onCloseTab = vi.fn();
+      render(
+        <TerminalTabs
+          {...defaultProps}
+          onCloseTab={onCloseTab}
+          tabs={mockTabs}
+          activeTabId="t2"
+        />,
+      );
+      fireEvent.contextMenu(screen.getByRole("tab", { name: /staging-server/ }));
+      fireEvent.click(
+        screen.getByRole("menuitem", { name: /close other tabs/i }),
+      );
+      await waitFor(() => expect(onCloseTab).toHaveBeenCalledTimes(2));
+      expect(onCloseTab).toHaveBeenCalledWith("t1");
+      expect(onCloseTab).toHaveBeenCalledWith("t3");
+    });
+
+    it("disables Close to the right on the last tab", () => {
+      render(
+        <TerminalTabs {...defaultProps} tabs={mockTabs} activeTabId="t3" />,
+      );
+      fireEvent.contextMenu(screen.getByRole("tab", { name: /dev-server/ }));
+      expect(
+        screen.getByRole("menuitem", { name: /close tabs to the right/i }),
+      ).toBeDisabled();
+    });
+  });
 });

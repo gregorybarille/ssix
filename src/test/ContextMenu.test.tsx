@@ -1,45 +1,142 @@
 import React from "react";
-import { render, screen, fireEvent } from "@testing-library/react";
+import { render, screen, fireEvent, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { ContextMenu } from "@/components/ContextMenu";
+import { ContextMenu, useContextMenu } from "@/components/ContextMenu";
 
-const defaultProps = {
-  position: { x: 100, y: 200 },
-  onClose: vi.fn(),
-  onTakeScreenshot: vi.fn(),
-};
+const baseItems = [
+  { label: "Connect", onClick: vi.fn() },
+  { label: "Edit", onClick: vi.fn() },
+  { separator: true } as const,
+  { label: "Delete", onClick: vi.fn(), destructive: true },
+];
 
-describe("ContextMenu", () => {
+describe("ContextMenu (generic primitive)", () => {
   beforeEach(() => {
     vi.clearAllMocks();
   });
 
-  it("renders the Take Screenshot item", () => {
-    render(<ContextMenu {...defaultProps} />);
-    expect(screen.getByRole("menuitem", { name: /take screenshot/i })).toBeInTheDocument();
+  it("renders all enabled items as menuitems and skips separators", () => {
+    render(
+      <ContextMenu position={{ x: 10, y: 10 }} onClose={vi.fn()} items={baseItems} />,
+    );
+    expect(screen.getAllByRole("menuitem")).toHaveLength(3);
+    expect(screen.getByRole("separator")).toBeInTheDocument();
   });
 
-  it("calls onTakeScreenshot and onClose when the item is clicked", () => {
-    render(<ContextMenu {...defaultProps} />);
-    fireEvent.click(screen.getByRole("menuitem", { name: /take screenshot/i }));
-    expect(defaultProps.onTakeScreenshot).toHaveBeenCalledOnce();
-    expect(defaultProps.onClose).toHaveBeenCalledOnce();
+  it("invokes the item's onClick and closes when clicked", async () => {
+    const onClose = vi.fn();
+    const onConnect = vi.fn();
+    render(
+      <ContextMenu
+        position={{ x: 10, y: 10 }}
+        onClose={onClose}
+        items={[{ label: "Connect", onClick: onConnect }]}
+      />,
+    );
+    fireEvent.click(screen.getByRole("menuitem", { name: "Connect" }));
+    expect(onClose).toHaveBeenCalledOnce();
+    await waitFor(() => expect(onConnect).toHaveBeenCalledOnce());
   });
 
-  it("calls onClose when Escape is pressed", () => {
-    render(<ContextMenu {...defaultProps} />);
+  it("closes on Escape", () => {
+    const onClose = vi.fn();
+    render(
+      <ContextMenu position={{ x: 10, y: 10 }} onClose={onClose} items={baseItems} />,
+    );
     fireEvent.keyDown(document, { key: "Escape" });
-    expect(defaultProps.onClose).toHaveBeenCalledOnce();
+    expect(onClose).toHaveBeenCalledOnce();
   });
 
-  it("calls onClose when clicking outside the menu", () => {
+  it("closes on outside click", () => {
+    const onClose = vi.fn();
     render(
       <div>
-        <ContextMenu {...defaultProps} />
+        <ContextMenu position={{ x: 10, y: 10 }} onClose={onClose} items={baseItems} />
         <button data-testid="outside">outside</button>
-      </div>
+      </div>,
     );
     fireEvent.mouseDown(screen.getByTestId("outside"));
-    expect(defaultProps.onClose).toHaveBeenCalledOnce();
+    expect(onClose).toHaveBeenCalledOnce();
+  });
+
+  it("moves focus with ArrowDown / ArrowUp and skips disabled items", async () => {
+    const user = userEvent.setup();
+    const items = [
+      { label: "Connect", onClick: vi.fn() },
+      { label: "Edit", onClick: vi.fn(), disabled: true },
+      { label: "Delete", onClick: vi.fn() },
+    ];
+    render(
+      <ContextMenu position={{ x: 10, y: 10 }} onClose={vi.fn()} items={items} />,
+    );
+    // First enabled item should be focused on mount.
+    await waitFor(() =>
+      expect(screen.getByRole("menuitem", { name: "Connect" })).toHaveFocus(),
+    );
+    await user.keyboard("{ArrowDown}");
+    // Edit is disabled — focus jumps over it to Delete.
+    expect(screen.getByRole("menuitem", { name: "Delete" })).toHaveFocus();
+    await user.keyboard("{ArrowDown}");
+    // Wraps back to Connect.
+    expect(screen.getByRole("menuitem", { name: "Connect" })).toHaveFocus();
+  });
+
+  it("renders destructive items with the destructive color class", () => {
+    render(
+      <ContextMenu
+        position={{ x: 10, y: 10 }}
+        onClose={vi.fn()}
+        items={[{ label: "Delete", onClick: vi.fn(), destructive: true }]}
+      />,
+    );
+    expect(screen.getByRole("menuitem", { name: "Delete" })).toHaveClass(
+      "text-destructive",
+    );
+  });
+
+  it("disabled items don't fire onClick when clicked", () => {
+    const onClick = vi.fn();
+    render(
+      <ContextMenu
+        position={{ x: 10, y: 10 }}
+        onClose={vi.fn()}
+        items={[{ label: "Edit", onClick, disabled: true }]}
+      />,
+    );
+    fireEvent.click(screen.getByRole("menuitem", { name: "Edit" }));
+    expect(onClick).not.toHaveBeenCalled();
+  });
+});
+
+describe("useContextMenu", () => {
+  function Harness() {
+    const ctx = useContextMenu();
+    return (
+      <>
+        <div data-testid="trigger" onContextMenu={ctx.open}>
+          right-click me
+        </div>
+        {ctx.state && (
+          <ContextMenu
+            position={ctx.state}
+            onClose={ctx.close}
+            items={[{ label: "Hello", onClick: vi.fn() }]}
+          />
+        )}
+      </>
+    );
+  }
+
+  it("opens on contextmenu and closes via Escape", () => {
+    render(<Harness />);
+    expect(screen.queryByRole("menu")).not.toBeInTheDocument();
+    fireEvent.contextMenu(screen.getByTestId("trigger"), {
+      clientX: 50,
+      clientY: 60,
+    });
+    expect(screen.getByRole("menu")).toBeInTheDocument();
+    fireEvent.keyDown(document, { key: "Escape" });
+    expect(screen.queryByRole("menu")).not.toBeInTheDocument();
   });
 });

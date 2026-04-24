@@ -19,6 +19,11 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "./ui/dropdown-menu";
+import {
+  ContextMenu,
+  useContextMenu,
+  type ContextMenuItem,
+} from "./ContextMenu";
 
 export interface TerminalSession {
   /** Unique ID returned by ssh_connect, or a synthetic ID for failed sessions. */
@@ -106,6 +111,40 @@ export function TerminalTabs({
   const [menuOpen, setMenuOpen] = useState(false);
   const tabRefs = React.useRef(new Map<string, HTMLButtonElement>());
 
+  // Right-click context menu for terminal tabs.
+  const ctx = useContextMenu();
+  const [ctxTabId, setCtxTabId] = React.useState<string | null>(null);
+  const openTabContextMenu = (e: React.MouseEvent, tabId: string) => {
+    setCtxTabId(tabId);
+    ctx.open(e);
+  };
+  const buildTabItems = (tabId: string): ContextMenuItem[] => {
+    const idx = tabs.findIndex((t) => t.id === tabId);
+    const tab = tabs[idx];
+    if (!tab) return [];
+    const otherTabs = tabs.filter((t) => t.id !== tabId);
+    const tabsToRight = tabs.slice(idx + 1);
+    return [
+      {
+        label: "Close tab",
+        icon: <X className="h-3.5 w-3.5" />,
+        onClick: () => onCloseTab(tabId),
+      },
+      {
+        label: "Close other tabs",
+        icon: <X className="h-3.5 w-3.5" />,
+        disabled: otherTabs.length === 0,
+        onClick: () => otherTabs.forEach((t) => onCloseTab(t.id)),
+      },
+      {
+        label: "Close tabs to the right",
+        icon: <X className="h-3.5 w-3.5" />,
+        disabled: tabsToRight.length === 0,
+        onClick: () => tabsToRight.forEach((t) => onCloseTab(t.id)),
+      },
+    ];
+  };
+
   const focusTabAt = (index: number) => {
     const wrapped = (index + tabs.length) % tabs.length;
     const id = tabs[wrapped]?.id;
@@ -172,6 +211,7 @@ export function TerminalTabs({
               )}
               style={color ? { borderLeft: `3px solid ${color}` } : undefined}
               onClick={() => onSelectTab(tab.id)}
+              onContextMenu={(e) => openTabContextMenu(e, tab.id)}
               onKeyDown={(e) => handleTabKeyDown(e, idx)}
             >
               {tab.panes.some((p) => p.error) && (
@@ -315,6 +355,17 @@ export function TerminalTabs({
           );
         })}
       </div>
+      {ctx.state && ctxTabId && (
+        <ContextMenu
+          position={ctx.state}
+          onClose={() => {
+            ctx.close();
+            setCtxTabId(null);
+          }}
+          ariaLabel="Tab actions"
+          items={buildTabItems(ctxTabId)}
+        />
+      )}
     </div>
   );
 }

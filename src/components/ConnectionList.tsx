@@ -12,10 +12,14 @@ import {
   ChevronRight,
   Play,
   ArrowUpDown,
+  Terminal as TerminalIcon,
+  Clipboard,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { getColorHex } from "@/lib/colors";
 import { useRovingFocus } from "@/hooks/useRovingFocus";
+import { ContextMenu, useContextMenu, type ContextMenuItem } from "./ContextMenu";
+import { buildSshCommand } from "@/lib/ssh-command";
 
 interface ConnectionListProps {
   connections: Connection[];
@@ -112,6 +116,65 @@ export function ConnectionList({
     orientation: layout === "tile" ? "grid" : "vertical",
   });
 
+  // Right-click context menu for any connection row/tile. We track which
+  // connection the menu was opened for so the items list can close over the
+  // correct connection without re-creating itself for every row on every
+  // render.
+  const ctx = useContextMenu();
+  const [ctxConn, setCtxConn] = React.useState<Connection | null>(null);
+  const openContextMenu = (e: React.MouseEvent, conn: Connection) => {
+    setCtxConn(conn);
+    ctx.open(e);
+  };
+  const buildItems = (conn: Connection): ContextMenuItem[] => {
+    const items: ContextMenuItem[] = [];
+    if (onConnect) {
+      items.push({
+        label: "Connect",
+        icon: <TerminalIcon className="h-3.5 w-3.5" />,
+        onClick: () => onConnect(conn),
+      });
+    }
+    items.push({
+      label: "Edit",
+      icon: <Edit className="h-3.5 w-3.5" />,
+      onClick: () => onEdit(conn),
+    });
+    items.push({
+      label: "Clone",
+      icon: <Copy className="h-3.5 w-3.5" />,
+      onClick: () => onClone(conn),
+    });
+    if (onScp && conn.type !== "port_forward") {
+      items.push({
+        label: "Transfer files",
+        icon: <ArrowUpDown className="h-3.5 w-3.5" />,
+        onClick: () => onScp(conn),
+      });
+    }
+    items.push({ separator: true });
+    items.push({
+      label: "Copy SSH command",
+      icon: <Clipboard className="h-3.5 w-3.5" />,
+      onClick: () => {
+        const cmd = buildSshCommand(conn, credentials);
+        // Best-effort; clipboard is async but we don't need to wait.
+        navigator.clipboard?.writeText(cmd).catch(() => {
+          /* swallow — surfacing this would require a toast plumbed
+             from App.tsx; the menu has already closed by now. */
+        });
+      },
+    });
+    items.push({ separator: true });
+    items.push({
+      label: "Delete",
+      icon: <Trash2 className="h-3.5 w-3.5" />,
+      destructive: true,
+      onClick: () => onDelete(conn.id),
+    });
+    return items;
+  };
+
   if (connections.length === 0) {
     return (
       <div className="flex flex-col items-center justify-center py-12 text-muted-foreground">
@@ -124,6 +187,7 @@ export function ConnectionList({
 
   if (layout === "tile") {
     return (
+      <>
       <div
         className="grid gap-3"
         data-testid="connection-grid"
@@ -153,6 +217,7 @@ export function ConnectionList({
                   : undefined
               }
               onClick={() => onSelect?.(conn)}
+              onContextMenu={(e) => openContextMenu(e, conn)}
             >
               <div className="flex items-start justify-between gap-2">
                 <div className="flex items-center gap-2 min-w-0">
@@ -255,10 +320,23 @@ export function ConnectionList({
           );
         })}
       </div>
+      {ctx.state && ctxConn && (
+        <ContextMenu
+          position={ctx.state}
+          onClose={() => {
+            ctx.close();
+            setCtxConn(null);
+          }}
+          ariaLabel={`Actions for ${ctxConn.name}`}
+          items={buildItems(ctxConn)}
+        />
+      )}
+      </>
     );
   }
 
   return (
+    <>
     <div
       className="space-y-1"
       role="list"
@@ -282,6 +360,7 @@ export function ConnectionList({
             )}
             style={color ? { borderLeft: `3px solid ${color}` } : undefined}
             onClick={() => onSelect?.(conn)}
+            onContextMenu={(e) => openContextMenu(e, conn)}
           >
             <div className="flex-shrink-0">
               <ConnIcon conn={conn} />
@@ -383,5 +462,17 @@ export function ConnectionList({
         );
       })}
     </div>
+    {ctx.state && ctxConn && (
+      <ContextMenu
+        position={ctx.state}
+        onClose={() => {
+          ctx.close();
+          setCtxConn(null);
+        }}
+        ariaLabel={`Actions for ${ctxConn.name}`}
+        items={buildItems(ctxConn)}
+      />
+    )}
+    </>
   );
 }

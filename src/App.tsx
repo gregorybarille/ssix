@@ -801,7 +801,14 @@ function App() {
         <ContextMenu
           position={contextMenu}
           onClose={() => setContextMenu(null)}
-          onTakeScreenshot={handleTakeScreenshot}
+          ariaLabel="Window actions"
+          items={[
+            {
+              label: "Take screenshot",
+              icon: <span aria-hidden="true">📸</span>,
+              onClick: handleTakeScreenshot,
+            },
+          ]}
         />
       )}
 
