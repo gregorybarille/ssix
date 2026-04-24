@@ -231,9 +231,19 @@ export function SettingsPanel({ settings, onSave }: SettingsPanelProps) {
         <Button onClick={handleSave} disabled={isSaving}>
           {isSaving ? "Saving..." : "Save Settings"}
         </Button>
-        {saved && (
-          <span className="text-sm text-green-500">Settings saved!</span>
-        )}
+        {/*
+          P2-A11: announce save success to screen readers. role=status
+          + aria-live=polite is the standard "transient confirmation"
+          pattern; visual color alone is invisible to AT and to color-
+          blind users on this background.
+        */}
+        <span
+          role="status"
+          aria-live="polite"
+          className="text-sm text-green-500"
+        >
+          {saved ? "Settings saved!" : ""}
+        </span>
       </div>
     </div>
   );
