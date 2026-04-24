@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import type { KeyboardEvent as ReactKeyboardEvent } from "react";
 
 /**
  * Implements roving-tabindex keyboard navigation across a flat list of
@@ -81,7 +82,7 @@ export function useRovingFocus({
   );
 
   const onKeyDown = useCallback(
-    (e: React.KeyboardEvent) => {
+    (e: ReactKeyboardEvent<HTMLElement>) => {
       // Don't intercept keys typed into nested controls (inputs, buttons).
       // Resolve the originating item by matching the event target against
       // every registered item ref — relying on `focusedIndex` here would
