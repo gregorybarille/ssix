@@ -190,8 +190,10 @@ describe("TunnelsView", () => {
       <TunnelsView {...defaultProps} layout="list" onLayoutChange={onLayoutChange} />,
     );
     // The List button is aria-pressed="true" for layout="list"
-    expect(screen.getByTitle("List")).toHaveAttribute("aria-pressed", "true");
-    fireEvent.click(screen.getByTitle("Tiles"));
+    expect(
+      screen.getByRole("button", { name: "List view" }),
+    ).toHaveAttribute("aria-pressed", "true");
+    fireEvent.click(screen.getByRole("button", { name: "Tile view" }));
     expect(onLayoutChange).toHaveBeenCalledWith("tile");
   });
 

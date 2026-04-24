@@ -23,6 +23,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "./ui/tabs";
 import { InstallKeyDialog } from "./InstallKeyDialog";
 import { TagInput } from "./ui/tag-input";
 import { RadioGroup, RadioGroupItem } from "./ui/radio-group";
+import { Checkbox } from "./ui/checkbox";
 import { COLOR_VALUES } from "@/lib/colors";
 import { parsePort } from "@/lib/port";
 import { UploadCloud } from "lucide-react";
@@ -866,12 +867,21 @@ export function ConnectionForm({
                       onChange={(e) => setInlinePassword(e.target.value)}
                     />
                   </div>
-                  <label className="flex items-center gap-2 text-xs text-muted-foreground cursor-pointer select-none">
-                    <input
-                      type="checkbox"
+                  {/*
+                    Audit-3 follow-up P1#2: replaced the bare
+                    <input type="checkbox" className="accent-primary">
+                    with the shared <Checkbox> primitive (Radix-
+                    backed). The native checkbox bypassed the
+                    focus-visible ring, theme tokens, and rendered
+                    differently on every OS — same contract pinned
+                    by AGENTS.md and previously fixed in ScpDialog.
+                  */}
+                  <div className="flex items-center gap-2">
+                    <Checkbox
+                      id="conn-save-credential-password"
                       checked={saveCredential}
-                      onChange={(e) => {
-                        const checked = e.target.checked;
+                      onCheckedChange={(v) => {
+                        const checked = v === true;
                         setSaveCredential(checked);
                         if (!checked) {
                           setInlineCredentialName("");
@@ -879,10 +889,14 @@ export function ConnectionForm({
                           setInlineCredentialName(defaultCredentialName("password"));
                         }
                       }}
-                      className="accent-primary"
                     />
-                    Save as a named credential (visible in the Credentials list)
-                  </label>
+                    <Label
+                      htmlFor="conn-save-credential-password"
+                      className="text-xs text-muted-foreground font-normal cursor-pointer select-none"
+                    >
+                      Save as a named credential (visible in the Credentials list)
+                    </Label>
+                  </div>
                   {saveCredential && (
                     <div className="space-y-2">
                       <Label htmlFor="password-cred-name">
@@ -926,12 +940,12 @@ export function ConnectionForm({
                       onChange={(e) => setInlinePassphrase(e.target.value)}
                     />
                   </div>
-                  <label className="flex items-center gap-2 text-xs text-muted-foreground cursor-pointer select-none">
-                    <input
-                      type="checkbox"
+                  <div className="flex items-center gap-2">
+                    <Checkbox
+                      id="conn-save-credential-key"
                       checked={saveCredential}
-                      onChange={(e) => {
-                        const checked = e.target.checked;
+                      onCheckedChange={(v) => {
+                        const checked = v === true;
                         setSaveCredential(checked);
                         if (!checked) {
                           setInlineCredentialName("");
@@ -939,10 +953,14 @@ export function ConnectionForm({
                           setInlineCredentialName(defaultCredentialName("ssh_key"));
                         }
                       }}
-                      className="accent-primary"
                     />
-                    Save as a named credential (visible in the Credentials list)
-                  </label>
+                    <Label
+                      htmlFor="conn-save-credential-key"
+                      className="text-xs text-muted-foreground font-normal cursor-pointer select-none"
+                    >
+                      Save as a named credential (visible in the Credentials list)
+                    </Label>
+                  </div>
                   {saveCredential && (
                     <div className="space-y-2">
                       <Label htmlFor="ssh-cred-name">

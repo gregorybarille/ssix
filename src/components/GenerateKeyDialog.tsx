@@ -157,7 +157,28 @@ export function GenerateKeyDialog({
                 placeholder="/home/me/.ssh/id_ed25519_custom"
                 value={customPath}
                 onChange={(e) => setCustomPath(e.target.value)}
+                aria-required="true"
+                aria-invalid={!!error && !customPath.trim()}
+                aria-describedby="key-custom-path-hint"
               />
+              {/*
+                Audit-3 follow-up P3#7: when 'Custom path' is
+                selected, the visible field has no instructional
+                copy beyond the placeholder. The placeholder
+                disappears as soon as the user types, leaving AT
+                users with no context about what file gets
+                written. The hint is always present so the
+                aria-describedby wiring is unconditional.
+              */}
+              <p
+                id="key-custom-path-hint"
+                className="text-xs text-muted-foreground"
+              >
+                Absolute path for the private key. SSX writes both
+                this file (mode 600) and a sibling{" "}
+                <code>.pub</code> file (mode 644). The directory
+                must already exist.
+              </p>
             </div>
           )}
 

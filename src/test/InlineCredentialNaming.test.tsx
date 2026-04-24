@@ -60,7 +60,7 @@ describe("ConnectionForm inline credential naming", () => {
     });
 
     fireEvent.click(
-      screen.getByLabelText(/Save as a named credential/i, { selector: "input" })
+      screen.getByLabelText(/Save as a named credential/i)
     );
 
     const nameInput = await screen.findByLabelText(/credential name \*/i);
@@ -116,7 +116,7 @@ describe("ConnectionForm inline credential naming", () => {
       target: { value: "s3cr3t" },
     });
     fireEvent.click(
-      screen.getByLabelText(/Save as a named credential/i, { selector: "input" })
+      screen.getByLabelText(/Save as a named credential/i)
     );
 
     fireEvent.click(screen.getByRole("button", { name: /create/i }));

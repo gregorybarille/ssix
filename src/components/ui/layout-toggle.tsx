@@ -10,6 +10,14 @@ interface LayoutToggleProps {
 }
 
 export function LayoutToggle({ value, onChange, className }: LayoutToggleProps) {
+  /*
+   * Audit-3 follow-up P1#1: each toggle is icon-only. title= is
+   * not exposed reliably to AT (and not at all on touch devices),
+   * so an aria-label is required for the buttons to have an
+   * accessible name beyond 'button, pressed'. The decorative
+   * lucide glyph carries aria-hidden so AT does not double-
+   * announce 'list, list view'.
+   */
   return (
     <div
       role="group"
@@ -22,30 +30,34 @@ export function LayoutToggle({ value, onChange, className }: LayoutToggleProps) 
       <button
         type="button"
         aria-pressed={value === "list"}
-        title="List"
+        aria-label="List view"
+        title="List view"
         onClick={() => onChange("list")}
         className={cn(
           "px-2 py-1 rounded-sm transition-colors",
+          "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
           value === "list"
             ? "bg-accent text-foreground"
             : "text-muted-foreground hover:text-foreground",
         )}
       >
-        <List className="h-3.5 w-3.5" />
+        <List aria-hidden="true" className="h-3.5 w-3.5" />
       </button>
       <button
         type="button"
         aria-pressed={value === "tile"}
-        title="Tiles"
+        aria-label="Tile view"
+        title="Tile view"
         onClick={() => onChange("tile")}
         className={cn(
           "px-2 py-1 rounded-sm transition-colors",
+          "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
           value === "tile"
             ? "bg-accent text-foreground"
             : "text-muted-foreground hover:text-foreground",
         )}
       >
-        <LayoutGrid className="h-3.5 w-3.5" />
+        <LayoutGrid aria-hidden="true" className="h-3.5 w-3.5" />
       </button>
     </div>
   );
