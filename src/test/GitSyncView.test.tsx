@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { render, screen, fireEvent, waitFor, within } from "@testing-library/react";
 import { GitSyncView } from "@/components/GitSyncView";
 import { useGitSyncStore } from "@/store/useGitSyncStore";
 
@@ -39,5 +39,61 @@ describe("GitSyncView", () => {
     expect(screen.getByDisplayValue(/diff --git/)).toBeInTheDocument();
     expect(screen.getByPlaceholderText(/sync ssx config snapshot/i)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /sync/i })).toBeInTheDocument();
+  });
+
+  it("requires confirmation before pulling from the remote", async () => {
+    const pullRemote = vi.fn().mockResolvedValue(undefined);
+    useGitSyncStore.setState({ pullRemote });
+    render(<GitSyncView />);
+
+    fireEvent.click(screen.getByRole("button", { name: /^pull$/i }));
+    // The store action should NOT have fired yet — only the dialog opened.
+    expect(pullRemote).not.toHaveBeenCalled();
+
+    // Confirm dialog should be present with cancel focused (not pull).
+    const dialog = await screen.findByRole("dialog");
+    expect(dialog).toHaveTextContent(/pull from remote/i);
+    expect(document.activeElement).toHaveTextContent(/cancel/i);
+
+    // Confirm; the store action runs exactly once and the dialog closes.
+    fireEvent.click(
+      screen.getAllByRole("button", { name: /^pull$/i }).slice(-1)[0],
+    );
+    await waitFor(() => expect(pullRemote).toHaveBeenCalledTimes(1));
+  });
+
+  it("requires confirmation before pushing to the remote", async () => {
+    const pushRemote = vi.fn().mockResolvedValue(undefined);
+    useGitSyncStore.setState({ pushRemote });
+    render(<GitSyncView />);
+
+    fireEvent.click(screen.getByRole("button", { name: /^push$/i }));
+    expect(pushRemote).not.toHaveBeenCalled();
+
+    const dialog = await screen.findByRole("dialog");
+    expect(dialog).toHaveTextContent(/push to remote/i);
+    expect(document.activeElement).toHaveTextContent(/cancel/i);
+
+    fireEvent.click(
+      screen.getAllByRole("button", { name: /^push$/i }).slice(-1)[0],
+    );
+    await waitFor(() => expect(pushRemote).toHaveBeenCalledTimes(1));
+  });
+
+  it("cancelling the pull confirmation does not invoke the store action", async () => {
+    const pullRemote = vi.fn().mockResolvedValue(undefined);
+    useGitSyncStore.setState({ pullRemote });
+    render(<GitSyncView />);
+
+    fireEvent.click(screen.getByRole("button", { name: /^pull$/i }));
+    const dialog = await screen.findByRole("dialog");
+    fireEvent.click(
+      // The cancel button is the only "Cancel" labelled control.
+      within(dialog).getByRole("button", { name: /cancel/i }),
+    );
+    await waitFor(() =>
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
+    );
+    expect(pullRemote).not.toHaveBeenCalled();
   });
 });

@@ -3,11 +3,14 @@ import { Button } from "./ui/button";
 import { Separator } from "./ui/separator";
 import { Badge } from "./ui/badge";
 import { Textarea } from "./ui/textarea";
+import { ConfirmDialog } from "./ConfirmDialog";
 import { useGitSyncStore } from "@/store/useGitSyncStore";
 import { GitBranch, RefreshCcw, Download, Upload, FileDiff, WandSparkles } from "lucide-react";
 
 export function GitSyncView() {
   const [commitMessage, setCommitMessage] = React.useState("");
+  const [confirmPullOpen, setConfirmPullOpen] = React.useState(false);
+  const [confirmPushOpen, setConfirmPushOpen] = React.useState(false);
   const {
     status,
     diff,
@@ -44,11 +47,11 @@ export function GitSyncView() {
             <RefreshCcw className="h-4 w-4 mr-1" />
             Fetch
           </Button>
-          <Button size="sm" variant="outline" onClick={() => void pullRemote()} disabled={isLoading || !status.configured}>
+          <Button size="sm" variant="outline" onClick={() => setConfirmPullOpen(true)} disabled={isLoading || !status.configured}>
             <Download className="h-4 w-4 mr-1" />
             Pull
           </Button>
-          <Button size="sm" onClick={() => void pushRemote()} disabled={isLoading || !status.configured}>
+          <Button size="sm" onClick={() => setConfirmPushOpen(true)} disabled={isLoading || !status.configured}>
             <Upload className="h-4 w-4 mr-1" />
             Push
           </Button>
@@ -160,6 +163,45 @@ export function GitSyncView() {
           </div>
         )}
       </div>
+
+      {/*
+       * Pull and Push touch local OR remote git history with no
+       * built-in undo. Gate them behind a confirmation so a misclick
+       * on the Git Sync toolbar can't silently fast-forward, merge,
+       * or overwrite. Pull is "default" variant (potentially data-
+       * losing locally if there are uncommitted changes); Push is
+       * "destructive" because it mutates the shared remote.
+       */}
+      <ConfirmDialog
+        open={confirmPullOpen}
+        onOpenChange={setConfirmPullOpen}
+        title="Pull from remote?"
+        description={
+          <>
+            This fetches{status.remote ? ` ${status.remote}` : " the remote"}
+            {status.branch ? ` and merges into ${status.branch}` : ""}. Local
+            uncommitted changes in the sanitized snapshot may be overwritten.
+          </>
+        }
+        confirmLabel="Pull"
+        onConfirm={() => pullRemote()}
+      />
+      <ConfirmDialog
+        open={confirmPushOpen}
+        onOpenChange={setConfirmPushOpen}
+        title="Push to remote?"
+        description={
+          <>
+            This publishes your local commits
+            {status.remote ? ` to ${status.remote}` : ""}
+            {status.branch ? ` (${status.branch})` : ""}. Other clones of this
+            repository will pick up the change on their next pull.
+          </>
+        }
+        confirmLabel="Push"
+        variant="destructive"
+        onConfirm={() => pushRemote()}
+      />
     </div>
   );
 }
