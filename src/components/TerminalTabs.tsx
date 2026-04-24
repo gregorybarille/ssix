@@ -211,6 +211,19 @@ export function TerminalTabs({
           const splitSuffix =
             tab.mode !== "single" ? ` (${tab.mode} split)` : "";
           const failureSuffix = hasFailure ? " — connection failed" : "";
+          /*
+           * Audit-3 follow-up P2#5: append the keyboard close hint
+           * to the active tab's accessible name. The visible "x"
+           * is mouse-only (aria-hidden because nesting an
+           * interactive element inside a role="tab" button is
+           * invalid HTML), so AT users have no way to discover
+           * Delete / Cmd+W from the visible UI. Only annotate the
+           * focused/active tab to avoid spamming the announcement
+           * for every tab in the list.
+           */
+          const closeHintSuffix = isActive
+            ? " — press Delete to close"
+            : "";
           return (
             <button
               key={tab.id}
@@ -221,7 +234,7 @@ export function TerminalTabs({
               role="tab"
               type="button"
               aria-selected={isActive}
-              aria-label={`Terminal ${label}${splitSuffix}${failureSuffix}`}
+              aria-label={`Terminal ${label}${splitSuffix}${failureSuffix}${closeHintSuffix}`}
               tabIndex={isActive ? 0 : -1}
               className={cn(
                 "group flex items-center gap-1.5 px-3 py-1.5 text-xs cursor-pointer border-r border-border shrink-0 max-w-[200px] transition-colors text-left",

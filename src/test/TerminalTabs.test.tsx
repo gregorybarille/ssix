@@ -482,15 +482,56 @@ describe("TerminalTabs", () => {
           {...defaultProps}
         />,
       );
-      // Healthy tab keeps the plain label.
+      // Healthy tab keeps the plain label (the active tab also gets
+      // the close-hint suffix — see the close-discoverability
+      // describe block below).
       expect(
-        screen.getByRole("tab", { name: "Terminal prod-server" }),
+        screen.getByRole("tab", {
+          name: /^Terminal prod-server( — press Delete to close)?$/,
+        }),
       ).toBeInTheDocument();
       // Failing tab announces the failure state.
       expect(
         screen.getByRole("tab", {
           name: /Terminal staging-server.*connection failed/i,
         }),
+      ).toBeInTheDocument();
+    });
+  });
+
+  /*
+   * Audit-3 follow-up P2#5: the visible "x" close affordance is
+   * mouse-only (aria-hidden, since nesting an interactive element
+   * inside a role="tab" button is invalid HTML). The keyboard
+   * shortcuts (Delete / Cmd+W) had no equivalent discoverability
+   * for AT users. The active tab now appends "— press Delete to
+   * close" to its aria-label so screen-reader users learn the
+   * shortcut without needing external docs. Only the active tab
+   * gets the suffix to avoid spamming every tab in the announcement.
+   */
+  describe("a11y: keyboard close-shortcut discoverability", () => {
+    it("appends the close hint to the active tab's aria-label only", () => {
+      const tabs: TerminalTab[] = [
+        tab("t1", [{ sessionId: "sess-1", connectionName: "alpha" }]),
+        tab("t2", [{ sessionId: "sess-2", connectionName: "bravo" }]),
+      ];
+      render(
+        <TerminalTabs
+          tabs={tabs}
+          activeTabId="t1"
+          connections={[mockConn]}
+          {...defaultProps}
+        />,
+      );
+      // Active tab carries the hint.
+      expect(
+        screen.getByRole("tab", {
+          name: "Terminal alpha — press Delete to close",
+        }),
+      ).toBeInTheDocument();
+      // Inactive tab does NOT carry the hint.
+      expect(
+        screen.getByRole("tab", { name: "Terminal bravo" }),
       ).toBeInTheDocument();
     });
   });
