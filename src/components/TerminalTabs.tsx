@@ -278,7 +278,7 @@ export function TerminalTabs({
               variant="ghost"
               size="icon"
               className="h-7 w-auto px-1 mx-1 shrink-0"
-              title="New connection"
+              title="Open a new tab or split"
               aria-label="Open a new tab or split"
             >
               <Plus className="h-3.5 w-3.5" aria-hidden="true" />

@@ -79,7 +79,7 @@ describe("TerminalTabs", () => {
         activeTabId="t1"
       />,
     );
-    expect(screen.getByTitle("New connection")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Open a new tab or split" })).toBeInTheDocument();
   });
 
   it("calls onSelectTab when clicking a tab", () => {
@@ -165,7 +165,7 @@ describe("TerminalTabs", () => {
         activeTabId={null}
       />,
     );
-    expect(screen.getByTitle("New connection")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Open a new tab or split" })).toBeInTheDocument();
   });
 
   it("renders FailedTerminal with Retry and Edit buttons for errored sessions", () => {
@@ -314,7 +314,7 @@ describe("TerminalTabs", () => {
         onNewTab={onNewTab}
       />,
     );
-    await user.click(screen.getByTitle("New connection"));
+    await user.click(screen.getByRole("button", { name: "Open a new tab or split" }));
     await waitFor(() => screen.getByText("New tab"));
     fireEvent.click(screen.getByText("New tab"));
     expect(onNewTab).toHaveBeenCalledWith("tab");
@@ -331,7 +331,7 @@ describe("TerminalTabs", () => {
         onNewTab={onNewTab}
       />,
     );
-    await user.click(screen.getByTitle("New connection"));
+    await user.click(screen.getByRole("button", { name: "Open a new tab or split" }));
     await waitFor(() => screen.getByText("Split right"));
     fireEvent.click(screen.getByText("Split right"));
     expect(onNewTab).toHaveBeenCalledWith("split_right");
@@ -348,7 +348,7 @@ describe("TerminalTabs", () => {
         onNewTab={onNewTab}
       />,
     );
-    await user.click(screen.getByTitle("New connection"));
+    await user.click(screen.getByRole("button", { name: "Open a new tab or split" }));
     await waitFor(() => screen.getByText("Split down"));
     fireEvent.click(screen.getByText("Split down"));
     expect(onNewTab).toHaveBeenCalledWith("split_down");
@@ -363,7 +363,7 @@ describe("TerminalTabs", () => {
         activeTabId={null}
       />,
     );
-    await user.click(screen.getByTitle("New connection"));
+    await user.click(screen.getByRole("button", { name: "Open a new tab or split" }));
     await waitFor(() => screen.getByText("Split right"));
     expect(screen.getByText("Split right")).toHaveAttribute("data-disabled");
     expect(screen.getByText("Split down")).toHaveAttribute("data-disabled");
@@ -386,7 +386,7 @@ describe("TerminalTabs", () => {
         activeTabId="st1"
       />,
     );
-    await user.click(screen.getByTitle("New connection"));
+    await user.click(screen.getByRole("button", { name: "Open a new tab or split" }));
     await waitFor(() => screen.getByText("Split right"));
     expect(screen.getByText("Split right")).toHaveAttribute("data-disabled");
     expect(screen.getByText("Split down")).toHaveAttribute("data-disabled");

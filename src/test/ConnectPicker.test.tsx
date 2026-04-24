@@ -78,6 +78,20 @@ describe("ConnectPicker (command palette)", () => {
     expect(document.activeElement).toBe(input);
   });
 
+  it("renders the search input with the focus-visible ring class", () => {
+    /*
+     * Audit-3 follow-up P2#4: pins the switch from a bare <input>
+     * to the shared <Input> primitive. Without this, a future
+     * drive-by edit could revert the search field and silently
+     * drop the focus-visible ring (it has no border to fall back
+     * on — the ring is the only focus indicator inside the
+     * picker shell).
+     */
+    open();
+    const input = screen.getByRole("combobox", { name: /search connections/i });
+    expect(input.className).toMatch(/focus-visible:ring-2/);
+  });
+
   it("filters by name, host, and tag tokens (AND semantics)", () => {
     open();
     const input = screen.getByRole("combobox", { name: /search connections/i });

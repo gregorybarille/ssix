@@ -7,6 +7,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "./ui/dialog";
+import { Input } from "./ui/input";
 import { cn } from "@/lib/utils";
 import { getColorHex } from "@/lib/colors";
 
@@ -174,7 +175,15 @@ export function ConnectPicker({
             className="h-4 w-4 text-muted-foreground shrink-0"
             aria-hidden="true"
           />
-          <input
+          {/*
+            Audit-3 follow-up P2#4: switched from a bare <input> to
+            the shared <Input> primitive so this combobox inherits
+            the focus-visible ring + theme tokens. The picker shell
+            owns the border (border-b on the parent), so we strip
+            the primitive's own border/bg/height/padding via class
+            overrides while keeping the focus-visible ring.
+          */}
+          <Input
             ref={inputRef}
             type="search"
             // Autofocus is intentional: the picker is invoked via Cmd+K /
@@ -193,7 +202,7 @@ export function ConnectPicker({
             aria-autocomplete="list"
             aria-controls={expanded ? listboxId : undefined}
             aria-activedescendant={activeId}
-            className="flex-1 bg-transparent outline-none text-sm placeholder:text-muted-foreground"
+            className="flex-1 h-auto border-0 bg-transparent px-0 py-0 ring-offset-0 focus-visible:ring-2 focus-visible:ring-offset-0"
           />
         </div>
         {connections.length === 0 ? (
