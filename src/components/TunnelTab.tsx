@@ -41,12 +41,19 @@ export function TunnelTab({
   const [log, setLog] = useState<LogEntry[]>([]);
 
   useEffect(() => {
+    // Audit-4 M5: the previous implementation stored `unlisten` in a let
+    // and called it from cleanup. If the effect was torn down before the
+    // `await listen(...)` promise resolved, `unlisten` was still
+    // undefined when cleanup ran, and the listener that resolved
+    // afterward leaked silently — every tunnel reconnect added another
+    // dangling subscription. We now track the cleanup state so a late
+    // resolve disposes itself.
     let unlisten: UnlistenFn | undefined;
     let cancelled = false;
 
     (async () => {
       try {
-        unlisten = await listen<TunnelStatusPayload>(
+        const fn = await listen<TunnelStatusPayload>(
           `tunnel-status-${sessionId}`,
           (event) => {
             const payload = event.payload;
@@ -67,6 +74,12 @@ export function TunnelTab({
             );
           },
         );
+        // If cleanup already ran while we were awaiting, dispose right away.
+        if (cancelled) {
+          fn();
+          return;
+        }
+        unlisten = fn;
       } catch {
         // ignore — listener wiring failure is non-fatal for the UI
       }

@@ -312,8 +312,18 @@ fn export_snapshot(repo_path: &Path, data: &AppData) -> Result<(), String> {
 
     let sanitized = sanitize_app_data(data);
     let data_json = serde_json::to_string_pretty(&sanitized).map_err(|e| e.to_string())?;
-    fs::write(export_dir.join(DATA_FILE), data_json).map_err(|e| e.to_string())?;
-    fs::write(export_dir.join(SUMMARY_FILE), render_summary(&sanitized)).map_err(|e| e.to_string())?;
+    // Audit-4 L1: route both writes through atomic_write so a crash
+    // during the export can't leave a half-written data.json or
+    // SUMMARY.md that subsequent git operations would commit as a
+    // partial snapshot.
+    crate::storage::atomic_write(&export_dir.join(DATA_FILE), data_json.as_bytes(), None)
+        .map_err(|e| e.to_string())?;
+    crate::storage::atomic_write(
+        &export_dir.join(SUMMARY_FILE),
+        render_summary(&sanitized).as_bytes(),
+        None,
+    )
+    .map_err(|e| e.to_string())?;
     Ok(())
 }
 

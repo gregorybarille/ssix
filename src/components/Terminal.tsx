@@ -18,6 +18,16 @@ export function Terminal({ sessionId, connectionName, isVisible, onDisconnect, s
   const xtermRef = useRef<XTerm | null>(null);
   const fitAddonRef = useRef<FitAddon | null>(null);
   const listenersRef = useRef<Array<() => void>>([]);
+  // Audit-4 H2: keep `onDisconnect` in a ref so the listener registered
+  // inside the [sessionId]-deps effect always calls the LATEST callback.
+  // Without this, a parent re-render that produces a new onDisconnect
+  // identity would leave the listener calling the original closure
+  // forever (silent: the disconnect appears to work but stale handlers
+  // mutate stale state).
+  const onDisconnectRef = useRef(onDisconnect);
+  useEffect(() => {
+    onDisconnectRef.current = onDisconnect;
+  }, [onDisconnect]);
   // Read by `onSelectionChange` so the setting toggle takes effect live
   // without requiring the terminal to remount.
   const autoCopyEnabledRef = useRef<boolean>(settings?.auto_copy_selection ?? false);
@@ -216,7 +226,9 @@ export function Terminal({ sessionId, connectionName, isVisible, onDisconnect, s
 
         const unlistenClosed = await listen(`ssh-closed-${sessionId}`, () => {
           term.write("\r\n\x1b[33mConnection closed.\x1b[0m\r\n");
-          onDisconnect();
+          // Audit-4 H2: call through the ref so we always invoke the
+          // current onDisconnect, not the one captured at mount.
+          onDisconnectRef.current();
         });
 
         listenersRef.current = [unlistenOutput, unlistenError, unlistenClosed];

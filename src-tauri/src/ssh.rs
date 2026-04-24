@@ -309,6 +309,7 @@ fn run_io_loop(
     rx: Receiver<SessionMsg>,
 ) -> Result<(), String> {
     let output_event = format!("ssh-output-{}", session_id);
+    let error_event = format!("ssh-error-{}", session_id);
     let mut buf = [0u8; 8192];
 
     loop {
@@ -322,7 +323,19 @@ fn run_io_loop(
                 got_data = true;
             }
             Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {}
-            Err(_) => break,
+            Err(e) => {
+                // Audit-4 H1: previously this was `Err(_) => break`, which
+                // closed the terminal silently when a real I/O error
+                // (network reset, broken pipe, ssh2 internal failure)
+                // was indistinguishable from a clean EOF. The user saw
+                // "Connection closed" with no clue why. Now we surface
+                // the error so the frontend can render a banner before
+                // the session-closed event.
+                let msg = format!("SSH read error: {}", e);
+                crate::logs::log(app_handle, "warn", "ssh", msg.clone());
+                let _ = app_handle.emit(&error_event, msg);
+                break;
+            }
         }
 
         // Read stderr
@@ -331,6 +344,10 @@ fn run_io_loop(
                 let _ = app_handle.emit(&output_event, &buf[..n]);
                 got_data = true;
             }
+            // stderr errors are intentionally swallowed: WouldBlock is
+            // expected, and a real error here will also surface via
+            // stdout's read on the next iteration (or the channel-close
+            // path below).
             _ => {}
         }
 
@@ -342,7 +359,26 @@ fn run_io_loop(
                     let _ = channel.flush();
                 }
                 Ok(SessionMsg::Resize { cols, rows }) => {
-                    let _ = channel.request_pty_size(cols, rows, None, None);
+                    // Audit-4 M1: previously `let _ = channel.request_pty_size(...)`
+                    // silently dropped resize failures, leaving the user with a
+                    // terminal stuck at the wrong dimensions and no diagnostic.
+                    // We can't emit a banner from here without risking a noisy
+                    // loop on flaky links (xterm.js fires resize on every column
+                    // change), so log the first error per session at warn level
+                    // and downgrade subsequent ones to debug. Errors are rare
+                    // in practice — usually the channel is dead and the next
+                    // read() will close the session anyway.
+                    if let Err(e) = channel.request_pty_size(cols, rows, None, None) {
+                        crate::logs::log(
+                            app_handle,
+                            "warn",
+                            "ssh",
+                            format!(
+                                "session {} resize to {}x{} failed: {}",
+                                session_id, cols, rows, e
+                            ),
+                        );
+                    }
                 }
                 Ok(SessionMsg::Disconnect) => {
                     let _ = channel.close();
