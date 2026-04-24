@@ -216,4 +216,37 @@ describe("ScpDialog", () => {
       ),
     );
   });
+
+  /*
+   * Audit-3 follow-up P2#6 / helper-text association: the persistent
+   * <p> describing remote-path semantics ("Uses the connection
+   * remote path as the base directory…") must be wired to the
+   * input via aria-describedby. Otherwise AT users tabbing into
+   * the field hear only "Remote path, edit text" and miss the
+   * directory-transfer hint. The hint id is always present; the
+   * error id only joins it when there's a validation failure.
+   */
+  it("links the remote-path help text to the input via aria-describedby", () => {
+    render(
+      <ScpDialog
+        open
+        onOpenChange={vi.fn()}
+        connection={{
+          id: "c1",
+          name: "prod",
+          host: "host",
+          port: 22,
+          type: "direct",
+          remote_path: "/srv/app",
+        }}
+      />
+    );
+
+    const input = screen.getByLabelText(/remote path/i) as HTMLInputElement;
+    const describedBy = input.getAttribute("aria-describedby") ?? "";
+    expect(describedBy.split(/\s+/)).toContain("scp-remote-path-hint");
+
+    const hint = document.getElementById("scp-remote-path-hint");
+    expect(hint?.textContent ?? "").toMatch(/base directory/i);
+  });
 });

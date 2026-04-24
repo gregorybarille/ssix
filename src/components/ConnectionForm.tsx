@@ -968,9 +968,10 @@ export function ConnectionForm({
               id="tags"
               value={form.tags ?? []}
               onChange={(tags) => setForm({ ...form, tags })}
-              placeholder="Press space to add a tag"
+              placeholder="Press Enter or comma to add a tag"
+              aria-describedby="tags-hint"
             />
-            <p className="text-xs text-muted-foreground">
+            <p id="tags-hint" className="text-xs text-muted-foreground">
               Used for filtering — matches in the Connections search box.
             </p>
           </div>
@@ -1038,8 +1039,9 @@ export function ConnectionForm({
               placeholder="-C (compression)"
               value={form.extra_args ?? ""}
               onChange={(e) => setForm({ ...form, extra_args: e.target.value })}
+              aria-describedby="extra_args-hint"
             />
-            <p className="text-xs text-muted-foreground">
+            <p id="extra_args-hint" className="text-xs text-muted-foreground">
               Pass extra flags to the SSH session (e.g. <code>-C</code> to
               enable compression). Unknown flags are ignored.
             </p>
@@ -1052,8 +1054,9 @@ export function ConnectionForm({
               placeholder="sudo su - deploy"
               value={form.login_command ?? ""}
               onChange={(e) => setForm({ ...form, login_command: e.target.value })}
+              aria-describedby="login_command-hint"
             />
-            <p className="text-xs text-muted-foreground">
+            <p id="login_command-hint" className="text-xs text-muted-foreground">
               Runs after login. Useful for switching users or bootstrapping a shell.
             </p>
           </div>
@@ -1065,8 +1068,9 @@ export function ConnectionForm({
               placeholder="/srv/app"
               value={form.remote_path ?? ""}
               onChange={(e) => setForm({ ...form, remote_path: e.target.value })}
+              aria-describedby="remote_path-hint"
             />
-            <p className="text-xs text-muted-foreground">
+            <p id="remote_path-hint" className="text-xs text-muted-foreground">
               Preferred starting directory for shells and default base path for SCP transfers.
             </p>
           </div>
@@ -1079,7 +1083,7 @@ export function ConnectionForm({
                 setForm({ ...form, verbosity: parseInt(v) })
               }
             >
-              <SelectTrigger id="verbosity">
+              <SelectTrigger id="verbosity" aria-describedby="verbosity-hint">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
@@ -1088,7 +1092,7 @@ export function ConnectionForm({
                 <SelectItem value="2">2 — Debug (full SSH protocol trace)</SelectItem>
               </SelectContent>
             </Select>
-            <p className="text-xs text-muted-foreground">
+            <p id="verbosity-hint" className="text-xs text-muted-foreground">
               Level 1 prints connection lifecycle messages (handshake,
               authentication, channel open) to the terminal. Level 2 also
               emits a low-level SSH protocol trace — useful for diagnosing

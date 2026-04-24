@@ -402,14 +402,32 @@ export function CredentialForm({
                       clearFieldError("key_inline");
                     }}
                     aria-invalid={fieldErrors.key_inline ? true : undefined}
-                    aria-describedby={fieldErrors.key_inline ? "cred-key-inline-error" : undefined}
+                    /*
+                      Audit-3 follow-up P2#6: AT users tabbing into
+                      this textarea need to hear BOTH the (potential)
+                      validation error AND the persistent security-
+                      relevant hint about where the secret is stored.
+                      The hint id is always present, the error id is
+                      conditional.
+                    */
+                    aria-describedby={
+                      [
+                        fieldErrors.key_inline ? "cred-key-inline-error" : null,
+                        "cred-key-inline-hint",
+                      ]
+                        .filter(Boolean)
+                        .join(" ")
+                    }
                   />
                   {fieldErrors.key_inline && (
                     <p id="cred-key-inline-error" role="alert" className="text-xs text-destructive">
                       {fieldErrors.key_inline}
                     </p>
                   )}
-                  <p className="text-xs text-muted-foreground">
+                  <p
+                    id="cred-key-inline-hint"
+                    className="text-xs text-muted-foreground"
+                  >
                     Stored in SSX's secrets file (~/.ssx/secrets.json) and used
                     via in-memory authentication.
                   </p>

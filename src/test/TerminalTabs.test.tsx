@@ -454,4 +454,44 @@ describe("TerminalTabs", () => {
       ).toBeDisabled();
     });
   });
+
+  /*
+   * Audit-3 follow-up P1#1: any pane in a tab whose .error is set
+   * causes the visible red dot at the leading edge of the tab.
+   * Without a corresponding 'connection failed' suffix in the tab's
+   * accessible name, AT users have no way to know which tab needs
+   * attention. Pin the suffix in the aria-label.
+   */
+  describe("a11y: failed-pane state in tab accessible name", () => {
+    it("appends 'connection failed' to the tab's aria-label when any pane has an error", () => {
+      const failingTabs: TerminalTab[] = [
+        tab("t1", [{ sessionId: "sess-1", connectionName: "prod-server" }]),
+        tab("t2", [
+          {
+            sessionId: "sess-2",
+            connectionName: "staging-server",
+            error: "Authentication failed",
+          },
+        ]),
+      ];
+      render(
+        <TerminalTabs
+          tabs={failingTabs}
+          activeTabId="t1"
+          connections={[mockConn]}
+          {...defaultProps}
+        />,
+      );
+      // Healthy tab keeps the plain label.
+      expect(
+        screen.getByRole("tab", { name: "Terminal prod-server" }),
+      ).toBeInTheDocument();
+      // Failing tab announces the failure state.
+      expect(
+        screen.getByRole("tab", {
+          name: /Terminal staging-server.*connection failed/i,
+        }),
+      ).toBeInTheDocument();
+    });
+  });
 });

@@ -199,6 +199,18 @@ export function TerminalTabs({
           const color = getColorHex(headSession?.connection?.color);
           const isActive = activeTabId === tab.id;
           const label = tab.panes.map((p) => p.connectionName).join(" | ");
+          /*
+           * Audit-3 follow-up P1#1: any pane in this tab with an
+           * error contributes a 'failed' suffix to the tab's
+           * accessible name. Without this, a screen-reader user
+           * cycling through tabs has no way to know which one
+           * needs attention — the visible red dot at line 226
+           * is aria-hidden because it's a decorative glyph.
+           */
+          const hasFailure = tab.panes.some((p) => p.error);
+          const splitSuffix =
+            tab.mode !== "single" ? ` (${tab.mode} split)` : "";
+          const failureSuffix = hasFailure ? " — connection failed" : "";
           return (
             <button
               key={tab.id}
@@ -209,7 +221,7 @@ export function TerminalTabs({
               role="tab"
               type="button"
               aria-selected={isActive}
-              aria-label={`Terminal ${label}${tab.mode !== "single" ? ` (${tab.mode} split)` : ""}`}
+              aria-label={`Terminal ${label}${splitSuffix}${failureSuffix}`}
               tabIndex={isActive ? 0 : -1}
               className={cn(
                 "group flex items-center gap-1.5 px-3 py-1.5 text-xs cursor-pointer border-r border-border shrink-0 max-w-[200px] transition-colors text-left",

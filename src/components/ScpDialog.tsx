@@ -138,8 +138,20 @@ export function ScpDialog({ open, onOpenChange, connection }: ScpDialogProps) {
               value={remotePath}
               onChange={(e) => setRemotePath(e.target.value)}
               aria-invalid={!!remotePathError}
+              /*
+                Audit-3 follow-up P2#6 (helper-text association): the
+                instructional <p> below is part of the field's
+                semantics — AT users need both the error (when set)
+                AND the persistent hint. Concatenate both ids; the
+                hint is always present, the error is conditional.
+              */
               aria-describedby={
-                remotePathError ? "scp-remote-path-error" : undefined
+                [
+                  remotePathError ? "scp-remote-path-error" : null,
+                  "scp-remote-path-hint",
+                ]
+                  .filter(Boolean)
+                  .join(" ")
               }
               className={cn(remotePathError && "border-destructive")}
             />
@@ -152,7 +164,10 @@ export function ScpDialog({ open, onOpenChange, connection }: ScpDialogProps) {
                 {remotePathError}
               </p>
             )}
-            <p className="text-xs text-muted-foreground">
+            <p
+              id="scp-remote-path-hint"
+              className="text-xs text-muted-foreground"
+            >
               Uses the connection remote path as the base directory when possible. Directory transfers require recursive mode.
             </p>
           </div>

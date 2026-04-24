@@ -9,6 +9,12 @@ interface TagInputProps {
   placeholder?: string;
   id?: string;
   className?: string;
+  /**
+   * Forwarded to the inner <input> so callers can wire helper text
+   * via aria-describedby — same contract as the shared <Input>
+   * primitive. AGENTS.md / Audit-3 follow-up P2#6.
+   */
+  "aria-describedby"?: string;
 }
 
 /**
@@ -28,6 +34,7 @@ export function TagInput({
   placeholder,
   id,
   className,
+  "aria-describedby": ariaDescribedBy,
 }: TagInputProps) {
   const [draft, setDraft] = useState("");
 
@@ -90,6 +97,7 @@ export function TagInput({
         onKeyDown={handleKeyDown}
         onBlur={() => commit(draft)}
         placeholder={value.length === 0 ? placeholder : ""}
+        aria-describedby={ariaDescribedBy}
         className="flex-1 min-w-[80px] bg-transparent outline-none text-sm placeholder:text-muted-foreground"
       />
     </div>
