@@ -11,6 +11,8 @@ import {
   DialogTitle,
   DialogFooter,
 } from "./ui/dialog";
+import { parsePort } from "@/lib/port";
+import { cn } from "@/lib/utils";
 
 interface InstallKeyDialogProps {
   open: boolean;
@@ -41,7 +43,11 @@ export function InstallKeyDialog({
   onSuccess,
 }: InstallKeyDialogProps) {
   const [host, setHost] = useState("");
-  const [port, setPort] = useState<number>(22);
+  // Port is held as a controlled string (per AGENTS.md "Port number
+  // inputs MUST go through parsePort"). Coercing on every keystroke
+  // with `Number(e) || 22` silently rewrote 2200 → 22 mid-typing and
+  // hid out-of-range entries.
+  const [port, setPort] = useState<string>("22");
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -51,7 +57,7 @@ export function InstallKeyDialog({
   useEffect(() => {
     if (open) {
       setHost(defaultHost ?? "");
-      setPort(defaultPort ?? 22);
+      setPort(String(defaultPort ?? 22));
       setUsername(defaultUsername ?? "");
       setPassword("");
       setError(null);
@@ -59,10 +65,20 @@ export function InstallKeyDialog({
     }
   }, [open, defaultHost, defaultPort, defaultUsername]);
 
+  const portParsed = parsePort(port);
+  const portError =
+    port === ""
+      ? "Port is required"
+      : portParsed.error;
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
     setSuccess(false);
+    if (portError || portParsed.value === null) {
+      setError(portError ?? "Port is required");
+      return;
+    }
     setIsSubmitting(true);
     try {
       if (!host.trim()) throw new Error("Host is required");
@@ -72,7 +88,7 @@ export function InstallKeyDialog({
         input: {
           credential_id: credentialId,
           host: host.trim(),
-          port,
+          port: portParsed.value,
           username: username.trim(),
           password,
         },
@@ -114,10 +130,23 @@ export function InstallKeyDialog({
               <Label htmlFor="install-port">Port</Label>
               <Input
                 id="install-port"
-                type="number"
+                type="text"
+                inputMode="numeric"
                 value={port}
-                onChange={(e) => setPort(Number(e.target.value) || 22)}
+                aria-invalid={!!portError}
+                aria-describedby={portError ? "install-port-error" : undefined}
+                onChange={(e) => setPort(e.target.value)}
+                className={cn(portError && "border-destructive")}
               />
+              {portError && (
+                <p
+                  id="install-port-error"
+                  role="alert"
+                  className="text-xs text-destructive"
+                >
+                  {portError}
+                </p>
+              )}
             </div>
           </div>
           <div className="space-y-2">
@@ -159,7 +188,10 @@ export function InstallKeyDialog({
             >
               Close
             </Button>
-            <Button type="submit" disabled={isSubmitting || success}>
+            <Button
+              type="submit"
+              disabled={isSubmitting || success || !!portError}
+            >
               {isSubmitting ? "Installing..." : "Install"}
             </Button>
           </DialogFooter>

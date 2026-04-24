@@ -66,4 +66,67 @@ describe("InstallKeyDialog", () => {
     fireEvent.click(screen.getByRole("button", { name: /Install/i }));
     await screen.findByText(/auth failed/);
   });
+
+  /*
+   * P2-A3: the Port field used to silently fall back to 22 on
+   * invalid input. AGENTS.md mandates parsePort + inline aria-invalid
+   * + role="alert" + submit blocked while invalid. These assertions
+   * lock that contract in.
+   */
+  it("blocks submit and shows an inline alert when the port is out of range", () => {
+    render(
+      <InstallKeyDialog
+        open={true}
+        onOpenChange={() => {}}
+        credentialId="cred-1"
+        defaultHost="h"
+        defaultUsername="u"
+      />,
+    );
+    const portInput = screen.getByLabelText(/^Port$/i);
+    fireEvent.change(portInput, { target: { value: "99999" } });
+    expect(portInput).toHaveAttribute("aria-invalid", "true");
+    expect(screen.getByRole("alert")).toHaveTextContent(/between 1 and 65535/i);
+    expect(screen.getByRole("button", { name: /Install/i })).toBeDisabled();
+  });
+
+  it("blocks submit when the port field is empty", () => {
+    render(
+      <InstallKeyDialog
+        open={true}
+        onOpenChange={() => {}}
+        credentialId="cred-1"
+        defaultHost="h"
+        defaultUsername="u"
+      />,
+    );
+    const portInput = screen.getByLabelText(/^Port$/i);
+    fireEvent.change(portInput, { target: { value: "" } });
+    expect(portInput).toHaveAttribute("aria-invalid", "true");
+    expect(screen.getByRole("alert")).toHaveTextContent(/required/i);
+    expect(screen.getByRole("button", { name: /Install/i })).toBeDisabled();
+  });
+
+  it("does NOT silently coerce non-numeric port input to 22", async () => {
+    vi.mocked(invoke).mockResolvedValueOnce(undefined);
+    render(
+      <InstallKeyDialog
+        open={true}
+        onOpenChange={() => {}}
+        credentialId="cred-1"
+        defaultHost="h"
+        defaultUsername="u"
+      />,
+    );
+    fireEvent.change(screen.getByLabelText(/^Port$/i), {
+      target: { value: "abc" },
+    });
+    fireEvent.change(screen.getByLabelText(/One-time Password/i), {
+      target: { value: "x" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: /Install/i }));
+    // Submit must NOT have been dispatched with a fallback port.
+    expect(vi.mocked(invoke)).not.toHaveBeenCalled();
+    expect(screen.getByRole("alert")).toHaveTextContent(/whole number/i);
+  });
 });
