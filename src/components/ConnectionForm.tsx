@@ -21,6 +21,7 @@ import {
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "./ui/tabs";
 import { InstallKeyDialog } from "./InstallKeyDialog";
 import { TagInput } from "./ui/tag-input";
+import { RadioGroup, RadioGroupItem } from "./ui/radio-group";
 import { COLOR_VALUES } from "@/lib/colors";
 import { parsePort } from "@/lib/port";
 import { UploadCloud } from "lucide-react";
@@ -966,38 +967,56 @@ export function ConnectionForm({
           </div>
 
           {/* Color */}
+          {/*
+            Audit-3 follow-up P0#1: this picker MUST be a Radix
+            RadioGroup (per AGENTS.md). Previously it was a hand-rolled
+            <button> grid with title-only labels — each swatch announced
+            as an unlabeled button to screen readers, and the group had
+            no semantics. The "None" option uses the literal string
+            "__none__" as its RadioGroupItem value because Radix
+            RadioGroup requires every option to have a non-empty string
+            value (an empty value is treated as "no selection") — we
+            translate it back to `undefined` on `onValueChange` so the
+            persisted Connection model is unchanged.
+          */}
           <div className="space-y-2">
-            <Label>Color</Label>
-            <div className="flex flex-wrap gap-2">
-              <button
-                type="button"
-                onClick={() => setForm({ ...form, color: undefined })}
+            <h3 id="conn-color-heading" className="text-sm font-medium">
+              Color
+            </h3>
+            <RadioGroup
+              aria-labelledby="conn-color-heading"
+              value={form.color ?? "__none__"}
+              onValueChange={(v) =>
+                setForm({ ...form, color: v === "__none__" ? undefined : v })
+              }
+              className="flex flex-wrap gap-2"
+            >
+              <RadioGroupItem
+                value="__none__"
+                aria-label="No color"
                 className={cn(
                   "px-2 py-1 text-xs rounded-md border transition-colors",
-                  !form.color
-                    ? "border-primary bg-accent"
-                    : "border-input text-muted-foreground hover:text-foreground",
+                  "data-[state=checked]:border-primary data-[state=checked]:bg-accent",
+                  "data-[state=unchecked]:border-input data-[state=unchecked]:text-muted-foreground data-[state=unchecked]:hover:text-foreground",
                 )}
               >
                 None
-              </button>
+              </RadioGroupItem>
               {OPEN_COLORS.map((c) => (
-                <button
+                <RadioGroupItem
                   key={c}
-                  type="button"
-                  title={c}
-                  onClick={() => setForm({ ...form, color: c })}
+                  value={c}
+                  aria-label={c}
                   className={cn(
                     "h-7 w-7 rounded-full border transition-all",
-                    form.color === c
-                      ? "ring-2 ring-primary ring-offset-2 ring-offset-background"
-                      : "border-transparent hover:scale-110",
+                    "data-[state=checked]:ring-2 data-[state=checked]:ring-primary data-[state=checked]:ring-offset-2 data-[state=checked]:ring-offset-background",
+                    "data-[state=unchecked]:border-transparent data-[state=unchecked]:hover:scale-110",
                   )}
                   style={{ backgroundColor: COLOR_VALUES[c] }}
                 />
               ))}
-            </div>
-            <p className="text-xs text-muted-foreground">
+            </RadioGroup>
+            <p id="conn-color-help" className="text-xs text-muted-foreground-soft">
               Used as the terminal-tab accent.
             </p>
           </div>

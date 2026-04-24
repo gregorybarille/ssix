@@ -112,7 +112,20 @@ export function SettingsPanel({ settings, onSave }: SettingsPanelProps) {
         </h3>
         <RadioGroup
           aria-labelledby="settings-color-scheme-heading"
-          orientation="horizontal"
+          /*
+            Audit-3 follow-up P1#2: NO `orientation` prop here. The
+            swatches lay out in a 4-column grid (`grid-cols-4`), so
+            keyboard users need BOTH ArrowLeft/Right (across a row)
+            AND ArrowUp/Down (between rows). Radix RadioGroup's
+            default omits the orientation context value, which makes
+            its RovingFocusGroup accept all four arrow keys. Setting
+            `orientation="horizontal"` would lock arrow nav to L/R
+            only — fine for the theme picker (single row, line ~199)
+            but broken for this 4-column grid. The connection-form
+            color picker (ConnectionForm.tsx ~970) uses `flex-wrap`
+            so visual rows are unpredictable; it also omits the
+            orientation prop for the same reason.
+          */
           value={form.color_scheme}
           onValueChange={(v) => setForm({ ...form, color_scheme: v })}
           className="grid grid-cols-4 gap-2"
