@@ -26,7 +26,7 @@
 - **SSH sessions**: `ssh2` crate, one thread per session, `mpsc` channels, events `ssx:ssh:{output|error|closed}:{id}` and `ssx:tunnel:status:{id}` (use helpers in `src-tauri/src/ssh.rs` + `src/lib/events.ts`)
 - **Terminal**: xterm.js, stays mounted when hidden; tunnels live in `TunnelsView`, not the terminal tab bar
 - **Persistence**: File-based at `~/.ssx/data.json`. All writes MUST use `atomic_write()` — never `fs::write` directly
-- **Models**: `src/types/index.ts` ↔ `src-tauri/src/models.rs` must stay in sync (snake_case throughout)
+- **Models**: `src/types/index.ts` ↔ `src-tauri/src/models.rs` must stay in sync (snake_case throughout). `cargo test` regenerates ts-rs bindings into `src/types/generated/`; `src/test/typesParity.test.ts` fails when a generated field is missing from the hand-written index.ts. CI: run `cargo test && git diff --exit-code src/types/generated/`.
 - **IDs**: Generated server-side with `uuid::Uuid::new_v4()`; frontend never generates IDs
 
 ## Adding a Tauri Command (end-to-end)

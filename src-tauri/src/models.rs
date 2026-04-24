@@ -1,7 +1,24 @@
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+// Audit-4 Phase 6a: ts-rs is gated to test builds only (see
+// Cargo.toml). The macro reads `#[ts(...)]` attributes regardless of
+// gating, so we use `#[cfg_attr(test, derive(TS))]` and apply the
+// per-type `export_to = "../../src/types/generated/"` path so
+// `cargo test` writes the bindings into `<repo>/src/types/generated/`
+// (path is relative to the source file = `src-tauri/src/models.rs`).
+// Production builds skip ts-rs entirely.
+//
+// Bindings are committed and a snapshot test (see `models::tests`)
+// asserts the on-disk shape matches what the macro emits, so any
+// model change that the developer forgets to mirror in `index.ts`
+// shows up as a failing `cargo test`.
+#[cfg(test)]
+use ts_rs::TS;
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[cfg_attr(test, derive(TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum CredentialKind {
     Password {
@@ -22,11 +39,14 @@ pub enum CredentialKind {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(test, derive(TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 pub struct Credential {
     pub id: String,
     pub name: String,
     pub username: String,
     #[serde(flatten)]
+    #[cfg_attr(test, ts(flatten))]
     pub kind: CredentialKind,
     /// When true the credential was auto-created for inline auth and is not
     /// shown in the credentials list. Treated as false when absent (legacy data).
@@ -60,6 +80,8 @@ impl Credential {
 ///
 /// Legacy data with `type: "tunnel"` is migrated to `JumpShell` on load.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[cfg_attr(test, derive(TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ConnectionKind {
     Direct,
@@ -92,6 +114,8 @@ pub enum ConnectionKind {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(test, derive(TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 pub struct Connection {
     pub id: String,
     pub name: String,
@@ -99,6 +123,7 @@ pub struct Connection {
     pub port: u16,
     pub credential_id: Option<String>,
     #[serde(flatten)]
+    #[cfg_attr(test, ts(flatten))]
     pub kind: ConnectionKind,
     /// SSH verbosity level: 0 = silent, 1 = standard SSH debug output,
     /// 2 = enables libssh2 trace (verbose). Output is written to the terminal
@@ -147,6 +172,8 @@ impl Connection {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(test, derive(TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 pub struct AppSettings {
     #[serde(default = "default_font_size")]
     pub font_size: u8,
@@ -213,6 +240,8 @@ impl Default for AppSettings {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(test, derive(TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 pub struct AppData {
     /// Audit-4 Phase 6b: monotonically-increasing schema stamp. Legacy
     /// `data.json` files written before this field existed deserialize
