@@ -63,8 +63,31 @@ pub fn get_connections() -> Result<Vec<Connection>, String> {
     Ok(data.connections)
 }
 
+/// Audit-4 H6: validate user-provided connection fields BEFORE we mutate
+/// state. Without this, the frontend was the only line of defence — a
+/// hand-crafted IPC call (or a future programmatic caller) could persist
+/// blank names, blank hosts, or port 0, then silently fail at SSH-connect
+/// time with a confusing error.
+fn validate_connection_fields(name: &str, host: &str, port: u16) -> Result<(), String> {
+    let trimmed_name = name.trim();
+    if trimmed_name.is_empty() {
+        return Err("Connection name is required.".to_string());
+    }
+    if trimmed_name.chars().count() > 128 {
+        return Err("Connection name must be 128 characters or fewer.".to_string());
+    }
+    if host.trim().is_empty() {
+        return Err("Host is required.".to_string());
+    }
+    if port == 0 {
+        return Err("Port must be between 1 and 65535.".to_string());
+    }
+    Ok(())
+}
+
 #[tauri::command]
 pub fn add_connection(input: AddConnectionInput) -> Result<Connection, String> {
+    validate_connection_fields(&input.name, &input.host, input.port)?;
     with_data_mut(|data| {
         if data.connections.iter().any(|c| c.name == input.name) {
             return Err(format!("A connection named '{}' already exists", input.name));
@@ -84,6 +107,7 @@ pub fn add_connection(input: AddConnectionInput) -> Result<Connection, String> {
 
 #[tauri::command]
 pub fn update_connection(input: UpdateConnectionInput) -> Result<Connection, String> {
+    validate_connection_fields(&input.name, &input.host, input.port)?;
     with_data_mut(|data| {
         if data
             .connections
@@ -170,6 +194,22 @@ pub fn get_orphan_private_credential(conn_id: String) -> Result<Option<String>, 
 
 #[tauri::command]
 pub fn clone_connection(input: CloneConnectionInput) -> Result<Connection, String> {
+    // Audit-4 H6: validate the new name (host/port are validated below once
+    // the original is loaded and we know the effective values).
+    if input.new_name.trim().is_empty() {
+        return Err("Connection name is required.".to_string());
+    }
+    if input.new_name.trim().chars().count() > 128 {
+        return Err("Connection name must be 128 characters or fewer.".to_string());
+    }
+    if matches!(input.port, Some(0)) {
+        return Err("Port must be between 1 and 65535.".to_string());
+    }
+    if let Some(ref h) = input.host {
+        if h.trim().is_empty() {
+            return Err("Host is required.".to_string());
+        }
+    }
     with_data_mut(|data| {
         if data.connections.iter().any(|c| c.name == input.new_name) {
             return Err(format!("A connection named '{}' already exists", input.new_name));
@@ -470,5 +510,38 @@ mod tests {
             normalize_remote_path(Some(r#"  C:\Users\greg\repo  "#.into())),
             Some("C:/Users/greg/repo".into())
         );
+    }
+
+    // Audit-4 H6 regression tests: backend validation of connection fields.
+    #[test]
+    fn test_validate_rejects_blank_name() {
+        let err = validate_connection_fields("   ", "host", 22).unwrap_err();
+        assert!(err.contains("name"), "got: {}", err);
+    }
+
+    #[test]
+    fn test_validate_rejects_blank_host() {
+        let err = validate_connection_fields("ok", "  ", 22).unwrap_err();
+        assert!(err.contains("Host"), "got: {}", err);
+    }
+
+    #[test]
+    fn test_validate_rejects_port_zero() {
+        let err = validate_connection_fields("ok", "host", 0).unwrap_err();
+        assert!(err.contains("Port"), "got: {}", err);
+    }
+
+    #[test]
+    fn test_validate_rejects_overlong_name() {
+        let long = "a".repeat(129);
+        let err = validate_connection_fields(&long, "host", 22).unwrap_err();
+        assert!(err.contains("128"), "got: {}", err);
+    }
+
+    #[test]
+    fn test_validate_accepts_typical_inputs() {
+        assert!(validate_connection_fields("prod-db", "10.0.0.1", 22).is_ok());
+        assert!(validate_connection_fields("a", "x", 1).is_ok());
+        assert!(validate_connection_fields("z", "y", 65535).is_ok());
     }
 }

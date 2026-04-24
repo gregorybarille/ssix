@@ -771,14 +771,29 @@ pub fn start_jump_shell(
     let connect_result = TcpStream::connect(("127.0.0.1", local_port))
         .map_err(|e| format!("Failed to connect inner SSH session: {}", e));
 
+    // Audit-4 H5: if the connect failed, the spawned forwarder is still
+    // blocked in `listener.accept()` and will NEVER reach `barrier.wait()`.
+    // Calling `barrier.wait()` here would deadlock the main thread forever.
+    // We must check the connect result FIRST, and short-circuit before the
+    // barrier when it failed. We also poke the listener with a self-connect
+    // so the accept() call wakes up and the forwarder thread can exit
+    // cleanly (best-effort — if it fails, the thread leaks but the user
+    // gets a real error instead of a hang).
+    let tcp_stream = match connect_result {
+        Ok(stream) => stream,
+        Err(e) => {
+            // Best-effort: unblock the accept() so the spawned thread exits.
+            let _ = TcpStream::connect(("127.0.0.1", local_port));
+            return Err(e);
+        }
+    };
+
     // Wait for the forwarder to finish bridging before starting the SSH handshake.
     barrier.wait();
 
     if let Some(err) = lock_recover(&forward_err).take() {
         return Err(format!("Destination connect via gateway failed: {}", err));
     }
-
-    let tcp_stream = connect_result?;
 
     let (session, mut channel) = open_shell_over_stream(tcp_stream, &destination_username, &destination_auth, verbosity, &extra_args)
         .map_err(|e| format!("Destination connect via gateway failed: {}", e))?;
