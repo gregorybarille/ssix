@@ -265,7 +265,6 @@ export function ConnectionList({
                       e.stopPropagation();
                       onConnect(conn);
                     }}
-                    title="Connect"
                     aria-label={`Connect to ${conn.name}`}
                   >
                     <Play className="h-3.5 w-3.5" aria-hidden="true" />
@@ -281,7 +280,6 @@ export function ConnectionList({
                       e.stopPropagation();
                       onScp(conn);
                     }}
-                    title="Transfer files"
                     aria-label={`Transfer files to ${conn.name}`}
                   >
                     <ArrowUpDown className="h-3.5 w-3.5" aria-hidden="true" />
@@ -295,7 +293,6 @@ export function ConnectionList({
                     e.stopPropagation();
                     onClone(conn);
                   }}
-                  title="Clone connection"
                   aria-label={`Clone ${conn.name}`}
                 >
                   <Copy className="h-3.5 w-3.5" aria-hidden="true" />
@@ -308,7 +305,6 @@ export function ConnectionList({
                     e.stopPropagation();
                     onEdit(conn);
                   }}
-                  title="Edit connection"
                   aria-label={`Edit ${conn.name}`}
                 >
                   <Edit className="h-3.5 w-3.5" aria-hidden="true" />
@@ -321,7 +317,6 @@ export function ConnectionList({
                     e.stopPropagation();
                     onDelete(conn.id);
                   }}
-                  title="Delete connection"
                   aria-label={`Delete ${conn.name}`}
                 >
                   <Trash2 className="h-3.5 w-3.5" aria-hidden="true" />
@@ -415,7 +410,6 @@ export function ConnectionList({
                     e.stopPropagation();
                     onConnect(conn);
                   }}
-                  title="Connect"
                   aria-label={`Connect to ${conn.name}`}
                 >
                   <Play className="h-3.5 w-3.5" aria-hidden="true" />
@@ -431,7 +425,6 @@ export function ConnectionList({
                     e.stopPropagation();
                     onScp(conn);
                   }}
-                  title="Transfer files"
                   aria-label={`Transfer files to ${conn.name}`}
                 >
                   <ArrowUpDown className="h-3.5 w-3.5" aria-hidden="true" />
@@ -445,7 +438,6 @@ export function ConnectionList({
                   e.stopPropagation();
                   onClone(conn);
                 }}
-                title="Clone connection"
                 aria-label={`Clone ${conn.name}`}
               >
                 <Copy className="h-3.5 w-3.5" aria-hidden="true" />
@@ -458,7 +450,6 @@ export function ConnectionList({
                   e.stopPropagation();
                   onEdit(conn);
                 }}
-                title="Edit connection"
                 aria-label={`Edit ${conn.name}`}
               >
                 <Edit className="h-3.5 w-3.5" aria-hidden="true" />
@@ -471,7 +462,6 @@ export function ConnectionList({
                   e.stopPropagation();
                   onDelete(conn.id);
                 }}
-                title="Delete connection"
                 aria-label={`Delete ${conn.name}`}
               >
                 <Trash2 className="h-3.5 w-3.5" aria-hidden="true" />

@@ -95,7 +95,6 @@ export function TunnelsView({
                         })
                       }
                       aria-label={`Disconnect tunnel ${s.connectionName}`}
-                      title="Disconnect tunnel"
                     >
                       <X className="h-3.5 w-3.5" aria-hidden="true" />
                     </Button>

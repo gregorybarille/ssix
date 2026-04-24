@@ -5,32 +5,32 @@ import { Sidebar } from "@/components/Sidebar";
 describe("Sidebar", () => {
   it("renders nav items", () => {
     render(<Sidebar active="connections" onNavigate={vi.fn()} />);
-    expect(screen.getByTitle("Connections")).toBeInTheDocument();
-    expect(screen.getByTitle("Credentials")).toBeInTheDocument();
-    expect(screen.getByTitle("Git Sync")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Connections" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Credentials" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^Git Sync/ })).toBeInTheDocument();
   });
 
   it("highlights the active nav item", () => {
     render(<Sidebar active="credentials" onNavigate={vi.fn()} />);
-    const credBtn = screen.getByTitle("Credentials");
+    const credBtn = screen.getByRole("button", { name: "Credentials" });
     expect(credBtn.className).toContain("bg-accent");
   });
 
   it("calls onNavigate when clicking a nav item", () => {
     const onNavigate = vi.fn();
     render(<Sidebar active="connections" onNavigate={onNavigate} />);
-    fireEvent.click(screen.getByTitle("Credentials"));
+    fireEvent.click(screen.getByRole("button", { name: "Credentials" }));
     expect(onNavigate).toHaveBeenCalledWith("credentials");
   });
 
   it("does not show terminal icon when terminalCount is 0", () => {
     render(<Sidebar active="connections" onNavigate={vi.fn()} terminalCount={0} />);
-    expect(screen.queryByTitle(/Terminals/)).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^Terminals/ })).not.toBeInTheDocument();
   });
 
   it("shows terminal icon with badge when terminalCount > 0", () => {
     render(<Sidebar active="connections" onNavigate={vi.fn()} terminalCount={3} />);
-    const termBtn = screen.getByTitle("Terminals (3)");
+    const termBtn = screen.getByRole("button", { name: /^Terminals.*3 active/ });
     expect(termBtn).toBeInTheDocument();
     expect(screen.getByText("3")).toBeInTheDocument();
   });
@@ -38,19 +38,19 @@ describe("Sidebar", () => {
   it("calls onNavigate with 'terminals' when clicking terminal icon", () => {
     const onNavigate = vi.fn();
     render(<Sidebar active="connections" onNavigate={onNavigate} terminalCount={2} />);
-    fireEvent.click(screen.getByTitle("Terminals (2)"));
+    fireEvent.click(screen.getByRole("button", { name: /^Terminals.*2 active/ }));
     expect(onNavigate).toHaveBeenCalledWith("terminals");
   });
 
   it("highlights terminal icon when active", () => {
     render(<Sidebar active="terminals" onNavigate={vi.fn()} terminalCount={1} />);
-    const termBtn = screen.getByTitle("Terminals (1)");
+    const termBtn = screen.getByRole("button", { name: /^Terminals.*1 active/ });
     expect(termBtn.className).toContain("bg-accent");
   });
 
   it("shows git sync at the bottom with pending indicator support", () => {
     render(<Sidebar active="connections" onNavigate={vi.fn()} gitPending />);
-    expect(screen.getByTitle("Git Sync")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^Git Sync/ })).toBeInTheDocument();
   });
 
   it("exposes accessible names on nav buttons", () => {

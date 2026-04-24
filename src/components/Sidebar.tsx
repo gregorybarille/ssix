@@ -59,7 +59,12 @@ function NavButton({
   return (
     <button
       type="button"
-      title={badge ? `${label} (${badge})` : label}
+      // Audit-3 follow-up P3#7: dropped redundant `title=` attribute.
+      // The badge count and "pending changes" state are already
+      // conveyed visually (badge chip / red dot) and via aria-label.
+      // The earlier title="Git Sync (3)" both duplicated the visible
+      // label text and drifted from aria-label ("3 active") — pure
+      // noise for sighted-mouse users with no information gain.
       aria-label={accessibleName}
       aria-current={active ? "page" : undefined}
       onClick={onClick}

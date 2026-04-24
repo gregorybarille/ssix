@@ -126,7 +126,6 @@ export function TitleBar({ onSettings, settingsActive }: TitleBarProps) {
           <button
             onClick={() => windowAction("minimize")}
             className="h-full w-11 flex items-center justify-center text-muted-foreground hover:bg-accent/50 hover:text-foreground transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
-            title="Minimize"
             aria-label="Minimize window"
           >
             <Minus className="h-4 w-4" aria-hidden="true" />
@@ -134,7 +133,6 @@ export function TitleBar({ onSettings, settingsActive }: TitleBarProps) {
           <button
             onClick={() => windowAction("toggleMaximize")}
             className="h-full w-11 flex items-center justify-center text-muted-foreground hover:bg-accent/50 hover:text-foreground transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
-            title={maximized ? "Restore" : "Maximize"}
             aria-label={maximized ? "Restore window" : "Maximize window"}
           >
             <Square className="h-3.5 w-3.5" aria-hidden="true" />
@@ -142,7 +140,6 @@ export function TitleBar({ onSettings, settingsActive }: TitleBarProps) {
           <button
             onClick={() => windowAction("close")}
             className="h-full w-11 flex items-center justify-center text-muted-foreground hover:bg-red-500/80 hover:text-white transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
-            title="Close"
             aria-label="Close window"
           >
             <X className="h-4 w-4" aria-hidden="true" />

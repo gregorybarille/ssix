@@ -48,7 +48,6 @@ export function CredentialList({
           size="icon"
           className="h-7 w-7"
           onClick={() => setInstallCred(cred)}
-          title="Install public key on remote host"
           aria-label={`Install public key for ${cred.name} on a remote host`}
         >
           <UploadCloud className="h-3.5 w-3.5" aria-hidden="true" />
@@ -59,7 +58,6 @@ export function CredentialList({
         size="icon"
         className="h-7 w-7"
         onClick={() => onEdit(cred)}
-        title="Edit credential"
         aria-label={`Edit credential ${cred.name}`}
       >
         <Edit className="h-3.5 w-3.5" aria-hidden="true" />
@@ -69,7 +67,6 @@ export function CredentialList({
         size="icon"
         className="h-7 w-7 text-destructive hover:text-destructive"
         onClick={() => onDelete(cred.id)}
-        title="Delete credential"
         aria-label={`Delete credential ${cred.name}`}
       >
         <Trash2 className="h-3.5 w-3.5" aria-hidden="true" />
