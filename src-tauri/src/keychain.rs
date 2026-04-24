@@ -37,21 +37,12 @@ fn load_secrets() -> HashMap<String, String> {
 
 fn save_secrets(secrets: &HashMap<String, String>) -> Result<(), String> {
     let path = secrets_path();
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent).map_err(|e| e.to_string())?;
-    }
     let content = serde_json::to_string_pretty(secrets).map_err(|e| e.to_string())?;
-    fs::write(&path, &content).map_err(|e| e.to_string())?;
-
-    // Restrict to owner read/write only (unix only; no-op on Windows).
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let perms = fs::Permissions::from_mode(0o600);
-        fs::set_permissions(&path, perms).map_err(|e| e.to_string())?;
-    }
-
-    Ok(())
+    // Audit-3 P1#4: route through `atomic_write` so `secrets.json` cannot
+    // be torn by a crash mid-write, and so the 0600 mode is applied to
+    // the temp file BEFORE the secret payload is flushed (preventing a
+    // brief world-readable window if a crash leaves the temp behind).
+    crate::storage::atomic_write(&path, content.as_bytes(), Some(0o600))
 }
 
 /// Run `f` with an exclusive lock on the secrets file.
