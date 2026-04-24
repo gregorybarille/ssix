@@ -90,6 +90,14 @@ See [Git Sync](git-sync.md) for details.
 - generate keypairs
 - choose storage mode for generated keys
 - install public key on remote hosts
+- **Browse for an existing private key** via the native file picker:
+  the SSH Key tab in the credential form has a folder icon next to the
+  Private Key Path input that opens the OS file dialog (powered by
+  `@tauri-apps/plugin-dialog`). Selecting a file writes the absolute
+  path back into the input and clears the "Private key path is
+  required" inline error if it was showing. Cancelling the dialog
+  leaves the existing value untouched, so users who prefer to type a
+  path can still do so.
 
 ## Settings
 

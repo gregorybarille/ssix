@@ -14,6 +14,8 @@ import {
 } from "./ui/dialog";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "./ui/tabs";
 import { GenerateKeyDialog, GeneratedKey, KeyStorageMode } from "./GenerateKeyDialog";
+import { pickFile } from "@/lib/dialog";
+import { FolderOpen } from "lucide-react";
 
 interface CredentialFormProps {
   open: boolean;
@@ -268,17 +270,41 @@ export function CredentialForm({
               {keySource === "path" ? (
                 <div className="space-y-2">
                   <Label htmlFor="cred-key-path">Private Key Path *</Label>
-                  <Input
-                    id="cred-key-path"
-                    placeholder="/home/user/.ssh/id_rsa"
-                    value={privateKeyPath}
-                    onChange={(e) => {
-                      setPrivateKeyPath(e.target.value);
-                      clearFieldError("key_path");
-                    }}
-                    aria-invalid={fieldErrors.key_path ? true : undefined}
-                    aria-describedby={fieldErrors.key_path ? "cred-key-path-error" : undefined}
-                  />
+                  <div className="flex gap-2">
+                    <Input
+                      id="cred-key-path"
+                      placeholder="/home/user/.ssh/id_rsa"
+                      value={privateKeyPath}
+                      onChange={(e) => {
+                        setPrivateKeyPath(e.target.value);
+                        clearFieldError("key_path");
+                      }}
+                      aria-invalid={fieldErrors.key_path ? true : undefined}
+                      aria-describedby={fieldErrors.key_path ? "cred-key-path-error" : undefined}
+                    />
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="icon"
+                      onClick={async () => {
+                        const picked = await pickFile({
+                          title: "Select SSH private key",
+                          defaultPath: privateKeyPath || undefined,
+                          filters: [
+                            { name: "All files", extensions: ["*"] },
+                          ],
+                        });
+                        if (picked) {
+                          setPrivateKeyPath(picked);
+                          clearFieldError("key_path");
+                        }
+                      }}
+                      aria-label="Browse for private key file"
+                      title="Browse for private key file"
+                    >
+                      <FolderOpen className="h-4 w-4" aria-hidden="true" />
+                    </Button>
+                  </div>
                   {fieldErrors.key_path && (
                     <p id="cred-key-path-error" role="alert" className="text-xs text-destructive">
                       {fieldErrors.key_path}

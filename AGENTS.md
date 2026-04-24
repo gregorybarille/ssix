@@ -62,6 +62,7 @@
 - Port number inputs MUST go through `parsePort` (`src/lib/port.ts`). Never use `parseInt(input) || 22`-style fallbacks — they silently corrupt mid-typing input and hide out-of-range values. Render port fields as `type="text" inputMode="numeric"` controlled by a string state, validate on change, and surface inline errors via `aria-invalid` + `aria-describedby` pointing at a `role="alert"` `<p>` next to the input. Block submit until every active port validates.
 - Rust commands return `Result<T, String>`. Frontend stores catch the rejection, stringify it into `error`, and rethrow on mutating actions (`add/update/delete/clone`) so form components can display it. `fetch*` actions swallow the error into state instead of rethrowing.
 - The Tauri CSP in `src-tauri/tauri.conf.json` is locked to `self` + `http://localhost:1420`. Adding outbound HTTP calls from the frontend requires updating the CSP.
+- Native OS dialogs (file picker, save dialog, message boxes) go through the shared `pickFile` helper in `src/lib/dialog.ts`, which lazy-imports `@tauri-apps/plugin-dialog`. The plugin is registered in `src-tauri/src/lib.rs` (`tauri_plugin_dialog::init()`) and gated by the `dialog:allow-open` permission in `src-tauri/capabilities/default.json`. Adding new dialog operations (save, message) requires extending the helper AND granting the matching permission (`dialog:allow-save`, `dialog:allow-message`, etc.) — never call the plugin directly from a component so tests can mock the helper.
 
 ## Adding a new Tauri command (end-to-end)
 
