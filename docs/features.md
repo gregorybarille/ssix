@@ -159,3 +159,21 @@ swallowing well-known terminal readline bindings, combos that mix
 The terminal tab strip itself also implements its own WAI-ARIA
 keyboard model (Arrow keys, Home/End, Delete) — see the Terminals
 section.
+
+## Connect Picker (Command Palette)
+
+`Cmd/Ctrl+K` (or the `+` button on the terminal tab bar) opens the
+**Connect Picker**, a focused command-palette UI for jumping to any
+saved connection without leaving the keyboard:
+
+- A search input is autofocused; typing filters the list with
+  AND-token matching across **name, host, and tags** (e.g. `prod db`
+  matches connections tagged both `production` and `db`).
+- `↑` / `↓` move the active row (wrap at the ends), `Home` / `End`
+  jump to the first/last match, `↵` connects, `Esc` closes.
+- The picker exposes a real ARIA listbox: the input owns the
+  `aria-activedescendant`/`aria-controls` wiring and each row has
+  `role="option"` with `aria-selected`, so screen readers announce the
+  selected connection as the user navigates.
+- The footer reminds users of the available keys
+  (`↑↓ navigate · ↵ connect · Esc close`).

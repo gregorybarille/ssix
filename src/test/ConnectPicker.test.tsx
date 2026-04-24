@@ -1,99 +1,146 @@
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/react";
 import { ConnectPicker } from "@/components/ConnectPicker";
 import { Connection, Credential } from "@/types";
 
-const mockConnections: Connection[] = [
-  { id: "c1", name: "prod-server", host: "10.0.0.1", port: 22, type: "direct" },
-  { id: "c2", name: "staging-server", host: "10.0.0.2", port: 22, type: "direct", credential_id: "cred1" },
-  {
-    id: "c3",
-    name: "tunnel-dev",
-    host: "internal.dev",
-    port: 22,
-    type: "jump_shell",
-    gateway_host: "gw.dev",
-    gateway_port: 22,
-    gateway_credential_id: "cred1",
-    destination_host: "internal.dev",
-    destination_port: 22,
-  },
+const conns: Connection[] = [
+  { id: "1", name: "prod-api", host: "api.prod", port: 22, type: "direct", tags: ["production"] },
+  { id: "2", name: "staging-api", host: "api.staging", port: 22, type: "direct", tags: ["staging"], credential_id: "cred1" },
+  { id: "3", name: "db-bastion", host: "10.0.0.5", port: 22, type: "direct", tags: ["production", "db"] },
 ];
 
-const mockCredentials: Credential[] = [
+const creds: Credential[] = [
   { id: "cred1", name: "staging-key", username: "deploy", type: "password", password: "secret" },
 ];
 
-describe("ConnectPicker", () => {
-  it("renders connection list when open", () => {
-    render(
-      <ConnectPicker
-        open={true}
-        onOpenChange={vi.fn()}
-        connections={mockConnections}
-        credentials={mockCredentials}
-        onConnect={vi.fn()}
-      />
-    );
-    expect(screen.getByText("Open Connection")).toBeInTheDocument();
-    expect(screen.getByText("prod-server")).toBeInTheDocument();
-    expect(screen.getByText("staging-server")).toBeInTheDocument();
-    expect(screen.getByText("tunnel-dev")).toBeInTheDocument();
+describe("ConnectPicker (command palette)", () => {
+  let onConnect: ReturnType<typeof vi.fn>;
+  let onOpenChange: ReturnType<typeof vi.fn>;
+
+  beforeEach(() => {
+    onConnect = vi.fn();
+    onOpenChange = vi.fn();
   });
 
-  it("shows credential name for connections with credentials", () => {
+  function open() {
     render(
       <ConnectPicker
-        open={true}
-        onOpenChange={vi.fn()}
-        connections={mockConnections}
-        credentials={mockCredentials}
-        onConnect={vi.fn()}
-      />
+        open
+        onOpenChange={onOpenChange}
+        connections={conns}
+        credentials={creds}
+        onConnect={onConnect}
+      />,
     );
+  }
+
+  it("renders all connections by default", () => {
+    open();
+    expect(screen.getByText("prod-api")).toBeInTheDocument();
+    expect(screen.getByText("staging-api")).toBeInTheDocument();
+    expect(screen.getByText("db-bastion")).toBeInTheDocument();
+  });
+
+  it("shows the credential name for connections that reference one", () => {
+    open();
     expect(screen.getByText(/staging-key/)).toBeInTheDocument();
   });
 
-  it("calls onConnect when clicking a connection", () => {
-    const onConnect = vi.fn();
-    const onOpenChange = vi.fn();
+  it("renders an empty state when no connections are configured", () => {
     render(
       <ConnectPicker
-        open={true}
+        open
         onOpenChange={onOpenChange}
-        connections={mockConnections}
-        credentials={mockCredentials}
-        onConnect={onConnect}
-      />
-    );
-    fireEvent.click(screen.getByText("prod-server"));
-    expect(onConnect).toHaveBeenCalledWith(mockConnections[0]);
-    expect(onOpenChange).toHaveBeenCalledWith(false);
-  });
-
-  it("shows empty state when no connections", () => {
-    render(
-      <ConnectPicker
-        open={true}
-        onOpenChange={vi.fn()}
         connections={[]}
         credentials={[]}
-        onConnect={vi.fn()}
-      />
+        onConnect={onConnect}
+      />,
     );
-    expect(screen.getByText("No connections configured yet.")).toBeInTheDocument();
+    expect(screen.getByText(/No connections configured yet/)).toBeInTheDocument();
   });
 
-  it("does not render when closed", () => {
+  it("does not render the search input when closed", () => {
     render(
       <ConnectPicker
         open={false}
-        onOpenChange={vi.fn()}
-        connections={mockConnections}
-        credentials={mockCredentials}
-        onConnect={vi.fn()}
-      />
+        onOpenChange={onOpenChange}
+        connections={conns}
+        credentials={creds}
+        onConnect={onConnect}
+      />,
     );
-    expect(screen.queryByText("Open Connection")).not.toBeInTheDocument();
+    expect(screen.queryByRole("searchbox", { name: /search connections/i })).toBeNull();
+  });
+
+  it("autofocuses the search input", () => {
+    open();
+    const input = screen.getByRole("searchbox", { name: /search connections/i });
+    expect(document.activeElement).toBe(input);
+  });
+
+  it("filters by name, host, and tag tokens (AND semantics)", () => {
+    open();
+    const input = screen.getByRole("searchbox", { name: /search connections/i });
+    fireEvent.change(input, { target: { value: "production db" } });
+    const options = screen.getAllByRole("option");
+    expect(options).toHaveLength(1);
+    expect(options[0]).toHaveTextContent("db-bastion");
+  });
+
+  it("ArrowDown / ArrowUp wrap and update aria-selected", () => {
+    open();
+    const input = screen.getByRole("searchbox", { name: /search connections/i });
+    let active = screen
+      .getAllByRole("option")
+      .find((o) => o.getAttribute("aria-selected") === "true");
+    expect(active).toHaveTextContent("prod-api");
+    fireEvent.keyDown(input, { key: "ArrowDown" });
+    active = screen
+      .getAllByRole("option")
+      .find((o) => o.getAttribute("aria-selected") === "true");
+    expect(active).toHaveTextContent("staging-api");
+    fireEvent.keyDown(input, { key: "ArrowDown" });
+    fireEvent.keyDown(input, { key: "ArrowDown" });
+    active = screen
+      .getAllByRole("option")
+      .find((o) => o.getAttribute("aria-selected") === "true");
+    expect(active).toHaveTextContent("prod-api");
+    fireEvent.keyDown(input, { key: "ArrowUp" });
+    active = screen
+      .getAllByRole("option")
+      .find((o) => o.getAttribute("aria-selected") === "true");
+    expect(active).toHaveTextContent("db-bastion");
+  });
+
+  it("Enter calls onConnect with the active row and closes", () => {
+    open();
+    const input = screen.getByRole("searchbox", { name: /search connections/i });
+    fireEvent.keyDown(input, { key: "ArrowDown" });
+    fireEvent.keyDown(input, { key: "Enter" });
+    expect(onConnect).toHaveBeenCalledTimes(1);
+    expect(onConnect).toHaveBeenCalledWith(conns[1]);
+    expect(onOpenChange).toHaveBeenCalledWith(false);
+  });
+
+  it("clicking a row connects to that row", () => {
+    open();
+    fireEvent.click(screen.getByText("prod-api"));
+    expect(onConnect).toHaveBeenCalledWith(conns[0]);
+    expect(onOpenChange).toHaveBeenCalledWith(false);
+  });
+
+  it("aria-activedescendant points at the active row", () => {
+    open();
+    const input = screen.getByRole("searchbox", { name: /search connections/i });
+    expect(input.getAttribute("aria-activedescendant")).toBe("connect-picker-row-0");
+    fireEvent.keyDown(input, { key: "ArrowDown" });
+    expect(input.getAttribute("aria-activedescendant")).toBe("connect-picker-row-1");
+  });
+
+  it("shows a no-matches message when query has no hits", () => {
+    open();
+    const input = screen.getByRole("searchbox", { name: /search connections/i });
+    fireEvent.change(input, { target: { value: "zzznomatch" } });
+    expect(screen.getByText(/No matches for/)).toBeInTheDocument();
   });
 });
