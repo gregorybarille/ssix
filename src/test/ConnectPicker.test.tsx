@@ -162,4 +162,49 @@ describe("ConnectPicker (command palette)", () => {
     expect(input).toHaveAttribute("aria-expanded", "false");
     expect(input).not.toHaveAttribute("aria-controls");
   });
+
+  /*
+   * Audit-3 P2#11: hover/keyboard race regression.
+   *
+   * The previous implementation used `onMouseEnter` to update the
+   * active row. Whenever ArrowUp/Down ran scrollIntoView on the
+   * newly-active row, the rows under a stationary cursor moved,
+   * which fires synthetic `mouseenter` events for whichever row
+   * passed under the cursor — clobbering the keyboard's selection.
+   *
+   * The fix uses `pointermove` to track real pointer motion and
+   * gates `pointerenter` on it. We assert here that synthesizing a
+   * pointerenter WITHOUT a preceding pointermove does NOT change
+   * the keyboard-driven selection.
+   */
+  it("hover does not clobber keyboard selection without pointer movement", () => {
+    open();
+    const input = screen.getByRole("combobox");
+    // ArrowDown twice → row index 2 (db-bastion).
+    fireEvent.keyDown(input, { key: "ArrowDown" });
+    fireEvent.keyDown(input, { key: "ArrowDown" });
+    expect(input).toHaveAttribute(
+      "aria-activedescendant",
+      "connect-picker-row-2",
+    );
+
+    // Simulate the bug: the scroll moves a different row under the
+    // (stationary) cursor, firing pointerenter on row 0 WITHOUT a
+    // preceding pointermove. Selection must NOT change.
+    const row0 = document.querySelector('[data-index="0"]')!;
+    fireEvent.pointerEnter(row0);
+    expect(input).toHaveAttribute(
+      "aria-activedescendant",
+      "connect-picker-row-2",
+    );
+
+    // After a real pointermove, hover IS allowed to take over.
+    const list = document.getElementById("connect-picker-list")!;
+    fireEvent.pointerMove(list);
+    fireEvent.pointerEnter(row0);
+    expect(input).toHaveAttribute(
+      "aria-activedescendant",
+      "connect-picker-row-0",
+    );
+  });
 });
