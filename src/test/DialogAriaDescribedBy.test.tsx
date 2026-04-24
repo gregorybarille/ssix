@@ -52,14 +52,13 @@ describe("Dialog aria-describedby wiring (P1#5)", () => {
           port: 22,
           type: "direct",
         }}
-        mode="upload"
       />,
     );
     expectDescribed(screen.getByRole("dialog"));
   });
 
   it("GenerateKeyDialog wires a non-empty description", () => {
-    render(<GenerateKeyDialog open onOpenChange={vi.fn()} />);
+    render(<GenerateKeyDialog open onOpenChange={vi.fn()} onGenerated={vi.fn()} />);
     expectDescribed(screen.getByRole("dialog"));
   });
 

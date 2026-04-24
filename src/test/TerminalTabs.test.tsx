@@ -478,7 +478,6 @@ describe("TerminalTabs", () => {
         <TerminalTabs
           tabs={failingTabs}
           activeTabId="t1"
-          connections={[mockConn]}
           {...defaultProps}
         />,
       );
@@ -519,7 +518,6 @@ describe("TerminalTabs", () => {
         <TerminalTabs
           tabs={tabs}
           activeTabId="t1"
-          connections={[mockConn]}
           {...defaultProps}
         />,
       );
