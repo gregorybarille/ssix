@@ -1,5 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { TunnelsView, TunnelSession } from "@/components/TunnelsView";
 import { Connection, Credential } from "@/types";
 
@@ -74,7 +75,8 @@ describe("TunnelsView", () => {
     expect(screen.getAllByText("api-tunnel").length).toBeGreaterThan(0);
   });
 
-  it("calls onCloseSession when the Disconnect button is clicked", () => {
+  it("opens a confirm dialog before disconnecting (Audit-2 #2) and only calls onCloseSession after confirmation", async () => {
+    const user = userEvent.setup();
     const onCloseSession = vi.fn();
     const sessions: TunnelSession[] = [
       {
@@ -86,8 +88,45 @@ describe("TunnelsView", () => {
     render(
       <TunnelsView {...defaultProps} sessions={sessions} onCloseSession={onCloseSession} />,
     );
-    fireEvent.click(screen.getByTitle("Disconnect tunnel"));
+
+    // Audit-2 #1: the icon-only button must expose an aria-label that
+    // identifies which tunnel it disconnects (title alone is unreliable
+    // across AT and not announced on touch).
+    const closeBtn = screen.getByRole("button", {
+      name: "Disconnect tunnel api-tunnel",
+    });
+    await user.click(closeBtn);
+
+    // The session must NOT be torn down on the first click — a
+    // ConfirmDialog gates the destructive action.
+    expect(onCloseSession).not.toHaveBeenCalled();
+    expect(
+      screen.getByRole("dialog", { name: /disconnect tunnel\?/i }),
+    ).toBeInTheDocument();
+
+    // Confirm the action.
+    await user.click(screen.getByRole("button", { name: "Disconnect" }));
     expect(onCloseSession).toHaveBeenCalledWith("s-42");
+  });
+
+  it("does not disconnect when the user cancels the confirm dialog", async () => {
+    const user = userEvent.setup();
+    const onCloseSession = vi.fn();
+    const sessions: TunnelSession[] = [
+      {
+        sessionId: "s-99",
+        connectionName: "api-tunnel",
+        connection: portForwardConn,
+      },
+    ];
+    render(
+      <TunnelsView {...defaultProps} sessions={sessions} onCloseSession={onCloseSession} />,
+    );
+    await user.click(
+      screen.getByRole("button", { name: "Disconnect tunnel api-tunnel" }),
+    );
+    await user.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(onCloseSession).not.toHaveBeenCalled();
   });
 
   it("filters tunnel definitions to port_forward connections only", () => {

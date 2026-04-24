@@ -1,9 +1,10 @@
-import React from "react";
+import React, { useState } from "react";
 import { Connection, Credential, LayoutMode } from "@/types";
 import { TunnelTab } from "./TunnelTab";
 import { ConnectionList } from "./ConnectionList";
 import { LayoutToggle } from "./ui/layout-toggle";
 import { Button } from "./ui/button";
+import { ConfirmDialog } from "./ConfirmDialog";
 import { Cable, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -41,6 +42,16 @@ export function TunnelsView({
   onClone,
 }: TunnelsViewProps) {
   const tunnelDefs = connections.filter((c) => c.type === "port_forward");
+  /*
+   * Audit-2 #2: closing a live tunnel is destructive — every TCP
+   * connection going through the forwarded port is dropped. AGENTS.md
+   * requires destructive actions to go through <ConfirmDialog>; the
+   * same standard that gates "close live terminal pane" applies here.
+   */
+  const [pendingClose, setPendingClose] = useState<{
+    sessionId: string;
+    name: string;
+  } | null>(null);
 
   return (
     <div className="flex flex-col h-full">
@@ -77,10 +88,16 @@ export function TunnelsView({
                       variant="ghost"
                       size="icon"
                       className="h-6 w-6"
-                      onClick={() => onCloseSession(s.sessionId)}
+                      onClick={() =>
+                        setPendingClose({
+                          sessionId: s.sessionId,
+                          name: s.connectionName,
+                        })
+                      }
+                      aria-label={`Disconnect tunnel ${s.connectionName}`}
                       title="Disconnect tunnel"
                     >
-                      <X className="h-3.5 w-3.5" />
+                      <X className="h-3.5 w-3.5" aria-hidden="true" />
                     </Button>
                   </div>
                   <div className="h-[260px] relative">
@@ -88,7 +105,12 @@ export function TunnelsView({
                       sessionId={s.sessionId}
                       connection={s.connection}
                       isVisible
-                      onDisconnect={() => onCloseSession(s.sessionId)}
+                      onDisconnect={() =>
+                        setPendingClose({
+                          sessionId: s.sessionId,
+                          name: s.connectionName,
+                        })
+                      }
                     />
                   </div>
                 </div>
@@ -113,6 +135,27 @@ export function TunnelsView({
           />
         </section>
       </div>
+
+      <ConfirmDialog
+        open={pendingClose !== null}
+        onOpenChange={(open) => {
+          if (!open) setPendingClose(null);
+        }}
+        title="Disconnect tunnel?"
+        description={
+          pendingClose
+            ? `Disconnecting "${pendingClose.name}" will drop every TCP connection currently using the forwarded port.`
+            : ""
+        }
+        confirmLabel="Disconnect"
+        variant="destructive"
+        onConfirm={() => {
+          if (pendingClose) {
+            onCloseSession(pendingClose.sessionId);
+            setPendingClose(null);
+          }
+        }}
+      />
     </div>
   );
 }
