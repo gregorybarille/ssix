@@ -12,9 +12,15 @@ interface TagInputProps {
 }
 
 /**
- * Chip-style tag editor. Pressing Space or Enter commits the buffered text as
- * a chip; Backspace on an empty buffer removes the last chip. Duplicates are
- * deduped case-insensitively.
+ * Chip-style tag editor.
+ *
+ * Commit keys: Enter or Comma. Space is intentionally NOT a commit
+ * key (P2-A9) — multi-word tags like "needs review" are valid and
+ * the previous Space-as-commit behavior silently mangled them.
+ * Backspace on an empty buffer removes the last chip. Duplicates
+ * are deduped case-insensitively. The chip strip is exposed as a
+ * `role="list"` so AT announces "list, 3 items" rather than a
+ * shapeless run of badges.
  */
 export function TagInput({
   value,
@@ -42,7 +48,7 @@ export function TagInput({
   };
 
   const handleKeyDown = (e: KeyboardEvent<HTMLInputElement>) => {
-    if (e.key === " " || e.key === "Enter") {
+    if (e.key === "Enter" || e.key === ",") {
       e.preventDefault();
       commit(draft);
     } else if (e.key === "Backspace" && draft === "" && value.length > 0) {
@@ -58,23 +64,25 @@ export function TagInput({
         className,
       )}
     >
-      {value.map((tag, i) => (
-        <Badge
-          key={`${tag}-${i}`}
-          variant="secondary"
-          className="gap-1 pr-1"
-        >
-          {tag}
-          <button
-            type="button"
-            aria-label={`Remove tag ${tag}`}
-            onClick={() => removeAt(i)}
-            className="rounded-sm hover:bg-destructive/20 hover:text-destructive p-0.5"
-          >
-            <X className="h-3 w-3" />
-          </button>
-        </Badge>
-      ))}
+      {value.length > 0 && (
+        <ul role="list" aria-label="Tags" className="contents">
+          {value.map((tag, i) => (
+            <li role="listitem" key={`${tag}-${i}`} className="contents">
+              <Badge variant="secondary" className="gap-1 pr-1">
+                {tag}
+                <button
+                  type="button"
+                  aria-label={`Remove tag ${tag}`}
+                  onClick={() => removeAt(i)}
+                  className="rounded-sm hover:bg-destructive/20 hover:text-destructive p-0.5"
+                >
+                  <X className="h-3 w-3" />
+                </button>
+              </Badge>
+            </li>
+          ))}
+        </ul>
+      )}
       <input
         id={id}
         value={draft}

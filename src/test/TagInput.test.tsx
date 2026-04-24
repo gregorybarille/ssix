@@ -14,12 +14,15 @@ function Harness({ initial = [] as string[] }: { initial?: string[] }) {
 }
 
 describe("TagInput", () => {
-  it("creates a chip when pressing space", () => {
+  it("does NOT commit on Space (multi-word tags are valid; P2-A9)", () => {
     render(<Harness />);
-    const input = screen.getByPlaceholderText("add");
-    fireEvent.change(input, { target: { value: "alpha" } });
+    const input = screen.getByPlaceholderText("add") as HTMLInputElement;
+    fireEvent.change(input, { target: { value: "needs review" } });
     fireEvent.keyDown(input, { key: " " });
-    expect(screen.getByTestId("dump").textContent).toBe("alpha");
+    // Buffer is unchanged, no chip created.
+    expect(screen.getByTestId("dump").textContent).toBe("");
+    fireEvent.keyDown(input, { key: "Enter" });
+    expect(screen.getByTestId("dump").textContent).toBe("needs review");
   });
 
   it("creates a chip when pressing enter", () => {
@@ -28,6 +31,14 @@ describe("TagInput", () => {
     fireEvent.change(input, { target: { value: "beta" } });
     fireEvent.keyDown(input, { key: "Enter" });
     expect(screen.getByTestId("dump").textContent).toBe("beta");
+  });
+
+  it("creates a chip when pressing comma", () => {
+    render(<Harness />);
+    const input = screen.getByPlaceholderText("add");
+    fireEvent.change(input, { target: { value: "gamma" } });
+    fireEvent.keyDown(input, { key: "," });
+    expect(screen.getByTestId("dump").textContent).toBe("gamma");
   });
 
   it("dedupes tags case-insensitively", () => {
@@ -50,5 +61,12 @@ describe("TagInput", () => {
     const remove = screen.getByLabelText("Remove tag two");
     fireEvent.click(remove);
     expect(screen.getByTestId("dump").textContent).toBe("one|three");
+  });
+
+  it("wraps the chip strip in a role=list with one listitem per tag", () => {
+    render(<Harness initial={["a", "b", "c"]} />);
+    const list = screen.getByRole("list", { name: /tags/i });
+    expect(list).toBeInTheDocument();
+    expect(screen.getAllByRole("listitem")).toHaveLength(3);
   });
 });
