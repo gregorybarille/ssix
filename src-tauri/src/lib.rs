@@ -42,7 +42,6 @@ pub fn run() {
             commands::ssh::scp_upload,
             commands::ssh::scp_download,
             commands::ssh_keygen::generate_ssh_key,
-            commands::ssh_keygen::ssh_install_public_key,
             commands::ssh_keygen::ssh_install_public_key_by_credential,
             commands::screenshot::take_screenshot,
             logs::get_logs,

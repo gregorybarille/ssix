@@ -41,8 +41,8 @@
 
 ## Code Reuse (Mandatory)
 
-- **Before writing new code**, check `src/utils/`, `src/lib/`, `src/hooks/` — import and reuse existing helpers
-- Extract any logic duplicated >5 lines to `src/utils/` immediately
+- **Before writing new code**, check `src/lib/`, `src/hooks/`, `src/components/ui/` — import and reuse existing helpers
+- Extract any logic duplicated >5 lines to `src/lib/` (utilities), `src/hooks/` (React hooks), or `src/components/ui/` (presentational primitives) immediately
 - No copy-paste logic across Rust crates or React components
 - Run a duplication check (`jscpd` or similar) before committing
 

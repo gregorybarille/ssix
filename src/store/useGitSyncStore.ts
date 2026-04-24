@@ -1,6 +1,6 @@
 import { create } from "zustand";
 import { invoke } from "@/lib/tauri";
-import { GitSyncDiff, GitSyncRunResult, GitSyncSnapshot, GitSyncStatus } from "@/types";
+import { GitSyncActionResult, GitSyncDiff, GitSyncRunResult, GitSyncSnapshot, GitSyncStatus } from "@/types";
 import { runAsync, runAsyncRethrow } from "@/lib/asyncAction";
 
 interface GitSyncState {
@@ -38,7 +38,7 @@ const DEFAULT_DIFF: GitSyncDiff = {
  * appeared in fetchRemote/pullRemote/pushRemote/commitSnapshot.
  */
 function formatGitOutput(
-  result: { stdout: string; stderr: string },
+  result: GitSyncActionResult,
   fallback: string,
 ): string {
   return [result.stdout, result.stderr].filter(Boolean).join("\n") || fallback;
@@ -82,7 +82,7 @@ export const useGitSyncStore = create<GitSyncState>((set, get) => ({
   fetchRemote: () =>
     runAsyncRethrow(set, async () => {
       set({ actionOutput: null });
-      const result = await invoke<{ stdout: string; stderr: string }>("git_sync_fetch");
+      const result = await invoke<GitSyncActionResult>("git_sync_fetch");
       set({ actionOutput: formatGitOutput(result, "Fetch complete.") });
       await get().fetchStatus();
     }),
@@ -90,7 +90,7 @@ export const useGitSyncStore = create<GitSyncState>((set, get) => ({
   pullRemote: () =>
     runAsyncRethrow(set, async () => {
       set({ actionOutput: null });
-      const result = await invoke<{ stdout: string; stderr: string }>("git_sync_pull");
+      const result = await invoke<GitSyncActionResult>("git_sync_pull");
       set({ actionOutput: formatGitOutput(result, "Pull complete.") });
       await Promise.all([get().fetchStatus(), get().fetchDiff()]);
     }),
@@ -98,7 +98,7 @@ export const useGitSyncStore = create<GitSyncState>((set, get) => ({
   pushRemote: () =>
     runAsyncRethrow(set, async () => {
       set({ actionOutput: null });
-      const result = await invoke<{ stdout: string; stderr: string }>("git_sync_push");
+      const result = await invoke<GitSyncActionResult>("git_sync_push");
       set({ actionOutput: formatGitOutput(result, "Push complete.") });
       await Promise.all([get().fetchStatus(), get().fetchDiff()]);
     }),
@@ -106,7 +106,7 @@ export const useGitSyncStore = create<GitSyncState>((set, get) => ({
   commitSnapshot: (message) =>
     runAsyncRethrow(set, async () => {
       set({ actionOutput: null });
-      const result = await invoke<{ stdout: string; stderr: string }>("git_sync_commit", {
+      const result = await invoke<GitSyncActionResult>("git_sync_commit", {
         input: { message },
       });
       set({ actionOutput: formatGitOutput(result, "Commit complete.") });

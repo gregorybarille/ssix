@@ -5,7 +5,6 @@ import { runAsync, runAsyncRethrow } from "@/lib/asyncAction";
 
 interface ConnectionsState {
   connections: Connection[];
-  searchQuery: string;
   isLoading: boolean;
   error: string | null;
   fetchConnections: () => Promise<void>;
@@ -14,13 +13,14 @@ interface ConnectionsState {
   deleteConnection: (id: string) => Promise<void>;
   cloneConnection: (id: string, newName: string, overrides?: Partial<Connection>) => Promise<void>;
   searchConnections: (query: string) => Promise<void>;
-  setSearchQuery: (q: string) => void;
   getOrphanPrivateCredential: (connId: string) => Promise<string | null>;
 }
 
+// Audit-4 Phase 4: removed `searchQuery` slice and `setSearchQuery`
+// action — App.tsx owns its own search input state and never read the
+// store's copy. Keeping a duplicate source of truth invited drift.
 export const useConnectionsStore = create<ConnectionsState>((set) => ({
   connections: [],
-  searchQuery: "",
   isLoading: false,
   error: null,
 
@@ -64,12 +64,9 @@ export const useConnectionsStore = create<ConnectionsState>((set) => ({
 
   searchConnections: (query) =>
     runAsync(set, async () => {
-      set({ searchQuery: query });
       const connections = await invoke<Connection[]>("search_connections", { query });
       set({ connections });
     }).then(() => undefined),
-
-  setSearchQuery: (q) => set({ searchQuery: q }),
 
   getOrphanPrivateCredential: async (connId) => {
     try {

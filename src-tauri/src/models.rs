@@ -107,16 +107,20 @@ pub struct Connection {
     pub verbosity: u8,
     /// Additional CLI-style flags passed to the SSH subsystem (e.g. `-C` for
     /// compression). Parsed and applied before the handshake.
-    #[serde(default)]
+    // Audit-4 Phase 4: skip_serializing_if on every Option/Vec field that
+    // already has #[serde(default)]. Round-trips identically and shaves
+    // noise from data.json for the common case (most connections leave
+    // these unset). Mirrors the existing treatment of `color`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub extra_args: Option<String>,
     /// Command to run after the shell session opens, e.g. `sudo su - deploy`.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub login_command: Option<String>,
     /// Preferred starting directory on the remote host.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub remote_path: Option<String>,
     /// User-defined tags. Used for filtering/search. Empty by default.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub tags: Vec<String>,
     /// Optional Open Color name (e.g. "blue", "violet") used as the tab accent.
     #[serde(default, skip_serializing_if = "Option::is_none")]

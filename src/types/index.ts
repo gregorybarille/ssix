@@ -123,6 +123,18 @@ export interface GitSyncSnapshot {
   exported_files: string[];
 }
 
+/**
+ * Audit-4 Phase 4: shape returned by every git_sync action that runs a
+ * single git subprocess (fetch/pull/push/commit). The store inlined
+ * `{ stdout: string; stderr: string }` four times — extracting it here
+ * keeps the contract documented in one place and gives the Rust side a
+ * single struct to mirror when ts-rs is adopted in Phase 6.
+ */
+export interface GitSyncActionResult {
+  stdout: string;
+  stderr: string;
+}
+
 export interface GitSyncRunResult {
   steps: string[];
   output: {
