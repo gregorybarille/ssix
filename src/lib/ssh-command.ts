@@ -35,7 +35,6 @@ export function buildSshCommand(
   const push = (...xs: string[]) => parts.push(...xs);
 
   const destCred = find(connection.credential_id);
-  const gwCred = find(connection.gateway_credential_id);
 
   const identity = (cred?: Credential) =>
     cred && cred.type === "ssh_key" && cred.private_key_path
@@ -46,29 +45,31 @@ export function buildSshCommand(
     user ? `${q(user)}@${q(host)}` : q(host);
 
   if (connection.type === "port_forward") {
-    const local = connection.local_port ?? 0;
-    const dest = `${connection.destination_host ?? ""}:${connection.destination_port ?? 22}`;
+    const gwCred = find(connection.gateway_credential_id);
+    const local = connection.local_port;
+    const dest = `${connection.destination_host}:${connection.destination_port}`;
     push("-L", q(`${local}:${dest}`));
     const idFile = identity(gwCred);
     if (idFile) push("-i", q(idFile));
-    const gwPort = connection.gateway_port ?? 22;
+    const gwPort = connection.gateway_port;
     if (gwPort !== 22) push("-p", String(gwPort));
-    push(userAt(gwCred?.username, connection.gateway_host ?? ""));
+    push(userAt(gwCred?.username, connection.gateway_host));
     return parts.join(" ");
   }
 
   if (connection.type === "jump_shell") {
-    const gwPort = connection.gateway_port ?? 22;
+    const gwCred = find(connection.gateway_credential_id);
+    const gwPort = connection.gateway_port;
     const jumpHost =
       gwPort === 22
-        ? (connection.gateway_host ?? "")
-        : `${connection.gateway_host ?? ""}:${gwPort}`;
+        ? connection.gateway_host
+        : `${connection.gateway_host}:${gwPort}`;
     push("-J", userAt(gwCred?.username, jumpHost));
     const idFile = identity(destCred);
     if (idFile) push("-i", q(idFile));
-    const destPort = connection.destination_port ?? 22;
+    const destPort = connection.destination_port;
     if (destPort !== 22) push("-p", String(destPort));
-    push(userAt(destCred?.username, connection.destination_host ?? ""));
+    push(userAt(destCred?.username, connection.destination_host));
     return parts.join(" ");
   }
 

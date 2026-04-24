@@ -24,11 +24,17 @@
  * Both manage `isLoading` and `error` identically.
  */
 
-type SetLoadingError = (
-  patch:
-    | { isLoading?: boolean; error?: string | null }
-    | ((prev: { isLoading?: boolean; error?: string | null }) => unknown),
-) => void;
+/**
+ * The shape of `set` we depend on. We use a parameter-less generic so
+ * Zustand's actual `set` (which is invariant in its state type) widens
+ * cleanly. Concretely: we only ever pass `{ isLoading, error }`-shaped
+ * patches, and every consuming store has those two keys, so this is
+ * sound at the call sites even though it isn't strictly assignable to
+ * `Zustand's StoreApi['setState']`.
+ */
+type LoadingErrorPatch = { isLoading?: boolean; error?: string | null };
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+type SetLoadingError = (patch: LoadingErrorPatch | ((prev: any) => any)) => void;
 
 /**
  * Wrap an async store action so loading/error state is managed automatically.

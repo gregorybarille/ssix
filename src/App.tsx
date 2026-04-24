@@ -38,7 +38,7 @@ import { useGlobalShortcuts } from "./hooks/useGlobalShortcuts";
 import { invoke } from "./lib/tauri";
 import { takeScreenshot } from "./lib/screenshot";
 import { log as appLog } from "./lib/log";
-import { Connection, Credential, OpenMode, LayoutMode } from "./types";
+import { Connection, ConnectionInput, Credential, OpenMode, LayoutMode } from "./types";
 import { Plus } from "lucide-react";
 
 type View = NavItem;
@@ -188,9 +188,9 @@ function App() {
     }
   };
 
-  const handleConnSubmit = async (data: Omit<Connection, "id"> | Connection) => {
+  const handleConnSubmit = async (data: ConnectionInput | Connection) => {
     if ("id" in data) {
-      await updateConnection(data as Connection);
+      await updateConnection(data);
     } else {
       await addConnection(data);
     }
@@ -229,7 +229,7 @@ function App() {
     }
   };
 
-  const handleCloneSubmit = async (data: Omit<Connection, "id"> | Connection) => {
+  const handleCloneSubmit = async (data: ConnectionInput | Connection) => {
     if (cloningConn) {
       await cloneConnection(cloningConn.id, data.name, {
         host: data.host,
@@ -258,6 +258,14 @@ function App() {
   /* ------------------------- Tunnel session lifecycle ------------------------- */
 
   const handleConnectTunnel = async (conn: Connection) => {
+    // Audit-4 Phase 4b: tunnels are only meaningful for port_forward
+    // connections. The picker upstream filters by `kind === "port_forward"`,
+    // but assert here so the discriminated `connection` field downstream
+    // (TunnelSession) is correctly narrowed.
+    if (conn.type !== "port_forward") {
+      appLog.error("tunnel", `Refusing to start tunnel for non-port_forward connection ${conn.name}`);
+      return;
+    }
     const failedId = `tunnel-${conn.id}-${Date.now()}`;
     setTunnelSessions((prev) => [
       ...prev,

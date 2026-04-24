@@ -19,7 +19,13 @@ export interface TunnelStatusPayload {
 
 interface TunnelTabProps {
   sessionId: string;
-  connection: Connection;
+  /**
+   * Audit-4 Phase 4b: TunnelTab is only rendered for `port_forward`
+   * connections (the only kind that produces a tunnel). Narrowing the
+   * prop type here lets the body use `local_port`, `destination_*`,
+   * and `gateway_*` directly without union guards.
+   */
+  connection: Extract<Connection, { type: "port_forward" }>;
   isVisible: boolean;
   onDisconnect: () => void;
 }

@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import { Connection } from "@/types";
+import { Connection, ConnectionInput } from "@/types";
 import { invoke } from "@/lib/tauri";
 import { runAsync, runAsyncRethrow } from "@/lib/asyncAction";
 
@@ -8,7 +8,7 @@ interface ConnectionsState {
   isLoading: boolean;
   error: string | null;
   fetchConnections: () => Promise<void>;
-  addConnection: (input: Omit<Connection, "id">) => Promise<void>;
+  addConnection: (input: ConnectionInput) => Promise<void>;
   updateConnection: (input: Connection) => Promise<void>;
   deleteConnection: (id: string) => Promise<void>;
   cloneConnection: (id: string, newName: string, overrides?: Partial<Connection>) => Promise<void>;

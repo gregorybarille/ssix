@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { buildSshCommand } from "@/lib/ssh-command";
-import type { Connection, Credential } from "@/types";
+import type { Connection, Credential, DirectConnection } from "@/types";
 
 const passCred: Credential = {
   id: "p1",
@@ -26,7 +26,7 @@ const keyCredInline: Credential = {
   private_key: "-----BEGIN OPENSSH PRIVATE KEY-----",
 };
 
-const directConn = (overrides: Partial<Connection> = {}): Connection => ({
+const directConn = (overrides: Partial<DirectConnection> = {}): Connection => ({
   id: "c1",
   name: "web",
   host: "example.com",

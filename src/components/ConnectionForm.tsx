@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from "react";
-import { Connection, Credential, ConnectionType, OPEN_COLORS } from "@/types";
+import { Connection, ConnectionDraft, ConnectionInput, Credential, ConnectionType, OPEN_COLORS } from "@/types";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
 import { PasswordInput } from "./ui/password-input";
@@ -38,12 +38,15 @@ interface ConnectionFormProps {
   onOpenChange: (open: boolean) => void;
   connection?: Connection | null;
   credentials: Credential[];
-  onSubmit: (data: Omit<Connection, "id"> | Connection) => Promise<void>;
+  // Audit-4 Phase 4b: callers receive the discriminated `Connection`
+  // (or `Omit<Connection, "id">` for new ones). Internally the form
+  // builds a flat `ConnectionDraft` and narrows on submit.
+  onSubmit: (data: ConnectionInput | Connection) => Promise<void>;
   onCreateCredential?: (data: Omit<Credential, "id">) => Promise<Credential>;
   isClone?: boolean;
 }
 
-const DEFAULT_FORM: Omit<Connection, "id"> = {
+const DEFAULT_FORM: ConnectionDraft = {
   name: "",
   host: "",
   port: 22,
@@ -63,7 +66,7 @@ const DEFAULT_FORM: Omit<Connection, "id"> = {
  * deterministic across renders.
  */
 function serializeFormState(s: {
-  form: Omit<Connection, "id">;
+  form: ConnectionDraft;
   portInputs: Record<string, string>;
   connectionType: ConnectionType;
   authMethod: AuthMethod;
@@ -112,7 +115,7 @@ export function ConnectionForm({
   onCreateCredential,
   isClone = false,
 }: ConnectionFormProps) {
-  const [form, setForm] = useState<Omit<Connection, "id">>(DEFAULT_FORM);
+  const [form, setForm] = useState<ConnectionDraft>(DEFAULT_FORM);
   const [connectionType, setConnectionType] = useState<ConnectionType>("direct");
   const [authMethod, setAuthMethod] = useState<AuthMethod>("credential");
   const [inlineUsername, setInlineUsername] = useState("");
@@ -179,20 +182,40 @@ export function ConnectionForm({
         remote_path: connection.remote_path ?? "",
         tags: connection.tags ?? [],
         color: connection.color,
-        gateway_host: connection.gateway_host,
-        gateway_port: connection.gateway_port,
-        gateway_credential_id: connection.gateway_credential_id,
-        local_port: connection.local_port,
-        destination_host: connection.destination_host,
-        destination_port: connection.destination_port,
+        // Audit-4 Phase 4b: gateway/destination fields only exist on
+        // port_forward and jump_shell variants. Pull them out via a
+        // narrowing switch so TS knows we're not poking DirectConnection.
+        ...(connection.type === "port_forward"
+          ? {
+              gateway_host: connection.gateway_host,
+              gateway_port: connection.gateway_port,
+              gateway_credential_id: connection.gateway_credential_id,
+              local_port: connection.local_port,
+              destination_host: connection.destination_host,
+              destination_port: connection.destination_port,
+            }
+          : connection.type === "jump_shell"
+          ? {
+              gateway_host: connection.gateway_host,
+              gateway_port: connection.gateway_port,
+              gateway_credential_id: connection.gateway_credential_id,
+              destination_host: connection.destination_host,
+              destination_port: connection.destination_port,
+            }
+          : {}),
       });
       setPortInputs({
         port: String(connection.port ?? 22),
-        gateway_port: String(connection.gateway_port ?? 22),
-        destination_port: String(
-          connection.destination_port ?? (connection.type === "port_forward" ? 80 : 22),
+        gateway_port: String(
+          connection.type !== "direct" ? connection.gateway_port : 22,
         ),
-        local_port: connection.local_port ? String(connection.local_port) : "",
+        destination_port: String(
+          connection.type !== "direct"
+            ? connection.destination_port
+            : 22,
+        ),
+        local_port:
+          connection.type === "port_forward" ? String(connection.local_port) : "",
       });
       setConnectionType(connection.type);
       setAuthMethod("credential");
@@ -419,12 +442,15 @@ export function ConnectionForm({
         ? (formWithPorts.destination_port ?? 22)
         : formWithPorts.port;
 
-      const base: Omit<Connection, "id"> = {
+      // Audit-4 Phase 4b: build a flat draft, then narrow on `connectionType`
+      // to a discriminated `Connection`. The `as Omit<Connection, "id">` casts
+      // are sound because each branch sets exactly the fields its variant
+      // requires (and excludes the others).
+      const baseFields = {
         name: formWithPorts.name,
         host: effectiveHost,
         port: effectivePort,
         credential_id: credentialId,
-        type: connectionType,
         verbosity: formWithPorts.verbosity ?? 0,
         extra_args: formWithPorts.extra_args || undefined,
         login_command: formWithPorts.login_command || undefined,
@@ -433,31 +459,33 @@ export function ConnectionForm({
         color: formWithPorts.color,
       };
 
-      const data: Omit<Connection, "id"> =
+      const data: ConnectionInput =
         connectionType === "direct"
-          ? base
+          ? { ...baseFields, type: "direct" }
           : connectionType === "port_forward"
           ? {
-              ...base,
-              gateway_host: formWithPorts.gateway_host,
+              ...baseFields,
+              type: "port_forward",
+              gateway_host: formWithPorts.gateway_host ?? "",
               gateway_port: formWithPorts.gateway_port ?? 22,
-              gateway_credential_id: formWithPorts.gateway_credential_id,
-              local_port: formWithPorts.local_port,
-              destination_host: formWithPorts.destination_host,
+              gateway_credential_id: formWithPorts.gateway_credential_id ?? "",
+              local_port: formWithPorts.local_port ?? 0,
+              destination_host: formWithPorts.destination_host ?? "",
               destination_port: formWithPorts.destination_port ?? 22,
             }
           : {
               // jump_shell
-              ...base,
-              gateway_host: formWithPorts.gateway_host,
+              ...baseFields,
+              type: "jump_shell",
+              gateway_host: formWithPorts.gateway_host ?? "",
               gateway_port: formWithPorts.gateway_port ?? 22,
-              gateway_credential_id: formWithPorts.gateway_credential_id,
-              destination_host: formWithPorts.destination_host,
+              gateway_credential_id: formWithPorts.gateway_credential_id ?? "",
+              destination_host: formWithPorts.destination_host ?? "",
               destination_port: formWithPorts.destination_port ?? 22,
             };
 
       if (connection && !isClone) {
-        await onSubmit({ ...data, id: connection.id });
+        await onSubmit({ ...data, id: connection.id } as Connection);
       } else {
         await onSubmit(data);
       }
