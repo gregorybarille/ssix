@@ -114,6 +114,20 @@ export function Terminal({ sessionId, connectionName, isVisible, onDisconnect, s
      *
      * Also handles Cmd/Ctrl+V paste so that keyboard paste works on macOS
      * (xterm's default Ctrl+V on macOS is captured by the WebView).
+     *
+     * P3#14 (Audit-3): we deliberately do NOT need a "swallow keystrokes
+     * while a dialog is open" guard here. Every Radix Dialog used in SSX
+     * is `modal={true}` (the default), which mounts a focus trap that
+     * synchronously moves focus into the dialog content and prevents
+     * focus from escaping back to outside elements. So when any dialog
+     * opens, the terminal's hidden xterm-helper-textarea loses focus
+     * immediately and stops receiving keystrokes — the protection is
+     * structural, not logical. The 1-tick window between click → mount →
+     * focus-trap activation is not user-reachable (the user cannot
+     * synthesize a keystroke faster than React's commit phase). If a
+     * future dialog is mounted with `modal={false}`, this guard will
+     * need to be added; the contract is documented here for that
+     * eventuality.
      */
     term.attachCustomKeyEventHandler((e) => {
       if (e.type !== "keydown") return true;
