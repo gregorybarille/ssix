@@ -116,20 +116,41 @@ export function TunnelTab({
           </div>
           <div className="flex items-center gap-2 text-sm text-muted-foreground">
             <Activity
+              aria-hidden="true"
               className={cn(
                 "h-4 w-4",
                 activeClients > 0 ? "text-green-500" : "text-muted-foreground",
               )}
             />
-            <span>
+            {/*
+             * Audit-2 #3: tunnel status changes (a client connects /
+             * disconnects, listener (re)opens) are meaningful to AT
+             * users but were previously silent. The line below is the
+             * single source of truth for the current state and lives
+             * in an always-mounted polite live region so subscriptions
+             * persist across renders. Text toggles, the region itself
+             * does not get re-mounted.
+             */}
+            <span role="status" aria-live="polite" aria-atomic="true">
               {activeClients} active client{activeClients === 1 ? "" : "s"}
             </span>
           </div>
         </div>
 
+        {/*
+         * Audit-2 #3: tunnel errors (e.g. listener bind failure, remote
+         * channel rejected) need to be announced immediately to AT
+         * users. role="alert" + aria-live="assertive" interrupts the
+         * current AT speech queue. Conditional mount is the standard
+         * pattern for role=alert (announcement fires on insertion).
+         */}
         {lastError && (
-          <div className="flex items-start gap-2 rounded-lg border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive">
-            <AlertCircle className="h-4 w-4 shrink-0 mt-0.5" />
+          <div
+            role="alert"
+            aria-live="assertive"
+            className="flex items-start gap-2 rounded-lg border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive"
+          >
+            <AlertCircle aria-hidden="true" className="h-4 w-4 shrink-0 mt-0.5" />
             <span>{lastError}</span>
           </div>
         )}
