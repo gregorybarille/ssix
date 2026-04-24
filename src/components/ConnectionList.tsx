@@ -218,6 +218,18 @@ export function ConnectionList({
               }
               onClick={() => onSelect?.(conn)}
               onContextMenu={(e) => openContextMenu(e, conn)}
+              onKeyDown={(e) => {
+                // Open the context menu via keyboard (Shift+F10 or
+                // ContextMenu key). The container-level roving-focus
+                // handler runs after this on bubble for arrow/Home/End,
+                // so we don't need to delegate manually.
+                if ((e.shiftKey && e.key === "F10") || e.key === "ContextMenu") {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  setCtxConn(conn);
+                  ctx.openAt(e.currentTarget);
+                }
+              }}
             >
               <div className="flex items-start justify-between gap-2">
                 <div className="flex items-center gap-2 min-w-0">
@@ -361,6 +373,15 @@ export function ConnectionList({
             style={color ? { borderLeft: `3px solid ${color}` } : undefined}
             onClick={() => onSelect?.(conn)}
             onContextMenu={(e) => openContextMenu(e, conn)}
+            onKeyDown={(e) => {
+              // Keyboard alternative for context menu (WCAG 2.1.1).
+              if ((e.shiftKey && e.key === "F10") || e.key === "ContextMenu") {
+                e.preventDefault();
+                e.stopPropagation();
+                setCtxConn(conn);
+                ctx.openAt(e.currentTarget);
+              }
+            }}
           >
             <div className="flex-shrink-0">
               <ConnIcon conn={conn} />

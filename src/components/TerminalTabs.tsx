@@ -173,6 +173,15 @@ export function TerminalTabs({
     } else if ((e.key === "Delete" || (e.metaKey && e.key === "w")) && tabs[index]) {
       e.preventDefault();
       onCloseTab(tabs[index].id);
+    } else if (((e.shiftKey && e.key === "F10") || e.key === "ContextMenu") && tabs[index]) {
+      // Keyboard alternative for the right-click context menu
+      // (WCAG 2.1.1 — every mouse-only path must have a keyboard
+      // equivalent). Anchor the menu to the bottom-left of the focused
+      // tab button.
+      e.preventDefault();
+      e.stopPropagation();
+      setCtxTabId(tabs[index].id);
+      ctx.openAt(e.currentTarget);
     }
   };
 

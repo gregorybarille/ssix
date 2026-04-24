@@ -138,4 +138,42 @@ describe("ConnectionList right-click context menu", () => {
       "text-destructive",
     );
   });
+
+  it("opens via Shift+F10 on a focused row (keyboard a11y, WCAG 2.1.1)", async () => {
+    render(
+      <ConnectionList
+        connections={[direct]}
+        credentials={[cred]}
+        onConnect={vi.fn()}
+        onEdit={vi.fn()}
+        onClone={vi.fn()}
+        onDelete={vi.fn()}
+      />,
+    );
+    const row = screen.getByRole("listitem");
+    row.focus();
+    expect(screen.queryByRole("menu")).not.toBeInTheDocument();
+    fireEvent.keyDown(row, { key: "F10", shiftKey: true });
+    expect(await screen.findByRole("menu")).toBeInTheDocument();
+    expect(
+      screen.getByRole("menuitem", { name: /connect/i }),
+    ).toBeInTheDocument();
+  });
+
+  it("opens via the dedicated ContextMenu key on a focused row", async () => {
+    render(
+      <ConnectionList
+        connections={[direct]}
+        credentials={[cred]}
+        onConnect={vi.fn()}
+        onEdit={vi.fn()}
+        onClone={vi.fn()}
+        onDelete={vi.fn()}
+      />,
+    );
+    const row = screen.getByRole("listitem");
+    row.focus();
+    fireEvent.keyDown(row, { key: "ContextMenu" });
+    expect(await screen.findByRole("menu")).toBeInTheDocument();
+  });
 });

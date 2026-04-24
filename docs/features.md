@@ -239,10 +239,18 @@ primitive is keyboard-navigable end-to-end:
 
 - Opens at the cursor position (clamped inside the viewport so it never
   spawns off-screen) and moves keyboard focus to the first enabled item.
+- **Keyboard alternative for opening the menu**: pressing `Shift+F10`
+  or the dedicated `ContextMenu` key on a focused trigger opens the
+  menu anchored to the bottom-left of the trigger element. This is the
+  WCAG 2.1.1 keyboard-equivalent for the right-click gesture and is
+  wired up on connection rows/tiles and terminal tabs.
 - `↑` / `↓` move between items, `Home` / `End` jump to ends, disabled
   items are skipped automatically.
 - `↵` / `Space` activate the focused item; `Esc`, click-outside, or the
   window losing focus close the menu.
+- When the menu closes, focus returns to whichever element had focus
+  when it opened (so keyboard users land back on the row/tab they came
+  from instead of `<body>`).
 - Items can be marked `destructive: true` to render in the destructive
   color, or `disabled: true` to be skipped, and `{ separator: true }`
   inserts a visual divider with `role="separator"`.
@@ -266,7 +274,13 @@ For new consumers, prefer the `useContextMenu()` hook:
 const ctx = useContextMenu();
 return (
   <>
-    <div onContextMenu={ctx.open}>right-click me</div>
+    <div
+      onContextMenu={ctx.open}
+      onKeyDown={ctx.onKeyDown}
+      tabIndex={0}
+    >
+      right-click or Shift+F10 me
+    </div>
     {ctx.state && (
       <ContextMenu position={ctx.state} onClose={ctx.close} items={...} />
     )}

@@ -61,6 +61,17 @@ export function ContextMenu({
 }: ContextMenuProps) {
   const menuRef = useRef<HTMLDivElement>(null);
   const itemRefs = useRef<Array<HTMLButtonElement | null>>([]);
+  // Snapshot the element that had focus when the menu opened so we can
+  // restore focus there on close (Shift+F10/ContextMenu-key opens
+  // typically come FROM the trigger row — we want focus to return to
+  // it, not vanish into <body>).
+  const restoreTargetRef = useRef<HTMLElement | null>(null);
+  if (restoreTargetRef.current === null && typeof document !== "undefined") {
+    const active = document.activeElement;
+    if (active instanceof HTMLElement && active !== document.body) {
+      restoreTargetRef.current = active;
+    }
+  }
 
   // Indices of items that can receive focus (skip separators + disabled).
   const focusableIndices = items
@@ -74,7 +85,8 @@ export function ContextMenu({
   );
 
   // Focus the first enabled item on mount so the menu is keyboard-usable
-  // immediately after opening.
+  // immediately after opening. Restore focus to whatever opened the
+  // menu when it unmounts.
   useEffect(() => {
     const first = focusableIndices[0];
     if (first === undefined) return;
@@ -83,6 +95,14 @@ export function ContextMenu({
     queueMicrotask(() => {
       itemRefs.current[first]?.focus();
     });
+    const restoreTarget = restoreTargetRef.current;
+    return () => {
+      if (restoreTarget && restoreTarget.isConnected) {
+        // Use a microtask so we run after React has detached the portal
+        // (otherwise focus can briefly land on <body>).
+        queueMicrotask(() => restoreTarget.focus());
+      }
+    };
     // We intentionally only run this on mount; subsequent item changes are
     // rare and recomputing focus would steal it from the user.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -241,11 +261,27 @@ export function ContextMenu({
  * for a {@link ContextMenu}. Wire `onContextMenu={open}` on any element and
  * conditionally render the menu when `state` is non-null.
  *
+ * For full keyboard accessibility, also wire `onKeyDown={onKeyDown}` on
+ * the same element. This opens the menu when the user presses the
+ * platform-standard context-menu shortcuts:
+ *   - Shift+F10  (works on every desktop OS — WCAG 2.1.1 keyboard)
+ *   - ContextMenu key  (the dedicated key on most full-size keyboards)
+ *
+ * The keyboard-opened menu is anchored to the bottom-left of the
+ * triggering element rather than the mouse cursor, so the menu still
+ * appears in a sensible place when there is no pointer event.
+ *
  * ```tsx
  * const ctx = useContextMenu();
  * return (
  *   <>
- *     <div onContextMenu={ctx.open}>right-click me</div>
+ *     <div
+ *       onContextMenu={ctx.open}
+ *       onKeyDown={ctx.onKeyDown}
+ *       tabIndex={0}
+ *     >
+ *       right-click or Shift+F10 me
+ *     </div>
  *     {ctx.state && (
  *       <ContextMenu position={ctx.state} onClose={ctx.close} items={...} />
  *     )}
@@ -260,6 +296,24 @@ export function useContextMenu() {
     e.stopPropagation();
     setState({ x: e.clientX, y: e.clientY });
   };
+  const openAt = (element: HTMLElement) => {
+    const rect = element.getBoundingClientRect();
+    // Anchor at bottom-left of the element with a small inset so the
+    // menu never overlaps the trigger.
+    setState({ x: rect.left + 4, y: rect.bottom + 2 });
+  };
+  const onKeyDown = (e: React.KeyboardEvent<HTMLElement>) => {
+    // Shift+F10 is the WCAG/AAA keyboard shortcut for opening a context
+    // menu and works across all desktop platforms. The ContextMenu key
+    // (key === "ContextMenu") is the dedicated physical key on most
+    // full-size keyboards. We treat both identically.
+    const isShiftF10 = e.shiftKey && e.key === "F10";
+    const isMenuKey = e.key === "ContextMenu";
+    if (!isShiftF10 && !isMenuKey) return;
+    e.preventDefault();
+    e.stopPropagation();
+    openAt(e.currentTarget);
+  };
   const close = () => setState(null);
-  return { state, open, close };
+  return { state, open, openAt, onKeyDown, close };
 }

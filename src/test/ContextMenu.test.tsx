@@ -114,9 +114,13 @@ describe("useContextMenu", () => {
     const ctx = useContextMenu();
     return (
       <>
-        <div data-testid="trigger" onContextMenu={ctx.open}>
+        <button
+          data-testid="trigger"
+          onContextMenu={ctx.open}
+          onKeyDown={ctx.onKeyDown}
+        >
           right-click me
-        </div>
+        </button>
         {ctx.state && (
           <ContextMenu
             position={ctx.state}
@@ -138,5 +142,46 @@ describe("useContextMenu", () => {
     expect(screen.getByRole("menu")).toBeInTheDocument();
     fireEvent.keyDown(document, { key: "Escape" });
     expect(screen.queryByRole("menu")).not.toBeInTheDocument();
+  });
+
+  it("opens via Shift+F10 anchored to the trigger element (WCAG 2.1.1)", async () => {
+    render(<Harness />);
+    const trigger = screen.getByTestId("trigger");
+    trigger.focus();
+    expect(screen.queryByRole("menu")).not.toBeInTheDocument();
+    fireEvent.keyDown(trigger, { key: "F10", shiftKey: true });
+    expect(await screen.findByRole("menu")).toBeInTheDocument();
+  });
+
+  it("opens via the dedicated ContextMenu key", async () => {
+    render(<Harness />);
+    const trigger = screen.getByTestId("trigger");
+    trigger.focus();
+    fireEvent.keyDown(trigger, { key: "ContextMenu" });
+    expect(await screen.findByRole("menu")).toBeInTheDocument();
+  });
+
+  it("ignores plain F10 (no Shift) so menubar shortcuts pass through", () => {
+    render(<Harness />);
+    const trigger = screen.getByTestId("trigger");
+    trigger.focus();
+    fireEvent.keyDown(trigger, { key: "F10" });
+    expect(screen.queryByRole("menu")).not.toBeInTheDocument();
+  });
+
+  it("returns focus to the opening trigger when the menu closes", async () => {
+    render(<Harness />);
+    const trigger = screen.getByTestId("trigger");
+    trigger.focus();
+    expect(document.activeElement).toBe(trigger);
+    fireEvent.keyDown(trigger, { key: "F10", shiftKey: true });
+    expect(await screen.findByRole("menu")).toBeInTheDocument();
+    fireEvent.keyDown(document, { key: "Escape" });
+    await waitFor(() => {
+      expect(screen.queryByRole("menu")).not.toBeInTheDocument();
+    });
+    await waitFor(() => {
+      expect(document.activeElement).toBe(trigger);
+    });
   });
 });
