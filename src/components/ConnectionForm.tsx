@@ -22,6 +22,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "./ui/tabs";
 import { InstallKeyDialog } from "./InstallKeyDialog";
 import { TagInput } from "./ui/tag-input";
 import { COLOR_VALUES } from "@/lib/colors";
+import { parsePort } from "@/lib/port";
 import { UploadCloud } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -72,6 +73,29 @@ export function ConnectionForm({
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
+  // Port inputs are managed as raw strings so we can validate without
+  // silently coercing invalid input back to 22. The keys mirror the
+  // numeric port field names on `Connection`.
+  type PortKey = "port" | "gateway_port" | "destination_port" | "local_port";
+  const [portInputs, setPortInputs] = useState<Record<PortKey, string>>({
+    port: "22",
+    gateway_port: "22",
+    destination_port: "22",
+    local_port: "",
+  });
+  const [portErrors, setPortErrors] = useState<Partial<Record<PortKey, string>>>({});
+
+  const updatePort = (key: PortKey, raw: string) => {
+    setPortInputs((p) => ({ ...p, [key]: raw }));
+    const parsed = parsePort(raw);
+    setPortErrors((errs) => {
+      const next = { ...errs };
+      if (parsed.error) next[key] = parsed.error;
+      else delete next[key];
+      return next;
+    });
+  };
+
   useEffect(() => {
     if (connection) {
       setForm({
@@ -93,13 +117,23 @@ export function ConnectionForm({
         destination_host: connection.destination_host,
         destination_port: connection.destination_port,
       });
+      setPortInputs({
+        port: String(connection.port ?? 22),
+        gateway_port: String(connection.gateway_port ?? 22),
+        destination_port: String(
+          connection.destination_port ?? (connection.type === "port_forward" ? 80 : 22),
+        ),
+        local_port: connection.local_port ? String(connection.local_port) : "",
+      });
       setConnectionType(connection.type);
       setAuthMethod("credential");
     } else {
       setForm(DEFAULT_FORM);
+      setPortInputs({ port: "22", gateway_port: "22", destination_port: "22", local_port: "" });
       setConnectionType("direct");
       setAuthMethod("credential");
     }
+    setPortErrors({});
     setInlineUsername("");
     setInlinePassword("");
     setInlineKeyPath("");
@@ -138,7 +172,54 @@ export function ConnectionForm({
     setError(null);
     setIsSubmitting(true);
     try {
-      let credentialId = form.credential_id;
+      // Validate every port input that is relevant for the active
+      // connection type. Empty is allowed for `local_port` only when
+      // we're not in port_forward mode (the kind-specific check
+      // further down catches required-but-empty local_port).
+      const portChecks: { key: PortKey; required: boolean; label: string }[] = [];
+      if (connectionType === "direct") {
+        portChecks.push({ key: "port", required: true, label: "Port" });
+      }
+      if (isTunnel) {
+        portChecks.push({ key: "gateway_port", required: true, label: "Gateway port" });
+        portChecks.push({ key: "destination_port", required: true, label: "Destination port" });
+      }
+      if (connectionType === "port_forward") {
+        portChecks.push({ key: "local_port", required: true, label: "Local port" });
+      }
+      const newPortErrors: Partial<Record<PortKey, string>> = {};
+      const parsedPorts: Partial<Record<PortKey, number>> = {};
+      for (const check of portChecks) {
+        const raw = portInputs[check.key];
+        const parsed = parsePort(raw);
+        if (parsed.error) {
+          newPortErrors[check.key] = parsed.error;
+        } else if (parsed.value === null && check.required) {
+          newPortErrors[check.key] = `${check.label} is required`;
+        } else if (parsed.value !== null) {
+          parsedPorts[check.key] = parsed.value;
+        }
+      }
+      if (Object.keys(newPortErrors).length > 0) {
+        setPortErrors(newPortErrors);
+        throw new Error("Please fix the highlighted port fields");
+      }
+      // Apply validated ports back into `form` so the rest of the
+      // submit path sees the user's intended values.
+      const formWithPorts = {
+        ...form,
+        port: parsedPorts.port ?? form.port,
+        gateway_port: parsedPorts.gateway_port ?? form.gateway_port,
+        destination_port: parsedPorts.destination_port ?? form.destination_port,
+        local_port: parsedPorts.local_port ?? form.local_port,
+      };
+      // Mutate `form` reference for the rest of the submit code path
+      // (which still reads from the closure) by reassigning via setForm
+      // and using formWithPorts locally.
+      // (We don't await the state update — the local copy is enough.)
+      setForm(formWithPorts);
+
+      let credentialId = formWithPorts.credential_id;
 
       // Auto-create credential for inline auth (only for kinds that need destination auth)
       if (needsDestinationAuth) {
@@ -183,15 +264,15 @@ export function ConnectionForm({
 
       // Validation per kind.
       if (isTunnel) {
-        if (!form.gateway_host)
+        if (!formWithPorts.gateway_host)
           throw new Error("Gateway host is required");
-        if (!form.gateway_credential_id)
+        if (!formWithPorts.gateway_credential_id)
           throw new Error("Gateway credential is required");
-        if (!form.destination_host)
+        if (!formWithPorts.destination_host)
           throw new Error("Destination host is required");
       }
       if (connectionType === "port_forward") {
-        if (!form.local_port)
+        if (!formWithPorts.local_port)
           throw new Error("Local port is required for port forwarding");
       }
       if (connectionType === "jump_shell" && !credentialId) {
@@ -200,23 +281,23 @@ export function ConnectionForm({
 
       // Mirror destination_host/port into top-level host/port for tunnel kinds so
       // list views can keep displaying a meaningful "host" label.
-      const effectiveHost = isTunnel ? (form.destination_host ?? "") : form.host;
+      const effectiveHost = isTunnel ? (formWithPorts.destination_host ?? "") : formWithPorts.host;
       const effectivePort = isTunnel
-        ? (form.destination_port ?? 22)
-        : form.port;
+        ? (formWithPorts.destination_port ?? 22)
+        : formWithPorts.port;
 
       const base: Omit<Connection, "id"> = {
-        name: form.name,
+        name: formWithPorts.name,
         host: effectiveHost,
         port: effectivePort,
         credential_id: credentialId,
         type: connectionType,
-        verbosity: form.verbosity ?? 0,
-        extra_args: form.extra_args || undefined,
-        login_command: form.login_command || undefined,
-        remote_path: form.remote_path || undefined,
-        tags: form.tags ?? [],
-        color: form.color,
+        verbosity: formWithPorts.verbosity ?? 0,
+        extra_args: formWithPorts.extra_args || undefined,
+        login_command: formWithPorts.login_command || undefined,
+        remote_path: formWithPorts.remote_path || undefined,
+        tags: formWithPorts.tags ?? [],
+        color: formWithPorts.color,
       };
 
       const data: Omit<Connection, "id"> =
@@ -225,21 +306,21 @@ export function ConnectionForm({
           : connectionType === "port_forward"
           ? {
               ...base,
-              gateway_host: form.gateway_host,
-              gateway_port: form.gateway_port ?? 22,
-              gateway_credential_id: form.gateway_credential_id,
-              local_port: form.local_port,
-              destination_host: form.destination_host,
-              destination_port: form.destination_port ?? 22,
+              gateway_host: formWithPorts.gateway_host,
+              gateway_port: formWithPorts.gateway_port ?? 22,
+              gateway_credential_id: formWithPorts.gateway_credential_id,
+              local_port: formWithPorts.local_port,
+              destination_host: formWithPorts.destination_host,
+              destination_port: formWithPorts.destination_port ?? 22,
             }
           : {
               // jump_shell
               ...base,
-              gateway_host: form.gateway_host,
-              gateway_port: form.gateway_port ?? 22,
-              gateway_credential_id: form.gateway_credential_id,
-              destination_host: form.destination_host,
-              destination_port: form.destination_port ?? 22,
+              gateway_host: formWithPorts.gateway_host,
+              gateway_port: formWithPorts.gateway_port ?? 22,
+              gateway_credential_id: formWithPorts.gateway_credential_id,
+              destination_host: formWithPorts.destination_host,
+              destination_port: formWithPorts.destination_port ?? 22,
             };
 
       if (connection && !isClone) {
@@ -305,7 +386,7 @@ export function ConnectionForm({
             onOpenChange={setInstallOpen}
             credentialId={selectedCredential.id}
             defaultHost={form.host}
-            defaultPort={form.port}
+            defaultPort={parsePort(portInputs.port).value ?? form.port}
             defaultUsername={selectedCredential.username}
           />
         </>
@@ -332,16 +413,23 @@ export function ConnectionForm({
           <Label htmlFor="gateway_port">Gateway Port</Label>
           <Input
             id="gateway_port"
-            type="number"
+            type="text"
+            inputMode="numeric"
             placeholder="22"
-            value={form.gateway_port ?? 22}
-            onChange={(e) =>
-              setForm({
-                ...form,
-                gateway_port: parseInt(e.target.value) || 22,
-              })
-            }
+            value={portInputs.gateway_port}
+            onChange={(e) => updatePort("gateway_port", e.target.value)}
+            aria-invalid={portErrors.gateway_port ? true : undefined}
+            aria-describedby={portErrors.gateway_port ? "gateway_port-error" : undefined}
           />
+          {portErrors.gateway_port && (
+            <p
+              id="gateway_port-error"
+              role="alert"
+              className="text-xs text-destructive"
+            >
+              {portErrors.gateway_port}
+            </p>
+          )}
         </div>
       </div>
       <div className="space-y-2">
@@ -394,16 +482,23 @@ export function ConnectionForm({
           <Label htmlFor="destination_port">Destination Port</Label>
           <Input
             id="destination_port"
-            type="number"
+            type="text"
+            inputMode="numeric"
             placeholder={connectionType === "port_forward" ? "80" : "22"}
-            value={form.destination_port ?? (connectionType === "port_forward" ? 80 : 22)}
-            onChange={(e) =>
-              setForm({
-                ...form,
-                destination_port: parseInt(e.target.value) || 22,
-              })
-            }
+            value={portInputs.destination_port}
+            onChange={(e) => updatePort("destination_port", e.target.value)}
+            aria-invalid={portErrors.destination_port ? true : undefined}
+            aria-describedby={portErrors.destination_port ? "destination_port-error" : undefined}
           />
+          {portErrors.destination_port && (
+            <p
+              id="destination_port-error"
+              role="alert"
+              className="text-xs text-destructive"
+            >
+              {portErrors.destination_port}
+            </p>
+          )}
         </div>
       </div>
     </div>
@@ -414,20 +509,26 @@ export function ConnectionForm({
       <Label htmlFor="local_port">Local Port *</Label>
       <Input
         id="local_port"
-        type="number"
+        type="text"
+        inputMode="numeric"
         placeholder="9000"
-        value={form.local_port ?? ""}
-        onChange={(e) =>
-          setForm({
-            ...form,
-            local_port: parseInt(e.target.value) || undefined,
-          })
+        value={portInputs.local_port}
+        onChange={(e) => updatePort("local_port", e.target.value)}
+        aria-invalid={portErrors.local_port ? true : undefined}
+        aria-describedby={
+          portErrors.local_port ? "local_port-error" : "local_port-help"
         }
       />
-      <p className="text-xs text-muted-foreground">
-        SSX will listen on <code>127.0.0.1:&lt;local_port&gt;</code> and forward
-        connections through the gateway to the destination.
-      </p>
+      {portErrors.local_port ? (
+        <p id="local_port-error" role="alert" className="text-xs text-destructive">
+          {portErrors.local_port}
+        </p>
+      ) : (
+        <p id="local_port-help" className="text-xs text-muted-foreground">
+          SSX will listen on <code>127.0.0.1:&lt;local_port&gt;</code> and forward
+          connections through the gateway to the destination.
+        </p>
+      )}
     </div>
   );
 
@@ -488,13 +589,19 @@ export function ConnectionForm({
                 <Label htmlFor="port">Port</Label>
                 <Input
                   id="port"
-                  type="number"
+                  type="text"
+                  inputMode="numeric"
                   placeholder="22"
-                  value={form.port}
-                  onChange={(e) =>
-                    setForm({ ...form, port: parseInt(e.target.value) || 22 })
-                  }
+                  value={portInputs.port}
+                  onChange={(e) => updatePort("port", e.target.value)}
+                  aria-invalid={portErrors.port ? true : undefined}
+                  aria-describedby={portErrors.port ? "port-error" : undefined}
                 />
+                {portErrors.port && (
+                  <p id="port-error" role="alert" className="text-xs text-destructive">
+                    {portErrors.port}
+                  </p>
+                )}
               </div>
             </div>
           )}

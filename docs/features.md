@@ -127,6 +127,22 @@ Both dialogs use a sticky footer layout: the form body scrolls inside
 to the bottom and never disappears, regardless of viewport height or
 expanded panels (Advanced options, inline credentials, etc.).
 
+### Port validation
+
+Port inputs (direct port, gateway port, destination port, local port)
+parse strictly via the `parsePort` helper in `src/lib/port.ts`:
+
+- Empty input is treated as "missing" so callers can decide whether the
+  field is required for the active connection type.
+- Non-integer or non-numeric input shows the inline error
+  *"Port must be a whole number"*.
+- Values outside `1..65535` show *"Port must be between 1 and 65535"*.
+- Invalid input never silently coerces to `22` (the previous
+  `parseInt(...) || 22` behaviour); the form refuses to submit until
+  every active port field validates, and each field individually gets
+  `aria-invalid="true"` plus an `aria-describedby` link to its inline
+  `role="alert"` error.
+
 ## Connection List Actions
 
 The **Connect** action (green Play icon) is the primary CTA on every
