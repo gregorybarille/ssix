@@ -6,6 +6,7 @@ import { Input } from "./ui/input";
 import { Label } from "./ui/label";
 import { Tabs, TabsList, TabsTrigger } from "./ui/tabs";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "./ui/dialog";
+import { cn } from "@/lib/utils";
 
 interface ScpDialogProps {
   open: boolean;
@@ -21,6 +22,9 @@ export function ScpDialog({ open, onOpenChange, connection }: ScpDialogProps) {
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<ScpResult | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  // Per-field errors only show after the user attempts submit, so we
+  // don't shout at them while they're still typing the first character.
+  const [submitted, setSubmitted] = useState(false);
 
   useEffect(() => {
     if (!open) {
@@ -30,15 +34,32 @@ export function ScpDialog({ open, onOpenChange, connection }: ScpDialogProps) {
       setRecursive(false);
       setError(null);
       setResult(null);
+      setSubmitted(false);
     }
   }, [open, connection]);
+
+  // Reset the "submitted" flag whenever the user switches mode so the
+  // download-required hint doesn't linger after toggling back to upload.
+  useEffect(() => {
+    setSubmitted(false);
+  }, [mode]);
+
+  const localPathError =
+    submitted && !localPath.trim() ? "Local path is required" : null;
+  const remotePathError =
+    submitted && mode === "download" && !remotePath.trim()
+      ? "Remote path is required for downloads"
+      : null;
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!connection) return;
-    setIsSubmitting(true);
+    setSubmitted(true);
     setError(null);
     setResult(null);
+    if (!localPath.trim()) return;
+    if (mode === "download" && !remotePath.trim()) return;
+    setIsSubmitting(true);
     try {
       const next =
         mode === "upload"
@@ -72,7 +93,7 @@ export function ScpDialog({ open, onOpenChange, connection }: ScpDialogProps) {
         <DialogHeader>
           <DialogTitle>SCP {connection ? `for ${connection.name}` : ""}</DialogTitle>
         </DialogHeader>
-        <form onSubmit={handleSubmit} className="space-y-4">
+        <form onSubmit={handleSubmit} className="space-y-4" noValidate>
           <Tabs value={mode} onValueChange={(v) => setMode(v as "upload" | "download")}>
             <TabsList className="w-full">
               <TabsTrigger value="upload" className="flex-1">Upload</TabsTrigger>
@@ -87,8 +108,21 @@ export function ScpDialog({ open, onOpenChange, connection }: ScpDialogProps) {
               placeholder={mode === "upload" ? "/Users/me/file.txt" : "/Users/me/downloads/file.txt"}
               value={localPath}
               onChange={(e) => setLocalPath(e.target.value)}
-              required
+              aria-invalid={!!localPathError}
+              aria-describedby={
+                localPathError ? "scp-local-path-error" : undefined
+              }
+              className={cn(localPathError && "border-destructive")}
             />
+            {localPathError && (
+              <p
+                id="scp-local-path-error"
+                role="alert"
+                className="text-xs text-destructive"
+              >
+                {localPathError}
+              </p>
+            )}
           </div>
 
           <div className="space-y-2">
@@ -98,8 +132,21 @@ export function ScpDialog({ open, onOpenChange, connection }: ScpDialogProps) {
               placeholder={connection?.remote_path || "/tmp/ or relative/file.txt"}
               value={remotePath}
               onChange={(e) => setRemotePath(e.target.value)}
-              required={mode === "download"}
+              aria-invalid={!!remotePathError}
+              aria-describedby={
+                remotePathError ? "scp-remote-path-error" : undefined
+              }
+              className={cn(remotePathError && "border-destructive")}
             />
+            {remotePathError && (
+              <p
+                id="scp-remote-path-error"
+                role="alert"
+                className="text-xs text-destructive"
+              >
+                {remotePathError}
+              </p>
+            )}
             <p className="text-xs text-muted-foreground">
               Uses the connection remote path as the base directory when possible. Directory transfers require recursive mode.
             </p>
@@ -124,7 +171,13 @@ export function ScpDialog({ open, onOpenChange, connection }: ScpDialogProps) {
           )}
 
           {error && (
-            <div className="rounded-md bg-destructive/10 text-destructive text-sm px-3 py-2">{error}</div>
+            <div
+              role="alert"
+              aria-live="assertive"
+              className="rounded-md bg-destructive/10 text-destructive text-sm px-3 py-2"
+            >
+              {error}
+            </div>
           )}
 
           <DialogFooter>
