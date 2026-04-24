@@ -212,14 +212,68 @@ impl Default for AppSettings {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppData {
+    /// Audit-4 Phase 6b: monotonically-increasing schema stamp. Legacy
+    /// `data.json` files written before this field existed deserialize
+    /// as version 0; `migrate_to_current()` walks them up to
+    /// `CURRENT_SCHEMA_VERSION` and re-stamps before save. Bump
+    /// `CURRENT_SCHEMA_VERSION` and add a `migrate_v{N-1}_to_v{N}`
+    /// branch any time you change the on-disk shape in a way that
+    /// requires a one-time fixup at load time.
+    #[serde(default)]
+    pub schema_version: u32,
     pub credentials: Vec<Credential>,
     pub connections: Vec<Connection>,
     pub settings: AppSettings,
 }
 
+/// Current `AppData.schema_version` written by this build.
+///
+/// Version history:
+///  - 0 — implicit; pre-Phase-6b files with no `schema_version` field.
+///        Treated identically to v1 in-memory; `migrate_legacy_kinds`
+///        already covered the LegacyTunnel → JumpShell rewrite that
+///        was the only on-disk shape change to date.
+///  - 1 — first explicit stamp. No data shape change vs v0; the
+///        version is recorded so future migrations can branch on
+///        "before/after this point" without ambiguity.
+pub const CURRENT_SCHEMA_VERSION: u32 = 1;
+
+impl Default for AppData {
+    fn default() -> Self {
+        Self {
+            schema_version: CURRENT_SCHEMA_VERSION,
+            credentials: Vec::new(),
+            connections: Vec::new(),
+            settings: AppSettings::default(),
+        }
+    }
+}
+
 impl AppData {
+    /// Run every migration from the loaded `schema_version` up to
+    /// `CURRENT_SCHEMA_VERSION` and stamp the result. Idempotent: a
+    /// file already at `CURRENT_SCHEMA_VERSION` is left untouched.
+    ///
+    /// Migration order matters: `migrate_legacy_kinds` runs first
+    /// regardless of stamp because pre-stamp files (v0) may carry the
+    /// LegacyTunnel variant that v1+ readers must not see.
+    pub fn migrate_to_current(&mut self) {
+        // Step 1: legacy variants are dropped on every load (cheap, idempotent).
+        self.migrate_legacy_kinds();
+
+        // Step 2: future-proofing scaffold. Add branches here as the
+        // schema evolves:
+        //
+        //   if self.schema_version < 2 {
+        //       // migrate v1 → v2
+        //   }
+        //   if self.schema_version < 3 { … }
+
+        self.schema_version = CURRENT_SCHEMA_VERSION;
+    }
+
     /// Migrate legacy `ConnectionKind::LegacyTunnel` entries to `JumpShell`.
     /// `LegacyTunnel.gateway_credential_id` was optional; if absent, we drop the
     /// connection's tunnel-ness and convert it to `Direct` (with a warning logged)
@@ -581,5 +635,86 @@ mod tests {
         assert_eq!(s.connection_layout, "list");
         assert_eq!(s.default_open_mode, "tab");
         assert_eq!(s.git_sync_remote, "origin");
+    }
+
+    // Audit-4 Phase 6b: schema_version stamping + migration ----------------
+
+    #[test]
+    fn test_app_data_default_stamps_current_schema_version() {
+        let data = AppData::default();
+        assert_eq!(data.schema_version, CURRENT_SCHEMA_VERSION);
+    }
+
+    #[test]
+    fn test_app_data_legacy_json_without_schema_version_loads_as_zero() {
+        // Pre-Phase-6b on-disk shape: no schema_version field.
+        let json = r#"{
+            "credentials": [],
+            "connections": [],
+            "settings": {}
+        }"#;
+        let data: AppData = serde_json::from_str(json).unwrap();
+        assert_eq!(data.schema_version, 0);
+    }
+
+    #[test]
+    fn test_migrate_to_current_stamps_version_and_clears_legacy() {
+        // Simulate a v0 file with a LegacyTunnel — the most realistic
+        // worst case for an upgrade in the wild.
+        let mut data = AppData {
+            schema_version: 0,
+            credentials: Vec::new(),
+            connections: vec![Connection {
+                id: "c1".into(),
+                name: "old".into(),
+                host: "internal.example".into(),
+                port: 22,
+                credential_id: None,
+                verbosity: 0,
+                extra_args: None,
+                login_command: None,
+                remote_path: None,
+                tags: Vec::new(),
+                color: None,
+                kind: ConnectionKind::LegacyTunnel {
+                    gateway_host: "gw.example".into(),
+                    gateway_port: 22,
+                    gateway_credential_id: Some("gw-cred".into()),
+                    destination_host: "internal.example".into(),
+                    destination_port: 22,
+                },
+            }],
+            settings: AppSettings::default(),
+        };
+
+        data.migrate_to_current();
+
+        assert_eq!(data.schema_version, CURRENT_SCHEMA_VERSION);
+        assert!(matches!(
+            data.connections[0].kind,
+            ConnectionKind::JumpShell { .. }
+        ));
+    }
+
+    #[test]
+    fn test_migrate_to_current_is_idempotent() {
+        let mut data = AppData::default();
+        data.migrate_to_current();
+        assert_eq!(data.schema_version, CURRENT_SCHEMA_VERSION);
+        // Run again — must not regress or panic.
+        data.migrate_to_current();
+        assert_eq!(data.schema_version, CURRENT_SCHEMA_VERSION);
+    }
+
+    #[test]
+    fn test_app_data_roundtrip_preserves_schema_version() {
+        let data = AppData::default();
+        let json = serde_json::to_string(&data).unwrap();
+        assert!(json.contains(&format!(
+            r#""schema_version":{}"#,
+            CURRENT_SCHEMA_VERSION
+        )));
+        let back: AppData = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.schema_version, CURRENT_SCHEMA_VERSION);
     }
 }

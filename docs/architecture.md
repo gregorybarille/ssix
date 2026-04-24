@@ -35,7 +35,7 @@ UI -> Zustand store -> `invoke()` -> Tauri command -> storage / SSH subsystem ->
 ## SSH Session Model
 
 - Each shell session runs on its own backend thread.
-- The backend emits `ssh-output-{id}`, `ssh-error-{id}`, and `ssh-closed-{id}` events.
+- The backend emits `ssx:ssh:output:{id}`, `ssx:ssh:error:{id}`, and `ssx:ssh:closed:{id}` events. Tunnels also emit `ssx:tunnel:status:{id}`. Event names are produced by helpers in `src-tauri/src/ssh.rs` and mirrored in `src/lib/events.ts` — both sides MUST go through these helpers.
 - The frontend keeps terminal components mounted while hidden so output is not lost when switching tabs.
 
 ## Tunnel Model

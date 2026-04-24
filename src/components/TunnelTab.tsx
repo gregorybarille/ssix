@@ -1,12 +1,13 @@
 import React, { useEffect, useState } from "react";
 import { listen, UnlistenFn } from "@tauri-apps/api/event";
 import { Connection } from "@/types";
+import { tunnelStatusEvent } from "@/lib/events";
 import { Button } from "./ui/button";
 import { cn } from "@/lib/utils";
 import { Network, ArrowRight, Activity, AlertCircle } from "lucide-react";
 
 /**
- * Status payload emitted on `tunnel-status-{sessionId}`. Mirror of
+ * Status payload emitted on `ssx:tunnel:status:{sessionId}`. Mirror of
  * `TunnelStatus` in `src-tauri/src/ssh.rs`.
  */
 export interface TunnelStatusPayload {
@@ -60,7 +61,7 @@ export function TunnelTab({
     (async () => {
       try {
         const fn = await listen<TunnelStatusPayload>(
-          `tunnel-status-${sessionId}`,
+          tunnelStatusEvent(sessionId),
           (event) => {
             const payload = event.payload;
             if (cancelled) return;

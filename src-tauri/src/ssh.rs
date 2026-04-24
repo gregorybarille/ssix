@@ -127,7 +127,7 @@ pub(crate) fn lock_recover<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
     m.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
-/// Status payload emitted on `tunnel-status-{id}`.
+/// Status payload emitted on `ssx:tunnel:status:{id}`.
 #[derive(Serialize, Clone)]
 pub struct TunnelStatus {
     pub state: &'static str, // "listening" | "client_connected" | "client_closed" | "error"
@@ -135,6 +135,29 @@ pub struct TunnelStatus {
     pub destination: String,
     pub message: Option<String>,
     pub active_clients: usize,
+}
+
+/// Audit-4 Phase 6c: SSH/tunnel event names are namespaced under
+/// `ssx:` so they cannot collide with Tauri plugin events or with
+/// any future frontend custom-event listener (the frontend already
+/// uses an `ssx:` prefix for its DOM events — see App.tsx
+/// `ssx:contextmenu`, `ssx:terminal-paste`).
+///
+/// Callers MUST go through these helpers so a future rename is a
+/// single-point change. The frontend mirrors the same names in
+/// `src/components/Terminal.tsx` and `src/components/TunnelTab.tsx`;
+/// any change here must be reflected there in the same commit.
+pub(crate) fn ssh_output_event(session_id: &str) -> String {
+    format!("ssx:ssh:output:{}", session_id)
+}
+pub(crate) fn ssh_error_event(session_id: &str) -> String {
+    format!("ssx:ssh:error:{}", session_id)
+}
+pub(crate) fn ssh_closed_event(session_id: &str) -> String {
+    format!("ssx:ssh:closed:{}", session_id)
+}
+pub(crate) fn tunnel_status_event(session_id: &str) -> String {
+    format!("ssx:tunnel:status:{}", session_id)
 }
 
 pub fn start_ssh_session(
@@ -170,14 +193,14 @@ pub fn start_ssh_session(
                 "\x1b[2m[SSX] Connected to {}:{} as {}\x1b[0m\r\n",
                 host, port, username
             );
-            let _ = app_handle.emit(&format!("ssh-output-{}", sid), msg.into_bytes());
+            let _ = app_handle.emit(&ssh_output_event(&sid), msg.into_bytes());
         }
         let result = run_io_loop(channel, &app_handle, &sid, rx);
         if let Err(e) = &result {
             crate::logs::log(&app_handle, "error", "ssh", format!("session {}: {}", sid, e));
-            let _ = app_handle.emit(&format!("ssh-error-{}", sid), e.clone());
+            let _ = app_handle.emit(&ssh_error_event(&sid), e.clone());
         }
-        let _ = app_handle.emit(&format!("ssh-closed-{}", sid), ());
+        let _ = app_handle.emit(&ssh_closed_event(&sid), ());
     });
 
     Ok(tx)
@@ -319,8 +342,8 @@ fn run_io_loop(
     session_id: &str,
     rx: Receiver<SessionMsg>,
 ) -> Result<(), String> {
-    let output_event = format!("ssh-output-{}", session_id);
-    let error_event = format!("ssh-error-{}", session_id);
+    let output_event = ssh_output_event(session_id);
+    let error_event = ssh_error_event(session_id);
     let mut buf = [0u8; 8192];
 
     loop {
@@ -598,7 +621,7 @@ pub fn start_port_forward(
 
     // Emit "listening" status.
     let _ = app_handle.emit(
-        &format!("tunnel-status-{}", sid),
+        &tunnel_status_event(&sid),
         TunnelStatus {
             state: "listening",
             local_port,
@@ -642,7 +665,7 @@ pub fn start_port_forward(
                             Ok(c) => c,
                             Err(e) => {
                                 let _ = app.emit(
-                                    &format!("tunnel-status-{}", sid_inner),
+                                    &tunnel_status_event(&sid_inner),
                                     TunnelStatus {
                                         state: "error",
                                         local_port: local_port_inner,
@@ -664,7 +687,7 @@ pub fn start_port_forward(
                             *g
                         };
                         let _ = app.emit(
-                            &format!("tunnel-status-{}", sid_inner),
+                            &tunnel_status_event(&sid_inner),
                             TunnelStatus {
                                 state: "client_connected",
                                 local_port: local_port_inner,
@@ -682,7 +705,7 @@ pub fn start_port_forward(
                             *g
                         };
                         let _ = app.emit(
-                            &format!("tunnel-status-{}", sid_inner),
+                            &tunnel_status_event(&sid_inner),
                             TunnelStatus {
                                 state: "client_closed",
                                 local_port: local_port_inner,
@@ -704,7 +727,7 @@ pub fn start_port_forward(
                         format!("session {}: accept failed: {}", sid, e),
                     );
                     let _ = app_handle.emit(
-                        &format!("tunnel-status-{}", sid),
+                        &tunnel_status_event(&sid),
                         TunnelStatus {
                             state: "error",
                             local_port,
@@ -720,7 +743,7 @@ pub fn start_port_forward(
 
         // Listener is dropped here. The gateway session is dropped when the last
         // forwarder thread holding an Arc clone exits.
-        let _ = app_handle.emit(&format!("ssh-closed-{}", sid), ());
+        let _ = app_handle.emit(&ssh_closed_event(&sid), ());
     });
 
     Ok(tx)
@@ -868,14 +891,14 @@ pub fn start_jump_shell(
                 "\x1b[2m[SSX] Connected to {}:{} via gateway {}:{} as {}\x1b[0m\r\n",
                 destination_host, destination_port, gateway_host, gateway_port, destination_username
             );
-            let _ = app_handle.emit(&format!("ssh-output-{}", sid), msg.into_bytes());
+            let _ = app_handle.emit(&ssh_output_event(&sid), msg.into_bytes());
         }
         let result = run_io_loop(channel, &app_handle, &sid, rx);
         if let Err(e) = &result {
             crate::logs::log(&app_handle, "error", "jump_shell", format!("session {}: {}", sid, e));
-            let _ = app_handle.emit(&format!("ssh-error-{}", sid), e.clone());
+            let _ = app_handle.emit(&ssh_error_event(&sid), e.clone());
         }
-        let _ = app_handle.emit(&format!("ssh-closed-{}", sid), ());
+        let _ = app_handle.emit(&ssh_closed_event(&sid), ());
     });
 
     Ok(tx)

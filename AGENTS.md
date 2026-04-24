@@ -23,7 +23,7 @@
 - **Tauri v2** desktop app: React/Vite frontend (`src/`) + Rust backend (`src-tauri/`)
 - **Frontend state**: Zustand stores in `src/store/` call Tauri via `src/lib/tauri.ts` (lazy-loaded for test mocking)
 - **Backend commands**: `src-tauri/src/commands/` → registered in `lib.rs` `invoke_handler![]`
-- **SSH sessions**: `ssh2` crate, one thread per session, `mpsc` channels, events `ssh-{output|error|closed}-{id}`
+- **SSH sessions**: `ssh2` crate, one thread per session, `mpsc` channels, events `ssx:ssh:{output|error|closed}:{id}` and `ssx:tunnel:status:{id}` (use helpers in `src-tauri/src/ssh.rs` + `src/lib/events.ts`)
 - **Terminal**: xterm.js, stays mounted when hidden; tunnels live in `TunnelsView`, not the terminal tab bar
 - **Persistence**: File-based at `~/.ssx/data.json`. All writes MUST use `atomic_write()` — never `fs::write` directly
 - **Models**: `src/types/index.ts` ↔ `src-tauri/src/models.rs` must stay in sync (snake_case throughout)

@@ -23,7 +23,10 @@ fn load_data_unlocked() -> Result<AppData, String> {
     }
     let content = fs::read_to_string(&path).map_err(|e| e.to_string())?;
     let mut data: AppData = serde_json::from_str(&content).map_err(|e| e.to_string())?;
-    data.migrate_legacy_kinds();
+    // Audit-4 Phase 6b: walk the loaded `schema_version` up to the
+    // current one (also runs the LegacyTunnel → JumpShell rewrite for
+    // pre-stamp v0 files). Idempotent for files already at HEAD.
+    data.migrate_to_current();
     Ok(data)
 }
 
