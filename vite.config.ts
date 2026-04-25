@@ -1,5 +1,6 @@
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
+import tailwindcss from "@tailwindcss/vite";
 import path from "path";
 
 const host = process.env.TAURI_DEV_HOST;
@@ -12,7 +13,7 @@ const host = process.env.TAURI_DEV_HOST;
 const buildTarget = ["es2022", "safari16", "chrome120", "edge120"];
 
 export default defineConfig({
-  plugins: [react()],
+  plugins: [react(), tailwindcss()],
   resolve: {
     alias: {
       "@": path.resolve(__dirname, "./src"),

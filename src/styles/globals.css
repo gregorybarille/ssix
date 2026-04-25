@@ -1,6 +1,126 @@
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
+@import 'tailwindcss';
+@import 'tw-animate-css';
+
+/*
+ * Tailwind v4 source detection. v4 walks @source globs at build time
+ * to determine which utility classes to emit, replacing v3's
+ * `content` array in tailwind.config.ts. We point at index.html and
+ * the entire src tree (any file the bundler may pull into the graph).
+ */
+@source "../../index.html";
+@source "../../src/**/*.{ts,tsx,js,jsx}";
+
+/*
+ * Dark/light variant. v4 dropped the `darkMode` config option in
+ * favour of `@custom-variant`, evaluated against an explicit `.dark`
+ * (or `.light`) class on a parent. Matches the old v3
+ * `darkMode: ["class"]` semantics.
+ */
+@custom-variant dark (&:is(.dark *));
+
+/*
+ * Theme tokens. v4 expects design tokens as CSS custom properties
+ * inside `@theme`; the generator turns them into utilities like
+ * `text-foreground`, `bg-card`, `rounded-lg`, etc. The actual color
+ * values still live in `:root` / `.light` blocks below so the runtime
+ * theme switcher can swap them without re-running the build.
+ */
+@theme {
+  --color-border: hsl(var(--border));
+  --color-input: hsl(var(--input));
+  --color-ring: hsl(var(--ring));
+  --color-background: hsl(var(--background));
+  --color-foreground: hsl(var(--foreground));
+
+  --color-primary: hsl(var(--primary));
+  --color-primary-foreground: hsl(var(--primary-foreground));
+
+  --color-secondary: hsl(var(--secondary));
+  --color-secondary-foreground: hsl(var(--secondary-foreground));
+
+  --color-destructive: hsl(var(--destructive));
+  --color-destructive-foreground: hsl(var(--destructive-foreground));
+
+  --color-muted: hsl(var(--muted));
+  --color-muted-foreground: hsl(var(--muted-foreground));
+  --color-muted-foreground-soft: hsl(var(--muted-foreground-soft));
+
+  --color-accent: hsl(var(--accent));
+  --color-accent-foreground: hsl(var(--accent-foreground));
+
+  --color-popover: hsl(var(--popover));
+  --color-popover-foreground: hsl(var(--popover-foreground));
+
+  --color-card: hsl(var(--card));
+  --color-card-foreground: hsl(var(--card-foreground));
+
+  --radius-lg: var(--radius);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-sm: calc(var(--radius) - 4px);
+}
+
+/*
+ * `container` v4 replacement. v3 exposed a `theme.container` config
+ * (centered, padded, max-width per breakpoint); v4 removed that
+ * surface entirely, so we re-create the SSX defaults as a custom
+ * utility. `--theme(--breakpoint-sm)` resolves to v4's built-in sm
+ * breakpoint (40rem / 640px), keeping behaviour identical.
+ */
+@utility container {
+  margin-inline: auto;
+  padding-inline: 2rem;
+  @media (width >= --theme(--breakpoint-sm)) {
+    max-width: none;
+  }
+  @media (width >= 1400px) {
+    max-width: 1400px;
+  }
+}
+
+/*
+ * v3 → v4 border-color compatibility. v4 changed the default border
+ * color from `theme.colors.gray.200` to `currentColor`. We pin it
+ * back to the old default so existing `border` (no color) usages
+ * across SSX components don't suddenly inherit text color.
+ */
+@layer base {
+  *,
+  ::after,
+  ::before,
+  ::backdrop,
+  ::file-selector-button {
+    border-color: var(--color-gray-200, currentcolor);
+  }
+}
+
+/*
+ * Audit-3 #4: remap `text-destructive` and its hover/focus/group-hover
+ * variants to use `--destructive-text` rather than the button-tuned
+ * `--destructive`. This keeps button styles (`bg-destructive` paired
+ * with `text-destructive-foreground`) untouched while giving every
+ * text/icon usage a WCAG AA-compliant color.
+ *
+ * Implementation note (Tailwind v4): v4's `@utility` directive only
+ * accepts plain identifiers, so the original v3 form (which targeted
+ * the escaped `.hover\:text-destructive` class via @layer) is
+ * recreated here. Rules sit in the same cascade tier as Tailwind's
+ * generated utilities; the `!important` keeps them from being
+ * silently outranked when other text-color utilities collide.
+ */
+@layer utilities {
+  .text-destructive {
+    color: hsl(var(--destructive-text)) !important;
+  }
+  .hover\:text-destructive:hover {
+    color: hsl(var(--destructive-text)) !important;
+  }
+  .focus\:text-destructive:focus {
+    color: hsl(var(--destructive-text)) !important;
+  }
+  .group:hover .group-hover\:text-destructive {
+    color: hsl(var(--destructive-text)) !important;
+  }
+}
 
 @layer base {
   /* Dark theme — default (no class required) and explicit .dark */
@@ -44,7 +164,7 @@
      * on the dark app background, which fails WCAG AA badly when used
      * directly as text via `text-destructive`.
      *
-     * Tailwind's `text-destructive` utility is remapped further down
+     * Tailwind's `text-destructive` utility is remapped further up
      * (in @layer utilities) to read this variable instead.
      *
      * Dark theme: hsl(0 84.2% 72%) ≈ #f49191 yields ≥ 5.5:1 on every
@@ -94,28 +214,6 @@
     --border: 214.3 31.8% 91.4%;
     --input: 214.3 31.8% 91.4%;
     --ring: 222.2 84% 4.9%;
-  }
-}
-
-@layer utilities {
-  /*
-   * Audit-3 #4: remap `text-destructive` (and `*:text-destructive`
-   * variants) to use `--destructive-text` rather than the
-   * button-tuned `--destructive`. This keeps button styles
-   * (`bg-destructive` + `text-destructive-foreground`) untouched
-   * while giving every text/icon usage a WCAG AA-compliant color.
-   */
-  .text-destructive {
-    color: hsl(var(--destructive-text)) !important;
-  }
-  .hover\:text-destructive:hover {
-    color: hsl(var(--destructive-text)) !important;
-  }
-  .focus\:text-destructive:focus {
-    color: hsl(var(--destructive-text)) !important;
-  }
-  .group:hover .group-hover\:text-destructive {
-    color: hsl(var(--destructive-text)) !important;
   }
 }
 

@@ -14,12 +14,12 @@ const creds: Credential[] = [
 ];
 
 describe("ConnectPicker (command palette)", () => {
-  let onConnect: ReturnType<typeof vi.fn>;
-  let onOpenChange: ReturnType<typeof vi.fn>;
+  let onConnect: ReturnType<typeof vi.fn<(connection: Connection) => void>>;
+  let onOpenChange: ReturnType<typeof vi.fn<(open: boolean) => void>>;
 
   beforeEach(() => {
-    onConnect = vi.fn();
-    onOpenChange = vi.fn();
+    onConnect = vi.fn<(connection: Connection) => void>();
+    onOpenChange = vi.fn<(open: boolean) => void>();
   });
 
   function open() {
