@@ -26,19 +26,19 @@ describe("Direct SSH session", () => {
   it("connects, runs whoami, and sees the expected output", async () => {
     await waitForAppReady();
     await createPasswordCredential({
-      name: "cred-a",
+      name: "cred-03-a",
       username: TARGETS.a.user,
       password: TARGETS.a.password,
     });
     await createDirectConnection({
-      name: "conn-a",
+      name: "conn-03-a",
       host: TARGETS.a.host,
       port: TARGETS.a.sshPort,
-      credentialName: "cred-a",
+      credentialName: "cred-03-a",
     });
     await navigateTo("connections");
 
-    const row = await browser.$(sel.connectionRowByName("conn-a"));
+    const row = await browser.$(sel.connectionRowByName("conn-03-a"));
     await row.waitForClickable({ timeout: 10_000 });
     await row.doubleClick();
 

@@ -34,7 +34,7 @@ describe("SSH keygen + install_public_key", () => {
 
     // Step 1 — password credential we'll use to bootstrap the install.
     await createPasswordCredential({
-      name: "cred-a-pw",
+      name: "cred-07-pw",
       username: TARGETS.a.user,
       password: TARGETS.a.password,
     });
@@ -43,7 +43,7 @@ describe("SSH keygen + install_public_key", () => {
     await navigateTo("credentials");
     await (await browser.$(sel.addCredentialButton)).click();
     await (await browser.$(sel.credentialForm)).waitForExist({ timeout: 10_000 });
-    await (await browser.$(sel.credentialFormName)).setValue("cred-a-key");
+    await (await browser.$(sel.credentialFormName)).setValue("cred-07-key");
     await (await browser.$(sel.credentialFormUsername)).setValue(TARGETS.a.user);
     await (await browser.$(sel.credentialFormKindSshKey)).click();
 
@@ -72,9 +72,11 @@ describe("SSH keygen + install_public_key", () => {
 
     // Step 3 — install the new public key onto server-a.
     const keyRow = await browser.$(
-      `${sel.credentialList} [data-name="cred-a-key"]`,
+      `${sel.credentialList} [data-name="cred-07-key"]`,
     );
     await keyRow.waitForExist({ timeout: 10_000 });
+    // Actions are hidden until hover — move the pointer over the row.
+    await keyRow.moveTo();
     const installBtn = await keyRow.$('[data-testid^="install-key-"]');
     await installBtn.waitForClickable({ timeout: 10_000 });
     await installBtn.click();
@@ -90,13 +92,13 @@ describe("SSH keygen + install_public_key", () => {
 
     // Step 4 — connect with the key credential.
     await createDirectConnection({
-      name: "conn-a-key",
+      name: "conn-07-key",
       host: TARGETS.a.host,
       port: TARGETS.a.sshPort,
-      credentialName: "cred-a-key",
+      credentialName: "cred-07-key",
     });
     await navigateTo("connections");
-    const connRow = await browser.$(sel.connectionRowByName("conn-a-key"));
+    const connRow = await browser.$(sel.connectionRowByName("conn-07-key"));
     await connRow.waitForClickable({ timeout: 10_000 });
     await connRow.doubleClick();
     await waitForTerminalContains("usera@server-a", 30_000);

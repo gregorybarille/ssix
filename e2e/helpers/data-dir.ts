@@ -49,5 +49,9 @@ export function cleanupTestDataDir(): void {
 }
 
 export function currentTestDataDir(): string | null {
-  return sharedDir;
+  // `sharedDir` is set when setupTestDataDir() was called in this process
+  // (e.g. in wdio.conf.ts onPrepare). In WDIO worker processes the
+  // module is re-imported fresh, so sharedDir is null — fall back to the
+  // env var which is inherited from the parent process or set by CI.
+  return sharedDir ?? process.env.SSX_DATA_DIR ?? null;
 }

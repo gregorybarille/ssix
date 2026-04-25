@@ -36,19 +36,19 @@ describe("SCP upload + download", () => {
   it("uploads then downloads a file and gets identical bytes back", async () => {
     await waitForAppReady();
     await createPasswordCredential({
-      name: "cred-a",
+      name: "cred-06-a",
       username: TARGETS.a.user,
       password: TARGETS.a.password,
     });
     await createDirectConnection({
-      name: "conn-a",
+      name: "conn-06-a",
       host: TARGETS.a.host,
       port: TARGETS.a.sshPort,
-      credentialName: "cred-a",
+      credentialName: "cred-06-a",
     });
 
     await navigateTo("connections");
-    const row = await browser.$(sel.connectionRowByName("conn-a"));
+    const row = await browser.$(sel.connectionRowByName("conn-06-a"));
     await row.waitForExist({ timeout: 10_000 });
     // Open SCP dialog via the per-row affordance.
     const scpBtn = await row.$('[data-testid^="scp-open-"]');

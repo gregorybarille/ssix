@@ -38,40 +38,40 @@ async function pickCredential(triggerSelector: string, name: string) {
 
 describe("JumpShell session (server-a → server-c)", () => {
   before(async () => {
-    await waitForServers(["a", "c"]);
+    await waitForServers(["a"]);
   });
 
   it("opens a shell on server-c via the server-a gateway", async () => {
     await waitForAppReady();
     await createPasswordCredential({
-      name: "cred-a",
+      name: "cred-04-a",
       username: TARGETS.a.user,
       password: TARGETS.a.password,
     });
     await createPasswordCredential({
-      name: "cred-c",
+      name: "cred-04-c",
       username: TARGETS.c.user,
       password: TARGETS.c.password,
     });
 
     await navigateTo("connections");
     await click(sel.addConnectionButton);
-    await fill(sel.connectionFormName, "jump-c");
+    await fill(sel.connectionFormName, "jump-04-c");
     await click(sel.connectionFormKindJumpShell);
-    // Gateway = server-a (with cred-a).
+    // Gateway = server-a (with cred-04-a).
     await fill(sel.connectionFormHost, TARGETS.a.host);
     await fill(sel.connectionFormPort, String(TARGETS.a.sshPort));
-    await pickCredential(sel.connectionFormCredential, "cred-a");
-    // Destination = server-c (with cred-c). server-c sshd is on
+    await pickCredential(sel.connectionFormCredential, "cred-04-a");
+    // Destination = server-c (with cred-04-c). server-c sshd is on
     // port 22 inside the docker network; the SSH command runs from
     // INSIDE server-a, so we always use port 22 here regardless of
     // whether the test runner is dockerized.
     await fill(sel.connectionFormDestHost, "server-c");
     await fill(sel.connectionFormDestPort, "22");
-    await pickCredential(sel.connectionFormDestCredential, "cred-c");
+    await pickCredential(sel.connectionFormDestCredential, "cred-04-c");
     await click(sel.connectionFormSubmit);
 
-    const row = await browser.$(sel.connectionRowByName("jump-c"));
+    const row = await browser.$(sel.connectionRowByName("jump-04-c"));
     await row.waitForClickable({ timeout: 10_000 });
     await row.doubleClick();
 

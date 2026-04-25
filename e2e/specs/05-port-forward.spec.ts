@@ -52,24 +52,24 @@ function readBanner(host: string, port: number, timeoutMs = 5_000): Promise<stri
 
 describe("Port forward (server-a → server-c:22)", () => {
   before(async () => {
-    await waitForServers(["a", "c"]);
+    await waitForServers(["a"]);
   });
 
   it("forwards a local port to server-c via server-a", async () => {
     await waitForAppReady();
     await createPasswordCredential({
-      name: "cred-a",
+      name: "cred-05-a",
       username: TARGETS.a.user,
       password: TARGETS.a.password,
     });
 
     await navigateTo("connections");
     await click(sel.addConnectionButton);
-    await fill(sel.connectionFormName, "tunnel-c");
+    await fill(sel.connectionFormName, "tunnel-05-c");
     await click(sel.connectionFormKindPortForward);
     await fill(sel.connectionFormHost, TARGETS.a.host);
     await fill(sel.connectionFormPort, String(TARGETS.a.sshPort));
-    await pickCredential(sel.connectionFormCredential, "cred-a");
+    await pickCredential(sel.connectionFormCredential, "cred-05-a");
     await fill(sel.connectionFormLocalPort, String(LOCAL_PORT));
     await fill(sel.connectionFormDestHost, "server-c");
     await fill(sel.connectionFormDestPort, "22");
@@ -78,14 +78,14 @@ describe("Port forward (server-a → server-c:22)", () => {
     await navigateTo("tunnels");
     // The tunnel definitions section uses <ConnectionList>; find the
     // row by name and click its connect button to start the tunnel.
-    const defRow = await browser.$(sel.connectionRowByName("tunnel-c"));
+    const defRow = await browser.$(sel.connectionRowByName("tunnel-05-c"));
     await defRow.waitForExist({ timeout: 10_000 });
     const startBtn = await defRow.$('[data-testid^="connect-button-"]');
     await startBtn.waitForClickable({ timeout: 10_000 });
     await startBtn.click();
 
     // Wait for the active session row to appear in the "Active" section.
-    const activeRow = await browser.$(`[data-testid^="tunnel-row-"][data-name="tunnel-c"]`);
+    const activeRow = await browser.$(`[data-testid^="tunnel-row-"][data-name="tunnel-05-c"]`);
     await activeRow.waitForExist({
       timeout: 30_000,
     });
