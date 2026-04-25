@@ -52,6 +52,7 @@ export function CredentialList({
           size="icon"
           className="h-7 w-7"
           onClick={() => setInstallCred(cred)}
+          data-testid={`install-key-${cred.id}`}
           aria-label={`Install public key for ${cred.name} on a remote host`}
         >
           <UploadCloud className="h-3.5 w-3.5" aria-hidden="true" />
@@ -105,6 +106,8 @@ export function CredentialList({
                 key={cred.id}
                 {...itemProps}
                 role="listitem"
+                data-testid={`credential-row-${cred.id}`}
+                data-name={cred.name}
                 aria-label={`${cred.name}, ${cred.type === "ssh_key" ? "SSH key" : "password"} credential`}
                 className={cn(
                   "group rounded-lg border p-3 hover:bg-accent transition-colors flex flex-col gap-2 cursor-pointer",
@@ -140,6 +143,7 @@ export function CredentialList({
   return (
     <div
       className="space-y-1"
+      data-testid="credential-list-rows"
       role="list"
       aria-label="Credentials"
       onKeyDown={roving.onKeyDown}
@@ -151,6 +155,8 @@ export function CredentialList({
             key={cred.id}
             {...itemProps}
             role="listitem"
+            data-testid={`credential-row-${cred.id}`}
+            data-name={cred.name}
             aria-label={`${cred.name}, ${cred.type === "ssh_key" ? "SSH key" : "password"} credential`}
             className={cn(
               "group flex items-center gap-3 rounded-lg p-3 hover:bg-accent transition-colors cursor-pointer",

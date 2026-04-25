@@ -152,7 +152,7 @@ export function InstallKeyDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-[420px]">
+      <DialogContent className="sm:max-w-[420px]" data-testid="install-key-dialog">
         <DialogHeader>
           <DialogTitle>Install Public Key on Remote</DialogTitle>
           {/*
@@ -185,6 +185,7 @@ export function InstallKeyDialog({
                 aria-required="true"
                 aria-invalid={!!error && !host.trim()}
                 onChange={(e) => editHost(e.target.value)}
+                data-testid="install-key-host"
               />
             </div>
             <div className="space-y-2">
@@ -197,6 +198,7 @@ export function InstallKeyDialog({
                 aria-invalid={!!portError}
                 aria-describedby={portError ? "install-port-error" : undefined}
                 onChange={(e) => editPort(e.target.value)}
+                data-testid="install-key-port"
                 className={cn(portError && "border-destructive")}
               />
               {portError && (
@@ -219,6 +221,7 @@ export function InstallKeyDialog({
               aria-required="true"
               aria-invalid={!!error && !username.trim()}
               onChange={(e) => editUsername(e.target.value)}
+              data-testid="install-key-username"
             />
           </div>
           <div className="space-y-2">
@@ -230,6 +233,7 @@ export function InstallKeyDialog({
               aria-required="true"
               aria-invalid={!!error && !password}
               onChange={(e) => setPassword(e.target.value)}
+              data-testid="install-key-password"
             />
           </div>
 
@@ -265,6 +269,7 @@ export function InstallKeyDialog({
               type="submit"
               disabled={isSubmitting || effectiveSuccess || !!portError}
               aria-busy={isSubmitting}
+              data-testid="install-key-submit"
             >
               {isSubmitting
                 ? "Installing..."

@@ -54,6 +54,42 @@ Backend:
 
 - Rust unit tests inside the relevant modules
 
+End-to-end:
+
+- WebdriverIO + `tauri-driver` drives the real built Tauri app against
+  the four Dockerized SSH servers in `docker/docker-compose.yml`.
+- **CI-only by default**: runs on every push to `main` via
+  `.github/workflows/e2e.yml` (advisory status — does not block merges).
+  Trigger manually from the Actions tab via `workflow_dispatch`.
+- **Locally optional**: developers run `npm test` + `cargo test` only.
+  E2E does NOT run locally as part of the standard workflow because
+  `tauri-driver` is unsupported on macOS.
+- **Local debugging** (when reproducing a CI E2E failure): use the
+  Dockerized runner, which works on every host that runs Docker:
+
+  ```bash
+  npm run e2e            # build image, run full suite
+  npm run e2e:shell      # interactive shell inside the runner
+  npm run e2e:teardown   # stop containers, drop named volumes
+  ```
+
+  Test specs and helpers live in `e2e/`. A single shared `SSX_DATA_DIR`
+  is created once in `wdio.conf.ts` `onPrepare` and deleted in
+  `onComplete` (see `helpers/data-dir.ts`). Because the Tauri app
+  process is started once and inherits the env var at launch, cross-spec
+  isolation relies on every spec using unique credential / connection
+  names rather than separate directories. Runs cannot leak into the
+  developer's real `~/.ssx`. Failure artifacts (screenshots, docker
+  logs) are written to `e2e/.artifacts/` and uploaded as a workflow
+  artifact in CI.
+
+  The first iteration covers credentials/connections CRUD, direct
+  SSH, jump-shell, port forwarding, SCP round-trip, key generation +
+  install, and git-sync export. Selectors are centralised in
+  `e2e/helpers/selectors.ts`; some `data-testid` attributes are still
+  to be added as the suite is brought green for the first time
+  (Sidebar, ConnectionList, and the App add-buttons are wired today).
+
 ## Adding A New Tauri Command
 
 1. Update `src-tauri/src/models.rs` if the data model changes.

@@ -258,6 +258,7 @@ export function CredentialForm({
         <form
           action={submitAction}
           className="flex flex-col flex-1 min-h-0"
+          data-testid="credential-form"
         >
           <div className="flex-1 min-h-0 overflow-y-auto px-6 py-4 space-y-4">
           <div className="space-y-2">
@@ -271,6 +272,7 @@ export function CredentialForm({
                 clearFieldError("name");
               }}
               required
+              data-testid="credential-form-name"
               aria-invalid={fieldErrors.name ? true : undefined}
               aria-describedby={fieldErrors.name ? "cred-name-error" : undefined}
             />
@@ -291,6 +293,7 @@ export function CredentialForm({
                 clearFieldError("username");
               }}
               required
+              data-testid="credential-form-username"
               aria-invalid={fieldErrors.username ? true : undefined}
               aria-describedby={fieldErrors.username ? "cred-username-error" : undefined}
             />
@@ -306,10 +309,10 @@ export function CredentialForm({
             onValueChange={(v) => setCredType(v as "password" | "ssh_key")}
           >
             <TabsList className="w-full">
-              <TabsTrigger value="password" className="flex-1">
+              <TabsTrigger value="password" className="flex-1" data-testid="credential-form-kind-password">
                 Password
               </TabsTrigger>
-              <TabsTrigger value="ssh_key" className="flex-1">
+              <TabsTrigger value="ssh_key" className="flex-1" data-testid="credential-form-kind-sshkey">
                 SSH Key
               </TabsTrigger>
             </TabsList>
@@ -322,6 +325,7 @@ export function CredentialForm({
                   autoComplete="new-password"
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
+                  data-testid="credential-form-password"
                 />
               </div>
             </TabsContent>
@@ -360,6 +364,7 @@ export function CredentialForm({
                   variant="outline"
                   size="sm"
                   onClick={() => setGenerateOpen(true)}
+                  data-testid="generate-key-open"
                 >
                   Generate key…
                 </Button>
@@ -376,6 +381,7 @@ export function CredentialForm({
                         setPrivateKeyPath(e.target.value);
                         clearFieldError("key_path");
                       }}
+                      data-testid="credential-form-private-key-path"
                       aria-invalid={fieldErrors.key_path ? true : undefined}
                       aria-describedby={fieldErrors.key_path ? "cred-key-path-error" : undefined}
                     />
@@ -513,6 +519,7 @@ export function CredentialForm({
               type="submit"
               disabled={isSubmitting}
               aria-busy={isSubmitting}
+              data-testid="credential-form-submit"
               aria-describedby={visibleError ? "credential-form-error" : undefined}
             >
               {isSubmitting ? "Saving..." : credential ? "Update" : "Create"}

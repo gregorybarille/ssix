@@ -11,6 +11,15 @@ services:
       - private_a
     ports:
       - "2201:22"
+    healthcheck:
+      # busybox nc on alpine: -z probes the port without sending data.
+      # Used by `docker compose up --wait` so CI / E2E doesn't race sshd
+      # accepting connections before tests start.
+      test: ["CMD", "nc", "-z", "localhost", "22"]
+      interval: 2s
+      timeout: 2s
+      retries: 15
+      start_period: 2s
 
   server-b:
     build:
@@ -24,6 +33,12 @@ services:
       - private_b
     ports:
       - "2202:22"
+    healthcheck:
+      test: ["CMD", "nc", "-z", "localhost", "22"]
+      interval: 2s
+      timeout: 2s
+      retries: 15
+      start_period: 2s
 
   server-c:
     build:
@@ -36,6 +51,12 @@ services:
       - private_a
     ports:
       - "2203:22"
+    healthcheck:
+      test: ["CMD", "nc", "-z", "localhost", "22"]
+      interval: 2s
+      timeout: 2s
+      retries: 15
+      start_period: 2s
 
   server-d:
     build:
@@ -48,6 +69,52 @@ services:
       - private_b
     ports:
       - "2204:22"
+    healthcheck:
+      test: ["CMD", "nc", "-z", "localhost", "22"]
+      interval: 2s
+      timeout: 2s
+      retries: 15
+      start_period: 2s
+
+  # ---------------------------------------------------------------------
+  # Opt-in E2E runner (see e2e/docker/Dockerfile + entrypoint.sh).
+  # NOT started by `docker compose up` because of the `e2e` profile —
+  # invoked explicitly via:
+  #   docker compose --profile e2e -f docker/docker-compose.yml run \
+  #     --rm --build e2e-runner
+  # or via `npm run e2e`.
+  #
+  # Attached to all three networks so it can reach every server by
+  # hostname (server-a..d). Cargo registry, target/ and node_modules
+  # live in named volumes so warm rebuilds stay fast.
+  # ---------------------------------------------------------------------
+  e2e-runner:
+    profiles:
+      - e2e
+    build:
+      context: ../e2e/docker
+    working_dir: /workspace
+    volumes:
+      - ../:/workspace
+      - ssx-cargo-registry:/usr/local/cargo/registry
+      - ssx-cargo-target:/workspace/src-tauri/target
+      - ssx-node-modules:/workspace/node_modules
+    environment:
+      - E2E_INSIDE_DOCKER=1
+      - SSX_DATA_DIR=/tmp/ssx-e2e-data
+    networks:
+      - public
+      - private_a
+      - private_b
+    depends_on:
+      server-a:
+        condition: service_healthy
+      server-b:
+        condition: service_healthy
+      server-c:
+        condition: service_healthy
+      server-d:
+        condition: service_healthy
 
 networks:
   public:
@@ -58,3 +125,8 @@ networks:
   private_b:
     driver: bridge
     internal: true
+
+volumes:
+  ssx-cargo-registry:
+  ssx-cargo-target:
+  ssx-node-modules:

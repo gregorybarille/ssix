@@ -81,12 +81,20 @@ export function TunnelsView({
               {sessions.map((s) => (
                 <div
                   key={s.sessionId}
+                  data-testid={`tunnel-row-${s.connection.id}`}
+                  data-name={s.connectionName}
+                  data-session-id={s.sessionId}
                   className={cn(
                     "rounded-lg border bg-card overflow-hidden relative",
                   )}
                 >
                   <div className="flex items-center justify-between border-b px-3 py-1.5">
-                    <span className="text-sm font-medium">{s.connectionName}</span>
+                    <span
+                      className="text-sm font-medium"
+                      data-testid={`tunnel-status-${s.connection.id}`}
+                    >
+                      {s.connectionName}
+                    </span>
                     <Button
                       variant="ghost"
                       size="icon"
@@ -97,6 +105,7 @@ export function TunnelsView({
                           name: s.connectionName,
                         })
                       }
+                      data-testid={`tunnel-stop-${s.connection.id}`}
                       aria-label={`Disconnect tunnel ${s.connectionName}`}
                     >
                       <X className="h-3.5 w-3.5" aria-hidden="true" />
