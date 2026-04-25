@@ -73,11 +73,15 @@ End-to-end:
   npm run e2e:teardown   # stop containers, drop named volumes
   ```
 
-  Test specs and helpers live in `e2e/`. Each spec gets a fresh
-  `SSX_DATA_DIR` (see `helpers/data-dir.ts`) so runs cannot leak into
-  the developer's real `~/.ssx`. Failure artifacts (screenshots,
-  docker logs) are written to `e2e/.artifacts/` and uploaded as a
-  workflow artifact in CI.
+  Test specs and helpers live in `e2e/`. A single shared `SSX_DATA_DIR`
+  is created once in `wdio.conf.ts` `onPrepare` and deleted in
+  `onComplete` (see `helpers/data-dir.ts`). Because the Tauri app
+  process is started once and inherits the env var at launch, cross-spec
+  isolation relies on every spec using unique credential / connection
+  names rather than separate directories. Runs cannot leak into the
+  developer's real `~/.ssx`. Failure artifacts (screenshots, docker
+  logs) are written to `e2e/.artifacts/` and uploaded as a workflow
+  artifact in CI.
 
   The first iteration covers credentials/connections CRUD, direct
   SSH, jump-shell, port forwarding, SCP round-trip, key generation +

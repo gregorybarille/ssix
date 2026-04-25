@@ -7,7 +7,6 @@
 import { writeFileSync, readFileSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { setupTestDataDir, cleanupTestDataDir } from "../helpers/data-dir.js";
 import { waitForAppReady } from "../helpers/app.js";
 import { TARGETS, waitForServers } from "../helpers/docker.js";
 import {
@@ -25,14 +24,12 @@ const PAYLOAD = "ssx-scp-roundtrip-payload\n";
 describe("SCP upload + download", () => {
   before(async () => {
     await waitForServers(["a"]);
-    setupTestDataDir();
     workDir = mkdtempSync(join(tmpdir(), "ssx-scp-"));
     upload = join(workDir, "upload.txt");
     download = join(workDir, "download.txt");
     writeFileSync(upload, PAYLOAD);
   });
   after(() => {
-    cleanupTestDataDir();
     rmSync(workDir, { recursive: true, force: true });
   });
 

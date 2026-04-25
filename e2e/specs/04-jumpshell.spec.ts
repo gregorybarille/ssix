@@ -9,7 +9,6 @@
  * the Direct flow; the form's kind toggle reveals the additional
  * gateway/destination fields.
  */
-import { setupTestDataDir, cleanupTestDataDir } from "../helpers/data-dir.js";
 import { waitForAppReady } from "../helpers/app.js";
 import { TARGETS, waitForServers } from "../helpers/docker.js";
 import {
@@ -40,10 +39,6 @@ async function pickCredential(triggerSelector: string, name: string) {
 describe("JumpShell session (server-a → server-c)", () => {
   before(async () => {
     await waitForServers(["a", "c"]);
-    setupTestDataDir();
-  });
-  after(() => {
-    cleanupTestDataDir();
   });
 
   it("opens a shell on server-c via the server-a gateway", async () => {

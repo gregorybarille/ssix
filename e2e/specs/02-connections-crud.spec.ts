@@ -5,7 +5,6 @@
  * Asserts the connection appears in the list (round-tripped through
  * `add_connection` and `data.json`).
  */
-import { setupTestDataDir, cleanupTestDataDir } from "../helpers/data-dir.js";
 import { waitForAppReady } from "../helpers/app.js";
 import { TARGETS } from "../helpers/docker.js";
 import {
@@ -16,13 +15,6 @@ import {
 import { sel } from "../helpers/selectors.js";
 
 describe("Connections CRUD", () => {
-  before(() => {
-    setupTestDataDir();
-  });
-  after(() => {
-    cleanupTestDataDir();
-  });
-
   it("creates a Direct connection referencing a credential", async () => {
     await waitForAppReady();
     await createPasswordCredential({

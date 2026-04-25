@@ -7,7 +7,6 @@
  * Exercises `start_ssh_session` + the OS-thread / mpsc plumbing in
  * `src-tauri/src/ssh.rs` against a real OpenSSH server.
  */
-import { setupTestDataDir, cleanupTestDataDir } from "../helpers/data-dir.js";
 import { waitForAppReady } from "../helpers/app.js";
 import { TARGETS, waitForServers } from "../helpers/docker.js";
 import {
@@ -22,10 +21,6 @@ import { sel } from "../helpers/selectors.js";
 describe("Direct SSH session", () => {
   before(async () => {
     await waitForServers(["a"]);
-    setupTestDataDir();
-  });
-  after(() => {
-    cleanupTestDataDir();
   });
 
   it("connects, runs whoami, and sees the expected output", async () => {

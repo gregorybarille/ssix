@@ -14,7 +14,6 @@
  * 4. Create a connection that uses the key credential and confirm the
  *    shell opens (key auth works without prompting).
  */
-import { setupTestDataDir, cleanupTestDataDir } from "../helpers/data-dir.js";
 import { waitForAppReady } from "../helpers/app.js";
 import { TARGETS, waitForServers } from "../helpers/docker.js";
 import {
@@ -28,10 +27,6 @@ import { sel } from "../helpers/selectors.js";
 describe("SSH keygen + install_public_key", () => {
   before(async () => {
     await waitForServers(["a"]);
-    setupTestDataDir();
-  });
-  after(() => {
-    cleanupTestDataDir();
   });
 
   it("generates a key, installs it, and reconnects with key auth", async () => {

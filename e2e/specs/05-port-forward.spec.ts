@@ -7,7 +7,6 @@
  * and the `ssx:tunnel:status` event stream.
  */
 import { connect } from "node:net";
-import { setupTestDataDir, cleanupTestDataDir } from "../helpers/data-dir.js";
 import { waitForAppReady } from "../helpers/app.js";
 import { TARGETS, waitForServers } from "../helpers/docker.js";
 import { createPasswordCredential, navigateTo } from "../helpers/flows.js";
@@ -54,10 +53,6 @@ function readBanner(host: string, port: number, timeoutMs = 5_000): Promise<stri
 describe("Port forward (server-a → server-c:22)", () => {
   before(async () => {
     await waitForServers(["a", "c"]);
-    setupTestDataDir();
-  });
-  after(() => {
-    cleanupTestDataDir();
   });
 
   it("forwards a local port to server-c via server-a", async () => {
