@@ -109,7 +109,10 @@ describe("GitSyncView", () => {
   it("commit message field uses the shared <Input> primitive (focus-ring class present)", () => {
     render(<GitSyncView />);
     const field = screen.getByLabelText(/commit message/i);
-    expect(field.className).toMatch(/focus-visible:ring-2/);
+    // shadcn 4.5 (new-york-v4) uses arbitrary `ring-[3px]` for the
+    // focus ring; this regex matches both the old `ring-2` and the
+    // new `ring-[3px]` so the assertion still pins the shared Input.
+    expect(field.className).toMatch(/focus-visible:ring-(?:2|\[3px\])/);
   });
 
   /*

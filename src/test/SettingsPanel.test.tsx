@@ -28,7 +28,10 @@ describe("SettingsPanel", () => {
     render(<SettingsPanel settings={defaults} onSave={vi.fn()} />);
     for (const label of [/repository path/i, /remote name/i, /branch override/i]) {
       const field = screen.getByLabelText(label);
-      expect(field.className).toMatch(/focus-visible:ring-2/);
+      // shadcn 4.5 (new-york-v4) uses arbitrary `ring-[3px]`; accept
+      // both for forward/backward compat — the point is to verify the
+      // shared <Input> primitive is in use, not the exact ring width.
+      expect(field.className).toMatch(/focus-visible:ring-(?:2|\[3px\])/);
     }
   });
 

@@ -1,5 +1,6 @@
 import * as React from "react";
-import * as RadioGroupPrimitive from "@radix-ui/react-radio-group";
+import { RadioGroup as RadioGroupPrimitive } from "radix-ui";
+
 import { cn } from "@/lib/utils";
 
 /**
@@ -20,33 +21,34 @@ import { cn } from "@/lib/utils";
  * The root accepts an `aria-label` or `aria-labelledby` (point it at
  * the section heading) so the group has an accessible name.
  *
- * `<RadioGroupItem>` is a presentationally-empty wrapper — pass your
- * styled visual (a swatch, a labelled chip, etc.) as children and use
- * `data-state=checked` for selected styling. The item already handles
- * the `role="radio"` + `aria-checked` wiring.
+ * NOTE — SSX deviation from canonical shadcn: `<RadioGroupItem>` is
+ * intentionally a *presentationally-empty* wrapper. Pass your styled
+ * visual (a swatch, a labelled chip, etc.) as children and use
+ * `data-state=checked` for selected styling. Canonical shadcn renders
+ * a built-in dot indicator inside the item; SSX does NOT, because the
+ * surrounding visual carries the selected state. Existing call sites
+ * in ConnectionForm / GenerateKeyDialog / SettingsPanel rely on this.
  */
-type RadioGroupProps = React.ComponentPropsWithoutRef<typeof RadioGroupPrimitive.Root> & {
-  ref?: React.Ref<React.ComponentRef<typeof RadioGroupPrimitive.Root>>;
-};
-
-function RadioGroup({ className, ref, ...props }: RadioGroupProps) {
+function RadioGroup({
+  className,
+  ...props
+}: React.ComponentProps<typeof RadioGroupPrimitive.Root>) {
   return (
     <RadioGroupPrimitive.Root
-      ref={ref}
+      data-slot="radio-group"
       className={cn("grid gap-2", className)}
       {...props}
     />
   );
 }
 
-type RadioGroupItemProps = React.ComponentPropsWithoutRef<typeof RadioGroupPrimitive.Item> & {
-  ref?: React.Ref<React.ComponentRef<typeof RadioGroupPrimitive.Item>>;
-};
-
-function RadioGroupItem({ className, ref, ...props }: RadioGroupItemProps) {
+function RadioGroupItem({
+  className,
+  ...props
+}: React.ComponentProps<typeof RadioGroupPrimitive.Item>) {
   return (
     <RadioGroupPrimitive.Item
-      ref={ref}
+      data-slot="radio-group-item"
       className={cn(
         // Reset the default <button> chrome so callers can fully style
         // the item; preserve focus-visible ring so keyboard users see
