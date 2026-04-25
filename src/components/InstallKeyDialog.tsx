@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useActionState, useState, useEffect } from "react";
 import { invoke } from "@/lib/tauri";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
@@ -51,9 +51,50 @@ export function InstallKeyDialog({
   const [port, setPort] = useState<string>("22");
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
-  const [error, setError] = useState<string | null>(null);
-  const [success, setSuccess] = useState(false);
-  const [isSubmitting, setIsSubmitting] = useState(false);
+
+  const portParsed = parsePort(port);
+  const portError =
+    port === ""
+      ? "Port is required"
+      : portParsed.error;
+
+  /*
+   * React 19 useActionState owns both the form-level error and the
+   * "installed successfully" flag, so all form-result state moves
+   * through one channel. Field-level errors stay on local state
+   * (per AGENTS.md / migration plan).
+   */
+  type InstallState = { error: string | null; success: boolean };
+  const initialInstallState: InstallState = { error: null, success: false };
+  const [{ error, success }, installAction, isSubmitting] =
+    useActionState<InstallState>(async () => {
+      try {
+        if (portError || portParsed.value === null) {
+          return { error: portError ?? "Port is required", success: false };
+        }
+        if (!host.trim()) return { error: "Host is required", success: false };
+        if (!username.trim())
+          return { error: "Username is required", success: false };
+        if (!password) return { error: "Password is required", success: false };
+        await invoke("ssh_install_public_key_by_credential", {
+          input: {
+            credential_id: credentialId,
+            host: host.trim(),
+            port: portParsed.value,
+            username: username.trim(),
+            password,
+          },
+        });
+        onSuccess?.();
+        // P2-A10: do NOT auto-close. The previous 800ms setTimeout
+        // raced with the user reading the success message and
+        // dismissed the dialog before assistive tech could finish
+        // announcing it. The user closes via "Close" or "Done".
+        return { error: null, success: true };
+      } catch (err) {
+        return { error: String(err), success: false };
+      }
+    }, initialInstallState);
 
   /*
    * Audit-3 follow-up P2#7: once an install succeeds we leave the
@@ -67,16 +108,30 @@ export function InstallKeyDialog({
    * setters keeps the contract local — handlers below call
    * editHost/editPort/editUsername instead of setHost/etc.
    */
+  const clearSuccess = () => {
+    if (success) {
+      // Reset only the success flag; leave any previous error visible
+      // until the user re-submits. We dispatch through the action's
+      // reducer by calling the state setter directly.
+      // useActionState doesn't expose a setter, so we model this via
+      // a side effect: read state and re-call the action wrapper.
+      // Simpler: keep a local `dismissedSuccess` flag.
+      setDismissedSuccess(true);
+    }
+  };
+  const [dismissedSuccess, setDismissedSuccess] = useState(false);
+  const effectiveSuccess = success && !dismissedSuccess;
+
   const editHost = (v: string) => {
-    if (success) setSuccess(false);
+    clearSuccess();
     setHost(v);
   };
   const editPort = (v: string) => {
-    if (success) setSuccess(false);
+    clearSuccess();
     setPort(v);
   };
   const editUsername = (v: string) => {
-    if (success) setSuccess(false);
+    clearSuccess();
     setUsername(v);
   };
 
@@ -86,51 +141,9 @@ export function InstallKeyDialog({
       setPort(String(defaultPort ?? 22));
       setUsername(defaultUsername ?? "");
       setPassword("");
-      setError(null);
-      setSuccess(false);
+      setDismissedSuccess(false);
     }
   }, [open, defaultHost, defaultPort, defaultUsername]);
-
-  const portParsed = parsePort(port);
-  const portError =
-    port === ""
-      ? "Port is required"
-      : portParsed.error;
-
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setError(null);
-    setSuccess(false);
-    if (portError || portParsed.value === null) {
-      setError(portError ?? "Port is required");
-      return;
-    }
-    setIsSubmitting(true);
-    try {
-      if (!host.trim()) throw new Error("Host is required");
-      if (!username.trim()) throw new Error("Username is required");
-      if (!password) throw new Error("Password is required");
-      await invoke("ssh_install_public_key_by_credential", {
-        input: {
-          credential_id: credentialId,
-          host: host.trim(),
-          port: portParsed.value,
-          username: username.trim(),
-          password,
-        },
-      });
-      setSuccess(true);
-      onSuccess?.();
-      // P2-A10: do NOT auto-close. The previous 800ms setTimeout
-      // raced with the user reading the success message and
-      // dismissed the dialog before assistive tech could finish
-      // announcing it. The user closes via "Close" or "Done".
-    } catch (err) {
-      setError(String(err));
-    } finally {
-      setIsSubmitting(false);
-    }
-  };
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -149,7 +162,7 @@ export function InstallKeyDialog({
             not saved.
           </DialogDescription>
         </DialogHeader>
-        <form onSubmit={handleSubmit} className="space-y-4">
+        <form action={installAction} className="space-y-4">
           <div className="grid grid-cols-3 gap-2">
             <div className="col-span-2 space-y-2">
               <Label htmlFor="install-host">Host *</Label>
@@ -224,7 +237,7 @@ export function InstallKeyDialog({
               {error}
             </p>
           )}
-          {success && (
+          {effectiveSuccess && (
             <p
               role="status"
               aria-live="polite"
@@ -241,14 +254,18 @@ export function InstallKeyDialog({
               onClick={() => onOpenChange(false)}
               disabled={isSubmitting}
             >
-              {success ? "Done" : "Close"}
+              {effectiveSuccess ? "Done" : "Close"}
             </Button>
             <Button
               type="submit"
-              disabled={isSubmitting || success || !!portError}
+              disabled={isSubmitting || effectiveSuccess || !!portError}
               aria-busy={isSubmitting}
             >
-              {isSubmitting ? "Installing..." : success ? "Installed" : "Install"}
+              {isSubmitting
+                ? "Installing..."
+                : effectiveSuccess
+                  ? "Installed"
+                  : "Install"}
             </Button>
           </DialogFooter>
         </form>

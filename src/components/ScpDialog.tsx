@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import { useActionState, useEffect, useState } from "react";
 import { Connection, ScpResult } from "@/types";
 import { invoke } from "@/lib/tauri";
 import { Button } from "./ui/button";
@@ -20,12 +20,55 @@ export function ScpDialog({ open, onOpenChange, connection }: ScpDialogProps) {
   const [localPath, setLocalPath] = useState("");
   const [remotePath, setRemotePath] = useState("");
   const [recursive, setRecursive] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [result, setResult] = useState<ScpResult | null>(null);
-  const [isSubmitting, setIsSubmitting] = useState(false);
   // Per-field errors only show after the user attempts submit, so we
   // don't shout at them while they're still typing the first character.
   const [submitted, setSubmitted] = useState(false);
+
+  /*
+   * React 19: form-level error + result live in useActionState so
+   * pending state, error, and the success payload all flow through
+   * one channel. Field-level validation (`localPath`, `remotePath`)
+   * remains in plain state — per AGENTS.md / migration plan.
+   */
+  type ScpState = { error: string | null; result: ScpResult | null };
+  const initialScpState: ScpState = { error: null, result: null };
+  const [{ error, result }, scpAction, isSubmitting] =
+    useActionState<ScpState>(async () => {
+      if (!connection) {
+        return { error: null, result: null };
+      }
+      setSubmitted(true);
+      // Mirror previous guard: bail without invoking when required
+      // fields are blank. The local-state-driven errors above
+      // (`localPathError` / `remotePathError`) handle the visible
+      // alert; we just refuse to fire the IPC.
+      if (!localPath.trim()) return { error: null, result: null };
+      if (mode === "download" && !remotePath.trim())
+        return { error: null, result: null };
+      try {
+        const next =
+          mode === "upload"
+            ? await invoke<ScpResult>("scp_upload", {
+                input: {
+                  connection_id: connection.id,
+                  local_path: localPath,
+                  remote_path: remotePath || undefined,
+                  recursive,
+                },
+              })
+            : await invoke<ScpResult>("scp_download", {
+                input: {
+                  connection_id: connection.id,
+                  local_path: localPath,
+                  remote_path: remotePath,
+                  recursive,
+                },
+              });
+        return { error: null, result: next };
+      } catch (err) {
+        return { error: String(err), result: null };
+      }
+    }, initialScpState);
 
   useEffect(() => {
     if (!open) {
@@ -33,8 +76,6 @@ export function ScpDialog({ open, onOpenChange, connection }: ScpDialogProps) {
       setLocalPath("");
       setRemotePath(connection?.remote_path ?? "");
       setRecursive(false);
-      setError(null);
-      setResult(null);
       setSubmitted(false);
     }
   }, [open, connection]);
@@ -52,42 +93,6 @@ export function ScpDialog({ open, onOpenChange, connection }: ScpDialogProps) {
       ? "Remote path is required for downloads"
       : null;
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!connection) return;
-    setSubmitted(true);
-    setError(null);
-    setResult(null);
-    if (!localPath.trim()) return;
-    if (mode === "download" && !remotePath.trim()) return;
-    setIsSubmitting(true);
-    try {
-      const next =
-        mode === "upload"
-          ? await invoke<ScpResult>("scp_upload", {
-              input: {
-                connection_id: connection.id,
-                local_path: localPath,
-                remote_path: remotePath || undefined,
-                recursive,
-              },
-            })
-          : await invoke<ScpResult>("scp_download", {
-              input: {
-                connection_id: connection.id,
-                local_path: localPath,
-                remote_path: remotePath,
-                recursive,
-              },
-            });
-      setResult(next);
-    } catch (err) {
-      setError(String(err));
-    } finally {
-      setIsSubmitting(false);
-    }
-  };
-
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-[500px]">
@@ -98,7 +103,7 @@ export function ScpDialog({ open, onOpenChange, connection }: ScpDialogProps) {
             Transfer files between your machine and the remote host over SSH/SCP.
           </DialogDescription>
         </DialogHeader>
-        <form onSubmit={handleSubmit} className="space-y-4" noValidate>
+        <form action={scpAction} className="space-y-4" noValidate>
           <Tabs value={mode} onValueChange={(v) => setMode(v as "upload" | "download")}>
             <TabsList className="w-full">
               <TabsTrigger value="upload" className="flex-1">Upload</TabsTrigger>

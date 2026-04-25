@@ -25,35 +25,39 @@ import { cn } from "@/lib/utils";
  * `data-state=checked` for selected styling. The item already handles
  * the `role="radio"` + `aria-checked` wiring.
  */
-const RadioGroup = React.forwardRef<
-  React.ElementRef<typeof RadioGroupPrimitive.Root>,
-  React.ComponentPropsWithoutRef<typeof RadioGroupPrimitive.Root>
->(({ className, ...props }, ref) => (
-  <RadioGroupPrimitive.Root
-    ref={ref}
-    className={cn("grid gap-2", className)}
-    {...props}
-  />
-));
-RadioGroup.displayName = RadioGroupPrimitive.Root.displayName;
+type RadioGroupProps = React.ComponentPropsWithoutRef<typeof RadioGroupPrimitive.Root> & {
+  ref?: React.Ref<React.ComponentRef<typeof RadioGroupPrimitive.Root>>;
+};
 
-const RadioGroupItem = React.forwardRef<
-  React.ElementRef<typeof RadioGroupPrimitive.Item>,
-  React.ComponentPropsWithoutRef<typeof RadioGroupPrimitive.Item>
->(({ className, ...props }, ref) => (
-  <RadioGroupPrimitive.Item
-    ref={ref}
-    className={cn(
-      // Reset the default <button> chrome so callers can fully style
-      // the item; preserve focus-visible ring so keyboard users see
-      // which option is focused while navigating with arrows.
-      "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background rounded-lg",
-      "disabled:cursor-not-allowed disabled:opacity-50",
-      className,
-    )}
-    {...props}
-  />
-));
-RadioGroupItem.displayName = RadioGroupPrimitive.Item.displayName;
+function RadioGroup({ className, ref, ...props }: RadioGroupProps) {
+  return (
+    <RadioGroupPrimitive.Root
+      ref={ref}
+      className={cn("grid gap-2", className)}
+      {...props}
+    />
+  );
+}
+
+type RadioGroupItemProps = React.ComponentPropsWithoutRef<typeof RadioGroupPrimitive.Item> & {
+  ref?: React.Ref<React.ComponentRef<typeof RadioGroupPrimitive.Item>>;
+};
+
+function RadioGroupItem({ className, ref, ...props }: RadioGroupItemProps) {
+  return (
+    <RadioGroupPrimitive.Item
+      ref={ref}
+      className={cn(
+        // Reset the default <button> chrome so callers can fully style
+        // the item; preserve focus-visible ring so keyboard users see
+        // which option is focused while navigating with arrows.
+        "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background rounded-lg",
+        "disabled:cursor-not-allowed disabled:opacity-50",
+        className,
+      )}
+      {...props}
+    />
+  );
+}
 
 export { RadioGroup, RadioGroupItem };

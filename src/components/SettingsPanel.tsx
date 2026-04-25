@@ -1,4 +1,4 @@
-import React, { useEffect } from "react";
+import React, { useActionState, useEffect } from "react";
 import { AppSettings, OPEN_COLORS, FONT_FAMILIES, FONT_SIZES, LayoutMode, OpenMode } from "@/types";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
@@ -24,26 +24,36 @@ interface SettingsPanelProps {
 
 export function SettingsPanel({ settings, onSave }: SettingsPanelProps) {
   const [form, setForm] = React.useState(settings);
-  const [isSaving, setIsSaving] = React.useState(false);
-  const [saved, setSaved] = React.useState(false);
+  const [savedAt, setSavedAt] = React.useState(0);
 
   useEffect(() => {
     setForm(settings);
   }, [settings]);
 
-  const handleSave = async () => {
-    setIsSaving(true);
-    try {
-      await onSave(form);
-      setSaved(true);
-      setTimeout(() => setSaved(false), 2000);
-    } finally {
-      setIsSaving(false);
-    }
-  };
+  /*
+   * React 19 useActionState replaces the prior trio of
+   * `isSaving` / `saved` / `setTimeout` flags. The action runs
+   * inside a transition so `isPending` is updated automatically
+   * for the duration of the await. We bump `savedAt` after a
+   * successful save so the polite live region can announce it
+   * and auto-clear after 2s.
+   */
+  const [, saveAction, isSaving] = useActionState<null>(async () => {
+    await onSave(form);
+    setSavedAt(Date.now());
+    return null;
+  }, null);
+
+  const [savedVisible, setSavedVisible] = React.useState(false);
+  useEffect(() => {
+    if (!savedAt) return;
+    setSavedVisible(true);
+    const id = setTimeout(() => setSavedVisible(false), 2000);
+    return () => clearTimeout(id);
+  }, [savedAt]);
 
   return (
-    <div className="space-y-6 p-6 max-w-lg">
+    <form action={saveAction} className="space-y-6 p-6 max-w-lg">
       <div>
         <h2 className="text-lg font-semibold">Settings</h2>
         <p className="text-sm text-muted-foreground mt-1">
@@ -324,7 +334,7 @@ export function SettingsPanel({ settings, onSave }: SettingsPanelProps) {
       </div>
 
       <div className="flex items-center gap-3">
-        <Button onClick={handleSave} disabled={isSaving} aria-busy={isSaving}>
+        <Button type="submit" disabled={isSaving} aria-busy={isSaving}>
           {isSaving ? "Saving..." : "Save Settings"}
         </Button>
         {/*
@@ -344,7 +354,7 @@ export function SettingsPanel({ settings, onSave }: SettingsPanelProps) {
           aria-live="polite"
           className="text-sm text-green-600 dark:text-green-400 inline-flex items-center gap-1.5"
         >
-          {saved && (
+          {savedVisible && (
             <>
               <Check aria-hidden="true" className="h-3.5 w-3.5" />
               Settings saved!
@@ -352,6 +362,6 @@ export function SettingsPanel({ settings, onSave }: SettingsPanelProps) {
           )}
         </span>
       </div>
-    </div>
+    </form>
   );
 }

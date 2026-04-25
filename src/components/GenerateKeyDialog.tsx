@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useActionState, useState, useEffect } from "react";
 import { invoke } from "@/lib/tauri";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
@@ -40,8 +40,38 @@ export function GenerateKeyDialog({
   const [customPath, setCustomPath] = useState("");
   const [passphrase, setPassphrase] = useState("");
   const [comment, setComment] = useState("");
-  const [error, setError] = useState<string | null>(null);
-  const [isSubmitting, setIsSubmitting] = useState(false);
+
+  /*
+   * React 19 useActionState: the form-level error and the pending
+   * flag come from the action runtime. Field-level validation
+   * still throws inside the action so errors are surfaced via the
+   * returned state.
+   */
+  const [error, generateAction, isSubmitting] = useActionState<string | null>(
+    async () => {
+      try {
+        if (storage === "custom_path" && !customPath.trim()) {
+          return "Custom path is required";
+        }
+        const input: Record<string, unknown> = {
+          storage,
+          name_hint: nameHint || undefined,
+          passphrase: passphrase || undefined,
+          comment: comment || undefined,
+        };
+        if (storage === "custom_path") {
+          input.path = customPath.trim();
+        }
+        const result = await invoke<GeneratedKey>("generate_ssh_key", { input });
+        onGenerated(result, storage);
+        onOpenChange(false);
+        return null;
+      } catch (err) {
+        return String(err);
+      }
+    },
+    null,
+  );
 
   useEffect(() => {
     if (open) {
@@ -49,36 +79,8 @@ export function GenerateKeyDialog({
       setCustomPath("");
       setPassphrase("");
       setComment("");
-      setError(null);
     }
   }, [open]);
-
-  const handleGenerate = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setError(null);
-    setIsSubmitting(true);
-    try {
-      if (storage === "custom_path" && !customPath.trim()) {
-        throw new Error("Custom path is required");
-      }
-      const input: Record<string, unknown> = {
-        storage,
-        name_hint: nameHint || undefined,
-        passphrase: passphrase || undefined,
-        comment: comment || undefined,
-      };
-      if (storage === "custom_path") {
-        input.path = customPath.trim();
-      }
-      const result = await invoke<GeneratedKey>("generate_ssh_key", { input });
-      onGenerated(result, storage);
-      onOpenChange(false);
-    } catch (err) {
-      setError(String(err));
-    } finally {
-      setIsSubmitting(false);
-    }
-  };
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -90,7 +92,7 @@ export function GenerateKeyDialog({
             Generate a new ed25519 SSH key pair and choose where to store it.
           </DialogDescription>
         </DialogHeader>
-        <form onSubmit={handleGenerate} className="space-y-4">
+        <form action={generateAction} className="space-y-4">
           <div className="space-y-2">
             {/*
               Audit-3 P2#9: storage picker is a single-choice picker
