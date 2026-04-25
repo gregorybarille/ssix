@@ -29,7 +29,7 @@ cd src-tauri && cargo test
 
 ## Repo Structure
 
-- `src/` frontend app
+- `src/` frontend app (React 19 + Vite 5 + TypeScript)
 - `src-tauri/` backend app
 - `docs/` product and engineering documentation
 - `docker/` local SSH test environment
