@@ -76,20 +76,19 @@ describe("Port forward (server-a → server-c:22)", () => {
     await click(sel.connectionFormSubmit);
 
     await navigateTo("tunnels");
-    // The tunnel id is generated server-side; locate by display name.
-    const tunnelRow = await browser.$(`[data-testid^="tunnel-row-"][data-name="tunnel-c"]`);
-    await tunnelRow.waitForExist({ timeout: 10_000 });
-    const startBtn = await tunnelRow.$('[data-testid^="tunnel-start-"]');
+    // The tunnel definitions section uses <ConnectionList>; find the
+    // row by name and click its connect button to start the tunnel.
+    const defRow = await browser.$(sel.connectionRowByName("tunnel-c"));
+    await defRow.waitForExist({ timeout: 10_000 });
+    const startBtn = await defRow.$('[data-testid^="connect-button-"]');
     await startBtn.waitForClickable({ timeout: 10_000 });
     await startBtn.click();
 
-    // Wait for "active" status (testid value can be either text or
-    // an attribute — try both).
-    const statusEl = await tunnelRow.$('[data-testid^="tunnel-status-"]');
-    await browser.waitUntil(
-      async () => /active|running|up/i.test(await statusEl.getText()),
-      { timeout: 30_000, timeoutMsg: "Tunnel did not reach active state" },
-    );
+    // Wait for the active session row to appear in the "Active" section.
+    const activeRow = await browser.$(`[data-testid^="tunnel-row-"][data-name="tunnel-c"]`);
+    await activeRow.waitForExist({
+      timeout: 30_000,
+    });
 
     const banner = await readBanner("127.0.0.1", LOCAL_PORT);
     expect(banner.toUpperCase()).toContain("SSH-2.0");

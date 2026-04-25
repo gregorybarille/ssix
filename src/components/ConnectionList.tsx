@@ -419,7 +419,7 @@ export function ConnectionList({
                     onConnect(conn);
                   }}
                   aria-label={`Connect to ${conn.name}`}
-                    data-testid={`connect-button-${conn.id}`}
+                  data-testid={`connect-button-${conn.id}`}
                 >
                   <Play className="h-3.5 w-3.5" aria-hidden="true" />
                 </Button>
@@ -435,7 +435,7 @@ export function ConnectionList({
                     onScp(conn);
                   }}
                   aria-label={`Transfer files to ${conn.name}`}
-                    data-testid={`scp-open-${conn.id}`}
+                  data-testid={`scp-open-${conn.id}`}
                 >
                   <ArrowUpDown className="h-3.5 w-3.5" aria-hidden="true" />
                 </Button>

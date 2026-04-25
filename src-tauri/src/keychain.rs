@@ -210,12 +210,19 @@ pub fn enrich_credential(cred: &mut Credential) {
 mod tests {
     use super::*;
     use crate::models::CredentialKind;
+    use std::sync::Mutex;
+
+    /// Serialize all tests that mutate `SSX_DATA_DIR` so cargo's parallel
+    /// runner cannot race them against each other (or against storage.rs
+    /// tests that use the same env var).
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
 
     #[test]
     fn secrets_path_honors_ssx_data_dir_env_override() {
         // Sibling of crate::storage::data_dir tests — secrets must
         // live alongside data.json in the override directory so E2E
         // runs are fully isolated from `~/.ssx`.
+        let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let prev = std::env::var("SSX_DATA_DIR").ok();
         let custom = std::env::temp_dir().join(format!(
             "ssx-secrets-path-test-{}-{}",
