@@ -103,7 +103,9 @@ export function InstallKeyDialog({
   // Ref keeps the open-effect below from needing successEpoch in its
   // dependency array (which would re-run field resets after every install).
   const successEpochRef = React.useRef(successEpoch);
-  successEpochRef.current = successEpoch;
+  useEffect(() => {
+    successEpochRef.current = successEpoch;
+  }, [successEpoch]);
 
   /*
    * Audit-3 follow-up P2#7: once an install succeeds we leave the
