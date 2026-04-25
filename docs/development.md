@@ -2,7 +2,7 @@
 
 ## Prerequisites
 
-- Node.js 20+
+- Node.js 22+ for frontend tooling and npm commands in this guide (`npm run tauri dev`, `npm run build`, and `npm test`)
 - Rust stable
 - Tauri CLI
 
@@ -29,7 +29,7 @@ cd src-tauri && cargo test
 
 ## Repo Structure
 
-- `src/` frontend app
+- `src/` frontend app (React 19 + Vite 8 + TypeScript)
 - `src-tauri/` backend app
 - `docs/` product and engineering documentation
 - `docker/` local SSH test environment

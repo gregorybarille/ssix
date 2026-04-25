@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useActionState, useState, useEffect } from "react";
 import { invoke } from "@/lib/tauri";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
@@ -51,9 +51,61 @@ export function InstallKeyDialog({
   const [port, setPort] = useState<string>("22");
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
-  const [error, setError] = useState<string | null>(null);
-  const [success, setSuccess] = useState(false);
-  const [isSubmitting, setIsSubmitting] = useState(false);
+
+  const portParsed = parsePort(port);
+  const portError =
+    port === ""
+      ? "Port is required"
+      : portParsed.error;
+
+  /*
+   * React 19 useActionState owns both the form-level error and the
+   * "installed successfully" flag, so all form-result state moves
+   * through one channel. Field-level errors stay on local state
+   * (per AGENTS.md / migration plan).
+   *
+   * successEpoch increments on every successful install so that a
+   * second success after the user edits fields is always detectable,
+   * even though useActionState preserves state across renders.
+   */
+  type InstallState = { error: string | null; successEpoch: number };
+  const initialInstallState: InstallState = { error: null, successEpoch: 0 };
+  const [{ error, successEpoch }, installAction, isSubmitting] =
+    useActionState<InstallState>(async (prevState) => {
+      try {
+        if (portError || portParsed.value === null) {
+          return { error: portError ?? "Port is required", successEpoch: prevState.successEpoch };
+        }
+        if (!host.trim()) return { error: "Host is required", successEpoch: prevState.successEpoch };
+        if (!username.trim())
+          return { error: "Username is required", successEpoch: prevState.successEpoch };
+        if (!password) return { error: "Password is required", successEpoch: prevState.successEpoch };
+        await invoke("ssh_install_public_key_by_credential", {
+          input: {
+            credential_id: credentialId,
+            host: host.trim(),
+            port: portParsed.value,
+            username: username.trim(),
+            password,
+          },
+        });
+        onSuccess?.();
+        // P2-A10: do NOT auto-close. The previous 800ms setTimeout
+        // raced with the user reading the success message and
+        // dismissed the dialog before assistive tech could finish
+        // announcing it. The user closes via "Close" or "Done".
+        return { error: null, successEpoch: prevState.successEpoch + 1 };
+      } catch (err) {
+        return { error: String(err), successEpoch: prevState.successEpoch };
+      }
+    }, initialInstallState);
+
+  // Ref keeps the open-effect below from needing successEpoch in its
+  // dependency array (which would re-run field resets after every install).
+  const successEpochRef = React.useRef(successEpoch);
+  useEffect(() => {
+    successEpochRef.current = successEpoch;
+  }, [successEpoch]);
 
   /*
    * Audit-3 follow-up P2#7: once an install succeeds we leave the
@@ -62,21 +114,27 @@ export function InstallKeyDialog({
    * want them to read the success message before another action).
    * BUT if the user then edits Host / Port / Username they're
    * clearly preparing to install on a *different* target, and the
-   * stale `success=true` would lock them out. Reset success on any
-   * target-identity edit so the button re-enables. Wrapping the
-   * setters keeps the contract local — handlers below call
-   * editHost/editPort/editUsername instead of setHost/etc.
+   * stale success state would lock them out. dismissedEpoch tracks
+   * the last epoch the user dismissed; effectiveSuccess is only true
+   * when a newer success epoch exists.
    */
+  const [dismissedEpoch, setDismissedEpoch] = useState(0);
+  const effectiveSuccess = successEpoch > dismissedEpoch;
+
+  const clearSuccess = () => {
+    setDismissedEpoch(successEpoch);
+  };
+
   const editHost = (v: string) => {
-    if (success) setSuccess(false);
+    clearSuccess();
     setHost(v);
   };
   const editPort = (v: string) => {
-    if (success) setSuccess(false);
+    clearSuccess();
     setPort(v);
   };
   const editUsername = (v: string) => {
-    if (success) setSuccess(false);
+    clearSuccess();
     setUsername(v);
   };
 
@@ -86,51 +144,11 @@ export function InstallKeyDialog({
       setPort(String(defaultPort ?? 22));
       setUsername(defaultUsername ?? "");
       setPassword("");
-      setError(null);
-      setSuccess(false);
+      // Dismiss any stale success from a previous session so the dialog
+      // opens clean even though useActionState state persists.
+      setDismissedEpoch(successEpochRef.current);
     }
   }, [open, defaultHost, defaultPort, defaultUsername]);
-
-  const portParsed = parsePort(port);
-  const portError =
-    port === ""
-      ? "Port is required"
-      : portParsed.error;
-
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setError(null);
-    setSuccess(false);
-    if (portError || portParsed.value === null) {
-      setError(portError ?? "Port is required");
-      return;
-    }
-    setIsSubmitting(true);
-    try {
-      if (!host.trim()) throw new Error("Host is required");
-      if (!username.trim()) throw new Error("Username is required");
-      if (!password) throw new Error("Password is required");
-      await invoke("ssh_install_public_key_by_credential", {
-        input: {
-          credential_id: credentialId,
-          host: host.trim(),
-          port: portParsed.value,
-          username: username.trim(),
-          password,
-        },
-      });
-      setSuccess(true);
-      onSuccess?.();
-      // P2-A10: do NOT auto-close. The previous 800ms setTimeout
-      // raced with the user reading the success message and
-      // dismissed the dialog before assistive tech could finish
-      // announcing it. The user closes via "Close" or "Done".
-    } catch (err) {
-      setError(String(err));
-    } finally {
-      setIsSubmitting(false);
-    }
-  };
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -149,7 +167,7 @@ export function InstallKeyDialog({
             not saved.
           </DialogDescription>
         </DialogHeader>
-        <form onSubmit={handleSubmit} className="space-y-4">
+        <form action={installAction} className="space-y-4">
           <div className="grid grid-cols-3 gap-2">
             <div className="col-span-2 space-y-2">
               <Label htmlFor="install-host">Host *</Label>
@@ -224,7 +242,7 @@ export function InstallKeyDialog({
               {error}
             </p>
           )}
-          {success && (
+          {effectiveSuccess && (
             <p
               role="status"
               aria-live="polite"
@@ -241,14 +259,18 @@ export function InstallKeyDialog({
               onClick={() => onOpenChange(false)}
               disabled={isSubmitting}
             >
-              {success ? "Done" : "Close"}
+              {effectiveSuccess ? "Done" : "Close"}
             </Button>
             <Button
               type="submit"
-              disabled={isSubmitting || success || !!portError}
+              disabled={isSubmitting || effectiveSuccess || !!portError}
               aria-busy={isSubmitting}
             >
-              {isSubmitting ? "Installing..." : success ? "Installed" : "Install"}
+              {isSubmitting
+                ? "Installing..."
+                : effectiveSuccess
+                  ? "Installed"
+                  : "Install"}
             </Button>
           </DialogFooter>
         </form>

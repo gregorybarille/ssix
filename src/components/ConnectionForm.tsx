@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from "react";
+import React, { useActionState, useState, useEffect, useRef } from "react";
 import { Connection, ConnectionDraft, ConnectionInput, Credential, ConnectionType, OPEN_COLORS } from "@/types";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
@@ -124,8 +124,6 @@ export function ConnectionForm({
   const [inlinePassphrase, setInlinePassphrase] = useState("");
   const [inlineCredentialName, setInlineCredentialName] = useState("");
   const [saveCredential, setSaveCredential] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [isSubmitting, setIsSubmitting] = useState(false);
 
   // Port inputs are managed as raw strings so we can validate without
   // silently coercing invalid input back to 22. The keys mirror the
@@ -233,7 +231,6 @@ export function ConnectionForm({
     setInlinePassphrase("");
     setInlineCredentialName("");
     setSaveCredential(false);
-    setError(null);
   }, [connection, open, isClone]);
 
   // Snapshot of the form state at "freshly opened" or "freshly reset"
@@ -305,200 +302,222 @@ export function ConnectionForm({
     }
   };
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setError(null);
-    setIsSubmitting(true);
-    try {
-      // Validate every port input that is relevant for the active
-      // connection type. Empty is allowed for `local_port` only when
-      // we're not in port_forward mode (the kind-specific check
-      // further down catches required-but-empty local_port).
-      const portChecks: { key: PortKey; required: boolean; label: string }[] = [];
-      if (connectionType === "direct") {
-        portChecks.push({ key: "port", required: true, label: "Port" });
-      }
-      if (isTunnel) {
-        portChecks.push({ key: "gateway_port", required: true, label: "Gateway port" });
-        portChecks.push({ key: "destination_port", required: true, label: "Destination port" });
-      }
-      if (connectionType === "port_forward") {
-        portChecks.push({ key: "local_port", required: true, label: "Local port" });
-      }
-      const newPortErrors: Partial<Record<PortKey, string>> = {};
-      const parsedPorts: Partial<Record<PortKey, number>> = {};
-      for (const check of portChecks) {
-        const raw = portInputs[check.key];
-        const parsed = parsePort(raw);
-        if (parsed.error) {
-          newPortErrors[check.key] = parsed.error;
-        } else if (parsed.value === null && check.required) {
-          newPortErrors[check.key] = `${check.label} is required`;
-        } else if (parsed.value !== null) {
-          parsedPorts[check.key] = parsed.value;
+  /*
+   * React 19: form-level error owned by useActionState; pending state
+   * comes from the action runner. Field-level errors (port and
+   * `fieldErrors`) stay in plain state — per AGENTS.md / migration plan.
+   */
+  type SubmitState = { error: string | null };
+  const initialSubmitState: SubmitState = { error: null };
+  const [{ error }, submitAction, isSubmitting] = useActionState<SubmitState>(
+    async () => {
+      try {
+        // Validate every port input that is relevant for the active
+        // connection type. Empty is allowed for `local_port` only when
+        // we're not in port_forward mode (the kind-specific check
+        // further down catches required-but-empty local_port).
+        const portChecks: { key: PortKey; required: boolean; label: string }[] = [];
+        if (connectionType === "direct") {
+          portChecks.push({ key: "port", required: true, label: "Port" });
         }
-      }
-      if (Object.keys(newPortErrors).length > 0) {
-        setPortErrors(newPortErrors);
-        throw new Error("Please fix the highlighted port fields");
-      }
-      // Apply validated ports back into `form` so the rest of the
-      // submit path sees the user's intended values.
-      const formWithPorts = {
-        ...form,
-        port: parsedPorts.port ?? form.port,
-        gateway_port: parsedPorts.gateway_port ?? form.gateway_port,
-        destination_port: parsedPorts.destination_port ?? form.destination_port,
-        local_port: parsedPorts.local_port ?? form.local_port,
-      };
-      // Mutate `form` reference for the rest of the submit code path
-      // (which still reads from the closure) by reassigning via setForm
-      // and using formWithPorts locally.
-      // (We don't await the state update — the local copy is enough.)
-      setForm(formWithPorts);
-
-      let credentialId = formWithPorts.credential_id;
-
-      // Auto-create credential for inline auth (only for kinds that need destination auth)
-      if (needsDestinationAuth) {
-        if (authMethod === "password" && onCreateCredential) {
-          if (!inlineUsername) throw new Error("Username is required");
-          if (!inlinePassword) throw new Error("Password is required");
-          validateNamedCredential(authMethod);
-          const isPrivate = !saveCredential;
-          const credName = saveCredential
-            ? inlineCredentialName.trim()
-            : `inline-${crypto.randomUUID()}`;
-          const cred = await onCreateCredential({
-            name: credName,
-            username: inlineUsername,
-            type: "password",
-            password: inlinePassword,
-            is_private: isPrivate,
-          });
-          credentialId = cred.id;
-        } else if (authMethod === "ssh_key" && onCreateCredential) {
-          if (!inlineUsername) throw new Error("Username is required");
-          if (!inlineKeyPath) throw new Error("Private key path is required");
-          validateNamedCredential(authMethod);
-          const isPrivate = !saveCredential;
-          const credName = saveCredential
-            ? inlineCredentialName.trim()
-            : `inline-${crypto.randomUUID()}`;
-          const cred = await onCreateCredential({
-            name: credName,
-            username: inlineUsername,
-            type: "ssh_key",
-            private_key_path: inlineKeyPath,
-            passphrase: inlinePassphrase || undefined,
-            is_private: isPrivate,
-          });
-          credentialId = cred.id;
+        if (isTunnel) {
+          portChecks.push({ key: "gateway_port", required: true, label: "Gateway port" });
+          portChecks.push({ key: "destination_port", required: true, label: "Destination port" });
         }
-      } else {
-        // PortForward has no destination credential.
-        credentialId = undefined;
-      }
-
-      // Required text fields (name + host(s) + gateway credential).
-      // Collect all of them so the user sees every problem at once
-      // instead of one-at-a-time throw cycling.
-      const newFieldErrors: Partial<Record<FieldKey, string>> = {};
-      if (!formWithPorts.name.trim()) {
-        newFieldErrors.name = "Connection name is required";
-      }
-      if (connectionType === "direct" && !formWithPorts.host.trim()) {
-        newFieldErrors.host = "Host is required";
-      }
-      if (isTunnel) {
-        if (!formWithPorts.gateway_host || !formWithPorts.gateway_host.trim()) {
-          newFieldErrors.gateway_host = "Gateway host is required";
+        if (connectionType === "port_forward") {
+          portChecks.push({ key: "local_port", required: true, label: "Local port" });
         }
-        if (!formWithPorts.gateway_credential_id) {
-          newFieldErrors.gateway_credential_id = "Gateway credential is required";
+        const newPortErrors: Partial<Record<PortKey, string>> = {};
+        const parsedPorts: Partial<Record<PortKey, number>> = {};
+        for (const check of portChecks) {
+          const raw = portInputs[check.key];
+          const parsed = parsePort(raw);
+          if (parsed.error) {
+            newPortErrors[check.key] = parsed.error;
+          } else if (parsed.value === null && check.required) {
+            newPortErrors[check.key] = `${check.label} is required`;
+          } else if (parsed.value !== null) {
+            parsedPorts[check.key] = parsed.value;
+          }
         }
-        if (!formWithPorts.destination_host || !formWithPorts.destination_host.trim()) {
-          newFieldErrors.destination_host = "Destination host is required";
+        if (Object.keys(newPortErrors).length > 0) {
+          setPortErrors(newPortErrors);
+          throw new Error("Please fix the highlighted port fields");
         }
-      }
-      if (Object.keys(newFieldErrors).length > 0) {
-        setFieldErrors(newFieldErrors);
-        throw new Error("Please fix the highlighted fields");
-      }
+        // Apply validated ports back into `form` so the rest of the
+        // submit path sees the user's intended values.
+        const formWithPorts = {
+          ...form,
+          port: parsedPorts.port ?? form.port,
+          gateway_port: parsedPorts.gateway_port ?? form.gateway_port,
+          destination_port: parsedPorts.destination_port ?? form.destination_port,
+          local_port: parsedPorts.local_port ?? form.local_port,
+        };
+        // Mutate `form` reference for the rest of the submit code path
+        // (which still reads from the closure) by reassigning via setForm
+        // and using formWithPorts locally.
+        // (We don't await the state update — the local copy is enough.)
+        setForm(formWithPorts);
 
-      // Validation per kind.
-      if (connectionType === "port_forward") {
-        if (!formWithPorts.local_port)
-          throw new Error("Local port is required for port forwarding");
+        let credentialId = formWithPorts.credential_id;
+
+        // Auto-create credential for inline auth (only for kinds that need destination auth)
+        if (needsDestinationAuth) {
+          if (authMethod === "password" && onCreateCredential) {
+            if (!inlineUsername) throw new Error("Username is required");
+            if (!inlinePassword) throw new Error("Password is required");
+            validateNamedCredential(authMethod);
+            const isPrivate = !saveCredential;
+            const credName = saveCredential
+              ? inlineCredentialName.trim()
+              : `inline-${crypto.randomUUID()}`;
+            const cred = await onCreateCredential({
+              name: credName,
+              username: inlineUsername,
+              type: "password",
+              password: inlinePassword,
+              is_private: isPrivate,
+            });
+            credentialId = cred.id;
+          } else if (authMethod === "ssh_key" && onCreateCredential) {
+            if (!inlineUsername) throw new Error("Username is required");
+            if (!inlineKeyPath) throw new Error("Private key path is required");
+            validateNamedCredential(authMethod);
+            const isPrivate = !saveCredential;
+            const credName = saveCredential
+              ? inlineCredentialName.trim()
+              : `inline-${crypto.randomUUID()}`;
+            const cred = await onCreateCredential({
+              name: credName,
+              username: inlineUsername,
+              type: "ssh_key",
+              private_key_path: inlineKeyPath,
+              passphrase: inlinePassphrase || undefined,
+              is_private: isPrivate,
+            });
+            credentialId = cred.id;
+          }
+        } else {
+          // PortForward has no destination credential.
+          credentialId = undefined;
+        }
+
+        // Required text fields (name + host(s) + gateway credential).
+        // Collect all of them so the user sees every problem at once
+        // instead of one-at-a-time throw cycling.
+        const newFieldErrors: Partial<Record<FieldKey, string>> = {};
+        if (!formWithPorts.name.trim()) {
+          newFieldErrors.name = "Connection name is required";
+        }
+        if (connectionType === "direct" && !formWithPorts.host.trim()) {
+          newFieldErrors.host = "Host is required";
+        }
+        if (isTunnel) {
+          if (!formWithPorts.gateway_host || !formWithPorts.gateway_host.trim()) {
+            newFieldErrors.gateway_host = "Gateway host is required";
+          }
+          if (!formWithPorts.gateway_credential_id) {
+            newFieldErrors.gateway_credential_id = "Gateway credential is required";
+          }
+          if (!formWithPorts.destination_host || !formWithPorts.destination_host.trim()) {
+            newFieldErrors.destination_host = "Destination host is required";
+          }
+        }
+        if (Object.keys(newFieldErrors).length > 0) {
+          setFieldErrors(newFieldErrors);
+          throw new Error("Please fix the highlighted fields");
+        }
+
+        // Validation per kind.
+        if (connectionType === "port_forward") {
+          if (!formWithPorts.local_port)
+            throw new Error("Local port is required for port forwarding");
+        }
+        if (connectionType === "jump_shell" && !credentialId) {
+          throw new Error("Destination credential is required for jump shell");
+        }
+
+        // Mirror destination_host/port into top-level host/port for tunnel kinds so
+        // list views can keep displaying a meaningful "host" label.
+        const effectiveHost = isTunnel ? (formWithPorts.destination_host ?? "") : formWithPorts.host;
+        const effectivePort = isTunnel
+          ? (formWithPorts.destination_port ?? 22)
+          : formWithPorts.port;
+
+        // Audit-4 Phase 4b: build a flat draft, then narrow on `connectionType`
+        // to a discriminated `Connection`. The `as Omit<Connection, "id">` casts
+        // are sound because each branch sets exactly the fields its variant
+        // requires (and excludes the others).
+        const baseFields = {
+          name: formWithPorts.name,
+          host: effectiveHost,
+          port: effectivePort,
+          credential_id: credentialId,
+          verbosity: formWithPorts.verbosity ?? 0,
+          extra_args: formWithPorts.extra_args || undefined,
+          login_command: formWithPorts.login_command || undefined,
+          remote_path: formWithPorts.remote_path || undefined,
+          tags: formWithPorts.tags ?? [],
+          color: formWithPorts.color,
+        };
+
+        const data: ConnectionInput =
+          connectionType === "direct"
+            ? { ...baseFields, type: "direct" }
+            : connectionType === "port_forward"
+            ? {
+                ...baseFields,
+                type: "port_forward",
+                gateway_host: formWithPorts.gateway_host ?? "",
+                gateway_port: formWithPorts.gateway_port ?? 22,
+                gateway_credential_id: formWithPorts.gateway_credential_id ?? "",
+                local_port: formWithPorts.local_port ?? 0,
+                destination_host: formWithPorts.destination_host ?? "",
+                destination_port: formWithPorts.destination_port ?? 22,
+              }
+            : {
+                // jump_shell
+                ...baseFields,
+                type: "jump_shell",
+                gateway_host: formWithPorts.gateway_host ?? "",
+                gateway_port: formWithPorts.gateway_port ?? 22,
+                gateway_credential_id: formWithPorts.gateway_credential_id ?? "",
+                destination_host: formWithPorts.destination_host ?? "",
+                destination_port: formWithPorts.destination_port ?? 22,
+              };
+
+        if (connection && !isClone) {
+          await onSubmit({ ...data, id: connection.id } as Connection);
+        } else {
+          await onSubmit(data);
+        }
+        // Suppress the unsaved-changes guard for the close that follows
+        // a successful save.
+        guard.markSaved();
+        onOpenChange(false);
+        return { error: null };
+      } catch (err) {
+        return { error: err instanceof Error ? err.message : String(err) };
       }
-      if (connectionType === "jump_shell" && !credentialId) {
-        throw new Error("Destination credential is required for jump shell");
-      }
+    },
+    initialSubmitState,
+  );
 
-      // Mirror destination_host/port into top-level host/port for tunnel kinds so
-      // list views can keep displaying a meaningful "host" label.
-      const effectiveHost = isTunnel ? (formWithPorts.destination_host ?? "") : formWithPorts.host;
-      const effectivePort = isTunnel
-        ? (formWithPorts.destination_port ?? 22)
-        : formWithPorts.port;
-
-      // Audit-4 Phase 4b: build a flat draft, then narrow on `connectionType`
-      // to a discriminated `Connection`. The `as Omit<Connection, "id">` casts
-      // are sound because each branch sets exactly the fields its variant
-      // requires (and excludes the others).
-      const baseFields = {
-        name: formWithPorts.name,
-        host: effectiveHost,
-        port: effectivePort,
-        credential_id: credentialId,
-        verbosity: formWithPorts.verbosity ?? 0,
-        extra_args: formWithPorts.extra_args || undefined,
-        login_command: formWithPorts.login_command || undefined,
-        remote_path: formWithPorts.remote_path || undefined,
-        tags: formWithPorts.tags ?? [],
-        color: formWithPorts.color,
-      };
-
-      const data: ConnectionInput =
-        connectionType === "direct"
-          ? { ...baseFields, type: "direct" }
-          : connectionType === "port_forward"
-          ? {
-              ...baseFields,
-              type: "port_forward",
-              gateway_host: formWithPorts.gateway_host ?? "",
-              gateway_port: formWithPorts.gateway_port ?? 22,
-              gateway_credential_id: formWithPorts.gateway_credential_id ?? "",
-              local_port: formWithPorts.local_port ?? 0,
-              destination_host: formWithPorts.destination_host ?? "",
-              destination_port: formWithPorts.destination_port ?? 22,
-            }
-          : {
-              // jump_shell
-              ...baseFields,
-              type: "jump_shell",
-              gateway_host: formWithPorts.gateway_host ?? "",
-              gateway_port: formWithPorts.gateway_port ?? 22,
-              gateway_credential_id: formWithPorts.gateway_credential_id ?? "",
-              destination_host: formWithPorts.destination_host ?? "",
-              destination_port: formWithPorts.destination_port ?? 22,
-            };
-
-      if (connection && !isClone) {
-        await onSubmit({ ...data, id: connection.id } as Connection);
-      } else {
-        await onSubmit(data);
-      }
-      // Suppress the unsaved-changes guard for the close that follows
-      // a successful save.
-      guard.markSaved();
-      onOpenChange(false);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setIsSubmitting(false);
+  // Mask the action's persistent `error` after the dialog closes/reopens.
+  // useActionState exposes no setter, so we track an epoch toggled by the
+  // open prop and only show the error if it was produced inside the
+  // current open-cycle.
+  const [errorEpoch, setErrorEpoch] = useState(0);
+  const [errorEpochSeen, setErrorEpochSeen] = useState(0);
+  useEffect(() => {
+    if (open) {
+      setErrorEpoch((e) => e + 1);
     }
-  };
+  }, [open]);
+  useEffect(() => {
+    if (error) setErrorEpochSeen(errorEpoch);
+  }, [error, errorEpoch]);
+  const visibleError = error && errorEpochSeen === errorEpoch ? error : null;
 
   const title = isClone
     ? "Clone Connection"
@@ -752,7 +771,7 @@ export function ConnectionForm({
           </DialogDescription>
         </DialogHeader>
         <form
-          onSubmit={handleSubmit}
+          action={submitAction}
           className="flex flex-col flex-1 min-h-0"
         >
           <div className="flex-1 min-h-0 overflow-y-auto px-6 py-4 space-y-4">
@@ -1146,14 +1165,14 @@ export function ConnectionForm({
             </p>
           </div>
 
-          {error && (
+          {visibleError && (
             <p
               role="alert"
               aria-live="assertive"
               id="connection-form-error"
               className="text-sm text-destructive bg-destructive/10 px-3 py-2 rounded-md"
             >
-              {error}
+              {visibleError}
             </p>
           )}
           </div>
@@ -1171,7 +1190,7 @@ export function ConnectionForm({
               type="submit"
               disabled={isSubmitting}
               aria-busy={isSubmitting}
-              aria-describedby={error ? "connection-form-error" : undefined}
+              aria-describedby={visibleError ? "connection-form-error" : undefined}
             >
               {isSubmitting
                 ? "Saving..."

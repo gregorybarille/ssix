@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from "react";
+import { useActionState, useState, useEffect, useRef } from "react";
 import { Credential } from "@/types";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
@@ -67,8 +67,6 @@ export function CredentialForm({
   const [passphrase, setPassphrase] = useState("");
   const [generatedPublicKey, setGeneratedPublicKey] = useState<string | null>(null);
   const [generateOpen, setGenerateOpen] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [isSubmitting, setIsSubmitting] = useState(false);
 
   // Inline per-field errors. Keys mirror the input identifiers.
   type FieldKey = "name" | "username" | "key_path" | "key_inline";
@@ -102,7 +100,6 @@ export function CredentialForm({
       setPassphrase("");
     }
     setGeneratedPublicKey(null);
-    setError(null);
     setFieldErrors({});
   }, [credential, open]);
 
@@ -155,11 +152,15 @@ export function CredentialForm({
     }
   };
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setError(null);
-    setIsSubmitting(true);
-    try {
+  /*
+   * React 19: form-level error owned by useActionState; pending state
+   * comes from the action runner. Field-level errors stay in plain
+   * state (per AGENTS.md / migration plan).
+   */
+  type SubmitState = { error: string | null };
+  const initialSubmitState: SubmitState = { error: null };
+  const [{ error }, submitAction, isSubmitting] = useActionState<SubmitState>(
+    async () => {
       // Required-field preflight: collect all problems at once so the
       // user sees every issue inline instead of one-at-a-time.
       const newFieldErrors: Partial<Record<FieldKey, string>> = {};
@@ -174,44 +175,62 @@ export function CredentialForm({
       }
       if (Object.keys(newFieldErrors).length > 0) {
         setFieldErrors(newFieldErrors);
-        throw new Error("Please fix the highlighted fields");
+        return { error: "Please fix the highlighted fields" };
       }
 
-      let kindFields: Partial<Credential>;
-      if (credType === "password") {
-        kindFields = { password };
-      } else {
-        if (keySource === "path") {
-          kindFields = {
-            private_key_path: privateKeyPath,
-            passphrase: passphrase || undefined,
-          };
+      try {
+        let kindFields: Partial<Credential>;
+        if (credType === "password") {
+          kindFields = { password };
         } else {
-          kindFields = {
-            private_key: privateKey,
-            passphrase: passphrase || undefined,
-          };
+          if (keySource === "path") {
+            kindFields = {
+              private_key_path: privateKeyPath,
+              passphrase: passphrase || undefined,
+            };
+          } else {
+            kindFields = {
+              private_key: privateKey,
+              passphrase: passphrase || undefined,
+            };
+          }
         }
+        const data: Omit<Credential, "id"> = {
+          name,
+          username,
+          type: credType,
+          ...kindFields,
+        };
+        if (credential) {
+          await onSubmit({ ...data, id: credential.id });
+        } else {
+          await onSubmit(data);
+        }
+        guard.markSaved();
+        onOpenChange(false);
+        return { error: null };
+      } catch (err) {
+        return { error: String(err) };
       }
-      const data: Omit<Credential, "id"> = {
-        name,
-        username,
-        type: credType,
-        ...kindFields,
-      };
-      if (credential) {
-        await onSubmit({ ...data, id: credential.id });
-      } else {
-        await onSubmit(data);
-      }
-      guard.markSaved();
-      onOpenChange(false);
-    } catch (err) {
-      setError(String(err));
-    } finally {
-      setIsSubmitting(false);
+    },
+    initialSubmitState,
+  );
+
+  // Mask the action's persistent `error` after the dialog closes/reopens.
+  // useActionState exposes no setter, so we track an epoch toggled by the
+  // open prop and only show the error if it was produced inside the
+  // current open-cycle.
+  const [errorEpoch, setErrorEpoch] = useState(0);
+  const [errorEpochSeen, setErrorEpochSeen] = useState(0);
+  useEffect(() => {
+    if (open) {
+      setErrorEpoch((e) => e + 1);
     }
-  };
+  }, [open]);
+  useEffect(() => {
+    if (error) setErrorEpochSeen(errorEpoch);
+  }, [error, errorEpoch]);
+  const visibleError = error && errorEpochSeen === errorEpoch ? error : null;
 
   return (
     <Dialog
@@ -237,7 +256,7 @@ export function CredentialForm({
           </DialogDescription>
         </DialogHeader>
         <form
-          onSubmit={handleSubmit}
+          action={submitAction}
           className="flex flex-col flex-1 min-h-0"
         >
           <div className="flex-1 min-h-0 overflow-y-auto px-6 py-4 space-y-4">
@@ -469,14 +488,14 @@ export function CredentialForm({
             </TabsContent>
           </Tabs>
 
-          {error && (
+          {visibleError && (
             <p
               role="alert"
               aria-live="assertive"
               id="credential-form-error"
               className="text-sm text-destructive bg-destructive/10 px-3 py-2 rounded-md"
             >
-              {error}
+              {visibleError}
             </p>
           )}
           </div>
@@ -494,7 +513,7 @@ export function CredentialForm({
               type="submit"
               disabled={isSubmitting}
               aria-busy={isSubmitting}
-              aria-describedby={error ? "credential-form-error" : undefined}
+              aria-describedby={visibleError ? "credential-form-error" : undefined}
             >
               {isSubmitting ? "Saving..." : credential ? "Update" : "Create"}
             </Button>
