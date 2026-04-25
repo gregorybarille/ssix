@@ -1,0 +1,104 @@
+name: E2E
+
+# Advisory E2E job — runs the full Tauri app under tauri-driver
+# against the Dockerized SSH fixtures. Per project decision:
+#   * push to main only (no PR trigger to avoid 15-min CI bills per push)
+#   * advisory status (never required for merges; flake-tolerant)
+#   * workflow_dispatch lets devs re-run a failing build without a commit
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# A second push to main while one is running is a wasted ~15 min — let
+# the in-progress run finish only when it's the latest commit.
+concurrency:
+  group: e2e-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  e2e:
+    name: E2E (tauri-driver + Docker SSH)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: "src-tauri -> target"
+
+      # tauri-driver lives in ~/.cargo/bin and is heavy to compile;
+      # cache it across runs.
+      - name: Cache tauri-driver binary
+        id: cache-tauri-driver
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/bin/tauri-driver
+          key: tauri-driver-${{ runner.os }}-v1
+
+      - name: Install Tauri + WebDriver system deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libgtk-3-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            libsoup-3.0-dev \
+            libssl-dev \
+            libxdo-dev \
+            webkit2gtk-driver \
+            xvfb
+
+      - name: Install tauri-driver
+        if: steps.cache-tauri-driver.outputs.cache-hit != 'true'
+        run: cargo install tauri-driver --locked
+
+      - name: npm ci
+        run: npm ci
+
+      - name: Start Docker SSH fixtures
+        # `--wait` blocks until each service's healthcheck passes
+        # (defined in docker/docker-compose.yml).
+        run: docker compose -f docker/docker-compose.yml up -d --build --wait
+
+      - name: Build SSX (debug, no bundle)
+        # --no-bundle skips dmg/deb/AppImage packaging — we only need
+        # the executable for tauri-driver to launch.
+        run: npm run tauri build -- --debug --no-bundle
+
+      - name: Run E2E suite
+        env:
+          # Per-job isolated state dir; honored by data_dir() in
+          # storage.rs and secrets_path() in keychain.rs.
+          SSX_DATA_DIR: ${{ runner.temp }}/ssx-e2e
+        run: xvfb-run -a npm run e2e:wdio
+
+      - name: Capture docker-compose logs (always)
+        if: always()
+        run: |
+          mkdir -p e2e/.artifacts
+          docker compose -f docker/docker-compose.yml logs > e2e/.artifacts/docker.log || true
+
+      - name: Tear down Docker fixtures
+        if: always()
+        run: docker compose -f docker/docker-compose.yml down -v
+
+      - name: Upload artifacts on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-artifacts-${{ github.run_id }}
+          path: |
+            e2e/.artifacts
+          if-no-files-found: ignore
+          retention-days: 14

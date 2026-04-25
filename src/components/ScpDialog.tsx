@@ -95,7 +95,7 @@ export function ScpDialog({ open, onOpenChange, connection }: ScpDialogProps) {
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-[500px]">
+      <DialogContent className="sm:max-w-[500px]" data-testid="scp-dialog">
         <DialogHeader>
           <DialogTitle>SCP {connection ? `for ${connection.name}` : ""}</DialogTitle>
           {/* P1#5: sr-only description so the dialog has a wired aria-describedby. */}
@@ -106,8 +106,8 @@ export function ScpDialog({ open, onOpenChange, connection }: ScpDialogProps) {
         <form action={scpAction} className="space-y-4" noValidate>
           <Tabs value={mode} onValueChange={(v) => setMode(v as "upload" | "download")}>
             <TabsList className="w-full">
-              <TabsTrigger value="upload" className="flex-1">Upload</TabsTrigger>
-              <TabsTrigger value="download" className="flex-1">Download</TabsTrigger>
+              <TabsTrigger value="upload" className="flex-1" data-testid="scp-mode-upload">Upload</TabsTrigger>
+              <TabsTrigger value="download" className="flex-1" data-testid="scp-mode-download">Download</TabsTrigger>
             </TabsList>
           </Tabs>
 
@@ -118,6 +118,7 @@ export function ScpDialog({ open, onOpenChange, connection }: ScpDialogProps) {
               placeholder={mode === "upload" ? "/Users/me/file.txt" : "/Users/me/downloads/file.txt"}
               value={localPath}
               onChange={(e) => setLocalPath(e.target.value)}
+              data-testid="scp-local-path"
               aria-invalid={!!localPathError}
               aria-describedby={
                 localPathError ? "scp-local-path-error" : undefined
@@ -142,6 +143,7 @@ export function ScpDialog({ open, onOpenChange, connection }: ScpDialogProps) {
               placeholder={connection?.remote_path || "/tmp/ or relative/file.txt"}
               value={remotePath}
               onChange={(e) => setRemotePath(e.target.value)}
+              data-testid="scp-remote-path"
               aria-invalid={!!remotePathError}
               /*
                 Audit-3 follow-up P2#6 (helper-text association): the
@@ -237,7 +239,10 @@ export function ScpDialog({ open, onOpenChange, connection }: ScpDialogProps) {
           </div>
 
           {result && (
-            <div className="rounded-md border p-3 text-xs">
+            <div
+              className="rounded-md border p-3 text-xs"
+              data-testid="scp-status"
+            >
               Transferred {result.bytes} bytes
               {result.entries ? ` across ${result.entries} item${result.entries === 1 ? "" : "s"}` : ""}
               {` between ${result.local_path} and ${result.remote_path}.`}
@@ -258,7 +263,12 @@ export function ScpDialog({ open, onOpenChange, connection }: ScpDialogProps) {
             <Button type="button" variant="outline" onClick={() => onOpenChange(false)} disabled={isSubmitting}>
               Close
             </Button>
-            <Button type="submit" disabled={isSubmitting || !connection} aria-busy={isSubmitting}>
+            <Button
+              type="submit"
+              disabled={isSubmitting || !connection}
+              aria-busy={isSubmitting}
+              data-testid={mode === "upload" ? "scp-upload" : "scp-download"}
+            >
               {isSubmitting ? "Transferring..." : mode === "upload" ? "Upload" : "Download"}
             </Button>
           </DialogFooter>

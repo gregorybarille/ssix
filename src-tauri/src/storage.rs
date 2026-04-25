@@ -6,9 +6,25 @@ use std::sync::Mutex;
 
 static DATA_LOCK: Mutex<()> = Mutex::new(());
 
-pub fn get_data_path() -> PathBuf {
+/// Returns the directory that holds SSX state (`data.json`, `secrets.json`).
+///
+/// In production this is `~/.ssx`. For E2E tests and other isolated
+/// runs the `SSX_DATA_DIR` environment variable, when set and non-empty,
+/// overrides this so each test gets a clean, deterministic data dir
+/// without touching the user's real one. The override is checked at
+/// every call (not memoized) so tests can rotate it between specs.
+pub fn data_dir() -> PathBuf {
+    if let Ok(override_dir) = std::env::var("SSX_DATA_DIR") {
+        if !override_dir.is_empty() {
+            return PathBuf::from(override_dir);
+        }
+    }
     let home = dirs_next::home_dir().unwrap_or_else(|| PathBuf::from("."));
-    home.join(".ssx").join("data.json")
+    home.join(".ssx")
+}
+
+pub fn get_data_path() -> PathBuf {
+    data_dir().join("data.json")
 }
 
 pub fn load_data() -> Result<AppData, String> {
@@ -334,5 +350,49 @@ mod tests {
             final_content
         );
         let _ = fs::remove_dir_all(&*dir);
+    }
+
+    /// `data_dir()` and `secrets_path()` (via the same helper) MUST
+    /// honor `SSX_DATA_DIR` so E2E tests get an isolated state dir.
+    /// The env var is process-global; serialize the env-mutating tests
+    /// behind a local mutex so cargo's parallel test runner doesn't
+    /// race us.
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
+
+    #[test]
+    fn data_dir_honors_ssx_data_dir_env_override() {
+        let _g = ENV_LOCK.lock().unwrap();
+        let prev = std::env::var("SSX_DATA_DIR").ok();
+        let custom = tmp_dir();
+        std::env::set_var("SSX_DATA_DIR", &custom);
+        let resolved = data_dir();
+        assert_eq!(resolved, custom);
+        assert_eq!(get_data_path(), custom.join("data.json"));
+        match prev {
+            Some(v) => std::env::set_var("SSX_DATA_DIR", v),
+            None => std::env::remove_var("SSX_DATA_DIR"),
+        }
+        let _ = fs::remove_dir_all(&custom);
+    }
+
+    #[test]
+    fn data_dir_falls_back_to_home_when_env_unset_or_empty() {
+        let _g = ENV_LOCK.lock().unwrap();
+        let prev = std::env::var("SSX_DATA_DIR").ok();
+        std::env::remove_var("SSX_DATA_DIR");
+        let resolved = data_dir();
+        let expected = dirs_next::home_dir()
+            .unwrap_or_else(|| PathBuf::from("."))
+            .join(".ssx");
+        assert_eq!(resolved, expected);
+
+        // Empty string must NOT count as an override either.
+        std::env::set_var("SSX_DATA_DIR", "");
+        assert_eq!(data_dir(), expected);
+
+        match prev {
+            Some(v) => std::env::set_var("SSX_DATA_DIR", v),
+            None => std::env::remove_var("SSX_DATA_DIR"),
+        }
     }
 }

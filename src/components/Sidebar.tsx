@@ -33,6 +33,7 @@ function NavButton({
   icon,
   badge,
   dot,
+  testId,
 }: {
   active: boolean;
   label: string;
@@ -40,6 +41,7 @@ function NavButton({
   icon: React.ReactNode;
   badge?: number;
   dot?: boolean;
+  testId?: string;
 }) {
   /*
    * Audit-3 #1: the only accessible name for these icon-only buttons
@@ -59,6 +61,9 @@ function NavButton({
   return (
     <button
       type="button"
+      // E2E hook — kept on the button itself (not a wrapper) so wdio's
+      // waitForClickable resolves on the actual interactive element.
+      data-testid={testId}
       // Audit-3 follow-up P3#7: dropped redundant `title=` attribute.
       // The badge count and "pending changes" state are already
       // conveyed visually (badge chip / red dot) and via aria-label.
@@ -114,6 +119,7 @@ export function Sidebar({
         'Primary' navigation landmark.
       */
       className="w-16 bg-card border-r border-border flex flex-col items-center py-4 gap-2"
+      data-testid="sidebar"
     >
       <div className="mb-4" aria-hidden="true">
         <div className="w-8 h-8 rounded-lg bg-primary flex items-center justify-center">
@@ -129,6 +135,7 @@ export function Sidebar({
             onClick={() => onNavigate(id)}
             icon={icon}
             badge={id === "tunnels" ? tunnelCount : undefined}
+            testId={`nav-${id.replace("_", "-")}`}
           />
         ))}
 
@@ -144,6 +151,7 @@ export function Sidebar({
               onClick={() => onNavigate("terminals")}
               icon={<TerminalSquare className="h-5 w-5" />}
               badge={terminalCount}
+              testId="nav-terminals"
             />
           </>
         )}
@@ -155,6 +163,7 @@ export function Sidebar({
             onClick={() => onNavigate("git_sync")}
             icon={<GitBranch className="h-5 w-5" />}
             dot={gitPending}
+            testId="nav-git-sync"
           />
         </div>
       </nav>

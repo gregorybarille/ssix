@@ -84,7 +84,7 @@ export function GenerateKeyDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-[460px]">
+      <DialogContent className="sm:max-w-[460px]" data-testid="generate-key-dialog">
         <DialogHeader>
           <DialogTitle>Generate SSH Key</DialogTitle>
           {/* P1#5: sr-only description so the dialog has a wired aria-describedby. */}
@@ -231,7 +231,7 @@ export function GenerateKeyDialog({
             >
               Cancel
             </Button>
-            <Button type="submit" disabled={isSubmitting} aria-busy={isSubmitting}>
+            <Button type="submit" disabled={isSubmitting} aria-busy={isSubmitting} data-testid="generate-key-submit">
               {isSubmitting ? "Generating..." : "Generate"}
             </Button>
           </DialogFooter>

@@ -264,6 +264,8 @@ export function Terminal({ sessionId, connectionName, isVisible, onDisconnect, s
     <div
       className="absolute inset-0"
       style={{ display: isVisible ? "flex" : "none", flexDirection: "column" }}
+      data-testid="terminal-container"
+      data-session-id={sessionId}
     >
       <div ref={termRef} className="flex-1 min-h-0 p-1 bg-[#1a1b26]" />
     </div>

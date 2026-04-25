@@ -81,7 +81,7 @@ export function GitSyncView() {
               <div className="flex items-center justify-between gap-3 flex-wrap">
                 <div>
                   <p className="text-sm font-medium">Repository</p>
-                  <p className="text-xs text-muted-foreground">{status.repo_path}</p>
+                  <p className="text-xs text-muted-foreground" data-testid="git-sync-repo-path">{status.repo_path}</p>
                 </div>
                 <div className="flex items-center gap-2 flex-wrap">
                   {status.branch && <Badge variant="secondary">{status.branch}</Badge>}
@@ -94,7 +94,7 @@ export function GitSyncView() {
                 Ahead {status.ahead} · Behind {status.behind}
               </p>
               <div className="flex gap-2 flex-wrap">
-                <Button variant="outline" size="sm" onClick={() => void exportSnapshot()} disabled={isLoading} aria-busy={isLoading}>
+                <Button variant="outline" size="sm" onClick={() => void exportSnapshot()} disabled={isLoading} aria-busy={isLoading} data-testid="git-sync-export">
                   Export sanitized snapshot
                 </Button>
                 <Button variant="outline" size="sm" onClick={() => void fetchDiff()} disabled={isLoading} aria-busy={isLoading}>
@@ -208,7 +208,7 @@ export function GitSyncView() {
               text appears; show the visual chrome only when there's
               content.
             */}
-            <div role="status" aria-live="polite" aria-atomic="true">
+            <div role="status" aria-live="polite" aria-atomic="true" data-testid="git-sync-status">
               {actionOutput && (
                 <div className="rounded-md border p-3 text-xs font-mono whitespace-pre-wrap">
                   {actionOutput}

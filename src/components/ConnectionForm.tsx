@@ -541,13 +541,13 @@ export function ConnectionForm({
           })
         }
       >
-        <SelectTrigger>
+        <SelectTrigger data-testid="connection-form-credential">
           <SelectValue placeholder="Select credential..." />
         </SelectTrigger>
         <SelectContent>
-          <SelectItem value="none">None</SelectItem>
+          <SelectItem value="none" data-name="None">None</SelectItem>
           {credentials.map((cred) => (
-            <SelectItem key={cred.id} value={cred.id}>
+            <SelectItem key={cred.id} value={cred.id} data-name={cred.name}>
               {cred.name} ({cred.username})
             </SelectItem>
           ))}
@@ -591,6 +591,7 @@ export function ConnectionForm({
               setForm({ ...form, gateway_host: e.target.value });
               clearFieldError("gateway_host");
             }}
+            data-testid="connection-form-gateway"
             aria-invalid={fieldErrors.gateway_host ? true : undefined}
             aria-describedby={fieldErrors.gateway_host ? "gateway_host-error" : undefined}
           />
@@ -637,6 +638,7 @@ export function ConnectionForm({
         >
           <SelectTrigger
             id="gateway_credential"
+            data-testid="connection-form-dest-credential"
             aria-invalid={fieldErrors.gateway_credential_id ? true : undefined}
             aria-describedby={
               fieldErrors.gateway_credential_id ? "gateway_credential-error" : undefined
@@ -645,9 +647,9 @@ export function ConnectionForm({
             <SelectValue placeholder="Select credential..." />
           </SelectTrigger>
           <SelectContent>
-            <SelectItem value="none">None</SelectItem>
+            <SelectItem value="none" data-name="None">None</SelectItem>
             {credentials.map((cred) => (
-              <SelectItem key={cred.id} value={cred.id}>
+              <SelectItem key={cred.id} value={cred.id} data-name={cred.name}>
                 {cred.name} ({cred.username})
               </SelectItem>
             ))}
@@ -680,6 +682,7 @@ export function ConnectionForm({
               setForm({ ...form, destination_host: e.target.value });
               clearFieldError("destination_host");
             }}
+            data-testid="connection-form-dest-host"
             aria-invalid={fieldErrors.destination_host ? true : undefined}
             aria-describedby={
               fieldErrors.destination_host ? "destination_host-error" : undefined
@@ -700,6 +703,7 @@ export function ConnectionForm({
             placeholder={connectionType === "port_forward" ? "80" : "22"}
             value={portInputs.destination_port}
             onChange={(e) => updatePort("destination_port", e.target.value)}
+            data-testid="connection-form-dest-port"
             aria-invalid={portErrors.destination_port ? true : undefined}
             aria-describedby={portErrors.destination_port ? "destination_port-error" : undefined}
           />
@@ -727,6 +731,7 @@ export function ConnectionForm({
         placeholder="9000"
         value={portInputs.local_port}
         onChange={(e) => updatePort("local_port", e.target.value)}
+        data-testid="connection-form-local-port"
         aria-invalid={portErrors.local_port ? true : undefined}
         aria-describedby={
           portErrors.local_port ? "local_port-error" : "local_port-help"
@@ -773,6 +778,7 @@ export function ConnectionForm({
         <form
           action={submitAction}
           className="flex flex-col flex-1 min-h-0"
+          data-testid="connection-form"
         >
           <div className="flex-1 min-h-0 overflow-y-auto px-6 py-4 space-y-4">
           <Tabs
@@ -780,13 +786,13 @@ export function ConnectionForm({
             onValueChange={(v) => setConnectionType(v as ConnectionType)}
           >
             <TabsList className="w-full">
-              <TabsTrigger value="direct" className="flex-1">
+              <TabsTrigger value="direct" className="flex-1" data-testid="connection-form-kind-direct">
                 Direct
               </TabsTrigger>
-              <TabsTrigger value="port_forward" className="flex-1">
+              <TabsTrigger value="port_forward" className="flex-1" data-testid="connection-form-kind-portforward">
                 Port Forward
               </TabsTrigger>
-              <TabsTrigger value="jump_shell" className="flex-1">
+              <TabsTrigger value="jump_shell" className="flex-1" data-testid="connection-form-kind-jumpshell">
                 Jump Shell
               </TabsTrigger>
             </TabsList>
@@ -804,6 +810,7 @@ export function ConnectionForm({
                 clearFieldError("name");
               }}
               required
+              data-testid="connection-form-name"
               aria-invalid={fieldErrors.name ? true : undefined}
               aria-describedby={fieldErrors.name ? "name-error" : undefined}
             />
@@ -828,6 +835,7 @@ export function ConnectionForm({
                     clearFieldError("host");
                   }}
                   required
+                  data-testid="connection-form-host"
                   aria-invalid={fieldErrors.host ? true : undefined}
                   aria-describedby={fieldErrors.host ? "host-error" : undefined}
                 />
@@ -846,6 +854,7 @@ export function ConnectionForm({
                   placeholder="22"
                   value={portInputs.port}
                   onChange={(e) => updatePort("port", e.target.value)}
+                  data-testid="connection-form-port"
                   aria-invalid={portErrors.port ? true : undefined}
                   aria-describedby={portErrors.port ? "port-error" : undefined}
                 />
@@ -1183,6 +1192,7 @@ export function ConnectionForm({
               variant="outline"
               onClick={requestCloseDialog}
               disabled={isSubmitting}
+              data-testid="connection-form-cancel"
             >
               Cancel
             </Button>
@@ -1190,6 +1200,7 @@ export function ConnectionForm({
               type="submit"
               disabled={isSubmitting}
               aria-busy={isSubmitting}
+              data-testid="connection-form-submit"
               aria-describedby={visibleError ? "connection-form-error" : undefined}
             >
               {isSubmitting

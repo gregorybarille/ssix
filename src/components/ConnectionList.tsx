@@ -205,6 +205,8 @@ export function ConnectionList({
               key={conn.id}
               {...itemProps}
               role="listitem"
+              data-testid={`connection-row-${conn.id}`}
+              data-name={conn.name}
               aria-label={`${conn.name}${conn.tags && conn.tags.length > 0 ? `, tagged ${conn.tags.join(", ")}` : ""}`}
               aria-selected={selectedId === conn.id || undefined}
               className={cn(
@@ -267,6 +269,7 @@ export function ConnectionList({
                       onConnect(conn);
                     }}
                     aria-label={`Connect to ${conn.name}`}
+                    data-testid={`connect-button-${conn.id}`}
                   >
                     <Play className="h-3.5 w-3.5" aria-hidden="true" />
                   </Button>
@@ -282,6 +285,7 @@ export function ConnectionList({
                       onScp(conn);
                     }}
                     aria-label={`Transfer files to ${conn.name}`}
+                    data-testid={`scp-open-${conn.id}`}
                   >
                     <ArrowUpDown className="h-3.5 w-3.5" aria-hidden="true" />
                   </Button>
@@ -347,6 +351,7 @@ export function ConnectionList({
     <>
     <div
       className="space-y-1"
+      data-testid="connection-list-rows"
       role="list"
       aria-label="Connections"
       onKeyDown={roving.onKeyDown}
@@ -359,6 +364,8 @@ export function ConnectionList({
             key={conn.id}
             {...itemProps}
             role="listitem"
+            data-testid={`connection-row-${conn.id}`}
+            data-name={conn.name}
             aria-label={`${conn.name}${conn.tags && conn.tags.length > 0 ? `, tagged ${conn.tags.join(", ")}` : ""}`}
             aria-selected={selectedId === conn.id || undefined}
             className={cn(
@@ -412,6 +419,7 @@ export function ConnectionList({
                     onConnect(conn);
                   }}
                   aria-label={`Connect to ${conn.name}`}
+                    data-testid={`connect-button-${conn.id}`}
                 >
                   <Play className="h-3.5 w-3.5" aria-hidden="true" />
                 </Button>
@@ -427,6 +435,7 @@ export function ConnectionList({
                     onScp(conn);
                   }}
                   aria-label={`Transfer files to ${conn.name}`}
+                    data-testid={`scp-open-${conn.id}`}
                 >
                   <ArrowUpDown className="h-3.5 w-3.5" aria-hidden="true" />
                 </Button>

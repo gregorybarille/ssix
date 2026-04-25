@@ -417,7 +417,7 @@ function App() {
                         value={settings.connection_layout}
                         onChange={(v) => updateLayout("connection_layout", v)}
                       />
-                      <Button size="sm" onClick={() => dialogs.openNewConnection()}>
+                      <Button size="sm" onClick={() => dialogs.openNewConnection()} data-testid="add-connection-button">
                         <Plus className="h-4 w-4 mr-1" />
                         New Connection
                       </Button>
@@ -454,7 +454,7 @@ function App() {
                         value={settings.credential_layout}
                         onChange={(v) => updateLayout("credential_layout", v)}
                       />
-                      <Button size="sm" onClick={() => dialogs.openNewCredential()}>
+                      <Button size="sm" onClick={() => dialogs.openNewCredential()} data-testid="add-credential-button">
                         <Plus className="h-4 w-4 mr-1" />
                         New Credential
                       </Button>

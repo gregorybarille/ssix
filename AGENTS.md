@@ -14,9 +14,10 @@
 |---|---|
 | `npm install` | Install frontend deps |
 | `npm run tauri dev` | Dev mode (Node 20+, Rust stable, Tauri CLI required) |
-| `npm test` | Vitest frontend suite |
+| `npm test` | Vitest frontend suite (excludes `e2e/**`) |
 | `npm test -- --run src/test/utils.test.ts` | Single test file |
 | `cd src-tauri && cargo test` | Rust backend tests |
+| `npm run e2e` | Dockerized end-to-end suite (opt-in; see E2E section) |
 
 ## Architecture
 
@@ -80,3 +81,13 @@ Point at `http://localhost:1420` (run `npm run dev` first). Add to `~/.copilot/m
 ```json
 { "mcpServers": { "playwright": { "command": "npx", "args": ["@playwright/mcp@latest"] } } }
 ```
+
+## End-to-End Tests
+
+- **Stack**: `tauri-driver` + WebdriverIO + Mocha (TypeScript). Specs in `e2e/specs/`, helpers in `e2e/helpers/`, selectors in `e2e/helpers/selectors.ts` (single source of truth).
+- **CI**: `.github/workflows/e2e.yml` runs on push to `main` and `workflow_dispatch` only. Advisory status — not a PR gate.
+- **Local**: `npm run e2e` runs the suite inside a Linux container (tauri-driver doesn't run on macOS). Requires Docker.
+- **Storage isolation**: `SSX_DATA_DIR` env var (honored by `storage::data_dir()` and `keychain::secrets_path()`) points to a per-suite `mkdtemp`. The Tauri app is spawned once via `tauri-driver` and inherits the env, so all specs share one data dir — cross-spec isolation relies on every spec using unique credential / connection names.
+- **SSH targets**: `docker/docker-compose.yml` defines four alpine sshd servers (`server-a/b/c/d`) with healthchecks. The `e2e-runner` service (under `e2e` profile) is the dockerized runner.
+- **Adding a testid**: register the selector in `e2e/helpers/selectors.ts`, add `data-testid="<kebab>"` to the component, and (if the element represents a row) include `data-name` so specs can locate by user-visible name.
+- **Artifacts**: failures upload `e2e/.artifacts/` (screenshots) from CI.

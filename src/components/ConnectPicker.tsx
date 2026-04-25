@@ -234,6 +234,7 @@ export function ConnectPicker({
                   key={conn.id}
                   id={`connect-picker-row-${idx}`}
                   data-index={idx}
+                  data-name={conn.name}
                   role="option"
                   aria-selected={isActive}
                   onPointerEnter={() => {

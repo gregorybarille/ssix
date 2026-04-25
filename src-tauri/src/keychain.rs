@@ -16,8 +16,7 @@ use std::sync::Mutex;
 static SECRETS_LOCK: Mutex<()> = Mutex::new(());
 
 fn secrets_path() -> PathBuf {
-    let home = dirs_next::home_dir().unwrap_or_else(|| PathBuf::from("."));
-    home.join(".ssx").join("secrets.json")
+    crate::storage::data_dir().join("secrets.json")
 }
 
 /// Read the secrets file. Returns:
@@ -211,6 +210,28 @@ pub fn enrich_credential(cred: &mut Credential) {
 mod tests {
     use super::*;
     use crate::models::CredentialKind;
+
+    #[test]
+    fn secrets_path_honors_ssx_data_dir_env_override() {
+        // Sibling of crate::storage::data_dir tests — secrets must
+        // live alongside data.json in the override directory so E2E
+        // runs are fully isolated from `~/.ssx`.
+        let prev = std::env::var("SSX_DATA_DIR").ok();
+        let custom = std::env::temp_dir().join(format!(
+            "ssx-secrets-path-test-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::env::set_var("SSX_DATA_DIR", &custom);
+        assert_eq!(secrets_path(), custom.join("secrets.json"));
+        match prev {
+            Some(v) => std::env::set_var("SSX_DATA_DIR", v),
+            None => std::env::remove_var("SSX_DATA_DIR"),
+        }
+    }
 
     fn make_password_cred(id: &str, password: &str) -> Credential {
         Credential {
