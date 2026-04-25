@@ -222,6 +222,46 @@ describe("InstallKeyDialog", () => {
     expect(installBtn).not.toBeDisabled();
   });
 
+  /*
+   * Regression: after success → edit → second submit → success,
+   * effectiveSuccess must restore to true. Previously dismissedSuccess
+   * was never reset, so the second success left the button permanently
+   * locked as "Install" (disabled) rather than "Installed".
+   */
+  it("after success → edit → second success, shows success again", async () => {
+    vi.mocked(invoke)
+      .mockResolvedValueOnce(undefined)
+      .mockResolvedValueOnce(undefined);
+    render(
+      <InstallKeyDialog
+        open
+        onOpenChange={() => {}}
+        credentialId="cred-1"
+        defaultHost="a.example"
+        defaultPort={22}
+        defaultUsername="root"
+      />,
+    );
+    // First install
+    fireEvent.change(screen.getByLabelText(/One-time Password/i), {
+      target: { value: "p" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: /^Install$/i }));
+    await screen.findByRole("button", { name: /Installed/i });
+
+    // Edit to dismiss success and re-enable
+    fireEvent.change(screen.getByLabelText(/Host/i), {
+      target: { value: "b.example" },
+    });
+    expect(screen.getByRole("button", { name: /^Install$/i })).not.toBeDisabled();
+
+    // Second install — success message and Installed button must reappear
+    fireEvent.click(screen.getByRole("button", { name: /^Install$/i }));
+    const installedBtn = await screen.findByRole("button", { name: /Installed/i });
+    expect(installedBtn).toBeDisabled();
+    expect(screen.getByRole("status")).toHaveTextContent(/installed successfully/i);
+  });
+
   it("submit button carries aria-busy while installing", async () => {
     let resolveInvoke: (v: undefined) => void = () => {};
     vi.mocked(invoke).mockImplementationOnce(

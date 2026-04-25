@@ -63,19 +63,23 @@ export function InstallKeyDialog({
    * "installed successfully" flag, so all form-result state moves
    * through one channel. Field-level errors stay on local state
    * (per AGENTS.md / migration plan).
+   *
+   * successEpoch increments on every successful install so that a
+   * second success after the user edits fields is always detectable,
+   * even though useActionState preserves state across renders.
    */
-  type InstallState = { error: string | null; success: boolean };
-  const initialInstallState: InstallState = { error: null, success: false };
-  const [{ error, success }, installAction, isSubmitting] =
-    useActionState<InstallState>(async () => {
+  type InstallState = { error: string | null; successEpoch: number };
+  const initialInstallState: InstallState = { error: null, successEpoch: 0 };
+  const [{ error, successEpoch }, installAction, isSubmitting] =
+    useActionState<InstallState>(async (prevState) => {
       try {
         if (portError || portParsed.value === null) {
-          return { error: portError ?? "Port is required", success: false };
+          return { error: portError ?? "Port is required", successEpoch: prevState.successEpoch };
         }
-        if (!host.trim()) return { error: "Host is required", success: false };
+        if (!host.trim()) return { error: "Host is required", successEpoch: prevState.successEpoch };
         if (!username.trim())
-          return { error: "Username is required", success: false };
-        if (!password) return { error: "Password is required", success: false };
+          return { error: "Username is required", successEpoch: prevState.successEpoch };
+        if (!password) return { error: "Password is required", successEpoch: prevState.successEpoch };
         await invoke("ssh_install_public_key_by_credential", {
           input: {
             credential_id: credentialId,
@@ -90,11 +94,16 @@ export function InstallKeyDialog({
         // raced with the user reading the success message and
         // dismissed the dialog before assistive tech could finish
         // announcing it. The user closes via "Close" or "Done".
-        return { error: null, success: true };
+        return { error: null, successEpoch: prevState.successEpoch + 1 };
       } catch (err) {
-        return { error: String(err), success: false };
+        return { error: String(err), successEpoch: prevState.successEpoch };
       }
     }, initialInstallState);
+
+  // Ref keeps the open-effect below from needing successEpoch in its
+  // dependency array (which would re-run field resets after every install).
+  const successEpochRef = React.useRef(successEpoch);
+  successEpochRef.current = successEpoch;
 
   /*
    * Audit-3 follow-up P2#7: once an install succeeds we leave the
@@ -103,24 +112,16 @@ export function InstallKeyDialog({
    * want them to read the success message before another action).
    * BUT if the user then edits Host / Port / Username they're
    * clearly preparing to install on a *different* target, and the
-   * stale `success=true` would lock them out. Reset success on any
-   * target-identity edit so the button re-enables. Wrapping the
-   * setters keeps the contract local — handlers below call
-   * editHost/editPort/editUsername instead of setHost/etc.
+   * stale success state would lock them out. dismissedEpoch tracks
+   * the last epoch the user dismissed; effectiveSuccess is only true
+   * when a newer success epoch exists.
    */
+  const [dismissedEpoch, setDismissedEpoch] = useState(0);
+  const effectiveSuccess = successEpoch > dismissedEpoch;
+
   const clearSuccess = () => {
-    if (success) {
-      // Reset only the success flag; leave any previous error visible
-      // until the user re-submits. We dispatch through the action's
-      // reducer by calling the state setter directly.
-      // useActionState doesn't expose a setter, so we model this via
-      // a side effect: read state and re-call the action wrapper.
-      // Simpler: keep a local `dismissedSuccess` flag.
-      setDismissedSuccess(true);
-    }
+    setDismissedEpoch(successEpoch);
   };
-  const [dismissedSuccess, setDismissedSuccess] = useState(false);
-  const effectiveSuccess = success && !dismissedSuccess;
 
   const editHost = (v: string) => {
     clearSuccess();
@@ -141,7 +142,9 @@ export function InstallKeyDialog({
       setPort(String(defaultPort ?? 22));
       setUsername(defaultUsername ?? "");
       setPassword("");
-      setDismissedSuccess(false);
+      // Dismiss any stale success from a previous session so the dialog
+      // opens clean even though useActionState state persists.
+      setDismissedEpoch(successEpochRef.current);
     }
   }, [open, defaultHost, defaultPort, defaultUsername]);
 
