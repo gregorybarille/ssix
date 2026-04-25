@@ -13,11 +13,13 @@
  */
 import { spawn, type ChildProcess } from "node:child_process";
 import { mkdirSync, existsSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { join, resolve, dirname } from "node:path";
+import { fileURLToPath } from "node:url";
 import type { Options } from "@wdio/types";
 import { resolveBinaryPath } from "./helpers/app.js";
 import { setupTestDataDir, cleanupTestDataDir } from "./helpers/data-dir.js";
 
+const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = resolve(__dirname, "..");
 const ARTIFACTS = join(__dirname, ".artifacts");
 mkdirSync(ARTIFACTS, { recursive: true });
