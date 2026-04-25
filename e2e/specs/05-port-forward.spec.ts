@@ -50,6 +50,32 @@ function readBanner(host: string, port: number, timeoutMs = 5_000): Promise<stri
   });
 }
 
+/**
+ * Poll-and-retry wrapper: the active tunnel row appears in the UI as
+ * soon as the placeholder is set, BEFORE `ssh_connect` resolves and
+ * the local listener is bound. Block until the local port actually
+ * accepts a TCP connection (or give up after `totalTimeoutMs`).
+ */
+async function readBannerEventually(
+  host: string,
+  port: number,
+  totalTimeoutMs = 15_000,
+): Promise<string> {
+  const deadline = Date.now() + totalTimeoutMs;
+  let lastErr: unknown = null;
+  while (Date.now() < deadline) {
+    try {
+      return await readBanner(host, port, 2_000);
+    } catch (err) {
+      lastErr = err;
+      await new Promise((r) => setTimeout(r, 500));
+    }
+  }
+  throw lastErr instanceof Error
+    ? lastErr
+    : new Error(`Could not read banner from ${host}:${port} within ${totalTimeoutMs}ms`);
+}
+
 describe("Port forward (server-a → server-c:22)", () => {
   before(async () => {
     await waitForServers(["a"]);
@@ -93,7 +119,7 @@ describe("Port forward (server-a → server-c:22)", () => {
       timeout: 30_000,
     });
 
-    const banner = await readBanner("127.0.0.1", LOCAL_PORT);
+    const banner = await readBannerEventually("127.0.0.1", LOCAL_PORT);
     expect(banner.toUpperCase()).toContain("SSH-2.0");
   });
 });

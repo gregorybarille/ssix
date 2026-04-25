@@ -108,6 +108,7 @@ export function TitleBar({ onSettings, settingsActive }: TitleBarProps) {
         title="Settings"
         aria-label="Settings"
         aria-pressed={settingsActive}
+        data-testid="nav-settings"
         className={cn(
           "h-7 w-7 rounded-md flex items-center justify-center transition-colors",
           "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-card",

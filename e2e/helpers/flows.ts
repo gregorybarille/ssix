@@ -110,13 +110,37 @@ export async function readTerminalText(): Promise<string> {
 }
 
 export async function waitForTerminalContains(needle: string, timeoutMs = 30_000): Promise<void> {
-  await browser.waitUntil(
-    async () => (await readTerminalText()).includes(needle),
-    {
-      timeout: timeoutMs,
-      timeoutMsg: `Terminal did not contain ${JSON.stringify(needle)} within ${timeoutMs}ms`,
-    },
-  );
+  try {
+    await browser.waitUntil(
+      async () => (await readTerminalText()).includes(needle),
+      {
+        timeout: timeoutMs,
+        timeoutMsg: `Terminal did not contain ${JSON.stringify(needle)} within ${timeoutMs}ms`,
+      },
+    );
+  } catch (err) {
+    // Re-throw with a richer message if a FailedTerminal is mounted —
+    // the underlying SSH failure is the real diagnostic.
+    const richer = await buildTerminalTimeoutMessage(needle, timeoutMs);
+    if (richer) throw new Error(richer);
+    throw err;
+  }
+}
+
+async function buildTerminalTimeoutMessage(needle: string, timeoutMs: number): Promise<string | null> {
+  try {
+    const failed = await browser.$('[data-testid="failed-terminal"]');
+    if (await failed.isExisting()) {
+      const err = await failed.getAttribute("data-error");
+      if (err && err.length > 0) {
+        return `Terminal showed FailedTerminal instead of expected ${JSON.stringify(needle)} (backend error): ${err}`;
+      }
+      return `Terminal stuck on FailedTerminal (still connecting / no error reported) waiting for ${JSON.stringify(needle)} within ${timeoutMs}ms`;
+    }
+  } catch {
+    // ignore
+  }
+  return null;
 }
 
 /**

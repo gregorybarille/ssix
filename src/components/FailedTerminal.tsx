@@ -28,6 +28,8 @@ export function FailedTerminal({
     <div
       className="absolute inset-0 flex items-center justify-center bg-[#1a1b26]"
       style={{ display: isVisible ? "flex" : "none" }}
+      data-testid="failed-terminal"
+      data-error={error || ""}
     >
       <div className="flex flex-col items-center gap-4 max-w-md w-full mx-6 text-center">
         <AlertCircle
