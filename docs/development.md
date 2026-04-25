@@ -2,7 +2,7 @@
 
 ## Prerequisites
 
-- Node.js 22+
+- Node.js 22+ for frontend tooling and npm commands in this guide (`npm run tauri dev`, `npm run build`, and `npm test`)
 - Rust stable
 - Tauri CLI
 
