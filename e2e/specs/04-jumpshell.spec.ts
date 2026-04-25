@@ -5,13 +5,19 @@
  * must connect through server-a as a gateway. Validates the two-hop
  * worker in `src-tauri/src/ssh.rs` (`start_jump_shell`).
  *
- * Note: the gateway/dest credential picker selectors here mirror
- * the Direct flow; the form's kind toggle reveals the additional
- * gateway/destination fields.
+ * Form selector cheat-sheet for `jump_shell` mode:
+ *   • `connection-form-gateway`            — gateway host
+ *   • `connection-form-gateway-port`       — gateway port
+ *   • `connection-form-gateway-credential` — gateway credential picker
+ *   • `connection-form-dest-host`          — destination host
+ *   • `connection-form-dest-port`          — destination port
+ *   • `connection-form-credential`         — destination credential
+ *     (the auth-section credential picker; reused as the dest cred)
  */
 import { waitForAppReady } from "../helpers/app.js";
 import { TARGETS, waitForServers } from "../helpers/docker.js";
 import {
+  connectToConnection,
   createPasswordCredential,
   navigateTo,
   typeIntoTerminal,
@@ -59,9 +65,9 @@ describe("JumpShell session (server-a → server-c)", () => {
     await fill(sel.connectionFormName, "jump-04-c");
     await click(sel.connectionFormKindJumpShell);
     // Gateway = server-a (with cred-04-a).
-    await fill(sel.connectionFormHost, TARGETS.a.host);
-    await fill(sel.connectionFormPort, String(TARGETS.a.sshPort));
-    await pickCredential(sel.connectionFormCredential, "cred-04-a");
+    await fill(sel.connectionFormGateway, TARGETS.a.host);
+    await fill(sel.connectionFormGatewayPort, String(TARGETS.a.sshPort));
+    await pickCredential(sel.connectionFormGatewayCredential, "cred-04-a");
     // Destination = server-c (with cred-04-c). server-c sshd is on
     // port 22 inside the docker network; the SSH command runs from
     // INSIDE server-a, so we always use port 22 here regardless of
@@ -71,9 +77,7 @@ describe("JumpShell session (server-a → server-c)", () => {
     await pickCredential(sel.connectionFormDestCredential, "cred-04-c");
     await click(sel.connectionFormSubmit);
 
-    const row = await browser.$(sel.connectionRowByName("jump-04-c"));
-    await row.waitForClickable({ timeout: 10_000 });
-    await row.doubleClick();
+    await connectToConnection("jump-04-c");
 
     await waitForTerminalContains("userc@server-c", 60_000);
     await typeIntoTerminal("hostname\n");

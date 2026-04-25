@@ -50,6 +50,9 @@ describe("SCP upload + download", () => {
     await navigateTo("connections");
     const row = await browser.$(sel.connectionRowByName("conn-06-a"));
     await row.waitForExist({ timeout: 10_000 });
+    // SCP button lives in the row's `opacity-0 group-hover` action
+    // cluster, so we have to hover before it becomes interactable.
+    await row.moveTo();
     // Open SCP dialog via the per-row affordance.
     const scpBtn = await row.$('[data-testid^="scp-open-"]');
     await scpBtn.waitForClickable({ timeout: 10_000 });

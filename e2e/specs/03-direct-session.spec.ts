@@ -10,13 +10,12 @@
 import { waitForAppReady } from "../helpers/app.js";
 import { TARGETS, waitForServers } from "../helpers/docker.js";
 import {
+  connectToConnection,
   createPasswordCredential,
   createDirectConnection,
-  navigateTo,
   typeIntoTerminal,
   waitForTerminalContains,
 } from "../helpers/flows.js";
-import { sel } from "../helpers/selectors.js";
 
 describe("Direct SSH session", () => {
   before(async () => {
@@ -36,11 +35,7 @@ describe("Direct SSH session", () => {
       port: TARGETS.a.sshPort,
       credentialName: "cred-03-a",
     });
-    await navigateTo("connections");
-
-    const row = await browser.$(sel.connectionRowByName("conn-03-a"));
-    await row.waitForClickable({ timeout: 10_000 });
-    await row.doubleClick();
+    await connectToConnection("conn-03-a");
 
     // Wait for shell prompt (alpine default PS1: `usera@server-a:~$`).
     await waitForTerminalContains("usera@server-a", 30_000);

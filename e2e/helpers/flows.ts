@@ -81,6 +81,22 @@ export async function createDirectConnection(input: DirectConnectionInput): Prom
 }
 
 /**
+ * Open a connection by clicking its visible "Connect" button. The
+ * row's outer click handler is wired to onSelect, not onConnect, so
+ * doubleClick() on the row won't reliably start a session — the only
+ * direct UI affordance is the per-row connect button (always visible,
+ * not hidden behind hover state).
+ */
+export async function connectToConnection(name: string): Promise<void> {
+  await navigateTo("connections");
+  const row = await browser.$(sel.connectionRowByName(name));
+  await row.waitForExist({ timeout: 10_000 });
+  const btn = await row.$('[data-testid^="connect-button-"]');
+  await btn.waitForClickable({ timeout: 10_000 });
+  await btn.click();
+}
+
+/**
  * Read the visible terminal text. xterm.js renders rows as
  * `.xterm-rows > div`; we concatenate them.
  */

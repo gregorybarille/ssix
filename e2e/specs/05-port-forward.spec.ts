@@ -67,12 +67,15 @@ describe("Port forward (server-a → server-c:22)", () => {
     await click(sel.addConnectionButton);
     await fill(sel.connectionFormName, "tunnel-05-c");
     await click(sel.connectionFormKindPortForward);
-    await fill(sel.connectionFormHost, TARGETS.a.host);
-    await fill(sel.connectionFormPort, String(TARGETS.a.sshPort));
-    await pickCredential(sel.connectionFormCredential, "cred-05-a");
-    await fill(sel.connectionFormLocalPort, String(LOCAL_PORT));
+    // port_forward = tunnel: uses gateway/dest fields, not the
+    // top-level direct host/port. Auth section is hidden (port_forward
+    // has no destination shell, so only the gateway needs creds).
+    await fill(sel.connectionFormGateway, TARGETS.a.host);
+    await fill(sel.connectionFormGatewayPort, String(TARGETS.a.sshPort));
+    await pickCredential(sel.connectionFormGatewayCredential, "cred-05-a");
     await fill(sel.connectionFormDestHost, "server-c");
     await fill(sel.connectionFormDestPort, "22");
+    await fill(sel.connectionFormLocalPort, String(LOCAL_PORT));
     await click(sel.connectionFormSubmit);
 
     await navigateTo("tunnels");

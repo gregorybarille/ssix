@@ -309,6 +309,7 @@ export function SettingsPanel({ settings, onSave }: SettingsPanelProps) {
             value={form.git_sync_repo_path ?? ""}
             onChange={(e) => setForm({ ...form, git_sync_repo_path: e.target.value || undefined })}
             placeholder="/Users/me/config-repo"
+            data-testid="settings-git-sync-repo-path"
           />
         </div>
 
@@ -334,7 +335,7 @@ export function SettingsPanel({ settings, onSave }: SettingsPanelProps) {
       </div>
 
       <div className="flex items-center gap-3">
-        <Button type="submit" disabled={isSaving} aria-busy={isSaving}>
+        <Button type="submit" disabled={isSaving} aria-busy={isSaving} data-testid="settings-save">
           {isSaving ? "Saving..." : "Save Settings"}
         </Button>
         {/*

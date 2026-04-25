@@ -34,9 +34,14 @@ export const sel = {
   connectionFormKindJumpShell: '[data-testid="connection-form-kind-jumpshell"]',
   connectionFormKindPortForward: '[data-testid="connection-form-kind-portforward"]',
   connectionFormGateway: '[data-testid="connection-form-gateway"]',
+  connectionFormGatewayPort: '[data-testid="connection-form-gateway-port"]',
+  connectionFormGatewayCredential: '[data-testid="connection-form-gateway-credential"]',
   connectionFormDestHost: '[data-testid="connection-form-dest-host"]',
   connectionFormDestPort: '[data-testid="connection-form-dest-port"]',
-  connectionFormDestCredential: '[data-testid="connection-form-dest-credential"]',
+  // The auth-section credential picker. In Direct mode it's *the*
+  // credential. In JumpShell mode it represents the destination
+  // credential (the gateway has its own picker, see GatewayCredential).
+  connectionFormDestCredential: '[data-testid="connection-form-credential"]',
   connectionFormLocalPort: '[data-testid="connection-form-local-port"]',
   connectionFormSubmit: '[data-testid="connection-form-submit"]',
   connectionFormCancel: '[data-testid="connection-form-cancel"]',
@@ -94,4 +99,9 @@ export const sel = {
   installKeyUsername: '[data-testid="install-key-username"]',
   installKeyPassword: '[data-testid="install-key-password"]',
   installKeySubmit: '[data-testid="install-key-submit"]',
+  installKeyClose: '[data-testid="install-key-close"]',
+
+  // Settings panel
+  settingsSave: '[data-testid="settings-save"]',
+  settingsGitSyncRepoPath: '[data-testid="settings-git-sync-repo-path"]',
 } as const;

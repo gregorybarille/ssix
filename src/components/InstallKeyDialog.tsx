@@ -262,6 +262,7 @@ export function InstallKeyDialog({
               variant="outline"
               onClick={() => onOpenChange(false)}
               disabled={isSubmitting}
+              data-testid="install-key-close"
             >
               {effectiveSuccess ? "Done" : "Close"}
             </Button>

@@ -610,6 +610,7 @@ export function ConnectionForm({
             placeholder="22"
             value={portInputs.gateway_port}
             onChange={(e) => updatePort("gateway_port", e.target.value)}
+            data-testid="connection-form-gateway-port"
             aria-invalid={portErrors.gateway_port ? true : undefined}
             aria-describedby={portErrors.gateway_port ? "gateway_port-error" : undefined}
           />
@@ -638,7 +639,7 @@ export function ConnectionForm({
         >
           <SelectTrigger
             id="gateway_credential"
-            data-testid="connection-form-dest-credential"
+            data-testid="connection-form-gateway-credential"
             aria-invalid={fieldErrors.gateway_credential_id ? true : undefined}
             aria-describedby={
               fieldErrors.gateway_credential_id ? "gateway_credential-error" : undefined
