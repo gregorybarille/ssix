@@ -25,10 +25,16 @@ const ARTIFACTS = join(__dirname, ".artifacts");
 mkdirSync(ARTIFACTS, { recursive: true });
 
 let tauriDriver: ChildProcess | null = null;
+let driverExit = false;
 
 export const config: Options.Testrunner = {
   runner: "local",
   tsConfigPath: resolve(__dirname, "tsconfig.json"),
+
+  // tauri-driver listens on 127.0.0.1:4444 — point WDIO at it directly
+  // instead of letting WDIO auto-detect a browser driver.
+  hostname: "127.0.0.1",
+  port: 4444,
 
   specs: ["./specs/**/*.spec.ts"],
   exclude: [],
@@ -36,11 +42,10 @@ export const config: Options.Testrunner = {
   maxInstances: 1, // Tauri E2E is inherently serial — one app window at a time.
   capabilities: [
     {
-      // tauri-driver exposes a dummy "browserName: tauri" capability and
-      // routes commands to the bundled WebView driver. The actual binary
-      // path is set per-spec via app.launch() so we can rotate
-      // SSX_DATA_DIR between runs.
-      browserName: "wry",
+      // No browserName — tauri-driver is not a standard browser driver.
+      // The application path is passed via the tauri:options extension
+      // capability; tauri-driver forwards it to WebKitWebDriver on Linux.
+      maxInstances: 1,
       "tauri:options": {
         application: resolveBinaryPath(),
       },
@@ -49,7 +54,6 @@ export const config: Options.Testrunner = {
 
   logLevel: "info",
   bail: 0,
-  baseUrl: "http://localhost",
   waitforTimeout: 15_000,
   connectionRetryTimeout: 120_000,
   connectionRetryCount: 3,
@@ -61,10 +65,8 @@ export const config: Options.Testrunner = {
     timeout: 120_000,
   },
 
-  // tauri-driver listens on :4444 by default. We spawn it once per
-  // wdio session and clean up afterwards. The shared SSX_DATA_DIR
-  // is created BEFORE tauri-driver spawns so the env var is
-  // inherited by the SSX app subprocess.
+  // Create SSX_DATA_DIR before anything else so tauri-driver (and the
+  // app it spawns) inherit the env var from this process.
   onPrepare() {
     setupTestDataDir();
     if (!existsSync(join(ROOT, "src-tauri", "target"))) {
@@ -72,6 +74,11 @@ export const config: Options.Testrunner = {
         "src-tauri/target not found. Build the app first: `npm run tauri build -- --debug`",
       );
     }
+  },
+
+  // Spawn tauri-driver just before the WebDriver session opens so the
+  // SSX app subprocess inherits the already-set SSX_DATA_DIR.
+  beforeSession() {
     tauriDriver = spawn("tauri-driver", [], {
       stdio: ["ignore", "inherit", "inherit"],
       env: process.env,
@@ -80,12 +87,21 @@ export const config: Options.Testrunner = {
       console.error("[tauri-driver] failed to start:", err);
       console.error("Install with: cargo install tauri-driver --locked");
     });
+    tauriDriver.on("exit", (code) => {
+      if (!driverExit) {
+        console.error(`[tauri-driver] exited unexpectedly with code ${String(code)}`);
+      }
+    });
   },
 
-  onComplete() {
+  afterSession() {
+    driverExit = true;
     if (tauriDriver && !tauriDriver.killed) {
       tauriDriver.kill();
     }
+  },
+
+  onComplete() {
     cleanupTestDataDir();
   },
 
