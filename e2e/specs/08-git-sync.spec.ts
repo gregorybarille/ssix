@@ -1,16 +1,19 @@
 /**
  * Spec 08: Git-sync export.
  *
- * Initialises a local bare git repo, configures the SSX app's
- * `git_sync_repo_path` setting via the Settings UI (so the in-memory
- * store is updated and the GitSyncView fetches a fresh status), then
- * runs the export and asserts the action produced visible status.
+ * Initialises a local non-bare git repo (export needs a worktree to
+ * stage files into), configures the SSX app's `git_sync_repo_path`
+ * setting via the Settings UI (so the in-memory store is updated and
+ * the GitSyncView fetches a fresh status), then runs the export and
+ * asserts the action produced visible status.
  *
  * Earlier revisions of this spec wrote the path directly into
  * `data.json`, but that bypasses the Zustand settings store — the
  * GitSyncView keeps showing `status.configured === false` until the
  * store re-reads from disk, and the `git-sync-repo-path` testid never
- * mounts.
+ * mounts. An even earlier revision used `git init --bare` which the
+ * Rust `ensure_repo_exists` check rejects (no `.git` subdir on a bare
+ * repo); export also requires a worktree.
  */
 import { execSync } from "node:child_process";
 import { mkdtempSync, rmSync } from "node:fs";
@@ -24,18 +27,20 @@ import {
 } from "../helpers/flows.js";
 import { sel } from "../helpers/selectors.js";
 
-let bare: string;
+let repo: string;
 
 describe("Git sync export", () => {
   before(() => {
-    bare = mkdtempSync(join(tmpdir(), "ssx-gitsync-bare-"));
-    execSync("git init --bare --initial-branch=main", { cwd: bare });
+    repo = mkdtempSync(join(tmpdir(), "ssx-gitsync-repo-"));
+    execSync("git init --initial-branch=main", { cwd: repo });
+    execSync("git config user.email e2e@ssx.test", { cwd: repo });
+    execSync("git config user.name e2e", { cwd: repo });
   });
   after(() => {
-    rmSync(bare, { recursive: true, force: true });
+    rmSync(repo, { recursive: true, force: true });
   });
 
-  it("exports the catalogue to a local bare repo", async () => {
+  it("exports the catalogue to a local repo", async () => {
     await waitForAppReady();
     // Need at least one connection so the export has content.
     await createPasswordCredential({
@@ -56,7 +61,7 @@ describe("Git sync export", () => {
     await navigateTo("settings");
     const repoInput = await browser.$(sel.settingsGitSyncRepoPath);
     await repoInput.waitForExist({ timeout: 10_000 });
-    await repoInput.setValue(bare);
+    await repoInput.setValue(repo);
     await (await browser.$(sel.settingsSave)).click();
 
     await navigateTo("git-sync");
@@ -64,7 +69,7 @@ describe("Git sync export", () => {
     const repoPath = await browser.$(sel.gitSyncRepoPath);
     await repoPath.waitForExist({ timeout: 10_000 });
     await browser.waitUntil(
-      async () => (await repoPath.getText()).includes(bare),
+      async () => (await repoPath.getText()).includes(repo),
       { timeout: 10_000, timeoutMsg: "git-sync did not pick up repo path" },
     );
 

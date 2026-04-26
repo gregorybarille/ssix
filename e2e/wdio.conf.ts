@@ -12,7 +12,7 @@
  * builds without edits.
  */
 import { spawn, type ChildProcess } from "node:child_process";
-import { mkdirSync, existsSync } from "node:fs";
+import { mkdirSync, existsSync, openSync } from "node:fs";
 import { join, resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { Options } from "@wdio/types";
@@ -78,10 +78,16 @@ export const config: Options.Testrunner = {
 
   // Spawn tauri-driver just before the WebDriver session opens so the
   // SSX app subprocess inherits the already-set SSX_DATA_DIR.
+  // Stdout/stderr are tee'd to e2e/.artifacts/tauri-driver.log so CI
+  // failure artifacts capture the SSX backend's eprintln/log output —
+  // critical for diagnosing silent SSH failures where the WebDriver
+  // log shows the frontend healthy but the backend failed quietly.
   beforeSession() {
+    const logPath = join(ARTIFACTS, "tauri-driver.log");
+    const logFd = openSync(logPath, "a");
     tauriDriver = spawn("tauri-driver", [], {
-      stdio: ["ignore", "inherit", "inherit"],
-      env: process.env,
+      stdio: ["ignore", logFd, logFd],
+      env: { ...process.env, RUST_BACKTRACE: "1", RUST_LOG: process.env.RUST_LOG ?? "info" },
     });
     tauriDriver.on("error", (err) => {
       console.error("[tauri-driver] failed to start:", err);

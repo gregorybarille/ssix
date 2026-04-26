@@ -87,7 +87,13 @@ jobs:
         if: always()
         run: |
           mkdir -p e2e/.artifacts
-          docker compose -f docker/docker-compose.yml logs > e2e/.artifacts/docker.log || true
+          docker compose -f docker/docker-compose.yml logs > e2e/.artifacts/docker.log 2>&1 || true
+          # Surface what we'll upload — when the upload step says "no
+          # files found" we want to know whether the dir was empty
+          # vs. the path was wrong.
+          echo "::group::Artifacts manifest"
+          ls -la e2e/.artifacts || echo "(no artifacts dir)"
+          echo "::endgroup::"
 
       - name: Tear down Docker fixtures
         if: always()
@@ -99,6 +105,6 @@ jobs:
         with:
           name: e2e-artifacts-${{ github.run_id }}
           path: |
-            e2e/.artifacts
-          if-no-files-found: ignore
+            e2e/.artifacts/**
+          if-no-files-found: warn
           retention-days: 14
