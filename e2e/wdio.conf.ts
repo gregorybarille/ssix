@@ -12,12 +12,13 @@
  * builds without edits.
  */
 import { spawn, type ChildProcess } from "node:child_process";
-import { mkdirSync, existsSync, openSync } from "node:fs";
+import { mkdirSync, existsSync, openSync, writeFileSync } from "node:fs";
 import { join, resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { Options } from "@wdio/types";
 import { resolveBinaryPath } from "./helpers/app.js";
 import { setupTestDataDir, cleanupTestDataDir } from "./helpers/data-dir.js";
+import { fetchBackendLogs, formatBackendLogs } from "./helpers/backend-logs.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = resolve(__dirname, "..");
@@ -111,13 +112,23 @@ export const config: Options.Testrunner = {
     cleanupTestDataDir();
   },
 
-  // Capture screenshot on every failed mocha test for easy triage from
-  // CI artifacts.
+  // Capture screenshot + backend log buffer on every failed mocha test
+  // for easy triage from CI artifacts. Backend logs come from the
+  // SSX `get_logs` Tauri command (in-memory ring buffer) since
+  // tauri-driver doesn't forward the SSX subprocess's stdio — this
+  // is our only reliable window into Rust-side errors when an SSH
+  // connection silently fails.
   afterTest: async function (test, _ctx, { error }) {
     if (error) {
       const safe = `${test.parent}-${test.title}`.replace(/[^a-z0-9-_]/gi, "_");
       try {
         await browser.saveScreenshot(join(ARTIFACTS, `${safe}.png`));
+      } catch {
+        // best effort
+      }
+      try {
+        const entries = await fetchBackendLogs();
+        writeFileSync(join(ARTIFACTS, `${safe}.backend.log`), formatBackendLogs(entries));
       } catch {
         // best effort
       }

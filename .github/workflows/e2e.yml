@@ -97,6 +97,16 @@ jobs:
           echo "::group::tauri-driver.log (SSX backend stderr)"
           cat e2e/.artifacts/tauri-driver.log 2>/dev/null || echo "(tauri-driver.log absent)"
           echo "::endgroup::"
+          # Per-spec backend log buffers captured by wdio.conf.ts
+          # afterTest hook via the `get_logs` Tauri command. This is
+          # our only reliable channel for SSX Rust-side diagnostics
+          # because tauri-driver discards the SSX subprocess stdio.
+          for f in e2e/.artifacts/*.backend.log; do
+            [ -e "$f" ] || continue
+            echo "::group::backend logs — $(basename "$f")"
+            cat "$f"
+            echo "::endgroup::"
+          done
           echo "::group::Artifacts manifest"
           ls -la e2e/.artifacts || echo "(no artifacts dir)"
           echo "::endgroup::"
