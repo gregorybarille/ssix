@@ -96,16 +96,31 @@ describe("SCP upload + download", () => {
 async function waitForScpStatusOrFail(phase: "upload" | "download"): Promise<void> {
   try {
     await browser.waitUntil(
-      async () =>
-        /transferred|done|success|complete/i.test(
-          await (await browser.$(sel.scpStatus)).getText(),
-        ),
+      async () => {
+        // The action returns { error, result }; on success result is set
+        // and `scp-status` mounts; on failure error is set and `scp-error`
+        // mounts. Either condition resolves the wait — error path is
+        // diagnosed in the catch block.
+        const status = await (await browser.$(sel.scpStatus)).getText().catch(() => "");
+        if (/transferred|done|success|complete/i.test(status)) return true;
+        const errorEl = await browser.$('[data-testid="scp-error"]');
+        if (await errorEl.isExisting()) return true;
+        return false;
+      },
       { timeout: 30_000, timeoutMsg: `SCP ${phase} did not complete` },
     );
   } catch (err) {
-    const status = await (await browser.$(sel.scpStatus)).getText().catch(() => "");
+    const status = await (await browser.$(sel.scpStatus)).getText().catch(() => "(no status)");
+    const errorText = await (await browser.$('[data-testid="scp-error"]')).getText().catch(() => "(no error)");
     throw new Error(
-      `SCP ${phase} did not complete within 30s. Last status text: ${JSON.stringify(status)}\n${(err as Error).message}`,
+      `SCP ${phase} did not complete within 30s.\n  status: ${JSON.stringify(status)}\n  error: ${JSON.stringify(errorText)}\n${(err as Error).message}`,
     );
+  }
+  // Surface backend error if the action came back with an error rather
+  // than success — the caller expects a successful round-trip.
+  const errorEl = await browser.$('[data-testid="scp-error"]');
+  if (await errorEl.isExisting()) {
+    const errorText = await errorEl.getText();
+    throw new Error(`SCP ${phase} returned error from backend: ${errorText}`);
   }
 }

@@ -253,6 +253,7 @@ export function ScpDialog({ open, onOpenChange, connection }: ScpDialogProps) {
             <div
               role="alert"
               aria-live="assertive"
+              data-testid="scp-error"
               className="rounded-md bg-destructive/10 text-destructive text-sm px-3 py-2"
             >
               {error}
