@@ -33,29 +33,32 @@ export interface BackendLogEntry {
  */
 export async function fetchBackendLogs(): Promise<BackendLogEntry[] | null> {
   try {
-    const result = await browser.executeAsync<BackendLogEntry[] | { __ssxError: string }>(
+    return await browser.executeAsync<BackendLogEntry[] | null>(
       function (done) {
-        // Tauri v2 exposes invoke at window.__TAURI__.core.invoke.
-        // Use any-cast inside the browser context (no TS in the
-        // injected script).
+        // Tauri v2's public JS package delegates through the internal
+        // runtime bridge. Under tauri-driver, probing only
+        // window.__TAURI__.core.invoke is unreliable and made failed
+        // specs lose the backend logs that explain the real failure.
+        // Keep a couple of fallbacks so this helper remains tolerant of
+        // minor runtime shape changes.
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const w = window as any;
-        const invoke = w?.__TAURI__?.core?.invoke;
+        const invoke =
+          w?.__TAURI_INTERNALS__?.invoke ??
+          w?.__TAURI__?.core?.invoke ??
+          w?.__TAURI__?.invoke;
+
         if (typeof invoke !== "function") {
-          done({ __ssxError: "window.__TAURI__.core.invoke is not a function" });
+          done(null);
           return;
         }
+
         invoke("get_logs")
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
           .then((entries: any) => done(entries))
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          .catch((err: any) => done({ __ssxError: String(err) }));
+          .catch(() => done(null));
       },
     );
-    if (result && typeof result === "object" && "__ssxError" in result) {
-      return null;
-    }
-    return result as BackendLogEntry[];
   } catch {
     return null;
   }
