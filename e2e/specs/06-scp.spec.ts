@@ -61,17 +61,23 @@ describe("SCP upload + download", () => {
     const dialog = await browser.$(sel.scpDialog);
     await dialog.waitForExist({ timeout: 10_000 });
 
-    // Upload phase
+    // Upload phase. NOTE: SSX's resolve_remote_target_path() always
+    // appends the local file name to the remote_path argument
+    // (treating it as a directory). So if local is /tmp/ssx-scp-XYZ/upload.txt
+    // and remote_path is "/tmp/", the actual remote file is /tmp/upload.txt.
     await (await browser.$(sel.scpModeUpload)).click();
     await (await browser.$(sel.scpLocalPath)).setValue(upload);
-    await (await browser.$(sel.scpRemotePath)).setValue("/tmp/ssx-e2e-upload.txt");
+    await (await browser.$(sel.scpRemotePath)).setValue("/tmp/");
     await (await browser.$(sel.scpUploadButton)).click();
     await waitForScpStatusOrFail("upload");
 
-    // Download phase
+    // Download phase. The remote file is at /tmp/upload.txt (SSX
+    // appended the source file name during upload). For download,
+    // remote_path is the source file directly — resolve_download_remote_path
+    // does not append anything.
     await (await browser.$(sel.scpModeDownload)).click();
     await (await browser.$(sel.scpLocalPath)).setValue(download);
-    await (await browser.$(sel.scpRemotePath)).setValue("/tmp/ssx-e2e-upload.txt");
+    await (await browser.$(sel.scpRemotePath)).setValue("/tmp/upload.txt");
     await (await browser.$(sel.scpDownloadButton)).click();
     await waitForScpStatusOrFail("download");
 
@@ -90,7 +96,10 @@ describe("SCP upload + download", () => {
 async function waitForScpStatusOrFail(phase: "upload" | "download"): Promise<void> {
   try {
     await browser.waitUntil(
-      async () => /done|success|complete/i.test(await (await browser.$(sel.scpStatus)).getText()),
+      async () =>
+        /transferred|done|success|complete/i.test(
+          await (await browser.$(sel.scpStatus)).getText(),
+        ),
       { timeout: 30_000, timeoutMsg: `SCP ${phase} did not complete` },
     );
   } catch (err) {
