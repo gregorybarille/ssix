@@ -307,6 +307,54 @@ fn upload_bytes(
     remote_path: &str,
     bytes: &[u8],
 ) -> Result<String, String> {
+    // Try SFTP first — this is what modern OpenSSH `scp` does internally
+    // since 9.0 and what most servers actually expect today. The legacy
+    // SCP wire protocol is deprecated upstream and broken on some
+    // distributions (alpine 3.21 / OpenSSH 9.9 returns scp-sink exit
+    // status 1 even when the channel write succeeds, leading to the
+    // "phantom transfer" class of bug we just hardened against).
+    match upload_bytes_sftp(ssh, remote_path, bytes) {
+        Ok(path) => Ok(path),
+        Err(sftp_err) if is_sftp_unavailable(&sftp_err) => {
+            // Fall back to legacy SCP for servers without an SFTP subsystem
+            // (some embedded sshd builds, or `Subsystem sftp` disabled).
+            upload_bytes_scp(ssh, remote_path, bytes).map_err(|scp_err| {
+                format!(
+                    "Upload to {} failed via both transports ({}). SFTP: {}. SCP: {}",
+                    remote_path, ssh.destination_label, sftp_err, scp_err
+                )
+            })
+        }
+        Err(e) => Err(e),
+    }
+}
+
+fn upload_bytes_sftp(
+    ssh: &mut ConnectedSession,
+    remote_path: &str,
+    bytes: &[u8],
+) -> Result<String, String> {
+    let sftp = ssh
+        .session
+        .sftp()
+        .map_err(|e| format!("Failed to open SFTP session: {}", e))?;
+    let mut remote = sftp
+        .create(Path::new(remote_path))
+        .map_err(|e| format!("SFTP upload to {} failed ({}): {}", remote_path, ssh.destination_label, e))?;
+    remote
+        .write_all(bytes)
+        .map_err(|e| format!("SFTP upload to {} failed while writing ({}): {}", remote_path, ssh.destination_label, e))?;
+    // ssh2's File closes on Drop, but explicit close surfaces protocol
+    // errors (full disk, permission denied on rename, etc).
+    drop(remote);
+    Ok(remote_path.to_string())
+}
+
+fn upload_bytes_scp(
+    ssh: &mut ConnectedSession,
+    remote_path: &str,
+    bytes: &[u8],
+) -> Result<String, String> {
     let mut remote = ssh
         .session
         .scp_send(Path::new(remote_path), 0o644, bytes.len() as u64, None)
@@ -347,6 +395,46 @@ fn download_bytes(
     ssh: &mut ConnectedSession,
     remote_path: &str,
 ) -> Result<(Vec<u8>, u64), String> {
+    match download_bytes_sftp(ssh, remote_path) {
+        Ok(result) => Ok(result),
+        Err(sftp_err) if is_sftp_unavailable(&sftp_err) => {
+            download_bytes_scp(ssh, remote_path).map_err(|scp_err| {
+                format!(
+                    "Download from {} failed via both transports ({}). SFTP: {}. SCP: {}",
+                    remote_path, ssh.destination_label, sftp_err, scp_err
+                )
+            })
+        }
+        Err(e) => Err(e),
+    }
+}
+
+fn download_bytes_sftp(
+    ssh: &mut ConnectedSession,
+    remote_path: &str,
+) -> Result<(Vec<u8>, u64), String> {
+    let sftp = ssh
+        .session
+        .sftp()
+        .map_err(|e| format!("Failed to open SFTP session: {}", e))?;
+    let stat = sftp
+        .stat(Path::new(remote_path))
+        .map_err(|e| format!("SFTP download from {} failed to stat ({}): {}", remote_path, ssh.destination_label, e))?;
+    let mut remote = sftp
+        .open(Path::new(remote_path))
+        .map_err(|e| format!("SFTP download from {} failed to open ({}): {}", remote_path, ssh.destination_label, e))?;
+    let mut bytes = Vec::new();
+    remote
+        .read_to_end(&mut bytes)
+        .map_err(|e| format!("SFTP download from {} failed while reading ({}): {}", remote_path, ssh.destination_label, e))?;
+    let size = stat.size.unwrap_or(bytes.len() as u64);
+    Ok((bytes, size))
+}
+
+fn download_bytes_scp(
+    ssh: &mut ConnectedSession,
+    remote_path: &str,
+) -> Result<(Vec<u8>, u64), String> {
     let (mut remote, stat) = ssh
         .session
         .scp_recv(Path::new(remote_path))
@@ -377,6 +465,20 @@ fn download_bytes(
         ));
     }
     Ok((bytes, stat.size()))
+}
+
+/// Detect "server has no SFTP subsystem" failures so we can fall back to
+/// legacy SCP. We deliberately match on the symptom (open-channel
+/// failure) rather than a specific error code because libssh2 reports
+/// it in slightly different ways depending on the server's behaviour
+/// (channel-request denied vs subsystem-request failed vs immediate EOF).
+fn is_sftp_unavailable(err: &str) -> bool {
+    let l = err.to_ascii_lowercase();
+    l.contains("subsystem")
+        || l.contains("channel-request")
+        || l.contains("channel request")
+        || l.contains("sftp session")
+        || l.contains("failed to open sftp")
 }
 
 fn upload_directory(
