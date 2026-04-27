@@ -111,6 +111,7 @@ describe("SSH keygen + install_public_key", () => {
       credentialName: "cred-07-key",
     });
     await connectToConnection("conn-07-key");
-    await waitForTerminalContains("usera@server-a", 30_000);
+    // Alpine ash prompt: `<host>:~$` (see spec 03 for context).
+    await waitForTerminalContains("server-a:~$", 30_000);
   });
 });

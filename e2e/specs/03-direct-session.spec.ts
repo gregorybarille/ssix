@@ -37,8 +37,11 @@ describe("Direct SSH session", () => {
     });
     await connectToConnection("conn-03-a");
 
-    // Wait for shell prompt (alpine default PS1: `usera@server-a:~$`).
-    await waitForTerminalContains("usera@server-a", 30_000);
+    // Wait for shell prompt. The alpine images use ash, whose default
+    // PS1 is `\h:\w\$` — i.e. `server-a:~$`, NOT the bash-style
+    // `user@host:~$`. (An earlier version of this spec assumed bash
+    // and timed out waiting for a prompt that never appears.)
+    await waitForTerminalContains("server-a:~$", 30_000);
 
     await typeIntoTerminal("whoami\n");
     await waitForTerminalContains(TARGETS.a.user, 10_000);

@@ -35,6 +35,29 @@ describe("Git sync export", () => {
     execSync("git init --initial-branch=main", { cwd: repo });
     execSync("git config user.email e2e@ssx.test", { cwd: repo });
     execSync("git config user.name e2e", { cwd: repo });
+    // git_sync_status calls `git status --short .ssx-sync` and
+    // `git rev-list --left-right --count HEAD...origin/main`. The
+    // ahead_behind() helper short-circuits when `current_branch`
+    // returns None (empty repo), but the moment we have any commit
+    // it'll resolve a branch and the rev-list call against the
+    // missing `origin/main` ref will fail, dropping the whole
+    // status into the Err path — so the GitSyncView never sees
+    // `configured: true`. We seed an initial commit AND register
+    // a no-op `origin` remote pointing at the repo itself so the
+    // remote ref exists once we fetch (we don't fetch in the spec
+    // because export is local-only, but having `origin` configured
+    // means rev-list errors only complain about the missing
+    // refs/remotes/origin/main pointer — which still errors).
+    //
+    // Simpler fix: create the initial commit so HEAD is real, then
+    // skip remote setup entirely. ahead_behind sees branch="main"
+    // and tries `HEAD...origin/main`. To avoid that error we point
+    // origin at a second local repo that already has main.
+    execSync("git commit --allow-empty -m initial", { cwd: repo });
+    const remote = mkdtempSync(join(tmpdir(), "ssx-gitsync-remote-"));
+    execSync("git init --bare --initial-branch=main", { cwd: remote });
+    execSync(`git remote add origin ${remote}`, { cwd: repo });
+    execSync("git push -u origin main", { cwd: repo });
   });
   after(() => {
     rmSync(repo, { recursive: true, force: true });

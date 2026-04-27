@@ -66,21 +66,37 @@ describe("SCP upload + download", () => {
     await (await browser.$(sel.scpLocalPath)).setValue(upload);
     await (await browser.$(sel.scpRemotePath)).setValue("/tmp/ssx-e2e-upload.txt");
     await (await browser.$(sel.scpUploadButton)).click();
-    await browser.waitUntil(
-      async () => /done|success|complete/i.test(await (await browser.$(sel.scpStatus)).getText()),
-      { timeout: 30_000, timeoutMsg: "SCP upload did not complete" },
-    );
+    await waitForScpStatusOrFail("upload");
 
     // Download phase
     await (await browser.$(sel.scpModeDownload)).click();
     await (await browser.$(sel.scpLocalPath)).setValue(download);
     await (await browser.$(sel.scpRemotePath)).setValue("/tmp/ssx-e2e-upload.txt");
     await (await browser.$(sel.scpDownloadButton)).click();
-    await browser.waitUntil(
-      async () => /done|success|complete/i.test(await (await browser.$(sel.scpStatus)).getText()),
-      { timeout: 30_000, timeoutMsg: "SCP download did not complete" },
-    );
+    await waitForScpStatusOrFail("download");
 
     expect(readFileSync(download, "utf8")).toBe(PAYLOAD);
   });
 });
+
+/**
+ * wdio's `timeoutMsg` is a string, not an async callback, so we can't
+ * inline a "scrape the on-screen status" message. Wrap waitUntil in a
+ * try/catch and rethrow with the trailing scp-status text — this is
+ * the difference between "SCP upload did not complete" (useless) and
+ * "SCP upload did not complete. status: 'Permission denied (publickey)'"
+ * (immediately actionable).
+ */
+async function waitForScpStatusOrFail(phase: "upload" | "download"): Promise<void> {
+  try {
+    await browser.waitUntil(
+      async () => /done|success|complete/i.test(await (await browser.$(sel.scpStatus)).getText()),
+      { timeout: 30_000, timeoutMsg: `SCP ${phase} did not complete` },
+    );
+  } catch (err) {
+    const status = await (await browser.$(sel.scpStatus)).getText().catch(() => "");
+    throw new Error(
+      `SCP ${phase} did not complete within 30s. Last status text: ${JSON.stringify(status)}\n${(err as Error).message}`,
+    );
+  }
+}

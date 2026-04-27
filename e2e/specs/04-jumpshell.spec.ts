@@ -79,7 +79,8 @@ describe("JumpShell session (server-a → server-c)", () => {
 
     await connectToConnection("jump-04-c");
 
-    await waitForTerminalContains("userc@server-c", 60_000);
+    // Alpine ash prompt: `<host>:~$` (see spec 03 for context).
+    await waitForTerminalContains("server-c:~$", 60_000);
     await typeIntoTerminal("hostname\n");
     await waitForTerminalContains("server-c", 10_000);
   });
