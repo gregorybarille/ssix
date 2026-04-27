@@ -73,9 +73,9 @@ export function BulkScpDialog({
     [connections],
   );
 
-  // Reset state every time the dialog re-opens or its target group
-  // changes. Without this, switching from `prod` to `staging` would
-  // carry over `prod`'s progress rows.
+  // Reset state when the dialog closes. The dialog is always
+  // unmounted/remounted for each group, so there is no in-flight
+  // state to carry over to a different group.
   useEffect(() => {
     if (!open) {
       setMode("upload");

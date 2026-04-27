@@ -44,6 +44,24 @@ interface TagGroupGridProps {
  * at the end of the grid so it never shifts the position of real
  * tags as the user adds new ones.
  */
+/**
+ * Convert a user-entered tag label to a safe, stable CSS-selector
+ * fragment for use in `data-testid` attributes. Quotes, brackets and
+ * other CSS-special characters in tag names would otherwise break
+ * selector strings like `[data-testid="tag-group-${label}"]`.
+ *
+ * Examples:
+ *   "prod"      → "prod"
+ *   "My Tag!"   → "my-tag"
+ *   "[backend]" → "backend"
+ */
+function slugifyTagId(label: string): string {
+  return label
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+}
+
 export function TagGroupGrid({
   connections,
   query = "",
@@ -110,12 +128,13 @@ export function TagGroupGrid({
           ),
         ).slice(0, 6);
         const isUntagged = group.key === UNTAGGED_KEY;
+        const tagId = isUntagged ? "untagged" : slugifyTagId(group.label);
         return (
           <div
             key={group.key}
             {...itemProps}
             role="listitem"
-            data-testid={`tag-group-${isUntagged ? "untagged" : group.label}`}
+            data-testid={`tag-group-${tagId}`}
             data-tag={isUntagged ? "" : group.label}
             aria-label={`Tag ${group.label}, ${group.connections.length} connection${group.connections.length === 1 ? "" : "s"}`}
             className={cn(
@@ -173,7 +192,7 @@ export function TagGroupGrid({
                 }}
                 disabled={actionable === 0}
                 aria-label={`Connect to all ${actionable} connection${actionable === 1 ? "" : "s"} tagged ${group.label}`}
-                data-testid={`tag-connect-all-${isUntagged ? "untagged" : group.label}`}
+                data-testid={`tag-connect-all-${tagId}`}
               >
                 <Play className="h-3.5 w-3.5" aria-hidden="true" />
               </Button>
@@ -187,7 +206,7 @@ export function TagGroupGrid({
                 }}
                 disabled={actionable === 0}
                 aria-label={`Transfer files to all ${actionable} connection${actionable === 1 ? "" : "s"} tagged ${group.label}`}
-                data-testid={`tag-scp-all-${isUntagged ? "untagged" : group.label}`}
+                data-testid={`tag-scp-all-${tagId}`}
               >
                 <ArrowUpDown className="h-3.5 w-3.5" aria-hidden="true" />
               </Button>

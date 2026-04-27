@@ -6,6 +6,18 @@
  * a refactor that renames a testid only requires editing this file.
  */
 
+/**
+ * Mirrors the slugifyTagId helper in TagGroupGrid.tsx — must stay
+ * identical so selectors match the data-testid values rendered by the
+ * component. Convert a tag label to a safe CSS-selector fragment.
+ */
+function slugifyTagId(label: string): string {
+  return label
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+}
+
 export const sel = {
   // Top-level navigation
   sidebar: '[data-testid="sidebar"]',
@@ -111,12 +123,18 @@ export const sel = {
   layoutToggleTile: '[data-testid="layout-toggle-tile"]',
   layoutToggleTags: '[data-testid="layout-toggle-tags"]',
 
-  // Tag-group view. Tile testids substitute "untagged" for the
-  // untagged sentinel and use the literal label otherwise.
+  // Tag-group view. Tile testids encode the tag label as a URL-safe
+  // slug (lowercase, non-alphanumeric chars collapsed to "-") so that
+  // CSS-special characters in user-entered tag names never break
+  // attribute selectors. "untagged" is the sentinel for the
+  // no-tag group.
   tagGroupGrid: '[data-testid="tag-group-grid"]',
-  tagGroup: (label: string) => `[data-testid="tag-group-${label}"]`,
-  tagConnectAll: (label: string) => `[data-testid="tag-connect-all-${label}"]`,
-  tagScpAll: (label: string) => `[data-testid="tag-scp-all-${label}"]`,
+  tagGroup: (label: string) =>
+    `[data-testid="tag-group-${slugifyTagId(label)}"]`,
+  tagConnectAll: (label: string) =>
+    `[data-testid="tag-connect-all-${slugifyTagId(label)}"]`,
+  tagScpAll: (label: string) =>
+    `[data-testid="tag-scp-all-${slugifyTagId(label)}"]`,
 
   // Bulk SCP dialog
   bulkScpDialog: '[data-testid="bulk-scp-dialog"]',
