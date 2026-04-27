@@ -57,10 +57,26 @@ async function tagConnection(name: string, tag: string): Promise<void> {
   // wdio because comma can be remapped on some keyboard layouts.
   await tagsInput.setValue(tag);
   await browser.keys(["Enter"]);
-  const submit = await browser.$(sel.connectionFormSubmit);
-  await submit.click();
-  const form = await browser.$(sel.connectionForm);
-  await form.waitForExist({ reverse: true, timeout: 10_000 });
+    const submit = await browser.$(sel.connectionFormSubmit);
+    await submit.waitForExist({ timeout: 10_000 });
+    // The connection form is a tall scrollable dialog; on Linux CI the
+    // WebDriver Actions API occasionally reports "move target out of
+    // bounds" when trying to scroll the sticky DialogFooter button into
+    // view, leaving `waitForClickable` to time out. Force-scroll via JS
+    // first (matches what wdio's auto-scroll attempts but reliably) and
+    // fall back to a JS click if Actions still refuses to fire.
+    await browser.execute(
+      (el: HTMLElement) => el.scrollIntoView({ block: "center" }),
+      submit,
+    );
+    try {
+      await submit.waitForClickable({ timeout: 5_000 });
+      await submit.click();
+    } catch {
+      await browser.execute((el: HTMLElement) => el.click(), submit);
+    }
+    const form = await browser.$(sel.connectionForm);
+    await form.waitForExist({ reverse: true, timeout: 10_000 });
 }
 
 describe("Tag-group view + bulk actions", () => {
