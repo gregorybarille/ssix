@@ -152,18 +152,27 @@ describe("Tag-group view + bulk actions", () => {
     await (await browser.$(sel.bulkScpStart)).click();
 
     // Wait for both per-host rows to show data-status="success".
-    // We don't know the connection IDs at test-authoring time (they
-    // are server-generated UUIDs), so we query progress rows by
-    // testid prefix and assert the count + status.
+    // We can't use getAttribute("data-status") here — webkit2gtk-driver
+    // (which tauri-driver wraps on Linux CI) returns a WebDriver error
+    // for `data-*` attribute reads on some elements, which wdio's
+    // waitUntil callback then catches and treats as "not yet" forever.
+    // CSS attribute selectors don't go through that path and work fine.
     await browser.waitUntil(
       async () => {
-        const rows = await browser.$$('[data-testid^="bulk-scp-row-"]');
-        if (rows.length < 2) return false;
-        for (const r of rows) {
-          const status = await r.getAttribute("data-status");
-          if (status !== "success") return false;
+        const successRows = await browser.$$(
+          '[data-testid^="bulk-scp-row-"][data-status="success"]',
+        );
+        const errorRows = await browser.$$(
+          '[data-testid^="bulk-scp-row-"][data-status="error"]',
+        );
+        // Bail early if a host failed — there's no recovery and the
+        // 60s wait would just be wasted.
+        if (errorRows.length > 0) {
+          throw new Error(
+            `Bulk SCP reported ${errorRows.length} failed host row(s); aborting wait.`,
+          );
         }
-        return true;
+        return successRows.length >= 2;
       },
       {
         timeout: 60_000,
