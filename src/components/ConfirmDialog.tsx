@@ -19,6 +19,13 @@ export interface ConfirmDialogProps {
   /** "destructive" renders the confirm button red. */
   variant?: "destructive" | "default";
   onConfirm: () => void | Promise<void>;
+  /**
+   * Optional `data-testid` prefix. When set, the dialog content,
+   * confirm and cancel buttons receive `${testId}`, `${testId}-confirm`
+   * and `${testId}-cancel` respectively. Used by E2E specs to disambiguate
+   * which ConfirmDialog instance is on screen (the App mounts several).
+   */
+  testId?: string;
 }
 
 /**
@@ -38,6 +45,7 @@ export function ConfirmDialog({
   cancelLabel = "Cancel",
   variant = "default",
   onConfirm,
+  testId,
 }: ConfirmDialogProps) {
   const [busy, setBusy] = React.useState(false);
   // Focus-return on close is implemented in the shared <DialogContent>
@@ -57,7 +65,7 @@ export function ConfirmDialog({
 
   return (
     <Dialog open={open} onOpenChange={(o) => !busy && onOpenChange(o)}>
-      <DialogContent className="sm:max-w-sm">
+      <DialogContent className="sm:max-w-sm" data-testid={testId}>
         <DialogHeader>
           <DialogTitle>{title}</DialogTitle>
           <DialogDescription>{description}</DialogDescription>
@@ -68,6 +76,7 @@ export function ConfirmDialog({
             autoFocus
             onClick={() => onOpenChange(false)}
             disabled={busy}
+            data-testid={testId ? `${testId}-cancel` : undefined}
           >
             {cancelLabel}
           </Button>
@@ -75,6 +84,7 @@ export function ConfirmDialog({
             variant={variant === "destructive" ? "destructive" : "default"}
             onClick={handleConfirm}
             disabled={busy}
+            data-testid={testId ? `${testId}-confirm` : undefined}
           >
             {confirmLabel}
           </Button>

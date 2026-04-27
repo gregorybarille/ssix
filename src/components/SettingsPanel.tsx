@@ -226,6 +226,16 @@ export function SettingsPanel({ settings, onSave }: SettingsPanelProps) {
               <SelectContent>
                 <SelectItem value="list">List</SelectItem>
                 <SelectItem value="tile">Tiles</SelectItem>
+                {/*
+                 * "Tag groups" is a connections-only mode — tag
+                 * grouping doesn't make sense for credentials or
+                 * tunnels. Hiding it elsewhere keeps the user from
+                 * picking a setting that would silently fall back
+                 * to "tile" at render time.
+                 */}
+                {key === "connection_layout" && (
+                  <SelectItem value="tags">Tag groups</SelectItem>
+                )}
               </SelectContent>
             </Select>
           </div>

@@ -40,6 +40,16 @@ interface DialogsState {
   scpConnection: Connection | null;
   scpOpen: boolean;
 
+  // Bulk SCP dialog (operates on a tag group's connection set).
+  // We deliberately store the connection list verbatim rather than
+  // a tag key — the tags view computes the membership at click
+  // time, and the dialog should freeze that snapshot for the
+  // duration of the transfer (tags edited mid-batch shouldn't
+  // change which hosts get hit).
+  bulkScpOpen: boolean;
+  bulkScpConnections: Connection[];
+  bulkScpLabel: string;
+
   // Orphaned-private-credential prompt when deleting a connection
   orphanCredDialog: { connId: string; credId: string } | null;
 
@@ -47,6 +57,17 @@ interface DialogsState {
   confirmDeleteConn: Connection | null;
   confirmDeleteCred: Credential | null;
   confirmClosePane: { sessionId: string; name: string } | null;
+  // Tag-group bulk action confirmation. We always confirm before
+  // running Connect-all or SCP-all on a tag group regardless of
+  // host count — these actions can spawn dozens of SSH sessions
+  // or transfer files to many hosts in one click, so a misclick
+  // is genuinely costly. The payload carries the action kind plus
+  // the connection snapshot, and the App resolves it on confirm.
+  confirmTagAction: {
+    kind: "connect" | "scp";
+    label: string;
+    connections: Connection[];
+  } | null;
 
   // Mutators
   openNewConnection: () => void;
@@ -67,6 +88,9 @@ interface DialogsState {
   openScp: (conn: Connection) => void;
   setScpOpen: (open: boolean) => void;
 
+  openBulkScp: (label: string, connections: Connection[]) => void;
+  setBulkScpOpen: (open: boolean) => void;
+
   setOrphanCredDialog: (
     payload: { connId: string; credId: string } | null,
   ) => void;
@@ -74,6 +98,11 @@ interface DialogsState {
   setConfirmDeleteCred: (cred: Credential | null) => void;
   setConfirmClosePane: (
     payload: { sessionId: string; name: string } | null,
+  ) => void;
+  setConfirmTagAction: (
+    payload:
+      | { kind: "connect" | "scp"; label: string; connections: Connection[] }
+      | null,
   ) => void;
 }
 
@@ -89,10 +118,14 @@ export const useDialogsStore = create<DialogsState>((set) => ({
   screenshotToast: null,
   scpConnection: null,
   scpOpen: false,
+  bulkScpOpen: false,
+  bulkScpConnections: [],
+  bulkScpLabel: "",
   orphanCredDialog: null,
   confirmDeleteConn: null,
   confirmDeleteCred: null,
   confirmClosePane: null,
+  confirmTagAction: null,
 
   openNewConnection: () =>
     set({ editingConn: null, cloningConn: null, connFormOpen: true }),
@@ -122,8 +155,22 @@ export const useDialogsStore = create<DialogsState>((set) => ({
   openScp: (conn) => set({ scpConnection: conn, scpOpen: true }),
   setScpOpen: (open) => set({ scpOpen: open }),
 
+  openBulkScp: (label, connections) =>
+    set({
+      bulkScpOpen: true,
+      bulkScpLabel: label,
+      bulkScpConnections: connections,
+    }),
+  setBulkScpOpen: (open) =>
+    set(
+      open
+        ? { bulkScpOpen: true }
+        : { bulkScpOpen: false, bulkScpConnections: [], bulkScpLabel: "" },
+    ),
+
   setOrphanCredDialog: (payload) => set({ orphanCredDialog: payload }),
   setConfirmDeleteConn: (conn) => set({ confirmDeleteConn: conn }),
   setConfirmDeleteCred: (cred) => set({ confirmDeleteCred: cred }),
   setConfirmClosePane: (payload) => set({ confirmClosePane: payload }),
+  setConfirmTagAction: (payload) => set({ confirmTagAction: payload }),
 }));
