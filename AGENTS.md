@@ -85,7 +85,7 @@ Point at `http://localhost:1420` (run `npm run dev` first). Add to `~/.copilot/m
 ## End-to-End Tests
 
 - **Stack**: `tauri-driver` + WebdriverIO + Mocha (TypeScript). Specs in `e2e/specs/`, helpers in `e2e/helpers/`, selectors in `e2e/helpers/selectors.ts` (single source of truth).
-- **CI**: `.github/workflows/e2e.yml` runs on push to `main` and `workflow_dispatch` only. Advisory status — not a PR gate.
+- **CI**: `.github/workflows/e2e.yml` runs on push to `main`, version tag pushes (`v*`), pull requests, and `workflow_dispatch`. Advisory status — not a required PR gate, but failures surface on the PR.
 - **Local**: `npm run e2e` runs the suite inside a Linux container (tauri-driver doesn't run on macOS). Requires Docker.
 - **Storage isolation**: `SSX_DATA_DIR` env var (honored by `storage::data_dir()` and `keychain::secrets_path()`) points to a per-suite `mkdtemp`. The Tauri app is spawned once via `tauri-driver` and inherits the env, so all specs share one data dir — cross-spec isolation relies on every spec using unique credential / connection names.
 - **SSH targets**: `docker/docker-compose.yml` defines four alpine sshd servers (`server-a/b/c/d`) with healthchecks. The `e2e-runner` service (under `e2e` profile) is the dockerized runner.

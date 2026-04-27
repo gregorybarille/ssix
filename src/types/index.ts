@@ -164,7 +164,18 @@ export type ConnectionDraft = {
   destination_port?: number;
 };
 
-export type LayoutMode = "list" | "tile";
+/**
+ * Display mode for the connection / credential / tunnel lists.
+ *
+ * - `"list"`: a vertical stack of full-width rows.
+ * - `"tile"`: a CSS grid of fixed-width cards, one per item.
+ * - `"tags"`: a connections-focused grouped view with one tile per
+ *   distinct tag, plus bulk Connect-all and SCP-all actions for every
+ *   member of the group. Untagged connections fall under a synthetic
+ *   "Untagged" group. The LayoutToggle hides the tags button outside
+ *   the connections view.
+ */
+export type LayoutMode = "list" | "tile" | "tags";
 export type OpenMode = "tab" | "split_right" | "split_down";
 
 export interface AppSettings {

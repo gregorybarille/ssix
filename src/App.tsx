@@ -33,6 +33,16 @@ const LogsView = lazy(() =>
 const ScpDialog = lazy(() =>
   import("./components/ScpDialog").then((m) => ({ default: m.ScpDialog })),
 );
+const BulkScpDialog = lazy(() =>
+  import("./components/BulkScpDialog").then((m) => ({
+    default: m.BulkScpDialog,
+  })),
+);
+const TagGroupGrid = lazy(() =>
+  import("./components/TagGroupGrid").then((m) => ({
+    default: m.TagGroupGrid,
+  })),
+);
 
 /**
  * Minimal Suspense fallback for lazy-loaded views. Intentionally
@@ -67,6 +77,8 @@ import { useGlobalShortcuts } from "./hooks/useGlobalShortcuts";
 import { takeScreenshot } from "./lib/screenshot";
 import { log as appLog } from "./lib/log";
 import { Connection, ConnectionInput, Credential, LayoutMode } from "./types";
+import { connectMany } from "./lib/bulk-actions";
+import type { TagGroup } from "./lib/tags";
 import { Plus } from "lucide-react";
 
 /**
@@ -273,11 +285,56 @@ function App() {
 
   const handleSearch = (query: string) => {
     setSearchQuery(query);
+    // In tags view the search bar filters tag labels client-side
+    // (the whole UX point is to find tag *groups*, not individual
+    // hosts), so we deliberately don't trigger the backend search
+    // — that would replace the connections array and prevent the
+    // grouping logic from seeing every host. The TagGroupGrid
+    // reads `searchQuery` directly and filters its own groups.
+    if (settings.connection_layout === "tags") {
+      // Make sure we have the unfiltered list to group from. If
+      // the previous mode was list/tile and the user had a query,
+      // the store currently holds a filtered slice; refresh it.
+      void fetchConnections();
+      return;
+    }
     if (query) {
       searchConnections(query);
     } else {
       fetchConnections();
     }
+  };
+
+  /**
+   * Bulk-connect every actionable host in a tag group. Routed through
+   * a confirmation dialog regardless of host count: a misclick on
+   * "Connect all" can spawn dozens of SSH sessions and is genuinely
+   * costly to undo (each one has to be closed individually). The
+   * confirm handler calls `connectMany` (sequentially awaited so tabs
+   * appear in deterministic order; SSH handshakes still run in
+   * parallel server-side).
+   */
+  const handleConnectAllInTag = (group: TagGroup) => {
+    dialogs.setConfirmTagAction({
+      kind: "connect",
+      label: group.label,
+      connections: group.connections,
+    });
+  };
+
+  /**
+   * Open the bulk-SCP dialog for a tag group. Confirmation comes
+   * first (same rationale as Connect-all — bulk file transfer to
+   * many hosts is hard to interrupt cleanly); the bulk dialog then
+   * freezes the member snapshot at confirm time (see `openBulkScp`
+   * doc).
+   */
+  const handleScpAllInTag = (group: TagGroup) => {
+    dialogs.setConfirmTagAction({
+      kind: "scp",
+      label: group.label,
+      connections: group.connections,
+    });
   };
 
   /* ---------------------- Terminal-driven side effects ---------------------- */
@@ -416,6 +473,7 @@ function App() {
                       <LayoutToggle
                         value={settings.connection_layout}
                         onChange={(v) => updateLayout("connection_layout", v)}
+                        showTags
                       />
                       <Button size="sm" onClick={() => dialogs.openNewConnection()} data-testid="add-connection-button">
                         <Plus className="h-4 w-4 mr-1" />
@@ -428,19 +486,35 @@ function App() {
                       value={searchQuery}
                       onChange={setSearchQuery}
                       onSearch={handleSearch}
+                      placeholder={
+                        settings.connection_layout === "tags"
+                          ? "Search tags…"
+                          : undefined
+                      }
                     />
                   </div>
                   <div className="flex-1 overflow-y-auto px-4 py-2">
-                    <ConnectionList
-                      connections={connections}
-                      credentials={credentials}
-                      layout={settings.connection_layout}
-                      onEdit={(conn) => dialogs.openEditConnection(conn)}
-                      onDelete={handleDeleteConnection}
-                      onClone={(conn) => dialogs.openCloneConnection(conn)}
-                      onConnect={(c) => void connect(c)}
-                      onScp={(conn) => dialogs.openScp(conn)}
-                    />
+                    {settings.connection_layout === "tags" ? (
+                      <Suspense fallback={<ViewFallback label="Loading tags…" />}>
+                        <TagGroupGrid
+                          connections={connections}
+                          query={searchQuery}
+                          onConnectAll={handleConnectAllInTag}
+                          onScpAll={handleScpAllInTag}
+                        />
+                      </Suspense>
+                    ) : (
+                      <ConnectionList
+                        connections={connections}
+                        credentials={credentials}
+                        layout={settings.connection_layout}
+                        onEdit={(conn) => dialogs.openEditConnection(conn)}
+                        onDelete={handleDeleteConnection}
+                        onClone={(conn) => dialogs.openCloneConnection(conn)}
+                        onConnect={(c) => void connect(c)}
+                        onScp={(conn) => dialogs.openScp(conn)}
+                      />
+                    )}
                   </div>
                 </>
               )}
@@ -534,6 +608,15 @@ function App() {
         />
       </Suspense>
 
+      <Suspense fallback={null}>
+        <BulkScpDialog
+          open={dialogs.bulkScpOpen}
+          onOpenChange={dialogs.setBulkScpOpen}
+          connections={dialogs.bulkScpConnections}
+          groupLabel={dialogs.bulkScpLabel}
+        />
+      </Suspense>
+
       {/* Custom context menu */}
       {dialogs.contextMenu && (
         <ContextMenu
@@ -622,6 +705,60 @@ function App() {
             await closeTab(tabId);
           } else {
             await closePane(payload.sessionId);
+          }
+        }}
+      />
+
+      {/* Tag-group bulk action confirm. Always shown before
+          Connect-all or SCP-all regardless of host count — see
+          handleConnectAllInTag/handleScpAllInTag rationale. */}
+      <ConfirmDialog
+        open={!!dialogs.confirmTagAction}
+        onOpenChange={(o) => !o && dialogs.setConfirmTagAction(null)}
+        title={
+          dialogs.confirmTagAction?.kind === "scp"
+            ? "Transfer files to all?"
+            : "Connect to all?"
+        }
+        description={
+          dialogs.confirmTagAction ? (
+            <>
+              {dialogs.confirmTagAction.kind === "scp" ? (
+                <>
+                  Open a bulk file transfer dialog for{" "}
+                  <strong>{dialogs.confirmTagAction.connections.length}</strong>{" "}
+                  connection
+                  {dialogs.confirmTagAction.connections.length === 1 ? "" : "s"}{" "}
+                  tagged{" "}
+                  <strong>{dialogs.confirmTagAction.label}</strong>?
+                </>
+              ) : (
+                <>
+                  Open SSH sessions for{" "}
+                  <strong>{dialogs.confirmTagAction.connections.length}</strong>{" "}
+                  connection
+                  {dialogs.confirmTagAction.connections.length === 1 ? "" : "s"}{" "}
+                  tagged{" "}
+                  <strong>{dialogs.confirmTagAction.label}</strong>?
+                  Port-forward connections will be skipped.
+                </>
+              )}
+            </>
+          ) : null
+        }
+        confirmLabel={
+          dialogs.confirmTagAction?.kind === "scp"
+            ? "Open transfer dialog"
+            : "Connect all"
+        }
+        testId="confirm-tag-action"
+        onConfirm={async () => {
+          const payload = dialogs.confirmTagAction;
+          if (!payload) return;
+          if (payload.kind === "connect") {
+            await connectMany(payload.connections);
+          } else {
+            dialogs.openBulkScp(payload.label, payload.connections);
           }
         }}
       />

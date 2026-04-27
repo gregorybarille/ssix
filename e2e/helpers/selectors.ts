@@ -6,6 +6,18 @@
  * a refactor that renames a testid only requires editing this file.
  */
 
+/**
+ * Mirrors the slugifyTagId helper in TagGroupGrid.tsx — must stay
+ * identical so selectors match the data-testid values rendered by the
+ * component. Convert a tag label to a safe CSS-selector fragment.
+ */
+function slugifyTagId(label: string): string {
+  return label
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+}
+
 export const sel = {
   // Top-level navigation
   sidebar: '[data-testid="sidebar"]',
@@ -62,6 +74,7 @@ export const sel = {
 
   // Connect / terminal
   connectButton: (id: string) => `[data-testid="connect-button-${id}"]`,
+  editConnection: (id: string) => `[data-testid="edit-connection-${id}"]`,
   terminalContainer: '[data-testid="terminal-container"]',
   terminalTabClose: (id: string) => `[data-testid="close-tab-${id}"]`,
 
@@ -104,4 +117,39 @@ export const sel = {
   // Settings panel
   settingsSave: '[data-testid="settings-save"]',
   settingsGitSyncRepoPath: '[data-testid="settings-git-sync-repo-path"]',
+
+  // Layout toggle (list / tile / tags)
+  layoutToggleList: '[data-testid="layout-toggle-list"]',
+  layoutToggleTile: '[data-testid="layout-toggle-tile"]',
+  layoutToggleTags: '[data-testid="layout-toggle-tags"]',
+
+  // Tag-group view. Tile testids encode the tag label as a URL-safe
+  // slug (lowercase, non-alphanumeric chars collapsed to "-") so that
+  // CSS-special characters in user-entered tag names never break
+  // attribute selectors. "untagged" is the sentinel for the
+  // no-tag group.
+  tagGroupGrid: '[data-testid="tag-group-grid"]',
+  tagGroup: (label: string) =>
+    `[data-testid="tag-group-${slugifyTagId(label)}"]`,
+  tagConnectAll: (label: string) =>
+    `[data-testid="tag-connect-all-${slugifyTagId(label)}"]`,
+  tagScpAll: (label: string) =>
+    `[data-testid="tag-scp-all-${slugifyTagId(label)}"]`,
+
+  // Bulk SCP dialog
+  bulkScpDialog: '[data-testid="bulk-scp-dialog"]',
+  bulkScpModeUpload: '[data-testid="bulk-scp-mode-upload"]',
+  bulkScpModeDownload: '[data-testid="bulk-scp-mode-download"]',
+  bulkScpLocalPath: '[data-testid="bulk-scp-local-path"]',
+  bulkScpRemotePath: '[data-testid="bulk-scp-remote-path"]',
+  bulkScpStart: '[data-testid="bulk-scp-start"]',
+  bulkScpProgress: '[data-testid="bulk-scp-progress"]',
+  bulkScpRow: (connectionId: string) =>
+    `[data-testid="bulk-scp-row-${connectionId}"]`,
+  bulkScpSummary: '[data-testid="bulk-scp-summary"]',
+
+  // Tag-action confirm dialog (Connect-all / SCP-all gate)
+  confirmTagAction: '[data-testid="confirm-tag-action"]',
+  confirmTagActionConfirm: '[data-testid="confirm-tag-action-confirm"]',
+  confirmTagActionCancel: '[data-testid="confirm-tag-action-cancel"]',
 } as const;

@@ -2,12 +2,15 @@ name: E2E
 
 # Advisory E2E job — runs the full Tauri app under tauri-driver
 # against the Dockerized SSH fixtures. Per project decision:
-#   * push to main only (no PR trigger to avoid 15-min CI bills per push)
+#   * push to main and tag pushes (release validation)
+#   * pull_request so PRs surface E2E failures before merge
 #   * advisory status (never required for merges; flake-tolerant)
 #   * workflow_dispatch lets devs re-run a failing build without a commit
 on:
   push:
     branches: [main]
+    tags: ["v*"]
+  pull_request:
   workflow_dispatch:
 
 # A second push to main while one is running is a wasted ~15 min — let

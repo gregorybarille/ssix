@@ -107,7 +107,8 @@ See [Git Sync](git-sync.md) for details.
 - font family
 - font size
 - color scheme
-- list/tile layouts per section
+- list/tile layouts per section (the Connections view also offers a
+  third **Tag groups** layout — see [Tag groups](#tag-groups))
 - default terminal open mode
 - Git Sync repository settings
 
@@ -356,6 +357,42 @@ saved connection without leaving the keyboard:
   selected connection as the user navigates.
 - The footer reminds users of the available keys
   (`↑↓ navigate · ↵ connect · Esc close`).
+
+## Tag Groups
+
+The Connections view supports a third layout — **Tag groups** —
+that pivots the list around tags instead of hosts. Each tile
+represents one distinct tag (with one trailing `Untagged` tile for
+hosts that carry no tags) and offers two bulk actions:
+
+- **Connect-all** opens an SSH session, in its own tab, for every
+  actionable connection in the group. Sessions start in the same
+  order as the connections list; SSH handshakes still run in
+  parallel server-side.
+- **SCP** opens the **bulk transfer dialog** for the group:
+  - **Upload** sends the same local file/directory to the same
+    remote path on every host. Use absolute paths so per-host
+    `remote_path` defaults don't shift the target.
+  - **Download** fetches the same remote path from every host into
+    a single local directory. Each downloaded file is suffixed
+    with `-<connection-name>` (sanitized for filesystem use) so
+    multiple hosts don't overwrite each other (e.g.
+    `app.log` → `app-server-a.log`, `app-server-b.log`). Recursive
+    downloads suffix the top-level directory name only
+    (`mydir-server-a/`).
+  - Transfers run sequentially, one host at a time, with a live
+    per-host progress list. Errors on one host don't abort the
+    rest of the batch.
+  - Connections that have multiple tags appear under each of their
+    tags so bulk actions on `prod` really do hit every prod host
+    even when some are also in `db`.
+  - Port-forward entries are listed but greyed out — they can't
+    do SCP and the SCP commands reject them server-side.
+- The search bar in tag-groups mode filters tag labels only
+  (case-insensitive substring), since the whole point of this view
+  is to find tag groups, not individual hosts.
+- The view mode is persisted per user via
+  `AppSettings.connection_layout` (`"tags"`).
 
 ## Reduced Motion
 
