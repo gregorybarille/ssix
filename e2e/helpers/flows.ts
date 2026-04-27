@@ -72,7 +72,7 @@ export async function createDirectConnection(input: DirectConnectionInput): Prom
   const credentialPicker = await browser.$(sel.connectionFormCredential);
   await credentialPicker.waitForClickable({ timeout: 10_000 });
   await credentialPicker.click();
-  const opt = await browser.$(`[role="option"][data-name="${input.credentialName}"]`);
+  const opt = await browser.$("[role=\"option\"][data-name=\"" + input.credentialName + "\""]");
   await opt.waitForClickable({ timeout: 10_000 });
   await opt.click();
   await click(sel.connectionFormSubmit);
@@ -91,7 +91,7 @@ export async function connectToConnection(name: string): Promise<void> {
   await navigateTo("connections");
   const row = await browser.$(sel.connectionRowByName(name));
   await row.waitForExist({ timeout: 10_000 });
-  const btn = await row.$('[data-testid^="connect-button-"]');
+  const btn = await row.$('[data-testid^=\"connect-button-\"]');
   await btn.waitForClickable({ timeout: 10_000 });
   await btn.click();
 }
@@ -118,18 +118,23 @@ export async function waitForTerminalContains(needle: string, timeoutMs = 30_000
         timeoutMsg: `Terminal did not contain ${JSON.stringify(needle)} within ${timeoutMs}ms`,
       },
     );
-  } catch (err) {
+  } catch {
     // Re-throw with a richer message if a FailedTerminal is mounted —
     // the underlying SSH failure is the real diagnostic.
     const richer = await buildTerminalTimeoutMessage(needle, timeoutMs);
     if (richer) throw new Error(richer);
-    throw err;
+
+    const terminalText = await readTerminalText().catch(() => "");
+    throw new Error(
+      `Terminal did not contain ${JSON.stringify(needle)} within ${timeoutMs}ms.\n` +
+        `Visible terminal text:\n${terminalText || "(empty)"}`,
+    );
   }
 }
 
 async function buildTerminalTimeoutMessage(needle: string, timeoutMs: number): Promise<string | null> {
   try {
-    const failed = await browser.$('[data-testid="failed-terminal"]');
+    const failed = await browser.$('[data-testid=\"failed-terminal\"]');
     if (await failed.isExisting()) {
       const err = await failed.getAttribute("data-error");
       if (err && err.length > 0) {
