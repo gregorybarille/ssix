@@ -311,11 +311,35 @@ fn upload_bytes(
         .session
         .scp_send(Path::new(remote_path), 0o644, bytes.len() as u64, None)
         .map_err(|e| format!("SCP upload to {} failed ({}): {}", remote_path, ssh.destination_label, e))?;
-    remote.write_all(bytes).map_err(|e| e.to_string())?;
-    remote.send_eof().ok();
-    remote.wait_eof().ok();
-    remote.close().ok();
-    remote.wait_close().ok();
+    remote
+        .write_all(bytes)
+        .map_err(|e| format!("SCP upload to {} failed while writing ({}): {}", remote_path, ssh.destination_label, e))?;
+    // Flush the SCP protocol exchange. If the remote `scp` helper is missing
+    // or exits non-zero, libssh2 surfaces it during the close/wait_close
+    // sequence below (or via a non-zero channel exit status). Swallowing
+    // these previously caused phantom "Transferred N bytes" successes when
+    // the file never landed on disk.
+    remote
+        .send_eof()
+        .map_err(|e| format!("SCP upload to {} failed during send_eof ({}): {}", remote_path, ssh.destination_label, e))?;
+    remote
+        .wait_eof()
+        .map_err(|e| format!("SCP upload to {} failed during wait_eof ({}): {}", remote_path, ssh.destination_label, e))?;
+    remote
+        .close()
+        .map_err(|e| format!("SCP upload to {} failed during close ({}): {}", remote_path, ssh.destination_label, e))?;
+    remote
+        .wait_close()
+        .map_err(|e| format!("SCP upload to {} failed during wait_close ({}): {}", remote_path, ssh.destination_label, e))?;
+    let exit = remote
+        .exit_status()
+        .map_err(|e| format!("SCP upload to {} failed reading exit status ({}): {}", remote_path, ssh.destination_label, e))?;
+    if exit != 0 {
+        return Err(format!(
+            "SCP upload to {} failed ({}): remote scp exited with status {} (is the `scp` binary installed on the remote host?)",
+            remote_path, ssh.destination_label, exit
+        ));
+    }
     Ok(remote_path.to_string())
 }
 
@@ -328,11 +352,30 @@ fn download_bytes(
         .scp_recv(Path::new(remote_path))
         .map_err(|e| format!("SCP download from {} failed ({}): {}", remote_path, ssh.destination_label, e))?;
     let mut bytes = Vec::new();
-    remote.read_to_end(&mut bytes).map_err(|e| e.to_string())?;
-    remote.send_eof().ok();
-    remote.wait_eof().ok();
-    remote.close().ok();
-    remote.wait_close().ok();
+    remote
+        .read_to_end(&mut bytes)
+        .map_err(|e| format!("SCP download from {} failed while reading ({}): {}", remote_path, ssh.destination_label, e))?;
+    remote
+        .send_eof()
+        .map_err(|e| format!("SCP download from {} failed during send_eof ({}): {}", remote_path, ssh.destination_label, e))?;
+    remote
+        .wait_eof()
+        .map_err(|e| format!("SCP download from {} failed during wait_eof ({}): {}", remote_path, ssh.destination_label, e))?;
+    remote
+        .close()
+        .map_err(|e| format!("SCP download from {} failed during close ({}): {}", remote_path, ssh.destination_label, e))?;
+    remote
+        .wait_close()
+        .map_err(|e| format!("SCP download from {} failed during wait_close ({}): {}", remote_path, ssh.destination_label, e))?;
+    let exit = remote
+        .exit_status()
+        .map_err(|e| format!("SCP download from {} failed reading exit status ({}): {}", remote_path, ssh.destination_label, e))?;
+    if exit != 0 {
+        return Err(format!(
+            "SCP download from {} failed ({}): remote scp exited with status {} (is the `scp` binary installed on the remote host?)",
+            remote_path, ssh.destination_label, exit
+        ));
+    }
     Ok((bytes, stat.size()))
 }
 

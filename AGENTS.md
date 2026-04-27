@@ -38,7 +38,7 @@
 4. `src/types/index.ts` — mirror Rust shape with snake_case fields
 5. `src/store/use<Area>Store.ts` — `invoke("command_name", {...})` + update state
 6. Wire into `App.tsx` or relevant component
-7. **Tests are mandatory** — `npm test` + `cargo test` must pass before a feature is complete
+7. **Tests are mandatory** — `npm test` + `cargo test` must pass before a feature is complete. Any new feature or behavioural change MUST also update the relevant E2E spec(s) under `e2e/specs/` (or add a new one) and keep `e2e/helpers/selectors.ts` in sync. New user-facing flows without E2E coverage are not considered complete.
 
 ## Code Reuse (Mandatory)
 
