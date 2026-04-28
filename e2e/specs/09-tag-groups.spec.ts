@@ -18,8 +18,7 @@
  * spec is suffixed `-09` so the shared per-suite SSX_DATA_DIR can
  * coexist with other specs without cross-contamination.
  */
-import { writeFileSync, mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { waitForAppReady } from "../helpers/app.js";
 import { TARGETS, waitForServers } from "../helpers/docker.js";
@@ -64,7 +63,8 @@ async function tagConnection(name: string, tag: string): Promise<void> {
 describe("Tag-group view + bulk actions", () => {
   before(async () => {
     await waitForServers(["a", "b"]);
-    workDir = mkdtempSync(join(tmpdir(), "ssx-tags-"));
+    workDir = join(process.cwd(), "e2e", ".tmp", `ssx-tags-${Date.now()}`);
+    mkdirSync(workDir, { recursive: true });
     upload = join(workDir, "tag-upload.txt");
     writeFileSync(upload, "ssx-tag-bulk-payload\n");
   });
@@ -145,8 +145,22 @@ describe("Tag-group view + bulk actions", () => {
     await bulkDialog.waitForExist({ timeout: 10_000 });
 
     await (await browser.$(sel.bulkScpModeUpload)).click();
-    await (await browser.$(sel.bulkScpLocalPath)).setValue(upload);
-    await (await browser.$(sel.bulkScpRemotePath)).setValue("/tmp/");
+    if (!existsSync(upload)) {
+      throw new Error(`Bulk SCP upload fixture missing before submit: ${upload}`);
+    }
+    const localInput = await browser.$(sel.bulkScpLocalPath);
+    await localInput.setValue(upload);
+    await browser.waitUntil(async () => (await localInput.getValue()) === upload, {
+      timeout: 5_000,
+      timeoutMsg: "Bulk SCP local path input did not receive the fixture path",
+    });
+
+    const remoteInput = await browser.$(sel.bulkScpRemotePath);
+    await remoteInput.setValue("/tmp/");
+    await browser.waitUntil(async () => (await remoteInput.getValue()) === "/tmp/", {
+      timeout: 5_000,
+      timeoutMsg: "Bulk SCP remote path input did not receive /tmp/",
+    });
     await (await browser.$(sel.bulkScpStart)).click();
 
     // Wait for both per-host rows to show data-status="success".
