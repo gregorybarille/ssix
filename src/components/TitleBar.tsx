@@ -95,13 +95,29 @@ export function TitleBar({ onSettings, settingsActive }: TitleBarProps) {
   return (
     <div
       data-tauri-drag-region
-      className="h-9 bg-card border-b border-border flex items-center select-none shrink-0"
+      className="relative h-9 bg-card border-b border-border flex items-center select-none shrink-0"
     >
       {/* macOS: left spacer for traffic lights */}
       {platform === "macos" && <div className="w-20" data-tauri-drag-region />}
 
       {/* Draggable fill area */}
       <div className="flex-1" data-tauri-drag-region />
+
+      {/*
+        Centered lowercase wordmark. Absolutely positioned so it sits
+        in the geometric center of the title bar regardless of which
+        platform-specific affordances flank it (macOS traffic lights
+        on the left, Windows/Linux window controls on the right).
+        `pointer-events-none` keeps the entire bar draggable through
+        the wordmark — Tauri's drag-region only listens for primary
+        clicks on elements that don't intercept them.
+      */}
+      <span
+        aria-hidden="true"
+        className="pointer-events-none absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 font-mono text-xs text-muted-foreground tracking-tight"
+      >
+        ssix
+      </span>
 
       <button
         onClick={onSettings}

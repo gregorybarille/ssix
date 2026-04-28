@@ -21,8 +21,8 @@ interface SidebarProps {
 
 const navItems: { id: NavItem; label: string; icon: React.ReactNode }[] = [
   { id: "connections", label: "Connections", icon: <Server className="h-5 w-5" /> },
-  { id: "credentials", label: "Credentials", icon: <Key className="h-5 w-5" /> },
   { id: "tunnels", label: "Tunnels", icon: <Cable className="h-5 w-5" /> },
+  { id: "credentials", label: "Credentials", icon: <Key className="h-5 w-5" /> },
   { id: "logs", label: "Logs", icon: <ScrollText className="h-5 w-5" /> },
 ];
 
@@ -118,14 +118,9 @@ export function Sidebar({
         Drop the aria-label here so AT only surfaces a single
         'Primary' navigation landmark.
       */
-      className="w-16 bg-card border-r border-border flex flex-col items-center py-4 gap-2"
+      className="w-16 bg-card border-r border-border flex flex-col items-center py-4 gap-2 shrink-0 overflow-hidden"
       data-testid="sidebar"
     >
-      <div className="mb-4" aria-hidden="true">
-        <div className="w-8 h-8 rounded-lg bg-primary flex items-center justify-center">
-          <span className="text-primary-foreground font-bold text-sm">S</span>
-        </div>
-      </div>
       <nav aria-label="Primary" className="contents">
         {navItems.map(({ id, label, icon }) => (
           <NavButton

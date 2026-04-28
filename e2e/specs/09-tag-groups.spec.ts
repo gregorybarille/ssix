@@ -18,14 +18,14 @@
  * spec is suffixed `-09` so the shared per-suite SSX_DATA_DIR can
  * coexist with other specs without cross-contamination.
  */
-import { writeFileSync, mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { waitForAppReady } from "../helpers/app.js";
 import { TARGETS, waitForServers } from "../helpers/docker.js";
 import {
   createPasswordCredential,
   createDirectConnection,
+  saveConnectionForm,
   navigateTo,
 } from "../helpers/flows.js";
 import { sel } from "../helpers/selectors.js";
@@ -57,32 +57,36 @@ async function tagConnection(name: string, tag: string): Promise<void> {
   // wdio because comma can be remapped on some keyboard layouts.
   await tagsInput.setValue(tag);
   await browser.keys(["Enter"]);
-    const submit = await browser.$(sel.connectionFormSubmit);
-    await submit.waitForExist({ timeout: 10_000 });
-    // The connection form is a tall scrollable dialog; on Linux CI the
-    // WebDriver Actions API occasionally reports "move target out of
-    // bounds" when trying to scroll the sticky DialogFooter button into
-    // view, leaving `waitForClickable` to time out. Force-scroll via JS
-    // first (matches what wdio's auto-scroll attempts but reliably) and
-    // fall back to a JS click if Actions still refuses to fire.
-    await browser.execute(
-      (el: HTMLElement) => el.scrollIntoView({ block: "center" }),
-      submit,
-    );
-    try {
-      await submit.waitForClickable({ timeout: 5_000 });
-      await submit.click();
-    } catch {
-      await browser.execute((el: HTMLElement) => el.click(), submit);
-    }
-    const form = await browser.$(sel.connectionForm);
-    await form.waitForExist({ reverse: true, timeout: 10_000 });
+  await saveConnectionForm();
+}
+
+async function setTextInputValue(selector: string, value: string): Promise<void> {
+  const input = await browser.$(selector);
+  await input.waitForExist({ timeout: 10_000 });
+  await browser.execute(
+    (el: HTMLInputElement, nextValue: string) => {
+      const setter = Object.getOwnPropertyDescriptor(
+        HTMLInputElement.prototype,
+        "value",
+      )?.set;
+      setter?.call(el, nextValue);
+      el.dispatchEvent(new Event("input", { bubbles: true }));
+      el.dispatchEvent(new Event("change", { bubbles: true }));
+    },
+    input,
+    value,
+  );
+  await browser.waitUntil(async () => (await input.getValue()) === value, {
+    timeout: 5_000,
+    timeoutMsg: `Input ${selector} did not receive ${value}`,
+  });
 }
 
 describe("Tag-group view + bulk actions", () => {
   before(async () => {
     await waitForServers(["a", "b"]);
-    workDir = mkdtempSync(join(tmpdir(), "ssx-tags-"));
+    workDir = join(process.cwd(), "e2e", ".tmp", `ssx-tags-${Date.now()}`);
+    mkdirSync(workDir, { recursive: true });
     upload = join(workDir, "tag-upload.txt");
     writeFileSync(upload, "ssx-tag-bulk-payload\n");
   });
@@ -163,8 +167,11 @@ describe("Tag-group view + bulk actions", () => {
     await bulkDialog.waitForExist({ timeout: 10_000 });
 
     await (await browser.$(sel.bulkScpModeUpload)).click();
-    await (await browser.$(sel.bulkScpLocalPath)).setValue(upload);
-    await (await browser.$(sel.bulkScpRemotePath)).setValue("/tmp/");
+    if (!existsSync(upload)) {
+      throw new Error(`Bulk SCP upload fixture missing before submit: ${upload}`);
+    }
+    await setTextInputValue(sel.bulkScpLocalPath, upload);
+    await setTextInputValue(sel.bulkScpRemotePath, "/tmp/");
     await (await browser.$(sel.bulkScpStart)).click();
 
     // Wait for both per-host rows to show data-status="success".
@@ -184,8 +191,12 @@ describe("Tag-group view + bulk actions", () => {
         // Bail early if a host failed — there's no recovery and the
         // 60s wait would just be wasted.
         if (errorRows.length > 0) {
+          const details: string[] = [];
+          for (let i = 0; i < errorRows.length; i += 1) {
+            details.push(await errorRows[i].getText());
+          }
           throw new Error(
-            `Bulk SCP reported ${errorRows.length} failed host row(s); aborting wait.`,
+            `Bulk SCP reported ${errorRows.length} failed host row(s); aborting wait.\n${details.join("\n---\n")}`,
           );
         }
         return successRows.length >= 2;

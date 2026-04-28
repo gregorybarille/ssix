@@ -44,60 +44,21 @@ describe("GitSyncView", () => {
     expect(screen.getByRole("button", { name: /sync/i })).toBeInTheDocument();
   });
 
-  it("requires confirmation before pulling from the remote", async () => {
-    const pullRemote = vi.fn().mockResolvedValue(undefined);
-    useGitSyncStore.setState({ pullRemote });
+  it("invokes the consolidated runSync action when Sync is clicked", async () => {
+    const runSync = vi.fn().mockResolvedValue(undefined);
+    useGitSyncStore.setState({ runSync });
     render(<GitSyncView />);
-
-    fireEvent.click(screen.getByRole("button", { name: /^pull$/i }));
-    // The store action should NOT have fired yet — only the dialog opened.
-    expect(pullRemote).not.toHaveBeenCalled();
-
-    // Confirm dialog should be present with cancel focused (not pull).
-    const dialog = await screen.findByRole("dialog");
-    expect(dialog).toHaveTextContent(/pull from remote/i);
-    expect(document.activeElement).toHaveTextContent(/cancel/i);
-
-    // Confirm; the store action runs exactly once and the dialog closes.
-    fireEvent.click(
-      screen.getAllByRole("button", { name: /^pull$/i }).slice(-1)[0],
-    );
-    await waitFor(() => expect(pullRemote).toHaveBeenCalledTimes(1));
+    fireEvent.click(screen.getByRole("button", { name: /^sync$/i }));
+    await waitFor(() => expect(runSync).toHaveBeenCalledTimes(1));
   });
 
-  it("requires confirmation before pushing to the remote", async () => {
-    const pushRemote = vi.fn().mockResolvedValue(undefined);
-    useGitSyncStore.setState({ pushRemote });
+  it("does not render separate Fetch / Pull / Push toolbar buttons", () => {
+    // The toolbar collapses fetch + pull + push into a single Sync action.
+    // Asserting their absence guards against accidental re-introduction.
     render(<GitSyncView />);
-
-    fireEvent.click(screen.getByRole("button", { name: /^push$/i }));
-    expect(pushRemote).not.toHaveBeenCalled();
-
-    const dialog = await screen.findByRole("dialog");
-    expect(dialog).toHaveTextContent(/push to remote/i);
-    expect(document.activeElement).toHaveTextContent(/cancel/i);
-
-    fireEvent.click(
-      screen.getAllByRole("button", { name: /^push$/i }).slice(-1)[0],
-    );
-    await waitFor(() => expect(pushRemote).toHaveBeenCalledTimes(1));
-  });
-
-  it("cancelling the pull confirmation does not invoke the store action", async () => {
-    const pullRemote = vi.fn().mockResolvedValue(undefined);
-    useGitSyncStore.setState({ pullRemote });
-    render(<GitSyncView />);
-
-    fireEvent.click(screen.getByRole("button", { name: /^pull$/i }));
-    const dialog = await screen.findByRole("dialog");
-    fireEvent.click(
-      // The cancel button is the only "Cancel" labelled control.
-      within(dialog).getByRole("button", { name: /cancel/i }),
-    );
-    await waitFor(() =>
-      expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
-    );
-    expect(pullRemote).not.toHaveBeenCalled();
+    expect(screen.queryByRole("button", { name: /^fetch$/i })).toBeNull();
+    expect(screen.queryByRole("button", { name: /^pull$/i })).toBeNull();
+    expect(screen.queryByRole("button", { name: /^push$/i })).toBeNull();
   });
 
   /*
@@ -170,13 +131,14 @@ describe("GitSyncView", () => {
     expect(alert.textContent).toMatch(/remote: rejected/);
   });
 
-  it("toolbar buttons carry aria-busy while a sync is running", () => {
+  it("Sync toolbar button carries aria-busy while a sync is running", () => {
+    // After collapsing the toolbar to a single bidirectional Sync action,
+    // there is only one button to assert against — but the aria-busy
+    // contract still matters: AT users need to know the action is in
+    // flight before the result banner / error region updates.
     useGitSyncStore.setState({ isLoading: true });
     render(<GitSyncView />);
-    // Each toolbar button should be aria-busy=true.
-    for (const name of [/^sync$/i, /^fetch$/i, /^pull$/i, /^push$/i]) {
-      const btn = screen.getByRole("button", { name });
-      expect(btn).toHaveAttribute("aria-busy", "true");
-    }
+    const btn = screen.getByRole("button", { name: /^sync$/i });
+    expect(btn).toHaveAttribute("aria-busy", "true");
   });
 });
