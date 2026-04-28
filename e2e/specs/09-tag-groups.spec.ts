@@ -60,6 +60,28 @@ async function tagConnection(name: string, tag: string): Promise<void> {
   await saveConnectionForm();
 }
 
+async function setTextInputValue(selector: string, value: string): Promise<void> {
+  const input = await browser.$(selector);
+  await input.waitForExist({ timeout: 10_000 });
+  await browser.execute(
+    (el: HTMLInputElement, nextValue: string) => {
+      const setter = Object.getOwnPropertyDescriptor(
+        HTMLInputElement.prototype,
+        "value",
+      )?.set;
+      setter?.call(el, nextValue);
+      el.dispatchEvent(new Event("input", { bubbles: true }));
+      el.dispatchEvent(new Event("change", { bubbles: true }));
+    },
+    input,
+    value,
+  );
+  await browser.waitUntil(async () => (await input.getValue()) === value, {
+    timeout: 5_000,
+    timeoutMsg: `Input ${selector} did not receive ${value}`,
+  });
+}
+
 describe("Tag-group view + bulk actions", () => {
   before(async () => {
     await waitForServers(["a", "b"]);
@@ -148,19 +170,8 @@ describe("Tag-group view + bulk actions", () => {
     if (!existsSync(upload)) {
       throw new Error(`Bulk SCP upload fixture missing before submit: ${upload}`);
     }
-    const localInput = await browser.$(sel.bulkScpLocalPath);
-    await localInput.setValue(upload);
-    await browser.waitUntil(async () => (await localInput.getValue()) === upload, {
-      timeout: 5_000,
-      timeoutMsg: "Bulk SCP local path input did not receive the fixture path",
-    });
-
-    const remoteInput = await browser.$(sel.bulkScpRemotePath);
-    await remoteInput.setValue("/tmp/");
-    await browser.waitUntil(async () => (await remoteInput.getValue()) === "/tmp/", {
-      timeout: 5_000,
-      timeoutMsg: "Bulk SCP remote path input did not receive /tmp/",
-    });
+    await setTextInputValue(sel.bulkScpLocalPath, upload);
+    await setTextInputValue(sel.bulkScpRemotePath, "/tmp/");
     await (await browser.$(sel.bulkScpStart)).click();
 
     // Wait for both per-host rows to show data-status="success".
