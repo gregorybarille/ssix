@@ -167,12 +167,17 @@ describe("Tag-group view + bulk actions", () => {
     await (await browser.$(sel.bulkScpRemotePath)).setValue("/tmp/");
     await (await browser.$(sel.bulkScpStart)).click();
 
-    // Wait for both per-host rows to show data-status="success".
+    // Wait for both per-host rows to reach a terminal state (success or
+    // error) with no pending/running rows remaining.
     // We can't use getAttribute("data-status") here — webkit2gtk-driver
     // (which tauri-driver wraps on Linux CI) returns a WebDriver error
     // for `data-*` attribute reads on some elements, which wdio's
     // waitUntil callback then catches and treats as "not yet" forever.
     // CSS attribute selectors don't go through that path and work fine.
+    // We intentionally do NOT abort early on transient error rows because
+    // in CI a row can briefly show data-status="error" before settling to
+    // its final state; waiting for all rows to be terminal avoids the flake.
+    const expectedHosts = 2;
     await browser.waitUntil(
       async () => {
         const successRows = await browser.$$(
@@ -181,21 +186,27 @@ describe("Tag-group view + bulk actions", () => {
         const errorRows = await browser.$$(
           '[data-testid^="bulk-scp-row-"][data-status="error"]',
         );
-        // Bail early if a host failed — there's no recovery and the
-        // 60s wait would just be wasted.
-        if (errorRows.length > 0) {
-          throw new Error(
-            `Bulk SCP reported ${errorRows.length} failed host row(s); aborting wait.`,
-          );
-        }
-        return successRows.length >= 2;
+        const pendingRows = await browser.$$(
+          '[data-testid^="bulk-scp-row-"][data-status="pending"],[data-testid^="bulk-scp-row-"][data-status="running"]',
+        );
+        return (
+          successRows.length + errorRows.length === expectedHosts &&
+          pendingRows.length === 0
+        );
       },
       {
-        timeout: 60_000,
+        timeout: 30_000,
+        interval: 200,
         timeoutMsg:
-          "Bulk SCP upload did not reach success on every per-host row within 60s",
+          "Bulk SCP rows did not reach terminal state within 30s",
       },
     );
+
+    // Final assertion: all rows must have succeeded (no errors).
+    const finalErrorRows = await browser.$$(
+      '[data-testid^="bulk-scp-row-"][data-status="error"]',
+    );
+    expect(finalErrorRows).toHaveLength(0);
 
     const summary = await browser.$(sel.bulkScpSummary);
     await summary.waitForExist({ timeout: 10_000 });
