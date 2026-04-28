@@ -277,29 +277,33 @@ export function ConnectionList({
                 )}
                 <div className="flex items-center gap-1">
                 {onScp && (
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    className="h-7 w-7"
-                    disabled={conn.type === "port_forward"}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      if (conn.type !== "port_forward") onScp(conn);
-                    }}
-                    aria-label={
-                      conn.type === "port_forward"
-                        ? "SCP not available for port-forward connections"
-                        : `Transfer files to ${conn.name}`
-                    }
+                  <span
                     title={
                       conn.type === "port_forward"
                         ? "SCP not available for port-forward connections"
                         : undefined
                     }
-                    data-testid={`scp-open-${conn.id}`}
+                    className="inline-flex"
                   >
-                    <ArrowUpDown className="h-3.5 w-3.5" aria-hidden="true" />
-                  </Button>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-7 w-7"
+                      disabled={conn.type === "port_forward"}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        if (conn.type !== "port_forward") onScp(conn);
+                      }}
+                      aria-label={
+                        conn.type === "port_forward"
+                          ? "SCP not available for port-forward connections"
+                          : `Transfer files to ${conn.name}`
+                      }
+                      data-testid={`scp-open-${conn.id}`}
+                    >
+                      <ArrowUpDown className="h-3.5 w-3.5" aria-hidden="true" />
+                    </Button>
+                  </span>
                 )}
                 <Button
                   variant="ghost"
@@ -438,29 +442,33 @@ export function ConnectionList({
               )}
               <div className="flex items-center gap-1">
               {onScp && (
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="h-7 w-7"
-                  disabled={conn.type === "port_forward"}
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    if (conn.type !== "port_forward") onScp(conn);
-                  }}
-                  aria-label={
-                    conn.type === "port_forward"
-                      ? "SCP not available for port-forward connections"
-                      : `Transfer files to ${conn.name}`
-                  }
+                <span
                   title={
                     conn.type === "port_forward"
                       ? "SCP not available for port-forward connections"
                       : undefined
                   }
-                  data-testid={`scp-open-${conn.id}`}
+                  className="inline-flex"
                 >
-                  <ArrowUpDown className="h-3.5 w-3.5" aria-hidden="true" />
-                </Button>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="h-7 w-7"
+                    disabled={conn.type === "port_forward"}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      if (conn.type !== "port_forward") onScp(conn);
+                    }}
+                    aria-label={
+                      conn.type === "port_forward"
+                        ? "SCP not available for port-forward connections"
+                        : `Transfer files to ${conn.name}`
+                    }
+                    data-testid={`scp-open-${conn.id}`}
+                  >
+                    <ArrowUpDown className="h-3.5 w-3.5" aria-hidden="true" />
+                  </Button>
+                </span>
               )}
               <Button
                 variant="ghost"
