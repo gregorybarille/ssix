@@ -26,6 +26,7 @@ import { TARGETS, waitForServers } from "../helpers/docker.js";
 import {
   createPasswordCredential,
   createDirectConnection,
+  saveConnectionForm,
   navigateTo,
 } from "../helpers/flows.js";
 import { sel } from "../helpers/selectors.js";
@@ -57,26 +58,7 @@ async function tagConnection(name: string, tag: string): Promise<void> {
   // wdio because comma can be remapped on some keyboard layouts.
   await tagsInput.setValue(tag);
   await browser.keys(["Enter"]);
-    const submit = await browser.$(sel.connectionFormSubmit);
-    await submit.waitForExist({ timeout: 10_000 });
-    // The connection form is a tall scrollable dialog; on Linux CI the
-    // WebDriver Actions API occasionally reports "move target out of
-    // bounds" when trying to scroll the sticky DialogFooter button into
-    // view, leaving `waitForClickable` to time out. Force-scroll via JS
-    // first (matches what wdio's auto-scroll attempts but reliably) and
-    // fall back to a JS click if Actions still refuses to fire.
-    await browser.execute(
-      (el: HTMLElement) => el.scrollIntoView({ block: "center" }),
-      submit,
-    );
-    try {
-      await submit.waitForClickable({ timeout: 5_000 });
-      await submit.click();
-    } catch {
-      await browser.execute((el: HTMLElement) => el.click(), submit);
-    }
-    const form = await browser.$(sel.connectionForm);
-    await form.waitForExist({ reverse: true, timeout: 10_000 });
+  await saveConnectionForm();
 }
 
 describe("Tag-group view + bulk actions", () => {
@@ -184,8 +166,9 @@ describe("Tag-group view + bulk actions", () => {
         // Bail early if a host failed — there's no recovery and the
         // 60s wait would just be wasted.
         if (errorRows.length > 0) {
+          const details = await Promise.all(errorRows.map((row) => row.getText()));
           throw new Error(
-            `Bulk SCP reported ${errorRows.length} failed host row(s); aborting wait.`,
+            `Bulk SCP reported ${errorRows.length} failed host row(s); aborting wait.\n${details.join("\n---\n")}`,
           );
         }
         return successRows.length >= 2;

@@ -22,6 +22,28 @@ async function click(selector: string): Promise<void> {
   await el.click();
 }
 
+async function clickDialogFooterButton(selector: string): Promise<void> {
+  const el = await browser.$(selector);
+  await el.waitForExist({ timeout: 10_000 });
+
+  // Linux tauri-driver/WebKit sometimes fails to scroll sticky dialog
+  // footer buttons into the viewport via WebDriver Actions, producing
+  // "move target out of bounds" and then a false non-clickable timeout.
+  // Force the same scroll from inside the page, then fall back to a DOM
+  // click only if the driver still refuses to perform a native click.
+  await browser.execute(
+    (button: HTMLElement) => button.scrollIntoView({ block: "center" }),
+    el,
+  );
+
+  try {
+    await el.waitForClickable({ timeout: 5_000 });
+    await el.click();
+  } catch {
+    await browser.execute((button: HTMLElement) => button.click(), el);
+  }
+}
+
 export async function navigateTo(view: "connections" | "credentials" | "tunnels" | "settings" | "git-sync" | "logs"): Promise<void> {
   const map = {
     connections: sel.navConnections,
@@ -60,6 +82,12 @@ export interface DirectConnectionInput {
   credentialName: string;
 }
 
+export async function saveConnectionForm(): Promise<void> {
+  await clickDialogFooterButton(sel.connectionFormSubmit);
+  const form = await browser.$(sel.connectionForm);
+  await form.waitForExist({ reverse: true, timeout: 10_000 });
+}
+
 export async function createDirectConnection(input: DirectConnectionInput): Promise<void> {
   await navigateTo("connections");
   await click(sel.addConnectionButton);
@@ -75,9 +103,7 @@ export async function createDirectConnection(input: DirectConnectionInput): Prom
   const opt = await browser.$(`[role="option"][data-name="${input.credentialName}"]`);
   await opt.waitForClickable({ timeout: 10_000 });
   await opt.click();
-  await click(sel.connectionFormSubmit);
-  const form = await browser.$(sel.connectionForm);
-  await form.waitForExist({ reverse: true, timeout: 10_000 });
+  await saveConnectionForm();
 }
 
 /**
