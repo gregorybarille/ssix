@@ -70,7 +70,7 @@ export function ConfirmDialog({
           <DialogTitle>{title}</DialogTitle>
           <DialogDescription>{description}</DialogDescription>
         </DialogHeader>
-        <DialogFooter className="gap-2">
+        <DialogFooter className="gap-2 sm:[&>button]:min-w-28">
           <Button
             variant="ghost"
             autoFocus

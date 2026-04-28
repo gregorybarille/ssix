@@ -23,10 +23,13 @@ The Git Sync view supports:
 
 - Export sanitized snapshot
 - Refresh diff
-- Fetch
-- Pull (requires confirmation — fast-forward / merge can overwrite local uncommitted snapshot changes)
-- Commit
-- Push (requires confirmation — mutates the shared remote)
+- Commit (with editable commit message)
+- One-click bidirectional **Sync** (see below)
+
+The previously separate Fetch / Pull / Push toolbar buttons were collapsed
+into the single `Sync` action — the underlying store still exposes the
+individual primitives for tests and future automation, but the UI no
+longer surfaces them as standalone destructive operations.
 
 ## One-Click Sync
 

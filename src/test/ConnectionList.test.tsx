@@ -268,9 +268,12 @@ describe("ConnectionList", () => {
     expect(onSelect).not.toHaveBeenCalled();
   });
 
-  // ─── Always-visible Connect CTA (P0-8) ────────────────────────────────────
+  // ─── Always-visible action cluster ────────────────────────────────────────
+  // Per the v2 redesign, secondary row actions (SCP, Clone, Edit, Delete)
+  // are no longer hover-revealed — keeping them visible at all times tells
+  // the user up-front what is available without requiring discovery.
 
-  it("renders Connect outside the hover-fade group in row layout", () => {
+  it("renders all row actions visible (no hover-fade) in row layout", () => {
     render(
       <ConnectionList
         connections={[mockConnections[0]]}
@@ -283,13 +286,12 @@ describe("ConnectionList", () => {
     );
     const connectBtn = screen.getByRole("button", { name: /^Connect to / });
     const editBtn = screen.getByRole("button", { name: /^Edit / });
-    // Connect must NOT be a descendant of any element with the hover-fade class.
+    // Neither primary nor secondary actions sit inside an opacity-0 wrapper.
     expect(connectBtn.closest(".opacity-0")).toBeNull();
-    // Secondary actions stay in the hover-fade group.
-    expect(editBtn.closest(".opacity-0")).not.toBeNull();
+    expect(editBtn.closest(".opacity-0")).toBeNull();
   });
 
-  it("renders Connect outside the hover-fade group in tile layout", () => {
+  it("renders all row actions visible (no hover-fade) in tile layout", () => {
     render(
       <ConnectionList
         connections={[mockConnections[0]]}
@@ -304,6 +306,6 @@ describe("ConnectionList", () => {
     const connectBtn = screen.getByRole("button", { name: /^Connect to / });
     const editBtn = screen.getByRole("button", { name: /^Edit / });
     expect(connectBtn.closest(".opacity-0")).toBeNull();
-    expect(editBtn.closest(".opacity-0")).not.toBeNull();
+    expect(editBtn.closest(".opacity-0")).toBeNull();
   });
 });

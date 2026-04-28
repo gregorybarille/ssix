@@ -126,18 +126,24 @@
   /* Dark theme — default (no class required) and explicit .dark */
   :root,
   .dark {
-    --background: 222.2 84% 4.9%;
-    --foreground: 210 40% 98%;
-    --card: 222.2 84% 4.9%;
-    --card-foreground: 210 40% 98%;
-    --popover: 217.2 32.6% 10%;
-    --popover-foreground: 210 40% 98%;
-    --primary: 210 40% 98%;
-    --primary-foreground: 222.2 47.4% 11.2%;
-    --secondary: 217.2 32.6% 17.5%;
-    --secondary-foreground: 210 40% 98%;
-    --muted: 217.2 32.6% 17.5%;
-    --muted-foreground: 215 20.2% 65.1%;
+    /*
+     * Dark palette: neutral slate (saturation tuned down from the
+     * previous blue-leaning Tailwind defaults). Lightness values are
+     * preserved so the WCAG-AA contrast notes below for
+     * `--muted-foreground-soft` and `--destructive-text` remain valid.
+     */
+    --background: 215 16% 9%;
+    --foreground: 210 20% 98%;
+    --card: 215 16% 11%;
+    --card-foreground: 210 20% 98%;
+    --popover: 215 16% 13%;
+    --popover-foreground: 210 20% 98%;
+    --primary: 210 20% 98%;
+    --primary-foreground: 215 25% 13%;
+    --secondary: 215 16% 19%;
+    --secondary-foreground: 210 20% 98%;
+    --muted: 215 16% 19%;
+    --muted-foreground: 215 14% 65%;
     /*
      * `muted-soft` is a deliberately-toned-down variant of
      * `muted-foreground` for tertiary metadata (timestamps, inline
@@ -145,12 +151,12 @@
      * AA (4.5:1) on the surrounding surface in both themes; do not
      * pair it with extra opacity utilities.
      *
-     * Dark theme (#0a1020 background): hsl(215 20% 55%) ≈ #6f8197
-     * yields ~5.2:1 contrast.
+     * Dark theme (slate background ~ #14181d): hsl(215 14% 55%) ≈ #7d848e
+     * yields ~5.0:1 contrast.
      */
-    --muted-foreground-soft: 215 20% 55%;
-    --accent: 217.2 32.6% 17.5%;
-    --accent-foreground: 210 40% 98%;
+    --muted-foreground-soft: 215 14% 55%;
+    --accent: 215 16% 19%;
+    --accent-foreground: 210 20% 98%;
     --destructive: 0 62.8% 30.6%;
     --destructive-foreground: 210 40% 98%;
     /*
@@ -172,9 +178,9 @@
      * common `bg-destructive/10` overlay).
      */
     --destructive-text: 0 84.2% 72%;
-    --border: 217.2 32.6% 17.5%;
-    --input: 217.2 32.6% 17.5%;
-    --ring: 212.7 26.8% 83.9%;
+    --border: 215 16% 19%;
+    --input: 215 16% 19%;
+    --ring: 215 14% 70%;
     --radius: 0.5rem;
   }
 

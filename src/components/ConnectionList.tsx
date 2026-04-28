@@ -210,7 +210,7 @@ export function ConnectionList({
               aria-label={`${conn.name}${conn.tags && conn.tags.length > 0 ? `, tagged ${conn.tags.join(", ")}` : ""}`}
               aria-selected={selectedId === conn.id || undefined}
               className={cn(
-                "group rounded-lg border p-3 cursor-pointer transition-colors hover:bg-accent flex flex-col gap-2",
+                "group rounded-lg border p-3 cursor-pointer transition-colors hover:bg-accent flex flex-col gap-2 h-full",
                 "focus:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background",
                 selectedId === conn.id && "bg-accent",
               )}
@@ -249,16 +249,17 @@ export function ConnectionList({
                   </span>
                 )}
               </p>
-              {conn.tags && conn.tags.length > 0 && (
-                <div className="flex flex-wrap gap-1">
-                  {conn.tags.map((t) => (
-                    <Badge key={t} variant="outline" className="text-[10px] py-0 px-1.5">
-                      {t}
-                    </Badge>
-                  ))}
-                </div>
-              )}
-              <div className="flex items-center justify-end gap-1">
+              {/* Tags row — always rendered (empty placeholder when no tags)
+                  to keep the actions row pinned to the same baseline across
+                  every tile in a grid row regardless of whether tags exist. */}
+              <div className="flex flex-wrap gap-1 min-h-[18px]">
+                {conn.tags?.map((t) => (
+                  <Badge key={t} variant="outline" className="text-[10px] py-0 px-1.5">
+                    {t}
+                  </Badge>
+                ))}
+              </div>
+              <div className="flex items-center justify-start gap-1 mt-auto">
                 {onConnect && (
                   <Button
                     variant="ghost"
@@ -274,17 +275,27 @@ export function ConnectionList({
                     <Play className="h-3.5 w-3.5" aria-hidden="true" />
                   </Button>
                 )}
-                <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity">
-                {onScp && conn.type !== "port_forward" && (
+                <div className="flex items-center gap-1">
+                {onScp && (
                   <Button
                     variant="ghost"
                     size="icon"
                     className="h-7 w-7"
+                    disabled={conn.type === "port_forward"}
                     onClick={(e) => {
                       e.stopPropagation();
-                      onScp(conn);
+                      if (conn.type !== "port_forward") onScp(conn);
                     }}
-                    aria-label={`Transfer files to ${conn.name}`}
+                    aria-label={
+                      conn.type === "port_forward"
+                        ? "SCP not available for port-forward connections"
+                        : `Transfer files to ${conn.name}`
+                    }
+                    title={
+                      conn.type === "port_forward"
+                        ? "SCP not available for port-forward connections"
+                        : undefined
+                    }
                     data-testid={`scp-open-${conn.id}`}
                   >
                     <ArrowUpDown className="h-3.5 w-3.5" aria-hidden="true" />
@@ -425,17 +436,27 @@ export function ConnectionList({
                   <Play className="h-3.5 w-3.5" aria-hidden="true" />
                 </Button>
               )}
-              <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity">
-              {onScp && conn.type !== "port_forward" && (
+              <div className="flex items-center gap-1">
+              {onScp && (
                 <Button
                   variant="ghost"
                   size="icon"
                   className="h-7 w-7"
+                  disabled={conn.type === "port_forward"}
                   onClick={(e) => {
                     e.stopPropagation();
-                    onScp(conn);
+                    if (conn.type !== "port_forward") onScp(conn);
                   }}
-                  aria-label={`Transfer files to ${conn.name}`}
+                  aria-label={
+                    conn.type === "port_forward"
+                      ? "SCP not available for port-forward connections"
+                      : `Transfer files to ${conn.name}`
+                  }
+                  title={
+                    conn.type === "port_forward"
+                      ? "SCP not available for port-forward connections"
+                      : undefined
+                  }
                   data-testid={`scp-open-${conn.id}`}
                 >
                   <ArrowUpDown className="h-3.5 w-3.5" aria-hidden="true" />

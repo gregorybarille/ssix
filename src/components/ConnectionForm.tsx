@@ -1187,7 +1187,7 @@ export function ConnectionForm({
           )}
           </div>
 
-          <DialogFooter className="px-6 py-3 border-t bg-background shrink-0">
+          <DialogFooter className="px-6 py-3 border-t bg-background shrink-0 gap-2 sm:[&>button]:min-w-28">
             <Button
               type="button"
               variant="outline"

@@ -28,7 +28,14 @@ const tabsListVariants = cva(
   {
     variants: {
       variant: {
-        default: "bg-muted",
+        // Inactive triggers get a subtle vertical separator between
+        // each option (skipping the first child) so the segmented
+        // control reads as a clear set of choices instead of one
+        // continuous bar. Active triggers cancel the separator on
+        // both themselves and the next sibling so the highlight isn't
+        // bisected by a divider.
+        default:
+          "bg-muted [&_[data-slot=tabs-trigger]:not(:first-child)]:border-l [&_[data-slot=tabs-trigger]:not(:first-child)]:border-border/60 [&_[data-slot=tabs-trigger][data-state=active]]:border-l-transparent [&_[data-slot=tabs-trigger][data-state=active]+[data-slot=tabs-trigger]]:border-l-transparent group-data-[orientation=vertical]/tabs:[&_[data-slot=tabs-trigger]:not(:first-child)]:border-l-0 group-data-[orientation=vertical]/tabs:[&_[data-slot=tabs-trigger]:not(:first-child)]:border-t group-data-[orientation=vertical]/tabs:[&_[data-slot=tabs-trigger]:not(:first-child)]:border-border/60",
         line: "gap-1 bg-transparent",
       },
     },

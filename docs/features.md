@@ -203,9 +203,13 @@ The **Connect** action (green Play icon) is the primary CTA on every
 connection row and tile and is **always visible** — it does not wait
 for hover, so the action is reachable for keyboard and touch users and
 discoverable on the very first visit. Secondary actions (Transfer
-files, Clone, Edit, Delete) remain in a hover-revealed group to keep
-the list visually quiet, and that group also expands when any of its
-buttons receives keyboard focus (`focus-within`).
+files, Clone, Edit, Delete) are likewise rendered in their resting
+state at all times: the v2 redesign deliberately removed the
+hover-reveal pattern so users know up-front exactly what is available
+on each row without any discovery cost. Port-forward connections
+render the Transfer-files (SCP) icon in a disabled state with an
+explanatory `title` tooltip rather than hiding it, so the affordance
+remains predictable across connection kinds.
 
 ### List Keyboard Navigation
 

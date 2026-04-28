@@ -319,7 +319,7 @@ export function BulkScpDialog({
           )}
         </div>
 
-        <DialogFooter>
+        <DialogFooter className="gap-2 sm:[&>button]:min-w-28">
           <Button
             type="button"
             variant="outline"

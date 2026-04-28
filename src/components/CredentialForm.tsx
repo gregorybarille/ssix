@@ -350,11 +350,11 @@ export function CredentialForm({
                     role="tab"
                     aria-selected={keySource === "inline"}
                     onClick={() => setKeySource("inline")}
-                    className={`px-3 py-1 text-xs rounded ${
+                    className={`px-3 py-1 text-xs rounded border-l ${
                       keySource === "inline"
-                        ? "bg-accent text-accent-foreground"
-                        : "text-muted-foreground"
-                    }`}
+                        ? "bg-accent text-accent-foreground border-l-transparent"
+                        : "text-muted-foreground border-border/60"
+                    } ${keySource === "path" ? "border-l-transparent" : ""}`}
                   >
                     Paste key
                   </button>
@@ -506,7 +506,7 @@ export function CredentialForm({
           )}
           </div>
 
-          <DialogFooter className="px-6 py-3 border-t bg-background shrink-0">
+          <DialogFooter className="px-6 py-3 border-t bg-background shrink-0 gap-2 sm:[&>button]:min-w-28">
             <Button
               type="button"
               variant="outline"
