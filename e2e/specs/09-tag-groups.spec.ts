@@ -166,7 +166,10 @@ describe("Tag-group view + bulk actions", () => {
         // Bail early if a host failed — there's no recovery and the
         // 60s wait would just be wasted.
         if (errorRows.length > 0) {
-          const details = await Promise.all(errorRows.map((row) => row.getText()));
+          const details: string[] = [];
+          for (let i = 0; i < errorRows.length; i += 1) {
+            details.push(await errorRows[i].getText());
+          }
           throw new Error(
             `Bulk SCP reported ${errorRows.length} failed host row(s); aborting wait.\n${details.join("\n---\n")}`,
           );
