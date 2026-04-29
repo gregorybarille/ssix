@@ -31,8 +31,9 @@ cd src-tauri && cargo test
 
 Windows releases are built by `.github/workflows/release.yml` on the
 `windows-latest` GitHub Actions runner and uploaded to the repository's
-GitHub Releases page as draft prereleases. The app bundle target is limited
-to MSI in `src-tauri/tauri.conf.json`.
+GitHub Releases page as draft prereleases. The base Tauri bundle target stays
+set to `all` in `src-tauri/tauri.conf.json`, and the release workflow narrows
+the build to MSI with `args: "--bundles msi"`.
 
 The release workflow automatically derives a unique numeric installer version
 from the Git tag so that each MSI is treated as a distinct product version by

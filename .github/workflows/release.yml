@@ -60,3 +60,4 @@ jobs:
           releaseBody: "Unsigned Windows MSI build for personal use. Windows may show SmartScreen warnings."
           releaseDraft: true
           prerelease: true
+          args: "--bundles msi"
