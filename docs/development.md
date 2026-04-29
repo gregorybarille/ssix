@@ -27,6 +27,33 @@ npm test
 cd src-tauri && cargo test
 ```
 
+## Windows MSI Releases
+
+Windows releases are built by `.github/workflows/release.yml` on the
+`windows-latest` GitHub Actions runner and uploaded to the repository's
+GitHub Releases page as draft prereleases. The base Tauri bundle target stays
+set to `all` in `src-tauri/tauri.conf.json`, and the release workflow narrows
+the build to MSI with `args: "--bundles msi"`.
+
+The release workflow automatically derives a unique numeric installer version
+from the Git tag so that each MSI is treated as a distinct product version by
+Windows Installer (preventing upgrade/reinstall conflicts). The version is
+computed as `MAJOR.MINOR.PATCH.<run_number>` — for example, pushing tag
+`v1.0.0-beta.1` on workflow run #42 produces installer version `1.0.0.42`.
+
+To publish a release, push a Git tag:
+
+```bash
+git tag v1.0.0-beta.1
+git push origin v1.0.0-beta.1
+```
+
+The release workflow can also be started manually from the Actions tab by
+providing the release tag input, for example `v1.0.0-beta.1`.
+
+Current MSI builds are unsigned and intended for personal use. Windows may
+show SmartScreen warnings until code signing is added.
+
 ## Repo Structure
 
 - `src/` frontend app (React 19 + Vite 8 + TypeScript)
