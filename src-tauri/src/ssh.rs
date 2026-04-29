@@ -297,10 +297,10 @@ fn authenticate_pubkey_memory(
 
     let path = std::env::temp_dir().join(format!("ssx-key-{}.tmp", Uuid::new_v4()));
 
-    fs::write(&path, private_key).map_err(|e| {
+    fs::write(&path, private_key).map_err(|_| {
         ssh2::Error::new(
             ssh2::ErrorCode::Session(-1),
-            &format!("failed to write temporary SSH key: {}", e),
+            "failed to write temporary SSH key",
         )
     })?;
 
@@ -311,10 +311,10 @@ fn authenticate_pubkey_memory(
         return Err(e);
     }
 
-    remove_result.map_err(|e| {
+    remove_result.map_err(|_| {
         ssh2::Error::new(
             ssh2::ErrorCode::Session(-1),
-            &format!("failed to remove temporary SSH key: {}", e),
+            "failed to remove temporary SSH key",
         )
     })
 }
