@@ -27,6 +27,27 @@ npm test
 cd src-tauri && cargo test
 ```
 
+## Windows MSI Releases
+
+Windows releases are built by `.github/workflows/release.yml` on the
+`windows-latest` GitHub Actions runner and uploaded to the repository's
+GitHub Releases page as draft prereleases. The app bundle target is limited
+to MSI in `src-tauri/tauri.conf.json`.
+
+The package version is numeric (`1.0.0`) for Windows Installer compatibility.
+Use prerelease labels on the Git tag and GitHub release name, for example:
+
+```bash
+git tag v1.0.0-beta.1
+git push origin v1.0.0-beta.1
+```
+
+The release workflow can also be started manually from the Actions tab by
+providing the release tag input, for example `v1.0.0-beta.1`.
+
+Current MSI builds are unsigned and intended for personal use. Windows may
+show SmartScreen warnings until code signing is added.
+
 ## Repo Structure
 
 - `src/` frontend app (React 19 + Vite 8 + TypeScript)
