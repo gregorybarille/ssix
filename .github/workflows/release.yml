@@ -40,17 +40,6 @@ jobs:
       - run: cargo test
         working-directory: src-tauri
 
-      - name: Derive installer version
-        shell: bash
-        run: |
-          TAG="${{ github.event_name == 'workflow_dispatch' && inputs.release_tag || github.ref_name }}"
-          BASE="${TAG#v}"
-          BASE="${BASE%%-*}"
-          INSTALLER_VERSION="${BASE}.${{ github.run_number }}"
-          echo "INSTALLER_VERSION=${INSTALLER_VERSION}" >> "$GITHUB_ENV"
-          jq --arg v "${INSTALLER_VERSION}" '.version = $v' src-tauri/tauri.conf.json > src-tauri/tauri.conf.json.tmp
-          mv src-tauri/tauri.conf.json.tmp src-tauri/tauri.conf.json
-
       - uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
