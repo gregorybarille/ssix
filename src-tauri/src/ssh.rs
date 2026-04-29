@@ -263,8 +263,7 @@ pub(crate) fn open_authenticated_session_over_stream(
             private_key,
             passphrase,
         } => {
-            session
-                .userauth_pubkey_memory(username, None, private_key, passphrase.as_deref())
+            authenticate_pubkey_memory(&session, username, private_key, passphrase.as_deref())
                 .map_err(|e| format!("Key auth failed: {}", e))?;
         }
     }
@@ -274,6 +273,50 @@ pub(crate) fn open_authenticated_session_over_stream(
     }
 
     Ok(session)
+}
+
+#[cfg(not(windows))]
+fn authenticate_pubkey_memory(
+    session: &Session,
+    username: &str,
+    private_key: &str,
+    passphrase: Option<&str>,
+) -> Result<(), ssh2::Error> {
+    session.userauth_pubkey_memory(username, None, private_key, passphrase)
+}
+
+#[cfg(windows)]
+fn authenticate_pubkey_memory(
+    session: &Session,
+    username: &str,
+    private_key: &str,
+    passphrase: Option<&str>,
+) -> Result<(), ssh2::Error> {
+    use std::fs;
+    use uuid::Uuid;
+
+    let path = std::env::temp_dir().join(format!("ssx-key-{}.tmp", Uuid::new_v4()));
+
+    fs::write(&path, private_key).map_err(|e| {
+        ssh2::Error::new(
+            ssh2::ErrorCode::Session(-1),
+            &format!("failed to write temporary SSH key: {}", e),
+        )
+    })?;
+
+    let auth_result = session.userauth_pubkey_file(username, None, &path, passphrase);
+    let remove_result = fs::remove_file(&path);
+
+    if let Err(e) = auth_result {
+        return Err(e);
+    }
+
+    remove_result.map_err(|e| {
+        ssh2::Error::new(
+            ssh2::ErrorCode::Session(-1),
+            &format!("failed to remove temporary SSH key: {}", e),
+        )
+    })
 }
 
 /// Opens a TCP connection, performs the SSH handshake + authentication, requests a
@@ -489,8 +532,7 @@ pub(crate) fn open_gateway_session(
             private_key,
             passphrase,
         } => {
-            session
-                .userauth_pubkey_memory(username, None, private_key, passphrase.as_deref())
+            authenticate_pubkey_memory(&session, username, private_key, passphrase.as_deref())
                 .map_err(|e| format!("Gateway key auth failed: {}", e))?;
         }
     }
