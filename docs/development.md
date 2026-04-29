@@ -34,8 +34,13 @@ Windows releases are built by `.github/workflows/release.yml` on the
 GitHub Releases page as draft prereleases. The app bundle target is limited
 to MSI in `src-tauri/tauri.conf.json`.
 
-The package version is numeric (`1.0.0`) for Windows Installer compatibility.
-Use prerelease labels on the Git tag and GitHub release name, for example:
+The release workflow automatically derives a unique numeric installer version
+from the Git tag so that each MSI is treated as a distinct product version by
+Windows Installer (preventing upgrade/reinstall conflicts). The version is
+computed as `MAJOR.MINOR.PATCH.<run_number>` — for example, pushing tag
+`v1.0.0-beta.1` on workflow run #42 produces installer version `1.0.0.42`.
+
+To publish a release, push a Git tag:
 
 ```bash
 git tag v1.0.0-beta.1
