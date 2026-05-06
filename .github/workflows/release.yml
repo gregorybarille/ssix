@@ -84,6 +84,8 @@ jobs:
       - windows-build
 
     steps:
+      - uses: actions/checkout@v4
+
       - name: Download portable executable artifact
         uses: actions/download-artifact@v4
         with:
