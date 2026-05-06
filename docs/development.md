@@ -31,16 +31,17 @@ cd src-tauri && cargo test
 
 Windows releases are built by `.github/workflows/release.yml` on the
 `windows-latest` GitHub Actions runner and uploaded to the repository's
-GitHub Releases page as draft prereleases. The workflow builds the app with
+GitHub Releases page as prereleases. The workflow builds the app with
 `npm run tauri build -- --no-bundle` and uploads the resulting
 `src-tauri/target/release/ssix.exe` directly as a release asset for users who
 cannot install MSI packages.
 
 The workflow publishes against the actual Git tag (for example
-`v1.0.0-beta.8`) using `gh release`, so the portable executable appears on the
-tagged release page instead of an orphaned `untagged-*` draft. For beta builds,
-CI also disables release LTO and raises codegen units during the Windows build
-to reduce turnaround time while still producing an optimized portable EXE.
+`v1.0.0-beta.10`) using `gh release --verify-tag`, so the portable executable
+appears on the tagged release page. Tests and the portable build run as
+separate jobs, and the beta build disables release LTO while raising codegen
+units during the Windows build to reduce turnaround time while still producing
+an optimized portable EXE.
 
 The package version remains semver (`1.0.0`) in `src-tauri/tauri.conf.json`.
 Use prerelease labels on the Git tag and GitHub release name.
