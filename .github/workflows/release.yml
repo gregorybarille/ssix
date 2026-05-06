@@ -43,15 +43,21 @@ jobs:
       - run: cargo test
         working-directory: src-tauri
 
-      - run: npm run tauri build -- --no-bundle
+      - name: Build portable executable
+        run: npm run tauri build -- --no-bundle
+        env:
+          CARGO_PROFILE_RELEASE_LTO: "false"
+          CARGO_PROFILE_RELEASE_CODEGEN_UNITS: "16"
 
-      - uses: softprops/action-gh-release@v2
+      - name: Publish tagged prerelease
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          tag_name: ${{ env.RELEASE_TAG }}
-          name: "SSIX ${{ env.RELEASE_TAG }}"
-          body: "Unsigned portable Windows build for personal use. Download `ssix.exe` from the release assets and run it directly. Windows may show SmartScreen warnings."
-          draft: true
-          prerelease: true
-          files: src-tauri/target/release/ssix.exe
+        shell: bash
+        run: >-
+          gh release view "$RELEASE_TAG" >/dev/null 2>&1
+          || gh release create "$RELEASE_TAG"
+          --title "SSIX $RELEASE_TAG"
+          --notes "Unsigned portable Windows build for personal use. Download ssix.exe from the release assets and run it directly. Windows may show SmartScreen warnings."
+          --draft
+          --prerelease
+          && gh release upload "$RELEASE_TAG" src-tauri/target/release/ssix.exe --clobber

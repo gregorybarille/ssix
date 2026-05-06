@@ -36,6 +36,12 @@ GitHub Releases page as draft prereleases. The workflow builds the app with
 `src-tauri/target/release/ssix.exe` directly as a release asset for users who
 cannot install MSI packages.
 
+The workflow publishes against the actual Git tag (for example
+`v1.0.0-beta.8`) using `gh release`, so the portable executable appears on the
+tagged release page instead of an orphaned `untagged-*` draft. For beta builds,
+CI also disables release LTO and raises codegen units during the Windows build
+to reduce turnaround time while still producing an optimized portable EXE.
+
 The package version remains semver (`1.0.0`) in `src-tauri/tauri.conf.json`.
 Use prerelease labels on the Git tag and GitHub release name.
 
