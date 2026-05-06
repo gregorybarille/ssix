@@ -6,6 +6,9 @@ use std::sync::Mutex;
 
 static DATA_LOCK: Mutex<()> = Mutex::new(());
 
+#[cfg(test)]
+pub(crate) static TEST_ENV_LOCK: Mutex<()> = Mutex::new(());
+
 /// Returns the directory that holds SSIX state (`data.json`, `secrets.json`).
 ///
 /// In production this is `~/.ssix`. For E2E tests and other isolated
@@ -357,11 +360,9 @@ mod tests {
     /// The env var is process-global; serialize the env-mutating tests
     /// behind a local mutex so cargo's parallel test runner doesn't
     /// race us.
-    static ENV_LOCK: Mutex<()> = Mutex::new(());
-
     #[test]
     fn data_dir_honors_ssx_data_dir_env_override() {
-        let _g = ENV_LOCK.lock().unwrap();
+        let _g = TEST_ENV_LOCK.lock().unwrap();
         let prev = std::env::var("SSIX_DATA_DIR").ok();
         let custom = tmp_dir();
         std::env::set_var("SSIX_DATA_DIR", &custom);
@@ -377,7 +378,7 @@ mod tests {
 
     #[test]
     fn data_dir_falls_back_to_home_when_env_unset_or_empty() {
-        let _g = ENV_LOCK.lock().unwrap();
+        let _g = TEST_ENV_LOCK.lock().unwrap();
         let prev = std::env::var("SSIX_DATA_DIR").ok();
         std::env::remove_var("SSIX_DATA_DIR");
         let resolved = data_dir();

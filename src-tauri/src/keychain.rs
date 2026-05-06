@@ -210,19 +210,47 @@ pub fn enrich_credential(cred: &mut Credential) {
 mod tests {
     use super::*;
     use crate::models::CredentialKind;
-    use std::sync::Mutex;
+    use std::fs;
+    use std::path::PathBuf;
+    use std::sync::atomic::{AtomicU64, Ordering};
 
-    /// Serialize all tests that mutate `SSIX_DATA_DIR` so cargo's parallel
-    /// runner cannot race them against each other (or against storage.rs
-    /// tests that use the same env var).
-    static ENV_LOCK: Mutex<()> = Mutex::new(());
+    static TMP_COUNTER: AtomicU64 = AtomicU64::new(0);
+
+    fn tmp_dir() -> PathBuf {
+        let n = TMP_COUNTER.fetch_add(1, Ordering::SeqCst);
+        let p = std::env::temp_dir().join(format!(
+            "ssix-keychain-test-{}-{}",
+            std::process::id(),
+            n
+        ));
+        let _ = fs::remove_dir_all(&p);
+        fs::create_dir_all(&p).unwrap();
+        p
+    }
+
+    fn with_isolated_data_dir(test: impl FnOnce()) {
+        let _g = crate::storage::TEST_ENV_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let prev = std::env::var("SSIX_DATA_DIR").ok();
+        let dir = tmp_dir();
+        std::env::set_var("SSIX_DATA_DIR", &dir);
+        test();
+        match prev {
+            Some(v) => std::env::set_var("SSIX_DATA_DIR", v),
+            None => std::env::remove_var("SSIX_DATA_DIR"),
+        }
+        let _ = fs::remove_dir_all(&dir);
+    }
 
     #[test]
     fn secrets_path_honors_ssix_data_dir_env_override() {
         // Sibling of crate::storage::data_dir tests — secrets must
         // live alongside data.json in the override directory so E2E
         // runs are fully isolated from `~/.ssix`.
-        let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _g = crate::storage::TEST_ENV_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         let prev = std::env::var("SSIX_DATA_DIR").ok();
         let custom = std::env::temp_dir().join(format!(
             "ssix-secrets-path-test-{}-{}",
@@ -268,103 +296,119 @@ mod tests {
 
     #[test]
     fn enrich_credential_keeps_non_empty_password() {
-        let mut cred = make_password_cred("id-1", "already-set");
-        enrich_credential(&mut cred);
-        if let CredentialKind::Password { password } = &cred.kind {
-            assert_eq!(password, "already-set");
-        } else {
-            panic!("unexpected kind");
-        }
+        with_isolated_data_dir(|| {
+            let mut cred = make_password_cred("id-1", "already-set");
+            enrich_credential(&mut cred);
+            if let CredentialKind::Password { password } = &cred.kind {
+                assert_eq!(password, "already-set");
+            } else {
+                panic!("unexpected kind");
+            }
+        });
     }
 
     #[test]
     fn enrich_credential_keeps_existing_passphrase() {
-        let mut cred = make_ssh_key_cred("id-2", Some("existing-pp"));
-        enrich_credential(&mut cred);
-        if let CredentialKind::SshKey { passphrase, .. } = &cred.kind {
-            assert_eq!(passphrase.as_deref(), Some("existing-pp"));
-        } else {
-            panic!("unexpected kind");
-        }
+        with_isolated_data_dir(|| {
+            let mut cred = make_ssh_key_cred("id-2", Some("existing-pp"));
+            enrich_credential(&mut cred);
+            if let CredentialKind::SshKey { passphrase, .. } = &cred.kind {
+                assert_eq!(passphrase.as_deref(), Some("existing-pp"));
+            } else {
+                panic!("unexpected kind");
+            }
+        });
     }
 
     #[test]
     fn enrich_credential_empty_password_stays_empty_when_no_entry() {
-        // Use a unique ID that won't exist in the secrets file.
-        let mut cred =
-            make_password_cred("ssix-test-no-entry-da7e3f8c-8e1b-4a2d-9b3e-1234567890ab", "");
-        enrich_credential(&mut cred);
-        if let CredentialKind::Password { password } = &cred.kind {
-            assert!(
-                password.is_empty(),
-                "password should stay empty when no entry exists"
+        with_isolated_data_dir(|| {
+            let mut cred = make_password_cred(
+                "ssix-test-no-entry-da7e3f8c-8e1b-4a2d-9b3e-1234567890ab",
+                "",
             );
-        } else {
-            panic!("unexpected CredentialKind variant after enrich");
-        }
+            enrich_credential(&mut cred);
+            if let CredentialKind::Password { password } = &cred.kind {
+                assert!(
+                    password.is_empty(),
+                    "password should stay empty when no entry exists"
+                );
+            } else {
+                panic!("unexpected CredentialKind variant after enrich");
+            }
+        });
     }
 
     #[test]
     fn store_and_retrieve_password() {
-        // Run sequentially to avoid races on the shared secrets file.
-        let id = "ssix-test-store-pw-da7e3f8c";
-        store_password(id, "hunter2").unwrap();
-        let pw = get_password(id);
-        delete_password(id);
-        assert_eq!(pw.as_deref(), Some("hunter2"));
+        with_isolated_data_dir(|| {
+            let id = "ssix-test-store-pw-da7e3f8c";
+            store_password(id, "hunter2").unwrap();
+            let pw = get_password(id);
+            delete_password(id);
+            assert_eq!(pw.as_deref(), Some("hunter2"));
+        });
     }
 
     #[test]
     fn store_and_retrieve_passphrase() {
-        let id = "ssix-test-store-pp-da7e3f8c";
-        store_passphrase(id, "mypassphrase").unwrap();
-        let pp = get_passphrase(id);
-        delete_passphrase(id);
-        assert_eq!(pp.as_deref(), Some("mypassphrase"));
+        with_isolated_data_dir(|| {
+            let id = "ssix-test-store-pp-da7e3f8c";
+            store_passphrase(id, "mypassphrase").unwrap();
+            let pp = get_passphrase(id);
+            delete_passphrase(id);
+            assert_eq!(pp.as_deref(), Some("mypassphrase"));
+        });
     }
 
     #[test]
     fn delete_all_removes_both_entries() {
-        let id = "ssix-test-delete-all-da7e3f8c";
-        store_password(id, "pw").unwrap();
-        store_passphrase(id, "pp").unwrap();
-        store_private_key(id, "key-data").unwrap();
-        delete_all_for_credential(id);
-        assert!(get_password(id).is_none());
-        assert!(get_passphrase(id).is_none());
-        assert!(get_private_key(id).is_none());
+        with_isolated_data_dir(|| {
+            let id = "ssix-test-delete-all-da7e3f8c";
+            store_password(id, "pw").unwrap();
+            store_passphrase(id, "pp").unwrap();
+            store_private_key(id, "key-data").unwrap();
+            delete_all_for_credential(id);
+            assert!(get_password(id).is_none());
+            assert!(get_passphrase(id).is_none());
+            assert!(get_private_key(id).is_none());
+        });
     }
 
     #[test]
     fn store_and_retrieve_private_key() {
-        let id = "ssix-test-store-pk-da7e3f8c";
-        store_private_key(id, "INLINE-KEY").unwrap();
-        let pk = get_private_key(id);
-        delete_private_key(id);
-        assert_eq!(pk.as_deref(), Some("INLINE-KEY"));
+        with_isolated_data_dir(|| {
+            let id = "ssix-test-store-pk-da7e3f8c";
+            store_private_key(id, "INLINE-KEY").unwrap();
+            let pk = get_private_key(id);
+            delete_private_key(id);
+            assert_eq!(pk.as_deref(), Some("INLINE-KEY"));
+        });
     }
 
     #[test]
     fn enrich_credential_loads_inline_private_key_from_secrets() {
-        let id = "ssix-test-enrich-pk-da7e3f8c";
-        store_private_key(id, "SECRET-KEY-BODY").unwrap();
-        let mut cred = Credential {
-            id: id.to_string(),
-            name: "k".to_string(),
-            username: "u".to_string(),
-            kind: CredentialKind::SshKey {
-                private_key_path: None,
-                private_key: None,
-                passphrase: None,
-            },
-            is_private: false,
-        };
-        enrich_credential(&mut cred);
-        delete_private_key(id);
-        if let CredentialKind::SshKey { private_key, .. } = &cred.kind {
-            assert_eq!(private_key.as_deref(), Some("SECRET-KEY-BODY"));
-        } else {
-            panic!("unexpected kind");
-        }
+        with_isolated_data_dir(|| {
+            let id = "ssix-test-enrich-pk-da7e3f8c";
+            store_private_key(id, "SECRET-KEY-BODY").unwrap();
+            let mut cred = Credential {
+                id: id.to_string(),
+                name: "k".to_string(),
+                username: "u".to_string(),
+                kind: CredentialKind::SshKey {
+                    private_key_path: None,
+                    private_key: None,
+                    passphrase: None,
+                },
+                is_private: false,
+            };
+            enrich_credential(&mut cred);
+            delete_private_key(id);
+            if let CredentialKind::SshKey { private_key, .. } = &cred.kind {
+                assert_eq!(private_key.as_deref(), Some("SECRET-KEY-BODY"));
+            } else {
+                panic!("unexpected kind");
+            }
+        });
     }
 }
