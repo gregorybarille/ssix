@@ -57,7 +57,7 @@ export function SettingsPanel({ settings, onSave }: SettingsPanelProps) {
       <div>
         <h2 className="text-lg font-semibold">Settings</h2>
         <p className="text-sm text-muted-foreground mt-1">
-          Customize the appearance of SSX
+          Customize the appearance of SSIX
         </p>
       </div>
       <Separator />
@@ -309,7 +309,7 @@ export function SettingsPanel({ settings, onSave }: SettingsPanelProps) {
           id="settings-git-sync-desc"
           className="text-xs text-muted-foreground"
         >
-          Sync a sanitized copy of your SSX config to a git checkout. Secrets remain excluded.
+          Sync a sanitized copy of your SSIX config to a git checkout. Secrets remain excluded.
         </p>
 
         <div className="space-y-2">

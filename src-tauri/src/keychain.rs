@@ -1,7 +1,7 @@
-/// Secret storage for SSX.
+/// Secret storage for SSIX.
 ///
 /// Secrets (passwords and SSH key passphrases) are stored in
-/// `~/.ssx/secrets.json` with permissions `0600` (owner read/write only).
+/// `~/.ssix/secrets.json` with permissions `0600` (owner read/write only).
 /// This avoids macOS Keychain code-signature issues that make the `keyring`
 /// crate unreliable for unsigned development builds.
 ///
@@ -25,7 +25,7 @@ fn secrets_path() -> PathBuf {
 ///
 /// **Audit-4 C1:** previously this function returned `HashMap::new()` on any
 /// read or parse error, which caused `with_secrets_mut` to atomically
-/// overwrite `~/.ssx/secrets.json` with `{just_one_entry}` — destroying
+/// overwrite `~/.ssix/secrets.json` with `{just_one_entry}` — destroying
 /// every other credential's secret on a transient EIO, half-written file
 /// after a crash, or any future format change. Errors are now propagated
 /// so the caller refuses to save and the user sees a real failure.
@@ -75,14 +75,14 @@ fn with_secrets<T>(f: impl FnOnce(&mut HashMap<String, String>) -> T) -> T {
 ///
 /// **Audit-4 C1:** this function MUST refuse to save when the prior load
 /// failed. Otherwise a transient read error would cause us to overwrite
-/// `~/.ssx/secrets.json` with `{ just_one_entry }`, deleting every other
+/// `~/.ssix/secrets.json` with `{ just_one_entry }`, deleting every other
 /// credential's secret silently.
 fn with_secrets_mut(f: impl FnOnce(&mut HashMap<String, String>)) -> Result<(), String> {
     let _guard = SECRETS_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let mut secrets = load_secrets().map_err(|e| {
         format!(
             "Refusing to write secrets: prior load failed ({}). The secrets file may be corrupted; \
-             back up ~/.ssx/secrets.json and retry. No data was modified.",
+             back up ~/.ssix/secrets.json and retry. No data was modified.",
             e
         )
     })?;
@@ -212,31 +212,31 @@ mod tests {
     use crate::models::CredentialKind;
     use std::sync::Mutex;
 
-    /// Serialize all tests that mutate `SSX_DATA_DIR` so cargo's parallel
+    /// Serialize all tests that mutate `SSIX_DATA_DIR` so cargo's parallel
     /// runner cannot race them against each other (or against storage.rs
     /// tests that use the same env var).
     static ENV_LOCK: Mutex<()> = Mutex::new(());
 
     #[test]
-    fn secrets_path_honors_ssx_data_dir_env_override() {
+    fn secrets_path_honors_ssix_data_dir_env_override() {
         // Sibling of crate::storage::data_dir tests — secrets must
         // live alongside data.json in the override directory so E2E
-        // runs are fully isolated from `~/.ssx`.
+        // runs are fully isolated from `~/.ssix`.
         let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        let prev = std::env::var("SSX_DATA_DIR").ok();
+        let prev = std::env::var("SSIX_DATA_DIR").ok();
         let custom = std::env::temp_dir().join(format!(
-            "ssx-secrets-path-test-{}-{}",
+            "ssix-secrets-path-test-{}-{}",
             std::process::id(),
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap()
                 .as_nanos()
         ));
-        std::env::set_var("SSX_DATA_DIR", &custom);
+        std::env::set_var("SSIX_DATA_DIR", &custom);
         assert_eq!(secrets_path(), custom.join("secrets.json"));
         match prev {
-            Some(v) => std::env::set_var("SSX_DATA_DIR", v),
-            None => std::env::remove_var("SSX_DATA_DIR"),
+            Some(v) => std::env::set_var("SSIX_DATA_DIR", v),
+            None => std::env::remove_var("SSIX_DATA_DIR"),
         }
     }
 
@@ -292,7 +292,7 @@ mod tests {
     fn enrich_credential_empty_password_stays_empty_when_no_entry() {
         // Use a unique ID that won't exist in the secrets file.
         let mut cred =
-            make_password_cred("ssx-test-no-entry-da7e3f8c-8e1b-4a2d-9b3e-1234567890ab", "");
+            make_password_cred("ssix-test-no-entry-da7e3f8c-8e1b-4a2d-9b3e-1234567890ab", "");
         enrich_credential(&mut cred);
         if let CredentialKind::Password { password } = &cred.kind {
             assert!(
@@ -307,7 +307,7 @@ mod tests {
     #[test]
     fn store_and_retrieve_password() {
         // Run sequentially to avoid races on the shared secrets file.
-        let id = "ssx-test-store-pw-da7e3f8c";
+        let id = "ssix-test-store-pw-da7e3f8c";
         store_password(id, "hunter2").unwrap();
         let pw = get_password(id);
         delete_password(id);
@@ -316,7 +316,7 @@ mod tests {
 
     #[test]
     fn store_and_retrieve_passphrase() {
-        let id = "ssx-test-store-pp-da7e3f8c";
+        let id = "ssix-test-store-pp-da7e3f8c";
         store_passphrase(id, "mypassphrase").unwrap();
         let pp = get_passphrase(id);
         delete_passphrase(id);
@@ -325,7 +325,7 @@ mod tests {
 
     #[test]
     fn delete_all_removes_both_entries() {
-        let id = "ssx-test-delete-all-da7e3f8c";
+        let id = "ssix-test-delete-all-da7e3f8c";
         store_password(id, "pw").unwrap();
         store_passphrase(id, "pp").unwrap();
         store_private_key(id, "key-data").unwrap();
@@ -337,7 +337,7 @@ mod tests {
 
     #[test]
     fn store_and_retrieve_private_key() {
-        let id = "ssx-test-store-pk-da7e3f8c";
+        let id = "ssix-test-store-pk-da7e3f8c";
         store_private_key(id, "INLINE-KEY").unwrap();
         let pk = get_private_key(id);
         delete_private_key(id);
@@ -346,7 +346,7 @@ mod tests {
 
     #[test]
     fn enrich_credential_loads_inline_private_key_from_secrets() {
-        let id = "ssx-test-enrich-pk-da7e3f8c";
+        let id = "ssix-test-enrich-pk-da7e3f8c";
         store_private_key(id, "SECRET-KEY-BODY").unwrap();
         let mut cred = Credential {
             id: id.to_string(),

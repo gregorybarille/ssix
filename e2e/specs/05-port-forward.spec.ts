@@ -1,10 +1,10 @@
 /**
  * Spec 05: Port forward — local → server-a → server-c:22.
  *
- * Starts a tunnel via SSX, then opens a raw TCP socket from the
+ * Starts a tunnel via SSIX, then opens a raw TCP socket from the
  * test runner to the local forwarded port and asserts the SSH
  * banner from server-c is received. Validates `start_port_forward`
- * and the `ssx:tunnel:status` event stream.
+ * and the `ssix:tunnel:status` event stream.
  */
 import { connect } from "node:net";
 import { waitForAppReady } from "../helpers/app.js";

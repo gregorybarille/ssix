@@ -1,6 +1,6 @@
 # Architecture
 
-SSX is a Tauri v2 desktop application with a React frontend and a Rust backend.
+SSIX is a Tauri v2 desktop application with a React frontend and a Rust backend.
 
 ## Layers
 
@@ -17,8 +17,8 @@ SSX is a Tauri v2 desktop application with a React frontend and a Rust backend.
 
 - `src-tauri/src/lib.rs` builds the Tauri app and registers commands.
 - `src-tauri/src/models.rs` defines shared persisted models.
-- `src-tauri/src/storage.rs` loads and saves `~/.ssx/data.json`.
-- `src-tauri/src/keychain.rs` stores secret material in `~/.ssx/secrets.json`.
+- `src-tauri/src/storage.rs` loads and saves `~/.ssix/data.json`.
+- `src-tauri/src/keychain.rs` stores secret material in `~/.ssix/secrets.json`.
 - `src-tauri/src/commands/` contains domain-specific Tauri commands.
 - `src-tauri/src/ssh.rs` handles shell sessions, tunnels, jump-shell bridging, and SSH I/O loops.
 
@@ -35,7 +35,7 @@ UI -> Zustand store -> `invoke()` -> Tauri command -> storage / SSH subsystem ->
 ## SSH Session Model
 
 - Each shell session runs on its own backend thread.
-- The backend emits `ssx:ssh:output:{id}`, `ssx:ssh:error:{id}`, and `ssx:ssh:closed:{id}` events. Tunnels also emit `ssx:tunnel:status:{id}`. Event names are produced by helpers in `src-tauri/src/ssh.rs` and mirrored in `src/lib/events.ts` — both sides MUST go through these helpers.
+- The backend emits `ssix:ssh:output:{id}`, `ssix:ssh:error:{id}`, and `ssix:ssh:closed:{id}` events. Tunnels also emit `ssix:tunnel:status:{id}`. Event names are produced by helpers in `src-tauri/src/ssh.rs` and mirrored in `src/lib/events.ts` — both sides MUST go through these helpers.
 - The frontend keeps terminal components mounted while hidden so output is not lost when switching tabs.
 
 ## Tunnel Model
@@ -46,6 +46,6 @@ UI -> Zustand store -> `invoke()` -> Tauri command -> storage / SSH subsystem ->
 
 ## Git Sync Model
 
-- Git Sync exports a sanitized snapshot into `.ssx-sync/` inside a user-configured repository.
+- Git Sync exports a sanitized snapshot into `.ssix-sync/` inside a user-configured repository.
 - The export contains no passwords or inline private key material.
 - One-click sync performs export, fetch, fast-forward pull when needed, commit when there are local exported changes, and push.

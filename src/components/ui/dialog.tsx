@@ -166,7 +166,7 @@ function DialogContent({
           which means screen readers got an empty description even
           when the caller rendered a real one.
 
-          Every dialog in SSX must now render a real <DialogDescription>
+          Every dialog in SSIX must now render a real <DialogDescription>
           (or pass `aria-describedby={undefined}` if the dialog truly
           has no descriptive prose, which is rare). The console
           warning Radix emits is the intended signal that a dialog

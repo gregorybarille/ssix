@@ -96,12 +96,12 @@ services:
     working_dir: /workspace
     volumes:
       - ../:/workspace
-      - ssx-cargo-registry:/usr/local/cargo/registry
-      - ssx-cargo-target:/workspace/src-tauri/target
-      - ssx-node-modules:/workspace/node_modules
+      - ssix-cargo-registry:/usr/local/cargo/registry
+      - ssix-cargo-target:/workspace/src-tauri/target
+      - ssix-node-modules:/workspace/node_modules
     environment:
       - E2E_INSIDE_DOCKER=1
-      - SSX_DATA_DIR=/tmp/ssx-e2e-data
+      - SSIX_DATA_DIR=/tmp/ssix-e2e-data
     networks:
       - public
       - private_a
@@ -127,6 +127,6 @@ networks:
     internal: true
 
 volumes:
-  ssx-cargo-registry:
-  ssx-cargo-target:
-  ssx-node-modules:
+  ssix-cargo-registry:
+  ssix-cargo-target:
+  ssix-node-modules:

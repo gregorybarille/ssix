@@ -1,7 +1,7 @@
 /**
  * Spec 04: JumpShell connection — server-a → server-c.
  *
- * server-c is only on `private_a`, unreachable from the host. SSX
+ * server-c is only on `private_a`, unreachable from the host. SSIX
  * must connect through server-a as a gateway. Validates the two-hop
  * worker in `src-tauri/src/ssh.rs` (`start_jump_shell`).
  *

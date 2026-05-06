@@ -1,12 +1,12 @@
 [package]
-name = "ssx"
+name = "ssix"
 version = "1.0.0"
-description = "SSX SSH Client"
+description = "SSIX SSH Client"
 authors = []
 edition = "2021"
 
 [lib]
-name = "ssx_lib"
+name = "ssix_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]

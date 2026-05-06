@@ -1,8 +1,8 @@
-# SSX — SSH Client
+# SSIX — SSH Client
 
 [![Test](https://github.com/gregorybarille/ssix/actions/workflows/test.yml/badge.svg?branch=main)](https://github.com/gregorybarille/ssix/actions/workflows/test.yml)
 
-SSX is a desktop SSH client built with Tauri, React, and Rust. It combines saved SSH connections, reusable credentials, tabbed and split terminals, tunnels, SCP transfers, diagnostics, screenshots, and Git-backed config sync in one app.
+SSIX is a desktop SSH client built with Tauri, React, and Rust. It combines saved SSH connections, reusable credentials, tabbed and split terminals, tunnels, SCP transfers, diagnostics, screenshots, and Git-backed config sync in one app.
 
 ![Connections](docs/screenshots/connections.png)
 
@@ -24,8 +24,8 @@ Prerequisites:
 - npm 9+
 
 ```bash
-git clone https://github.com/gregorybarille/ssx
-cd ssx
+git clone https://github.com/gregorybarille/ssix
+cd ssix
 npm install
 npm run tauri build
 ```
@@ -58,9 +58,9 @@ cd src-tauri && cargo test
 
 ## Storage
 
-- Runtime config: `~/.ssx/data.json`
-- Secrets: `~/.ssx/secrets.json`
-- Optional Git export: `.ssx-sync/` inside your configured sync repository
+- Runtime config: `~/.ssix/data.json`
+- Secrets: `~/.ssix/secrets.json`
+- Optional Git export: `.ssix-sync/` inside your configured sync repository
 
 ## License
 

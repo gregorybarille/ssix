@@ -10,7 +10,7 @@ const buttonVariants = cva(
     variants: {
       variant: {
         default: "bg-primary text-primary-foreground hover:bg-primary/90",
-        // Audit: SSX overrides `text-destructive` / destructive ring
+        // Audit: SSIX overrides `text-destructive` / destructive ring
         // tokens in globals.css to keep AA contrast on light theme.
         destructive:
           "bg-destructive text-white hover:bg-destructive/90 focus-visible:ring-destructive/20 dark:bg-destructive/60 dark:focus-visible:ring-destructive/40",

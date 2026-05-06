@@ -7,7 +7,7 @@ import { GenerateKeyDialog } from "@/components/GenerateKeyDialog";
 import { InstallKeyDialog } from "@/components/InstallKeyDialog";
 
 /*
- * Audit-3 follow-up P1#5: every dialog in SSX must wire a real
+ * Audit-3 follow-up P1#5: every dialog in SSIX must wire a real
  * <DialogDescription> so its aria-describedby points at non-empty
  * descriptive prose. The dialog primitive USED to render an empty
  * sr-only fallback Description to silence Radix's missing-

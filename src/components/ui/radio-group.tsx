@@ -21,11 +21,11 @@ import { cn } from "@/lib/utils";
  * The root accepts an `aria-label` or `aria-labelledby` (point it at
  * the section heading) so the group has an accessible name.
  *
- * NOTE — SSX deviation from canonical shadcn: `<RadioGroupItem>` is
+ * NOTE — SSIX deviation from canonical shadcn: `<RadioGroupItem>` is
  * intentionally a *presentationally-empty* wrapper. Pass your styled
  * visual (a swatch, a labelled chip, etc.) as children and use
  * `data-state=checked` for selected styling. Canonical shadcn renders
- * a built-in dot indicator inside the item; SSX does NOT, because the
+ * a built-in dot indicator inside the item; SSIX does NOT, because the
  * surrounding visual carries the selected state. Existing call sites
  * in ConnectionForm / GenerateKeyDialog / SettingsPanel rely on this.
  */

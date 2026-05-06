@@ -2,7 +2,7 @@
 //!
 //! - `generate_ssh_key`: creates an ed25519 keypair, optionally written to disk
 //!   under `~/.ssh/` or a user-supplied path, or kept inline (returned as text
-//!   only) so it can be stored in SSX's secrets file.
+//!   only) so it can be stored in SSIX's secrets file.
 //! - `ssh_install_public_key`: opens a one-shot ssh2 password session to the
 //!   target host and idempotently appends a public key line to
 //!   `~/.ssh/authorized_keys` with the standard 700/600 permission setup.
@@ -38,7 +38,7 @@ pub struct GenerateSshKeyInput {
     pub name_hint: Option<String>,
     #[serde(default)]
     pub passphrase: Option<String>,
-    /// Optional comment for the public key line. Defaults to `ssx@<hostname>`.
+    /// Optional comment for the public key line. Defaults to `ssix@<hostname>`.
     #[serde(default)]
     pub comment: Option<String>,
 }
@@ -63,7 +63,7 @@ fn sanitise_name(input: &str) -> String {
         .collect();
     let trimmed = cleaned.trim_matches('_').to_string();
     if trimmed.is_empty() {
-        "ssx".to_string()
+        "ssix".to_string()
     } else {
         trimmed
     }
@@ -76,7 +76,7 @@ fn default_key_path(name_hint: Option<&str>) -> Result<PathBuf, String> {
     let ssh_dir = home.join(".ssh");
     let base = match name_hint {
         Some(s) if !s.trim().is_empty() => format!("id_ed25519_{}", sanitise_name(s)),
-        _ => "id_ed25519_ssx".to_string(),
+        _ => "id_ed25519_ssix".to_string(),
     };
     let mut candidate = ssh_dir.join(&base);
     let mut counter: u32 = 2;
@@ -127,8 +127,8 @@ pub fn generate_ssh_key(input: GenerateSshKeyInput) -> Result<GeneratedKey, Stri
         .map_err(|e| format!("Key generation failed: {}", e))?;
 
     let comment = input.comment.unwrap_or_else(|| {
-        let host = hostname().unwrap_or_else(|| "ssx".to_string());
-        format!("ssx@{}", host)
+        let host = hostname().unwrap_or_else(|| "ssix".to_string());
+        format!("ssix@{}", host)
     });
     private.set_comment(comment);
 
@@ -419,7 +419,7 @@ mod tests {
     fn sanitise_name_strips_unsafe_chars() {
         assert_eq!(sanitise_name("my server!"), "my_server");
         assert_eq!(sanitise_name("../etc/passwd"), "etc_passwd");
-        assert_eq!(sanitise_name(""), "ssx");
+        assert_eq!(sanitise_name(""), "ssix");
         assert_eq!(sanitise_name("ok-name_1"), "ok-name_1");
     }
 
@@ -516,13 +516,13 @@ mod tests {
             storage: KeyStorage::Inline,
             name_hint: None,
             passphrase: None,
-            comment: Some("test@ssx".into()),
+            comment: Some("test@ssix".into()),
         })
         .unwrap();
         assert!(out.private_key_path.is_none());
         assert!(out.private_key.contains("BEGIN OPENSSH PRIVATE KEY"));
         assert!(out.public_key.starts_with("ssh-ed25519 "));
-        assert!(out.public_key.contains("test@ssx"));
+        assert!(out.public_key.contains("test@ssix"));
         // Round-trip parse.
         let parsed = PrivateKey::from_openssh(&out.private_key).unwrap();
         assert!(matches!(parsed.algorithm(), ssh_key::Algorithm::Ed25519));
@@ -531,7 +531,7 @@ mod tests {
     #[test]
     fn generate_ssh_key_custom_path_writes_files_and_refuses_overwrite() {
         let dir = std::env::temp_dir().join(format!(
-            "ssx-keygen-{}",
+            "ssix-keygen-{}",
             uuid::Uuid::new_v4()
         ));
         std::fs::create_dir_all(&dir).unwrap();

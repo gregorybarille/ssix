@@ -10,7 +10,7 @@
 import { connect, type Socket } from "node:net";
 
 export interface SshTarget {
-  /** Hostname to use INSIDE the SSX connection record (server-a, server-b, ...). */
+  /** Hostname to use INSIDE the SSIX connection record (server-a, server-b, ...). */
   host: string;
   /** Hostname/IP to probe FROM the test runner (host loopback OR docker DNS). */
   probeHost: string;
@@ -29,10 +29,10 @@ export interface SshTarget {
  * (`xvfb-run -a npm run e2e:wdio` on the bare GHA runner) — is to hit
  * the published 220X ports on the host loopback (127.0.0.1). The bare
  * runner cannot resolve the docker-network hostnames (`server-a`, …),
- * so the SSX connection record itself MUST use 127.0.0.1 in that
+ * so the SSIX connection record itself MUST use 127.0.0.1 in that
  * mode, not just the probe.
  *
- * `host` here is what gets stored in the SSX connection record, so it
+ * `host` here is what gets stored in the SSIX connection record, so it
  * must be reachable FROM THE TAURI APP'S PROCESS. That is the same
  * machine as the test runner in both modes, so we keep `host` and
  * `probeHost` aligned.

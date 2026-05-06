@@ -25,7 +25,7 @@ default_open_mode: string,
  */
 auto_copy_selection: boolean, 
 /**
- * Filesystem path to a local git checkout used for sanitized SSX config sync.
+ * Filesystem path to a local git checkout used for sanitized SSIX config sync.
  */
 git_sync_repo_path: string | null, 
 /**
@@ -33,6 +33,6 @@ git_sync_repo_path: string | null,
  */
 git_sync_remote: string, 
 /**
- * Optional branch override. When omitted, SSX uses the current branch.
+ * Optional branch override. When omitted, SSIX uses the current branch.
  */
 git_sync_branch: string | null, };

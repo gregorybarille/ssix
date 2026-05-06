@@ -6,10 +6,10 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-const EXPORT_DIR: &str = ".ssx-sync";
+const EXPORT_DIR: &str = ".ssix-sync";
 const DATA_FILE: &str = "data.json";
 const SUMMARY_FILE: &str = "README.md";
-const DEFAULT_COMMIT_MESSAGE: &str = "sync ssx config snapshot";
+const DEFAULT_COMMIT_MESSAGE: &str = "sync ssix config snapshot";
 
 #[derive(Debug, Serialize)]
 pub struct GitSyncStatus {
@@ -348,7 +348,7 @@ fn sanitize_app_data(data: &AppData) -> AppData {
 
 fn render_summary(data: &AppData) -> String {
     let mut out = String::new();
-    out.push_str("# SSX Sync Snapshot\n\n");
+    out.push_str("# SSIX Sync Snapshot\n\n");
     out.push_str("Sanitized export for git sync. Passwords, inline private keys, and other secrets are omitted.\n\n");
     out.push_str(&format!("- Connections: {}\n", data.connections.len()));
     out.push_str(&format!("- Credentials: {}\n", data.credentials.len()));
@@ -460,7 +460,7 @@ mod tests {
 
     #[test]
     fn test_parse_status_path_extracts_relative_path() {
-        assert_eq!(parse_status_path(" M .ssx-sync/data.json"), Some(".ssx-sync/data.json".into()));
+        assert_eq!(parse_status_path(" M .ssix-sync/data.json"), Some(".ssix-sync/data.json".into()));
     }
 
     #[test]

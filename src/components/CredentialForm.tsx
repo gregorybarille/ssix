@@ -453,7 +453,7 @@ export function CredentialForm({
                     id="cred-key-inline-hint"
                     className="text-xs text-muted-foreground"
                   >
-                    Stored in SSX's secrets file (~/.ssx/secrets.json) and used
+                    Stored in SSIX's secrets file (~/.ssix/secrets.json) and used
                     via in-memory authentication.
                   </p>
                 </div>

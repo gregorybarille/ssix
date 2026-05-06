@@ -74,7 +74,7 @@ jobs:
         # (defined in docker/docker-compose.yml).
         run: docker compose -f docker/docker-compose.yml up -d --build --wait
 
-      - name: Build SSX (debug, no bundle)
+      - name: Build SSIX (debug, no bundle)
         # --no-bundle skips dmg/deb/AppImage packaging — we only need
         # the executable for tauri-driver to launch.
         run: npm run tauri build -- --debug --no-bundle
@@ -83,7 +83,7 @@ jobs:
         env:
           # Per-job isolated state dir; honored by data_dir() in
           # storage.rs and secrets_path() in keychain.rs.
-          SSX_DATA_DIR: ${{ runner.temp }}/ssx-e2e
+          SSIX_DATA_DIR: ${{ runner.temp }}/ssix-e2e
         run: xvfb-run -a npm run e2e:wdio
 
       - name: Capture docker-compose logs (always)
@@ -97,13 +97,13 @@ jobs:
           echo "::group::docker-compose logs"
           cat e2e/.artifacts/docker.log || true
           echo "::endgroup::"
-          echo "::group::tauri-driver.log (SSX backend stderr)"
+          echo "::group::tauri-driver.log (SSIX backend stderr)"
           cat e2e/.artifacts/tauri-driver.log 2>/dev/null || echo "(tauri-driver.log absent)"
           echo "::endgroup::"
           # Per-spec backend log buffers captured by wdio.conf.ts
           # afterTest hook via the `get_logs` Tauri command. This is
-          # our only reliable channel for SSX Rust-side diagnostics
-          # because tauri-driver discards the SSX subprocess stdio.
+          # our only reliable channel for SSIX Rust-side diagnostics
+          # because tauri-driver discards the SSIX subprocess stdio.
           for f in e2e/.artifacts/*.backend.log; do
             [ -e "$f" ] || continue
             echo "::group::backend logs — $(basename "$f")"

@@ -33,7 +33,7 @@ Windows releases are built by `.github/workflows/release.yml` on the
 `windows-latest` GitHub Actions runner and uploaded to the repository's
 GitHub Releases page as draft prereleases. The workflow builds the app with
 `npm run tauri build -- --no-bundle` and uploads the resulting
-`src-tauri/target/release/ssx.exe` directly as a release asset for users who
+`src-tauri/target/release/ssix.exe` directly as a release asset for users who
 cannot install MSI packages.
 
 The package version remains semver (`1.0.0`) in `src-tauri/tauri.conf.json`.
@@ -50,7 +50,7 @@ The release workflow can also be started manually from the Actions tab by
 providing the release tag input, for example `v1.0.0-beta.1`.
 
 Current portable builds are unsigned and intended for personal use. Download
-`ssx.exe` from the release assets and run it directly. Windows may show
+`ssix.exe` from the release assets and run it directly. Windows may show
 SmartScreen warnings until code signing is added.
 
 ## Repo Structure
@@ -99,13 +99,13 @@ End-to-end:
   npm run e2e:teardown   # stop containers, drop named volumes
   ```
 
-  Test specs and helpers live in `e2e/`. A single shared `SSX_DATA_DIR`
+  Test specs and helpers live in `e2e/`. A single shared `SSIX_DATA_DIR`
   is created once in `wdio.conf.ts` `onPrepare` and deleted in
   `onComplete` (see `helpers/data-dir.ts`). Because the Tauri app
   process is started once and inherits the env var at launch, cross-spec
   isolation relies on every spec using unique credential / connection
   names rather than separate directories. Runs cannot leak into the
-  developer's real `~/.ssx`. Failure artifacts (screenshots, docker
+  developer's real `~/.ssix`. Failure artifacts (screenshots, docker
   logs) are written to `e2e/.artifacts/` and uploaded as a workflow
   artifact in CI.
 

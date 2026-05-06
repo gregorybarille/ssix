@@ -46,17 +46,17 @@ ssh -L 9001:server-c:22 usera@localhost -p 2201 -N
 npm run docker:down
 ```
 
-## Testing SSX tunneling features
+## Testing SSIX tunneling features
 
-The Docker environment is designed to validate the two SSX tunnel kinds end-to-end.
+The Docker environment is designed to validate the two SSIX tunnel kinds end-to-end.
 
 ### Port Forward (`ConnectionKind::PortForward`)
 
-SSX opens an SSH session to the gateway with password auth, binds `127.0.0.1:<local_port>`,
+SSIX opens an SSH session to the gateway with password auth, binds `127.0.0.1:<local_port>`,
 and forwards every accepted local connection through the gateway to the destination. The
 destination need not run sshd — any TCP service works.
 
-Configure an SSX connection:
+Configure an SSIX connection:
 
 | Field                | Value           |
 |----------------------|-----------------|
@@ -79,11 +79,11 @@ The same pattern works for forwarding non-SSH services (HTTP APIs, databases, et
 
 ### Jump Shell (`ConnectionKind::JumpShell`)
 
-SSX opens an SSH terminal to the destination *through* the gateway. No SSH keys are
-required on the gateway: SSX authenticates to both gateway and destination separately
+SSIX opens an SSH terminal to the destination *through* the gateway. No SSH keys are
+ required on the gateway: SSIX authenticates to both gateway and destination separately
 with their own credentials.
 
-Configure an SSX connection:
+Configure an SSIX connection:
 
 | Field                  | Value         |
 |------------------------|---------------|

@@ -201,13 +201,13 @@ pub struct AppSettings {
     /// Cmd/Ctrl+C still copies the active selection regardless of this flag.
     #[serde(default)]
     pub auto_copy_selection: bool,
-    /// Filesystem path to a local git checkout used for sanitized SSX config sync.
+    /// Filesystem path to a local git checkout used for sanitized SSIX config sync.
     #[serde(default)]
     pub git_sync_repo_path: Option<String>,
     /// Git remote name used for fetch/pull/push checks.
     #[serde(default = "default_git_remote")]
     pub git_sync_remote: String,
-    /// Optional branch override. When omitted, SSX uses the current branch.
+    /// Optional branch override. When omitted, SSIX uses the current branch.
     #[serde(default)]
     pub git_sync_branch: Option<String>,
 }

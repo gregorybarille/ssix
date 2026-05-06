@@ -2,7 +2,7 @@
  * Spec 08: Git-sync export.
  *
  * Initialises a local non-bare git repo (export needs a worktree to
- * stage files into), configures the SSX app's `git_sync_repo_path`
+ * stage files into), configures the SSIX app's `git_sync_repo_path`
  * setting via the Settings UI (so the in-memory store is updated and
  * the GitSyncView fetches a fresh status), then runs the export and
  * asserts the action produced visible status.
@@ -31,11 +31,11 @@ let repo: string;
 
 describe("Git sync export", () => {
   before(() => {
-    repo = mkdtempSync(join(tmpdir(), "ssx-gitsync-repo-"));
+    repo = mkdtempSync(join(tmpdir(), "ssix-gitsync-repo-"));
     execSync("git init --initial-branch=main", { cwd: repo });
-    execSync("git config user.email e2e@ssx.test", { cwd: repo });
+    execSync("git config user.email e2e@ssix.test", { cwd: repo });
     execSync("git config user.name e2e", { cwd: repo });
-    // git_sync_status calls `git status --short .ssx-sync` and
+    // git_sync_status calls `git status --short .ssix-sync` and
     // `git rev-list --left-right --count HEAD...origin/main`. The
     // ahead_behind() helper short-circuits when `current_branch`
     // returns None (empty repo), but the moment we have any commit
@@ -54,7 +54,7 @@ describe("Git sync export", () => {
     // and tries `HEAD...origin/main`. To avoid that error we point
     // origin at a second local repo that already has main.
     execSync("git commit --allow-empty -m initial", { cwd: repo });
-    const remote = mkdtempSync(join(tmpdir(), "ssx-gitsync-remote-"));
+    const remote = mkdtempSync(join(tmpdir(), "ssix-gitsync-remote-"));
     execSync("git init --bare --initial-branch=main", { cwd: remote });
     execSync(`git remote add origin ${remote}`, { cwd: repo });
     execSync("git push -u origin main", { cwd: repo });

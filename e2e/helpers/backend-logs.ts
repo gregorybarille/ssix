@@ -1,10 +1,10 @@
 /**
- * Capture the SSX Rust backend's in-memory log buffer from inside the
+ * Capture the SSIX Rust backend's in-memory log buffer from inside the
  * running WebView via the existing `get_logs` Tauri command.
  *
  * Why this exists
  * ---------------
- * `tauri-driver` spawns the SSX binary as a grandchild process and
+ * `tauri-driver` spawns the SSIX binary as a grandchild process and
  * does NOT forward its stdio, so redirecting tauri-driver's own
  * stdio captures only WebKitWebDriver chatter — never `eprintln!`
  * from `src-tauri/src/`. The production app already maintains a

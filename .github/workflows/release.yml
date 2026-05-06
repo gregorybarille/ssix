@@ -50,8 +50,8 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           tag_name: ${{ env.RELEASE_TAG }}
-          name: "SSX ${{ env.RELEASE_TAG }}"
-          body: "Unsigned portable Windows build for personal use. Download `ssx.exe` from the release assets and run it directly. Windows may show SmartScreen warnings."
+          name: "SSIX ${{ env.RELEASE_TAG }}"
+          body: "Unsigned portable Windows build for personal use. Download `ssix.exe` from the release assets and run it directly. Windows may show SmartScreen warnings."
           draft: true
           prerelease: true
-          files: src-tauri/target/release/ssx.exe
+          files: src-tauri/target/release/ssix.exe

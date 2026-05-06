@@ -127,7 +127,7 @@ export function Terminal({ sessionId, connectionName, isVisible, onDisconnect, s
      * (xterm's default Ctrl+V on macOS is captured by the WebView).
      *
      * P3#14 (Audit-3): we deliberately do NOT need a "swallow keystrokes
-     * while a dialog is open" guard here. Every Radix Dialog used in SSX
+     * while a dialog is open" guard here. Every Radix Dialog used in SSIX
      * is `modal={true}` (the default), which mounts a focus trap that
      * synchronously moves focus into the dialog content and prevents
      * focus from escaping back to outside elements. So when any dialog
@@ -169,7 +169,7 @@ export function Terminal({ sessionId, connectionName, isVisible, onDisconnect, s
      * dropped, lost tx in SshState) — the user keeps typing into a dead
      * terminal otherwise. We render a single red banner the first time it
      * happens per session so we don't spam on every keystroke after the
-     * connection is dead. The `ssx:ssh:closed:{id}` event will follow shortly
+     * connection is dead. The `ssix:ssh:closed:{id}` event will follow shortly
      * afterward and trigger `onDisconnect()`.
      */
     let writeFailed = false;
@@ -189,7 +189,7 @@ export function Terminal({ sessionId, connectionName, isVisible, onDisconnect, s
      * P1#1 (auto-copy-selection setting): when `settings.auto_copy_selection`
      * is true (off by default), reproduce the classic xterm behavior of
      * copying every selection to the clipboard immediately. This is the
-     * legacy SSX behavior — preserved behind a setting for users who want
+     * legacy SSIX behavior — preserved behind a setting for users who want
      * it, but no longer the default since it silently overwrites the
      * clipboard on highlight (a privacy/UX foot-gun on macOS).
      *
@@ -210,7 +210,7 @@ export function Terminal({ sessionId, connectionName, isVisible, onDisconnect, s
       const text = (e as CustomEvent<{ text: string }>).detail.text;
       if (isVisible && text) term.paste(text);
     };
-    window.addEventListener("ssx:terminal-paste", pasteHandler);
+    window.addEventListener("ssix:terminal-paste", pasteHandler);
 
     const setupListeners = async () => {
       try {
@@ -253,7 +253,7 @@ export function Terminal({ sessionId, connectionName, isVisible, onDisconnect, s
     return () => {
       dataDisposable.dispose();
       selectionDisposable.dispose();
-      window.removeEventListener("ssx:terminal-paste", pasteHandler);
+      window.removeEventListener("ssix:terminal-paste", pasteHandler);
       listenersRef.current.forEach((fn) => fn());
       resizeObserver.disconnect();
       term.dispose();

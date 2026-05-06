@@ -19,12 +19,12 @@ import { sel } from "../helpers/selectors.js";
 let workDir: string;
 let upload: string;
 let download: string;
-const PAYLOAD = "ssx-scp-roundtrip-payload\n";
+const PAYLOAD = "ssix-scp-roundtrip-payload\n";
 
 describe("SCP upload + download", () => {
   before(async () => {
     await waitForServers(["a"]);
-    workDir = mkdtempSync(join(tmpdir(), "ssx-scp-"));
+    workDir = mkdtempSync(join(tmpdir(), "ssix-scp-"));
     upload = join(workDir, "upload.txt");
     download = join(workDir, "download.txt");
     writeFileSync(upload, PAYLOAD);
@@ -61,9 +61,9 @@ describe("SCP upload + download", () => {
     const dialog = await browser.$(sel.scpDialog);
     await dialog.waitForExist({ timeout: 10_000 });
 
-    // Upload phase. NOTE: SSX's resolve_remote_target_path() always
+    // Upload phase. NOTE: SSIX's resolve_remote_target_path() always
     // appends the local file name to the remote_path argument
-    // (treating it as a directory). So if local is /tmp/ssx-scp-XYZ/upload.txt
+    // (treating it as a directory). So if local is /tmp/ssix-scp-XYZ/upload.txt
     // and remote_path is "/tmp/", the actual remote file is /tmp/upload.txt.
     await (await browser.$(sel.scpModeUpload)).click();
     await (await browser.$(sel.scpLocalPath)).setValue(upload);
@@ -71,7 +71,7 @@ describe("SCP upload + download", () => {
     await (await browser.$(sel.scpUploadButton)).click();
     await waitForScpStatusOrFail("upload");
 
-    // Download phase. The remote file is at /tmp/upload.txt (SSX
+    // Download phase. The remote file is at /tmp/upload.txt (SSIX
     // appended the source file name during upload). For download,
     // remote_path is the source file directly — resolve_download_remote_path
     // does not append anything.

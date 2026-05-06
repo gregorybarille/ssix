@@ -1,5 +1,5 @@
 /**
- * Helpers for resolving and launching the SSX Tauri binary under test.
+ * Helpers for resolving and launching the SSIX Tauri binary under test.
  *
  * tauri-driver expects an absolute path to the built executable. We
  * prefer the debug build (faster iteration, no signing concerns) but
@@ -13,7 +13,7 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = resolve(__dirname, "..", "..");
 
 /**
- * Resolve the path to the SSX binary produced by `tauri build`.
+ * Resolve the path to the SSIX binary produced by `tauri build`.
  * Searches debug then release across linux/macos layouts.
  *
  * Throws with an actionable message if no binary exists yet — CI
@@ -23,21 +23,21 @@ const ROOT = resolve(__dirname, "..", "..");
 export function resolveBinaryPath(): string {
   const candidates = [
     // Linux layout (CI + dockerized runner).
-    resolve(ROOT, "src-tauri/target/debug/ssx"),
-    resolve(ROOT, "src-tauri/target/release/ssx"),
+    resolve(ROOT, "src-tauri/target/debug/ssix"),
+    resolve(ROOT, "src-tauri/target/release/ssix"),
     // macOS layout (won't actually run under tauri-driver but kept
     // for the "developer pointed wdio at a local build" diagnostic).
-    resolve(ROOT, "src-tauri/target/debug/bundle/macos/ssx.app/Contents/MacOS/ssx"),
-    resolve(ROOT, "src-tauri/target/release/bundle/macos/ssx.app/Contents/MacOS/ssx"),
+    resolve(ROOT, "src-tauri/target/debug/bundle/macos/ssix.app/Contents/MacOS/ssix"),
+    resolve(ROOT, "src-tauri/target/release/bundle/macos/ssix.app/Contents/MacOS/ssix"),
     // Windows layout.
-    resolve(ROOT, "src-tauri/target/debug/ssx.exe"),
-    resolve(ROOT, "src-tauri/target/release/ssx.exe"),
+    resolve(ROOT, "src-tauri/target/debug/ssix.exe"),
+    resolve(ROOT, "src-tauri/target/release/ssix.exe"),
   ];
   for (const p of candidates) {
     if (existsSync(p)) return p;
   }
   throw new Error(
-    `Could not find SSX binary. Looked in:\n  ${candidates.join("\n  ")}\n` +
+    `Could not find SSIX binary. Looked in:\n  ${candidates.join("\n  ")}\n` +
       `Run \`npm run tauri build -- --debug\` first.`,
   );
 }

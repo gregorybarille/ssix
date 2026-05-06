@@ -7,7 +7,7 @@ function Textarea({ className, ...props }: React.ComponentProps<"textarea">) {
     <textarea
       data-slot="textarea"
       className={cn(
-        // Audit: SSX uses `font-mono` by default because the only
+        // Audit: SSIX uses `font-mono` by default because the only
         // current callers render private-key contents (CredentialForm),
         // where monospace is the expected affordance. Override per-call
         // with `className="font-sans"` for prose textareas.

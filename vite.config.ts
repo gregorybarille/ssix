@@ -6,7 +6,7 @@ import path from "path";
 const host = process.env.TAURI_DEV_HOST;
 
 // Vite 7 changed the default `build.target` to `'baseline-widely-available'`,
-// which silently shifts which JS features are down-leveled. SSX runs inside
+// which silently shifts which JS features are down-leveled. SSIX runs inside
 // Tauri's WebView (WKWebView on macOS, WebView2 on Windows, WebKitGTK on
 // Linux); pinning the target makes browser-feature support deterministic
 // and matches Node 22 / Tauri 2's runtime baseline.

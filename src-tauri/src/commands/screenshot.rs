@@ -33,7 +33,7 @@ fn take_screenshot_into_dir(
 
     // Format as YYYYMMDD-HHMMSS using integer arithmetic (no chrono dep needed).
     let ts = format_timestamp(secs);
-    let filename = format!("ssx-screenshot-{}-{:03}.png", ts, millis);
+    let filename = format!("ssix-screenshot-{}-{:03}.png", ts, millis);
     let path = dir.join(&filename);
 
     // Audit-4 L1: route through atomic_write so a crash mid-write
@@ -97,7 +97,7 @@ mod tests {
 
     #[test]
     fn take_screenshot_creates_directory_and_writes_file() {
-        let base = std::env::temp_dir().join("ssx_screenshot_missing_dir");
+        let base = std::env::temp_dir().join("ssix_screenshot_missing_dir");
         if base.exists() {
             fs::remove_dir_all(&base).unwrap();
         }
@@ -105,7 +105,7 @@ mod tests {
         let data_url = format!("data:image/png;base64,{}", png_b64());
 
         let path_str = take_screenshot_into_dir(&base, &data_url, now).unwrap();
-        let expected = base.join("ssx-screenshot-20240422-090000-042.png");
+        let expected = base.join("ssix-screenshot-20240422-090000-042.png");
 
         assert_eq!(expected.to_str().unwrap(), path_str);
         assert!(expected.exists());
@@ -117,7 +117,7 @@ mod tests {
 
     #[test]
     fn take_screenshot_rejects_invalid_base64() {
-        let base = std::env::temp_dir().join("ssx_screenshot_invalid_b64");
+        let base = std::env::temp_dir().join("ssix_screenshot_invalid_b64");
         let err = take_screenshot_into_dir(&base, "notbase64", SystemTime::now()).unwrap_err();
         assert!(
             err.starts_with("Failed to decode image"),
@@ -128,7 +128,7 @@ mod tests {
 
     #[test]
     fn test_decode_base64_and_write_png_bytes() {
-        let tmp = std::env::temp_dir().join("ssx_screenshot_test");
+        let tmp = std::env::temp_dir().join("ssix_screenshot_test");
         fs::create_dir_all(&tmp).unwrap();
 
         let b64 = png_b64();

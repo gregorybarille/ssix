@@ -7,7 +7,7 @@ import { cn } from "@/lib/utils";
 import { Network, ArrowRight, Activity, AlertCircle } from "lucide-react";
 
 /**
- * Status payload emitted on `ssx:tunnel:status:{sessionId}`. Mirror of
+ * Status payload emitted on `ssix:tunnel:status:{sessionId}`. Mirror of
  * `TunnelStatus` in `src-tauri/src/ssh.rs`.
  */
 export interface TunnelStatusPayload {

@@ -1,19 +1,19 @@
 # Git Sync
 
-Git Sync exports a sanitized snapshot of SSX configuration into a local git repository chosen in Settings.
+Git Sync exports a sanitized snapshot of SSIX configuration into a local git repository chosen in Settings.
 
 ## What Gets Exported
 
 Files are written under:
 
-- `.ssx-sync/data.json`
-- `.ssx-sync/README.md`
+- `.ssix-sync/data.json`
+- `.ssix-sync/README.md`
 
 ## What Does Not Get Exported
 
 - password values
 - inline private key contents
-- raw secret storage from `~/.ssx/secrets.json`
+- raw secret storage from `~/.ssix/secrets.json`
 
 Passphrases are represented as redacted markers when present, not as the original values.
 
@@ -38,7 +38,7 @@ The primary `Sync` action performs these steps:
 1. Export sanitized snapshot
 2. Fetch remote updates
 3. Fast-forward pull if the branch is behind
-4. Stage `.ssx-sync/`
+4. Stage `.ssix-sync/`
 5. Commit if there are local exported changes
 6. Push if the branch is ahead
 

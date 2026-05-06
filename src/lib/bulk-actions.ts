@@ -26,7 +26,7 @@ export function isBulkActionable(conn: Connection): boolean {
  *
  * Failures during the placeholder phase are swallowed and counted;
  * SSH errors that surface later show up on the affected pane via
- * the existing `ssx:ssh:error:{id}` event flow, exactly the same
+  * the existing `ssix:ssh:error:{id}` event flow, exactly the same
  * way single-connection failures do today.
  */
 export async function connectMany(

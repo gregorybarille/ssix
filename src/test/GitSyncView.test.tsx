@@ -15,9 +15,9 @@ describe("GitSyncView", () => {
         has_remote_changes: true,
         ahead: 1,
         behind: 2,
-        changed_files: [".ssx-sync/data.json"],
+        changed_files: [".ssix-sync/data.json"],
       },
-      diff: { staged: "", unstaged: "diff --git a/.ssx-sync/data.json b/.ssx-sync/data.json" },
+      diff: { staged: "", unstaged: "diff --git a/.ssix-sync/data.json b/.ssix-sync/data.json" },
       isLoading: false,
       actionOutput: null,
       error: null,
@@ -40,7 +40,7 @@ describe("GitSyncView", () => {
     // so it's queried by region role + label.
     const unstaged = screen.getByRole("region", { name: /unstaged/i });
     expect(unstaged.textContent).toMatch(/diff --git/);
-    expect(screen.getByPlaceholderText(/sync ssx config snapshot/i)).toBeInTheDocument();
+    expect(screen.getByPlaceholderText(/sync ssix config snapshot/i)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /sync/i })).toBeInTheDocument();
   });
 

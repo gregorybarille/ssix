@@ -127,7 +127,7 @@ pub(crate) fn lock_recover<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
     m.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
-/// Status payload emitted on `ssx:tunnel:status:{id}`.
+/// Status payload emitted on `ssix:tunnel:status:{id}`.
 #[derive(Serialize, Clone)]
 pub struct TunnelStatus {
     pub state: &'static str, // "listening" | "client_connected" | "client_closed" | "error"
@@ -138,26 +138,26 @@ pub struct TunnelStatus {
 }
 
 /// Audit-4 Phase 6c: SSH/tunnel event names are namespaced under
-/// `ssx:` so they cannot collide with Tauri plugin events or with
+/// `ssix:` so they cannot collide with Tauri plugin events or with
 /// any future frontend custom-event listener (the frontend already
-/// uses an `ssx:` prefix for its DOM events — see App.tsx
-/// `ssx:contextmenu`, `ssx:terminal-paste`).
+/// uses an `ssix:` prefix for its DOM events — see App.tsx
+/// `ssix:contextmenu`, `ssix:terminal-paste`).
 ///
 /// Callers MUST go through these helpers so a future rename is a
 /// single-point change. The frontend mirrors the same names in
 /// `src/components/Terminal.tsx` and `src/components/TunnelTab.tsx`;
 /// any change here must be reflected there in the same commit.
 pub(crate) fn ssh_output_event(session_id: &str) -> String {
-    format!("ssx:ssh:output:{}", session_id)
+    format!("ssix:ssh:output:{}", session_id)
 }
 pub(crate) fn ssh_error_event(session_id: &str) -> String {
-    format!("ssx:ssh:error:{}", session_id)
+    format!("ssix:ssh:error:{}", session_id)
 }
 pub(crate) fn ssh_closed_event(session_id: &str) -> String {
-    format!("ssx:ssh:closed:{}", session_id)
+    format!("ssix:ssh:closed:{}", session_id)
 }
 pub(crate) fn tunnel_status_event(session_id: &str) -> String {
-    format!("ssx:tunnel:status:{}", session_id)
+    format!("ssix:tunnel:status:{}", session_id)
 }
 
 pub fn start_ssh_session(
@@ -190,7 +190,7 @@ pub fn start_ssh_session(
         let _session = session;
         if verbosity >= 1 {
             let msg = format!(
-                "\x1b[2m[SSX] Connected to {}:{} as {}\x1b[0m\r\n",
+                "\x1b[2m[SSIX] Connected to {}:{} as {}\x1b[0m\r\n",
                 host, port, username
             );
             let _ = app_handle.emit(&ssh_output_event(&sid), msg.into_bytes());
@@ -295,7 +295,7 @@ fn authenticate_pubkey_memory(
     use std::fs;
     use uuid::Uuid;
 
-    let path = std::env::temp_dir().join(format!("ssx-key-{}.tmp", Uuid::new_v4()));
+    let path = std::env::temp_dir().join(format!("ssix-key-{}.tmp", Uuid::new_v4()));
 
     fs::write(&path, private_key).map_err(|_| {
         ssh2::Error::new(
@@ -930,7 +930,7 @@ pub fn start_jump_shell(
         let _gateway_session = gateway_session;
         if verbosity >= 1 {
             let msg = format!(
-                "\x1b[2m[SSX] Connected to {}:{} via gateway {}:{} as {}\x1b[0m\r\n",
+                "\x1b[2m[SSIX] Connected to {}:{} via gateway {}:{} as {}\x1b[0m\r\n",
                 destination_host, destination_port, gateway_host, gateway_port, destination_username
             );
             let _ = app_handle.emit(&ssh_output_event(&sid), msg.into_bytes());

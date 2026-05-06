@@ -144,7 +144,7 @@ export function GenerateKeyDialog({
                 <span>
                   <span className="font-medium">Inline (no file on disk)</span>
                   <span className="block text-xs text-muted-foreground-soft">
-                    Store the key inside SSX's secrets file only.
+                    Store the key inside SSIX's secrets file only.
                   </span>
                 </span>
               </label>
@@ -176,7 +176,7 @@ export function GenerateKeyDialog({
                 id="key-custom-path-hint"
                 className="text-xs text-muted-foreground"
               >
-                Absolute path for the private key. SSX writes both
+                Absolute path for the private key. SSIX writes both
                 this file (mode 600) and a sibling{" "}
                 <code>.pub</code> file (mode 644). The directory
                 must already exist.

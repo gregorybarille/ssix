@@ -4,7 +4,7 @@
  * Validates that creating, listing, and deleting a password credential
  * persists through the real `add_credential` / `delete_credential`
  * Tauri commands and the on-disk `secrets.json` (under the shared
- * SSX_DATA_DIR set in wdio.conf.ts onPrepare).
+ * SSIX_DATA_DIR set in wdio.conf.ts onPrepare).
  */
 import { waitForAppReady } from "../helpers/app.js";
 import { navigateTo, createPasswordCredential } from "../helpers/flows.js";

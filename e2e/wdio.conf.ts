@@ -1,5 +1,5 @@
 /**
- * WebdriverIO config for SSX E2E tests.
+ * WebdriverIO config for SSIX E2E tests.
  *
  * Drives the real Tauri application binary via `tauri-driver`, which
  * proxies WebDriver commands to the platform's native WebView driver
@@ -66,7 +66,7 @@ export const config: Options.Testrunner = {
     timeout: 120_000,
   },
 
-  // Create SSX_DATA_DIR before anything else so tauri-driver (and the
+  // Create SSIX_DATA_DIR before anything else so tauri-driver (and the
   // app it spawns) inherit the env var from this process.
   onPrepare() {
     setupTestDataDir();
@@ -78,9 +78,9 @@ export const config: Options.Testrunner = {
   },
 
   // Spawn tauri-driver just before the WebDriver session opens so the
-  // SSX app subprocess inherits the already-set SSX_DATA_DIR.
+  // SSIX app subprocess inherits the already-set SSIX_DATA_DIR.
   // Stdout/stderr are tee'd to e2e/.artifacts/tauri-driver.log so CI
-  // failure artifacts capture the SSX backend's eprintln/log output —
+  // failure artifacts capture the SSIX backend's eprintln/log output —
   // critical for diagnosing silent SSH failures where the WebDriver
   // log shows the frontend healthy but the backend failed quietly.
   beforeSession() {
@@ -114,8 +114,8 @@ export const config: Options.Testrunner = {
 
   // Capture screenshot + backend log buffer on every failed mocha test
   // for easy triage from CI artifacts. Backend logs come from the
-  // SSX `get_logs` Tauri command (in-memory ring buffer) since
-  // tauri-driver doesn't forward the SSX subprocess's stdio — this
+  // SSIX `get_logs` Tauri command (in-memory ring buffer) since
+  // tauri-driver doesn't forward the SSIX subprocess's stdio — this
   // is our only reliable window into Rust-side errors when an SSH
   // connection silently fails.
   afterTest: async function (test, _ctx, { error }) {

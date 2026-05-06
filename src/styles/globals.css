@@ -62,7 +62,7 @@
 /*
  * `container` v4 replacement. v3 exposed a `theme.container` config
  * (centered, padded, max-width per breakpoint); v4 removed that
- * surface entirely, so we re-create the SSX defaults as a custom
+ * surface entirely, so we re-create the SSIX defaults as a custom
  * utility. `--theme(--breakpoint-sm)` resolves to v4's built-in sm
  * breakpoint (40rem / 640px), keeping behaviour identical.
  */
@@ -81,7 +81,7 @@
  * v3 → v4 border-color compatibility. v4 changed the default border
  * color from `theme.colors.gray.200` to `currentColor`. We pin it
  * back to the old default so existing `border` (no color) usages
- * across SSX components don't suddenly inherit text color.
+ * across SSIX components don't suddenly inherit text color.
  */
 @layer base {
   *,

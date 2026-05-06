@@ -744,7 +744,7 @@ export function ConnectionForm({
         </p>
       ) : (
         <p id="local_port-help" className="text-xs text-muted-foreground">
-          SSX will listen on <code>127.0.0.1:&lt;local_port&gt;</code> and forward
+          SSIX will listen on <code>127.0.0.1:&lt;local_port&gt;</code> and forward
           connections through the gateway to the destination.
         </p>
       )}

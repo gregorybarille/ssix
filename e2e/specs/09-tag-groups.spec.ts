@@ -15,7 +15,7 @@
  *     each row reaches data-status="success".
  *
  * Naming convention: every credential / connection / tag in this
- * spec is suffixed `-09` so the shared per-suite SSX_DATA_DIR can
+ * spec is suffixed `-09` so the shared per-suite SSIX_DATA_DIR can
  * coexist with other specs without cross-contamination.
  */
 import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
@@ -85,10 +85,10 @@ async function setTextInputValue(selector: string, value: string): Promise<void>
 describe("Tag-group view + bulk actions", () => {
   before(async () => {
     await waitForServers(["a", "b"]);
-    workDir = join(process.cwd(), "e2e", ".tmp", `ssx-tags-${Date.now()}`);
+    workDir = join(process.cwd(), "e2e", ".tmp", `ssix-tags-${Date.now()}`);
     mkdirSync(workDir, { recursive: true });
     upload = join(workDir, "tag-upload.txt");
-    writeFileSync(upload, "ssx-tag-bulk-payload\n");
+    writeFileSync(upload, "ssix-tag-bulk-payload\n");
   });
   after(() => {
     rmSync(workDir, { recursive: true, force: true });

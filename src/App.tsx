@@ -178,8 +178,8 @@ function App() {
       const { x, y } = (e as CustomEvent<{ x: number; y: number }>).detail;
       dialogs.setContextMenu({ x, y });
     };
-    window.addEventListener("ssx:contextmenu", handler);
-    return () => window.removeEventListener("ssx:contextmenu", handler);
+    window.addEventListener("ssix:contextmenu", handler);
+    return () => window.removeEventListener("ssix:contextmenu", handler);
   }, [dialogs]);
 
   useEffect(() => {
@@ -193,7 +193,7 @@ function App() {
           .then((text) => {
             if (text) {
               window.dispatchEvent(
-                new CustomEvent("ssx:terminal-paste", { detail: { text } }),
+                new CustomEvent("ssix:terminal-paste", { detail: { text } }),
               );
             }
           })
@@ -201,7 +201,7 @@ function App() {
         return;
       }
       window.dispatchEvent(
-        new CustomEvent("ssx:contextmenu", {
+        new CustomEvent("ssix:contextmenu", {
           detail: { x: e.clientX, y: e.clientY },
         }),
       );

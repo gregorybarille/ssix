@@ -1,6 +1,6 @@
 # File Transfer
 
-SSX supports SCP-based file transfer for:
+SSIX supports SCP-based file transfer for:
 
 - direct connections
 - jump-shell connections
@@ -16,7 +16,7 @@ Port-forward connection definitions are not valid SCP targets.
 
 ## Remote Path Behavior
 
-- If a connection has `remote_path`, SSX uses it as the default base path when possible.
+- If a connection has `remote_path`, SSIX uses it as the default base path when possible.
 - Relative download paths resolve against the connection `remote_path` when set.
 - Uploads can target an explicit remote path or fall back to the configured connection base path.
 

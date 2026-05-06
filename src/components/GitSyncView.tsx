@@ -87,7 +87,7 @@ export function GitSyncView() {
                 <div className="flex gap-2">
                   <Input
                     id="git-commit-message"
-                    placeholder="sync ssx config snapshot"
+                    placeholder="sync ssix config snapshot"
                     value={commitMessage}
                     onChange={(e) => setCommitMessage(e.target.value)}
                   />
@@ -121,7 +121,7 @@ export function GitSyncView() {
                 <div className="px-4 py-3 border-b border-border">
                   <h2 className="text-sm font-medium">Exact diff</h2>
                   <p className="text-xs text-muted-foreground">
-                    Tracks only the sanitized export under `.ssx-sync/`.
+                    Tracks only the sanitized export under `.ssix-sync/`.
                   </p>
                 </div>
                 <div className="p-4 space-y-4">

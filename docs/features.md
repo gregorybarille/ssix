@@ -2,7 +2,7 @@
 
 ## Connections
 
-SSX supports three connection types:
+SSIX supports three connection types:
 
 - `direct`
 - `port_forward`
@@ -70,7 +70,7 @@ See [File Transfer](file-transfer.md) for behavior and limitations.
 
 ## Git Sync
 
-- sanitized config export into `.ssx-sync/`
+- sanitized config export into `.ssix-sync/`
 - exact diff view
 - fetch, pull, commit, push
 - one-click sync
@@ -114,7 +114,7 @@ See [Git Sync](git-sync.md) for details.
 
 ## Title Bar
 
-SSX renders its own draggable title bar so it can host a Settings shortcut
+SSIX renders its own draggable title bar so it can host a Settings shortcut
 and (on Windows / Linux) the minimize / maximize / close window controls.
 
 - macOS uses the native traffic-light buttons; only the Settings button is
@@ -129,7 +129,7 @@ and (on Windows / Linux) the minimize / maximize / close window controls.
 
 ## Destructive-Action Confirmations
 
-SSX shows a confirmation dialog before any destructive action:
+SSIX shows a confirmation dialog before any destructive action:
 
 - deleting a connection
 - deleting a credential
@@ -144,7 +144,7 @@ to lose.
 When a dialog closes — whether through Cancel, Confirm, the Escape
 key, or clicking outside — focus returns to the control that opened
 it. This holds even when the dialog is opened from React state rather
-than via `<DialogTrigger>` (the pattern used everywhere in SSX), which
+than via `<DialogTrigger>` (the pattern used everywhere in SSIX), which
 the stock Radix focus-restore can't always handle on its own. The
 shared `<DialogContent>` primitive in `src/components/ui/dialog.tsx`
 tracks the last interactive element the user touched outside any open
@@ -323,7 +323,7 @@ dialog first opens against an existing connection.
 
 ## Global Keyboard Shortcuts
 
-SSX listens for a small set of platform shortcuts. `Mod` is `Cmd` on
+SSIX listens for a small set of platform shortcuts. `Mod` is `Cmd` on
 macOS and `Ctrl` everywhere else.
 
 | Shortcut       | Action                                                   |
@@ -400,7 +400,7 @@ hosts that carry no tags) and offers two bulk actions:
 
 ## Reduced Motion
 
-SSX honors the OS-level **prefers-reduced-motion** preference. When
+SSIX honors the OS-level **prefers-reduced-motion** preference. When
 the user has enabled "Reduce motion" (System Settings → Accessibility
 on macOS, Settings → Ease of Access → Display on Windows, GNOME/KDE
 animation toggles on Linux), every CSS animation, transition, and

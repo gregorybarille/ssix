@@ -1,4 +1,4 @@
-# SSX Copilot Instructions
+# SSIX Copilot Instructions
 
 > **Docs index** — keep all docs in sync with code; never leave documentation stale.
 > - `docs/architecture.md` — system diagrams and data-flow
@@ -24,9 +24,9 @@
 - **Tauri v2** desktop app: React/Vite frontend (`src/`) + Rust backend (`src-tauri/`)
 - **Frontend state**: Zustand stores in `src/store/` call Tauri via `src/lib/tauri.ts` (lazy-loaded for test mocking)
 - **Backend commands**: `src-tauri/src/commands/` → registered in `lib.rs` `invoke_handler![]`
-- **SSH sessions**: `ssh2` crate, one thread per session, `mpsc` channels, events `ssx:ssh:{output|error|closed}:{id}` and `ssx:tunnel:status:{id}` (use helpers in `src-tauri/src/ssh.rs` + `src/lib/events.ts`)
+- **SSH sessions**: `ssh2` crate, one thread per session, `mpsc` channels, events `ssix:ssh:{output|error|closed}:{id}` and `ssix:tunnel:status:{id}` (use helpers in `src-tauri/src/ssh.rs` + `src/lib/events.ts`)
 - **Terminal**: xterm.js, stays mounted when hidden; tunnels live in `TunnelsView`, not the terminal tab bar
-- **Persistence**: File-based at `~/.ssx/data.json`. All writes MUST use `atomic_write()` — never `fs::write` directly
+- **Persistence**: File-based at `~/.ssix/data.json`. All writes MUST use `atomic_write()` — never `fs::write` directly
 - **Models**: `src/types/index.ts` ↔ `src-tauri/src/models.rs` must stay in sync (snake_case throughout). `cargo test` regenerates ts-rs bindings into `src/types/generated/`; `src/test/typesParity.test.ts` fails when a generated field is missing from the hand-written index.ts. CI: run `cargo test && git diff --exit-code src/types/generated/`.
 - **IDs**: Generated server-side with `uuid::Uuid::new_v4()`; frontend never generates IDs
 
@@ -87,7 +87,7 @@ Point at `http://localhost:1420` (run `npm run dev` first). Add to `~/.copilot/m
 - **Stack**: `tauri-driver` + WebdriverIO + Mocha (TypeScript). Specs in `e2e/specs/`, helpers in `e2e/helpers/`, selectors in `e2e/helpers/selectors.ts` (single source of truth).
 - **CI**: `.github/workflows/e2e.yml` runs on push to `main`, version tag pushes (`v*`), pull requests, and `workflow_dispatch`. Advisory status — not a required PR gate, but failures surface on the PR.
 - **Local**: `npm run e2e` runs the suite inside a Linux container (tauri-driver doesn't run on macOS). Requires Docker.
-- **Storage isolation**: `SSX_DATA_DIR` env var (honored by `storage::data_dir()` and `keychain::secrets_path()`) points to a per-suite `mkdtemp`. The Tauri app is spawned once via `tauri-driver` and inherits the env, so all specs share one data dir — cross-spec isolation relies on every spec using unique credential / connection names.
+- **Storage isolation**: `SSIX_DATA_DIR` env var (honored by `storage::data_dir()` and `keychain::secrets_path()`) points to a per-suite `mkdtemp`. The Tauri app is spawned once via `tauri-driver` and inherits the env, so all specs share one data dir — cross-spec isolation relies on every spec using unique credential / connection names.
 - **SSH targets**: `docker/docker-compose.yml` defines four alpine sshd servers (`server-a/b/c/d`) with healthchecks. The `e2e-runner` service (under `e2e` profile) is the dockerized runner.
 - **Adding a testid**: register the selector in `e2e/helpers/selectors.ts`, add `data-testid="<kebab>"` to the component, and (if the element represents a row) include `data-name` so specs can locate by user-visible name.
 - **Artifacts**: failures upload `e2e/.artifacts/` (screenshots) from CI.
