@@ -37,11 +37,12 @@ GitHub Releases page as prereleases. The workflow builds the app with
 cannot install MSI packages.
 
 The workflow publishes against the actual Git tag (for example
-`v1.0.0-beta.10`) using `gh release --verify-tag`, so the portable executable
-appears on the tagged release page. Tests and the portable build run as
-separate jobs, and the beta build disables release LTO while raising codegen
-units during the Windows build to reduce turnaround time while still producing
-an optimized portable EXE.
+`v1.0.0-beta.11`) using `gh release --verify-tag`, so the portable executable
+appears on the tagged release page. Windows tests and the portable build run in
+parallel jobs, and a small publish job uploads the produced `ssix.exe` only
+after both succeed. The beta build also disables release LTO while raising
+codegen units during the Windows build to reduce turnaround time while still
+producing an optimized portable EXE.
 
 The package version remains semver (`1.0.0`) in `src-tauri/tauri.conf.json`.
 Use prerelease labels on the Git tag and GitHub release name.

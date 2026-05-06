@@ -43,10 +43,9 @@ jobs:
       - run: cargo test
         working-directory: src-tauri
 
-  windows-portable:
-    name: Windows Portable EXE
+  windows-build:
+    name: Windows Build
     runs-on: windows-latest
-    needs: windows-tests
 
     steps:
       - uses: actions/checkout@v4
@@ -70,10 +69,30 @@ jobs:
           CARGO_PROFILE_RELEASE_LTO: "false"
           CARGO_PROFILE_RELEASE_CODEGEN_UNITS: "16"
 
+      - name: Upload portable executable artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-portable-exe
+          path: src-tauri/target/release/ssix.exe
+          if-no-files-found: error
+
+  publish-release:
+    name: Publish Release
+    runs-on: ubuntu-latest
+    needs:
+      - windows-tests
+      - windows-build
+
+    steps:
+      - name: Download portable executable artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: windows-portable-exe
+          path: release-assets
+
       - name: Publish tagged prerelease
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        shell: bash
         run: >-
           gh release view "$RELEASE_TAG" >/dev/null 2>&1
           || gh release create "$RELEASE_TAG"
@@ -81,4 +100,4 @@ jobs:
           --title "SSIX $RELEASE_TAG"
           --notes "Unsigned portable Windows build for personal use. Download ssix.exe from the release assets and run it directly. Windows may show SmartScreen warnings."
           --prerelease
-          && gh release upload "$RELEASE_TAG" src-tauri/target/release/ssix.exe --clobber
+          && gh release upload "$RELEASE_TAG" release-assets/ssix.exe --clobber
