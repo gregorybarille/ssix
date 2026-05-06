@@ -16,7 +16,7 @@ permissions:
 
 jobs:
   windows-portable:
-    name: Windows Portable
+    name: Windows Portable EXE
     runs-on: windows-latest
 
     env:
@@ -43,18 +43,7 @@ jobs:
       - run: cargo test
         working-directory: src-tauri
 
-      - uses: tauri-apps/tauri-action@v0
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          tagName: ${{ env.RELEASE_TAG }}
-          releaseName: "SSX ${{ env.RELEASE_TAG }}"
-          releaseBody: "Unsigned Windows MSI and portable builds for personal use. Extract the zip and run `ssx.exe` if installation is restricted. Windows may show SmartScreen warnings."
-          releaseDraft: true
-          prerelease: true
-          args: "--bundles msi"
-
-      - run: Compress-Archive -Path src-tauri/target/release/ssx.exe -DestinationPath src-tauri/target/release/ssx-windows-portable.zip -Force
+      - run: npm run tauri build -- --no-bundle
 
       - uses: softprops/action-gh-release@v2
         env:
@@ -62,7 +51,7 @@ jobs:
         with:
           tag_name: ${{ env.RELEASE_TAG }}
           name: "SSX ${{ env.RELEASE_TAG }}"
-          body: "Unsigned Windows MSI and portable builds for personal use. Extract the zip and run `ssx.exe` if installation is restricted. Windows may show SmartScreen warnings."
+          body: "Unsigned portable Windows build for personal use. Download `ssx.exe` from the release assets and run it directly. Windows may show SmartScreen warnings."
           draft: true
           prerelease: true
-          files: src-tauri/target/release/ssx-windows-portable.zip
+          files: src-tauri/target/release/ssx.exe
