@@ -27,13 +27,14 @@ npm test
 cd src-tauri && cargo test
 ```
 
-## Windows MSI Releases
+## Windows Releases
 
 Windows releases are built by `.github/workflows/release.yml` on the
 `windows-latest` GitHub Actions runner and uploaded to the repository's
-GitHub Releases page as draft prereleases. The base Tauri bundle target stays
-set to `all` in `src-tauri/tauri.conf.json`, and the release workflow narrows
-the build to MSI with `args: "--bundles msi"`.
+GitHub Releases page as draft prereleases. The workflow publishes an MSI via
+Tauri (`args: "--bundles msi"`) and also packages
+`src-tauri/target/release/ssx.exe` into `ssx-windows-portable.zip` for users
+who cannot install MSI packages.
 
 The package version remains semver (`1.0.0`) in `src-tauri/tauri.conf.json`.
 Use prerelease labels on the Git tag and GitHub release name.
@@ -48,7 +49,8 @@ git push origin v1.0.0-beta.1
 The release workflow can also be started manually from the Actions tab by
 providing the release tag input, for example `v1.0.0-beta.1`.
 
-Current MSI builds are unsigned and intended for personal use. Windows may
+Current MSI and portable builds are unsigned and intended for personal use.
+Extract the zip and run `ssx.exe` when installation is restricted. Windows may
 show SmartScreen warnings until code signing is added.
 
 ## Repo Structure

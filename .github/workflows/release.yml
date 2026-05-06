@@ -15,9 +15,12 @@ permissions:
   contents: write
 
 jobs:
-  windows-msi:
-    name: Windows MSI
+  windows-portable:
+    name: Windows Portable
     runs-on: windows-latest
+
+    env:
+      RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.release_tag || github.ref_name }}
 
     steps:
       - uses: actions/checkout@v4
@@ -44,9 +47,22 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          tagName: ${{ github.event_name == 'workflow_dispatch' && inputs.release_tag || github.ref_name }}
-          releaseName: "SSX ${{ github.event_name == 'workflow_dispatch' && inputs.release_tag || github.ref_name }}"
-          releaseBody: "Unsigned Windows MSI build for personal use. Windows may show SmartScreen warnings."
+          tagName: ${{ env.RELEASE_TAG }}
+          releaseName: "SSX ${{ env.RELEASE_TAG }}"
+          releaseBody: "Unsigned Windows MSI and portable builds for personal use. Extract the zip and run `ssx.exe` if installation is restricted. Windows may show SmartScreen warnings."
           releaseDraft: true
           prerelease: true
           args: "--bundles msi"
+
+      - run: Compress-Archive -Path src-tauri/target/release/ssx.exe -DestinationPath src-tauri/target/release/ssx-windows-portable.zip -Force
+
+      - uses: softprops/action-gh-release@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: ${{ env.RELEASE_TAG }}
+          name: "SSX ${{ env.RELEASE_TAG }}"
+          body: "Unsigned Windows MSI and portable builds for personal use. Extract the zip and run `ssx.exe` if installation is restricted. Windows may show SmartScreen warnings."
+          draft: true
+          prerelease: true
+          files: src-tauri/target/release/ssx-windows-portable.zip
