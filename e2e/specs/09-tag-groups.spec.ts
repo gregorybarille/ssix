@@ -50,6 +50,11 @@ async function tagConnection(name: string, tag: string): Promise<void> {
   const editBtn = await row.$('[data-testid^="edit-connection-"]');
   await editBtn.waitForClickable({ timeout: 10_000 });
   await editBtn.click();
+  const nameInput = await browser.$(sel.connectionFormName);
+  await browser.waitUntil(async () => (await nameInput.getValue()) === name, {
+    timeout: 10_000,
+    timeoutMsg: `Connection form did not hydrate with ${name} before tagging`,
+  });
   const tagsInput = await browser.$("#tags");
   await tagsInput.waitForExist({ timeout: 10_000 });
   await tagsInput.click();
