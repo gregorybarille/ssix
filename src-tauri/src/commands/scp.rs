@@ -186,7 +186,7 @@ pub fn scp_download(app: tauri::AppHandle, input: ScpDownloadInput) -> Result<Sc
             &app,
             "error",
             "scp",
-            format!("Download from {} failed: {}", conn.name, e),
+            format!("Download from {} failed (SFTP session): {}", conn.name, e),
         );
     }
     let sftp = sftp_result?;
@@ -198,7 +198,7 @@ pub fn scp_download(app: tauri::AppHandle, input: ScpDownloadInput) -> Result<Sc
             &app,
             "error",
             "scp",
-            format!("Download from {} failed: {}", conn.name, e),
+            format!("Download from {} failed (stat remote path): {}", conn.name, e),
         );
     }
     let stat = stat_result?;
@@ -235,7 +235,7 @@ pub fn scp_download(app: tauri::AppHandle, input: ScpDownloadInput) -> Result<Sc
                     &app,
                     "error",
                     "scp",
-                    format!("Download from {} failed: {}", conn.name, e),
+                    format!("Download from {} failed (create local directory): {}", conn.name, e),
                 );
             }
             create_dir_result.map_err(|e| e.to_string())?;
@@ -252,7 +252,7 @@ pub fn scp_download(app: tauri::AppHandle, input: ScpDownloadInput) -> Result<Sc
                 &app,
                 "error",
                 "scp",
-                format!("Download from {} failed: {}", conn.name, e),
+                format!("Download from {} failed (write local file): {}", conn.name, e),
             );
         }
         write_result.map_err(|e| e.to_string())?;
