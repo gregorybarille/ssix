@@ -58,9 +58,7 @@ pub(crate) fn resolve_credential(
 /// data when they need both (most do, e.g. for credential lookup).
 ///
 /// Audit-4 Phase 5a: re-exposed as `pub(crate)` for `commands/scp.rs`.
-pub(crate) fn find_connection(
-    connection_id: &str,
-) -> Result<(crate::models::AppData, Connection), String> {
+pub(crate) fn find_connection(connection_id: &str) -> Result<(crate::models::AppData, Connection), String> {
     let data = storage::load_data()?;
     let conn = data
         .connections
@@ -80,8 +78,10 @@ pub async fn ssh_connect(
     let (data, conn) = find_connection(&connection_id)?;
 
     let session_id = uuid::Uuid::new_v4().to_string();
-    let startup_command =
-        build_startup_command(conn.remote_path.as_deref(), conn.login_command.as_deref());
+    let startup_command = build_startup_command(
+        conn.remote_path.as_deref(),
+        conn.login_command.as_deref(),
+    );
 
     let tx = match &conn.kind {
         ConnectionKind::Direct => {
@@ -133,12 +133,7 @@ pub async fn ssh_connect(
                 "ssh",
                 format!(
                     "Starting port forward {} (127.0.0.1:{} -> {}:{} via {}:{})",
-                    conn.name,
-                    local_port,
-                    destination_host,
-                    destination_port,
-                    gateway_host,
-                    gateway_port
+                    conn.name, local_port, destination_host, destination_port, gateway_host, gateway_port
                 ),
             );
             let result: Result<_, String> = (|| {
@@ -218,9 +213,11 @@ pub async fn ssh_connect(
         }
         ConnectionKind::LegacyTunnel { .. } => {
             // Should not happen — `storage::load_data` migrates these to JumpShell.
-            return Err("Legacy tunnel connection encountered after migration. \
+            return Err(
+                "Legacy tunnel connection encountered after migration. \
                  Please re-save this connection."
-                .to_string());
+                    .to_string(),
+            );
         }
     };
 
@@ -229,13 +226,17 @@ pub async fn ssh_connect(
     Ok(session_id)
 }
 
+
 #[tauri::command]
 pub fn ssh_write(
     state: tauri::State<'_, SshState>,
     session_id: String,
     data: Vec<u8>,
 ) -> Result<(), String> {
-    let tx = state.sessions.get(&session_id).ok_or("Session not found")?;
+    let tx = state
+        .sessions
+        .get(&session_id)
+        .ok_or("Session not found")?;
     tx.send(SessionMsg::Write(data)).map_err(|e| e.to_string())
 }
 
@@ -246,13 +247,19 @@ pub fn ssh_resize(
     cols: u32,
     rows: u32,
 ) -> Result<(), String> {
-    let tx = state.sessions.get(&session_id).ok_or("Session not found")?;
+    let tx = state
+        .sessions
+        .get(&session_id)
+        .ok_or("Session not found")?;
     tx.send(SessionMsg::Resize { cols, rows })
         .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
-pub fn ssh_disconnect(state: tauri::State<'_, SshState>, session_id: String) -> Result<(), String> {
+pub fn ssh_disconnect(
+    state: tauri::State<'_, SshState>,
+    session_id: String,
+) -> Result<(), String> {
     if let Some((_, tx)) = state.sessions.remove(&session_id) {
         let _ = tx.send(SessionMsg::Disconnect);
     }
