@@ -56,14 +56,30 @@ pub struct ScpResult {
 }
 
 #[tauri::command]
-pub fn scp_upload(input: ScpUploadInput) -> Result<ScpResult, String> {
+pub fn scp_upload(app: tauri::AppHandle, input: ScpUploadInput) -> Result<ScpResult, String> {
     let (data, conn) = find_connection(&input.connection_id)?;
 
     if matches!(conn.kind, ConnectionKind::PortForward { .. }) {
         return Err("SCP is not available for port-forward connections".to_string());
     }
 
-    let mut ssh = connect_file_transfer_session(&data, &conn)?;
+    crate::logs::log(
+        &app,
+        "info",
+        "scp",
+        format!("Uploading {} to {}", input.local_path, conn.name),
+    );
+
+    let ssh_result = connect_file_transfer_session(&data, &conn);
+    if let Err(e) = &ssh_result {
+        crate::logs::log(
+            &app,
+            "error",
+            "scp",
+            format!("Upload to {} failed (connection): {}", conn.name, e),
+        );
+    }
+    let mut ssh = ssh_result?;
     let local = Path::new(&input.local_path);
     let (remote, bytes, entries) = if local.is_dir() {
         if !input.recursive {
@@ -77,7 +93,16 @@ pub fn scp_upload(input: ScpUploadInput) -> Result<ScpResult, String> {
             input.remote_path.as_deref().or(conn.remote_path.as_deref()),
             base_name,
         );
-        let stats = upload_directory(&mut ssh, local, &target_path)?;
+        let stats_result = upload_directory(&mut ssh, local, &target_path);
+        if let Err(e) = &stats_result {
+            crate::logs::log(
+                &app,
+                "error",
+                "scp",
+                format!("Upload to {} failed: {}", conn.name, e),
+            );
+        }
+        let stats = stats_result?;
         (target_path, stats.bytes, Some(stats.entries))
     } else {
         let file_name = local
@@ -89,9 +114,25 @@ pub fn scp_upload(input: ScpUploadInput) -> Result<ScpResult, String> {
             file_name,
         );
         let bytes = fs::read(&input.local_path).map_err(|e| e.to_string())?;
-        let remote = upload_bytes(&mut ssh, &target_path, &bytes)?;
+        let upload_result = upload_bytes(&mut ssh, &target_path, &bytes);
+        if let Err(e) = &upload_result {
+            crate::logs::log(
+                &app,
+                "error",
+                "scp",
+                format!("Upload to {} failed: {}", conn.name, e),
+            );
+        }
+        let remote = upload_result?;
         (remote, bytes.len() as u64, Some(1))
     };
+
+    crate::logs::log(
+        &app,
+        "info",
+        "scp",
+        format!("Upload to {} completed: {} bytes", conn.name, bytes),
+    );
 
     Ok(ScpResult {
         local_path: input.local_path,
@@ -102,15 +143,31 @@ pub fn scp_upload(input: ScpUploadInput) -> Result<ScpResult, String> {
 }
 
 #[tauri::command]
-pub fn scp_download(input: ScpDownloadInput) -> Result<ScpResult, String> {
+pub fn scp_download(app: tauri::AppHandle, input: ScpDownloadInput) -> Result<ScpResult, String> {
     let (data, conn) = find_connection(&input.connection_id)?;
 
     if matches!(conn.kind, ConnectionKind::PortForward { .. }) {
         return Err("SCP is not available for port-forward connections".to_string());
     }
 
+    crate::logs::log(
+        &app,
+        "info",
+        "scp",
+        format!("Downloading {} from {}", input.remote_path, conn.name),
+    );
+
     let remote_path = resolve_download_remote_path(&conn, &input.remote_path);
-    let mut ssh = connect_file_transfer_session(&data, &conn)?;
+    let ssh_result = connect_file_transfer_session(&data, &conn);
+    if let Err(e) = &ssh_result {
+        crate::logs::log(
+            &app,
+            "error",
+            "scp",
+            format!("Download from {} failed (connection): {}", conn.name, e),
+        );
+    }
+    let mut ssh = ssh_result?;
     let sftp = ssh
         .session
         .sftp()
@@ -122,10 +179,28 @@ pub fn scp_download(input: ScpDownloadInput) -> Result<ScpResult, String> {
         if !input.recursive {
             return Err("Downloading a directory requires the recursive option".to_string());
         }
-        let stats = download_directory(&mut ssh, &remote_path, Path::new(&input.local_path))?;
+        let stats_result = download_directory(&mut ssh, &remote_path, Path::new(&input.local_path));
+        if let Err(e) = &stats_result {
+            crate::logs::log(
+                &app,
+                "error",
+                "scp",
+                format!("Download from {} failed: {}", conn.name, e),
+            );
+        }
+        let stats = stats_result?;
         (stats.bytes, Some(stats.entries))
     } else {
-        let (bytes, size) = download_bytes(&mut ssh, &remote_path)?;
+        let download_result = download_bytes(&mut ssh, &remote_path);
+        if let Err(e) = &download_result {
+            crate::logs::log(
+                &app,
+                "error",
+                "scp",
+                format!("Download from {} failed: {}", conn.name, e),
+            );
+        }
+        let (bytes, size) = download_result?;
         if let Some(parent) = Path::new(&input.local_path).parent() {
             fs::create_dir_all(parent).map_err(|e| e.to_string())?;
         }
@@ -139,6 +214,13 @@ pub fn scp_download(input: ScpDownloadInput) -> Result<ScpResult, String> {
             .map_err(|e| e.to_string())?;
         (size, Some(1))
     };
+
+    crate::logs::log(
+        &app,
+        "info",
+        "scp",
+        format!("Download from {} completed: {} bytes", conn.name, bytes),
+    );
 
     Ok(ScpResult {
         local_path: input.local_path,

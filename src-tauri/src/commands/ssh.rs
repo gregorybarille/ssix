@@ -85,22 +85,37 @@ pub async fn ssh_connect(
 
     let tx = match &conn.kind {
         ConnectionKind::Direct => {
+            crate::logs::log(
+                &app,
+                "info",
+                "ssh",
+                format!("Connecting to {} ({}:{})", conn.name, conn.host, conn.port),
+            );
             let cred_id = conn
                 .credential_id
                 .as_ref()
                 .ok_or("No credential configured for this connection")?;
             let (username, auth) = resolve_credential(&data.credentials, cred_id)?;
-            start_ssh_session(
+            let result = start_ssh_session(
                 conn.host.clone(),
                 conn.port,
                 username,
                 auth,
-                app,
+                app.clone(),
                 session_id.clone(),
                 conn.verbosity,
                 conn.extra_args.clone(),
                 startup_command,
-            )?
+            );
+            if let Err(e) = &result {
+                crate::logs::log(
+                    &app,
+                    "error",
+                    "ssh",
+                    format!("Connection to {} failed: {}", conn.name, e),
+                );
+            }
+            result?
         }
         ConnectionKind::PortForward {
             gateway_host,
@@ -110,9 +125,18 @@ pub async fn ssh_connect(
             destination_host,
             destination_port,
         } => {
+            crate::logs::log(
+                &app,
+                "info",
+                "ssh",
+                format!(
+                    "Starting port forward {} (127.0.0.1:{} -> {}:{} via {}:{})",
+                    conn.name, local_port, destination_host, destination_port, gateway_host, gateway_port
+                ),
+            );
             let (gw_user, gw_auth) =
                 resolve_credential(&data.credentials, gateway_credential_id)?;
-            start_port_forward(
+            let result = start_port_forward(
                 gateway_host.clone(),
                 *gateway_port,
                 gw_user,
@@ -120,9 +144,18 @@ pub async fn ssh_connect(
                 *local_port,
                 destination_host.clone(),
                 *destination_port,
-                app,
+                app.clone(),
                 session_id.clone(),
-            )?
+            );
+            if let Err(e) = &result {
+                crate::logs::log(
+                    &app,
+                    "error",
+                    "ssh",
+                    format!("Port forward {} failed: {}", conn.name, e),
+                );
+            }
+            result?
         }
         ConnectionKind::JumpShell {
             gateway_host,
@@ -131,6 +164,15 @@ pub async fn ssh_connect(
             destination_host,
             destination_port,
         } => {
+            crate::logs::log(
+                &app,
+                "info",
+                "ssh",
+                format!(
+                    "Connecting to {} ({}:{} via {}:{})",
+                    conn.name, destination_host, destination_port, gateway_host, gateway_port
+                ),
+            );
             let dest_cred_id = conn
                 .credential_id
                 .as_ref()
@@ -138,7 +180,7 @@ pub async fn ssh_connect(
             let (gw_user, gw_auth) =
                 resolve_credential(&data.credentials, gateway_credential_id)?;
             let (dest_user, dest_auth) = resolve_credential(&data.credentials, dest_cred_id)?;
-            start_jump_shell(
+            let result = start_jump_shell(
                 gateway_host.clone(),
                 *gateway_port,
                 gw_user,
@@ -147,12 +189,21 @@ pub async fn ssh_connect(
                 *destination_port,
                 dest_user,
                 dest_auth,
-                app,
+                app.clone(),
                 session_id.clone(),
                 conn.verbosity,
                 conn.extra_args.clone(),
                 startup_command,
-            )?
+            );
+            if let Err(e) = &result {
+                crate::logs::log(
+                    &app,
+                    "error",
+                    "ssh",
+                    format!("Jump-shell connection to {} failed: {}", conn.name, e),
+                );
+            }
+            result?
         }
         ConnectionKind::LegacyTunnel { .. } => {
             // Should not happen — `storage::load_data` migrates these to JumpShell.

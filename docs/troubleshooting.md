@@ -5,6 +5,7 @@
 - Verify host, port, username, and credential choice.
 - Check whether a jump-shell connection has both gateway and destination credentials.
 - Use a higher verbosity level in the connection settings to surface more SSH output.
+- **Check the backend logs** in the Logs view (accessible from the sidebar) to see detailed connection error messages including TCP connection failures, SSH handshake errors, and authentication issues. All connection attempts and errors are logged regardless of verbosity level.
 
 ## Port Forward Does Not Work
 
@@ -17,6 +18,7 @@
 - Make sure the connection type is `direct` or `jump_shell`.
 - Use recursive mode when the source or target is a directory.
 - Check whether the remote path exists or whether the remote user has permission to write there.
+- **Check the backend logs** for detailed SCP error messages including connection errors and transfer failures.
 
 ## Git Sync Fails
 
