@@ -126,6 +126,9 @@ describe("Terminal — explicit Cmd/Ctrl+C copy (always available)", () => {
   function makeKeyHandler(opts: { getSelection: () => string }) {
     return (e: { type: string; metaKey: boolean; ctrlKey: boolean; altKey: boolean; key: string }) => {
       if (e.type !== "keydown") return true;
+      if (document.querySelector('[data-slot="app-panel-content"]')) {
+        return false;
+      }
       const mod = e.metaKey || e.ctrlKey;
       if (!mod || e.altKey) return true;
       const key = e.key.toLowerCase();
@@ -178,6 +181,22 @@ describe("Terminal — explicit Cmd/Ctrl+C copy (always available)", () => {
     });
     expect(navigator.clipboard.writeText).not.toHaveBeenCalled();
     expect(result).toBe(true); // pass-through so xterm sends Ctrl+C
+  });
+
+  it("swallows terminal keystrokes while an app panel is open", () => {
+    const panel = document.createElement("div");
+    panel.dataset.slot = "app-panel-content";
+    document.body.appendChild(panel);
+    const handler = makeKeyHandler({ getSelection: () => "" });
+    const result = handler({
+      type: "keydown",
+      metaKey: false,
+      ctrlKey: false,
+      altKey: false,
+      key: "a",
+    });
+    expect(result).toBe(false);
+    panel.remove();
   });
 
   it("Ctrl+Alt+C is NOT treated as copy (modifier collision avoidance)", () => {

@@ -3,12 +3,27 @@ import * as React from "react";
 import { cn } from "@/lib/utils";
 
 const Input = React.forwardRef<HTMLInputElement, React.ComponentProps<"input">>(
-  ({ className, type, ...props }, ref) => {
+  (
+    {
+      autoCapitalize,
+      autoComplete,
+      autoCorrect,
+      className,
+      spellCheck,
+      type,
+      ...props
+    },
+    ref,
+  ) => {
     return (
       <input
         ref={ref}
         type={type}
         data-slot="input"
+        autoCapitalize={autoCapitalize ?? "off"}
+        autoComplete={autoComplete ?? "off"}
+        autoCorrect={autoCorrect ?? "off"}
+        spellCheck={spellCheck ?? false}
         className={cn(
           // Audit: SSIX overrides destructive ring tokens in globals.css
           // for adequate contrast on light theme. `aria-invalid` styling

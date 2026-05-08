@@ -69,4 +69,13 @@ describe("TagInput", () => {
     expect(list).toBeInTheDocument();
     expect(screen.getAllByRole("listitem")).toHaveLength(3);
   });
+
+  it("suppresses browser autocomplete on the draft input", () => {
+    render(<Harness />);
+    const input = screen.getByPlaceholderText("add");
+    expect(input).toHaveAttribute("autocomplete", "off");
+    expect(input).toHaveAttribute("autocorrect", "off");
+    expect(input).toHaveAttribute("autocapitalize", "off");
+    expect(input).toHaveAttribute("spellcheck", "false");
+  });
 });

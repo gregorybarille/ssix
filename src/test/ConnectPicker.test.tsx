@@ -92,6 +92,15 @@ describe("ConnectPicker (command palette)", () => {
     expect(input.className).toMatch(/focus-visible:ring-2/);
   });
 
+  it("suppresses browser history on the search input", () => {
+    open();
+    const input = screen.getByRole("combobox", { name: /search connections/i });
+    expect(input).toHaveAttribute("autocomplete", "off");
+    expect(input).toHaveAttribute("autocorrect", "off");
+    expect(input).toHaveAttribute("autocapitalize", "off");
+    expect(input).toHaveAttribute("spellcheck", "false");
+  });
+
   it("filters by name, host, and tag tokens (AND semantics)", () => {
     open();
     const input = screen.getByRole("combobox", { name: /search connections/i });

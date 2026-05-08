@@ -23,9 +23,9 @@ import { join } from "node:path";
 import { waitForAppReady } from "../helpers/app.js";
 import { TARGETS, waitForServers } from "../helpers/docker.js";
 import {
+  clickDialogFooterButton,
   createPasswordCredential,
   createDirectConnection,
-  saveConnectionForm,
   navigateTo,
 } from "../helpers/flows.js";
 import { sel } from "../helpers/selectors.js";
@@ -35,46 +35,25 @@ const TAG = "team09";
 let workDir: string;
 let upload: string;
 
-/**
- * Connections in the tags view are tagged via the form's TagInput.
- * createDirectConnection doesn't expose tags, so after creating each
- * connection we re-open it via Edit and add the tag. Doing it in a
- * helper keeps the test body focused on the actual flow being tested.
- */
-async function tagConnection(name: string, tag: string): Promise<void> {
-  const row = await browser.$(sel.connectionRowByName(name));
-  await row.waitForExist({ timeout: 10_000 });
-  await row.moveTo();
-  // The edit affordance lives in the row's hover-revealed action
-  // cluster alongside the SCP and connect buttons.
-  const editBtn = await row.$('[data-testid^="edit-connection-"]');
-  await editBtn.waitForClickable({ timeout: 10_000 });
-  await editBtn.click();
-  const nameInput = await browser.$(sel.connectionFormName);
-  await browser.waitUntil(async () => (await nameInput.getValue()) === name, {
-    timeout: 10_000,
-    timeoutMsg: `Connection form did not hydrate with ${name} before tagging`,
-  });
-  const tagsInput = await browser.$("#tags");
-  await tagsInput.waitForExist({ timeout: 10_000 });
-  await tagsInput.click();
-  // TagInput commits on Enter or comma — Enter is more reliable in
-  // wdio because comma can be remapped on some keyboard layouts.
-  await tagsInput.setValue(tag);
-  await browser.keys(["Enter"]);
-  await saveConnectionForm();
-}
-
 async function setTextInputValue(selector: string, value: string): Promise<void> {
   const input = await browser.$(selector);
   await input.waitForExist({ timeout: 10_000 });
   await browser.execute(
     (el: HTMLInputElement, nextValue: string) => {
+      const previousValue = el.value;
       const setter = Object.getOwnPropertyDescriptor(
         HTMLInputElement.prototype,
         "value",
       )?.set;
       setter?.call(el, nextValue);
+
+      const tracker = (
+        el as HTMLInputElement & {
+          _valueTracker?: { setValue: (value: string) => void };
+        }
+      )._valueTracker;
+      tracker?.setValue(previousValue);
+
       el.dispatchEvent(new Event("input", { bubbles: true }));
       el.dispatchEvent(new Event("change", { bubbles: true }));
     },
@@ -119,12 +98,14 @@ describe("Tag-group view + bulk actions", () => {
       host: TARGETS.a.host,
       port: TARGETS.a.sshPort,
       credentialName: "cred-09-a",
+      tags: [TAG],
     });
     await createDirectConnection({
       name: "conn-09-b",
       host: TARGETS.b.host,
       port: TARGETS.b.sshPort,
       credentialName: "cred-09-b",
+      tags: [TAG],
     });
     await createDirectConnection({
       name: "conn-09-untagged",
@@ -134,8 +115,6 @@ describe("Tag-group view + bulk actions", () => {
     });
 
     await navigateTo("connections");
-    await tagConnection("conn-09-a", TAG);
-    await tagConnection("conn-09-b", TAG);
 
     // Switch to the tags layout. The toggle is always present on the
     // Connections view (showTags={true}).
@@ -155,7 +134,7 @@ describe("Tag-group view + bulk actions", () => {
     await (await browser.$(sel.tagConnectAll(TAG))).click();
     const confirm = await browser.$(sel.confirmTagAction);
     await confirm.waitForExist({ timeout: 10_000 });
-    await (await browser.$(sel.confirmTagActionCancel)).click();
+    await clickDialogFooterButton(sel.confirmTagActionCancel);
     await confirm.waitForExist({ reverse: true, timeout: 5_000 });
     // Quick sanity: terminal container should NOT have mounted.
     const terminal = await browser.$(sel.terminalContainer);
@@ -166,7 +145,7 @@ describe("Tag-group view + bulk actions", () => {
     await (await browser.$(sel.tagScpAll(TAG))).click();
     const confirm2 = await browser.$(sel.confirmTagAction);
     await confirm2.waitForExist({ timeout: 10_000 });
-    await (await browser.$(sel.confirmTagActionConfirm)).click();
+    await clickDialogFooterButton(sel.confirmTagActionConfirm);
 
     const bulkDialog = await browser.$(sel.bulkScpDialog);
     await bulkDialog.waitForExist({ timeout: 10_000 });
@@ -177,7 +156,7 @@ describe("Tag-group view + bulk actions", () => {
     }
     await setTextInputValue(sel.bulkScpLocalPath, upload);
     await setTextInputValue(sel.bulkScpRemotePath, "/tmp/");
-    await (await browser.$(sel.bulkScpStart)).click();
+    await clickDialogFooterButton(sel.bulkScpStart);
 
     // Wait for both per-host rows to show data-status="success".
     // We can't use getAttribute("data-status") here — webkit2gtk-driver

@@ -29,9 +29,10 @@ export interface ConfirmDialogProps {
 }
 
 /**
- * Generic Yes/No confirmation dialog. Built on Radix so it gets
- * focus trap, Escape-to-close, and aria-labelledby/aria-describedby
- * for free.
+ * Generic Yes/No confirmation panel. Built on Radix so it gets
+ * Escape-to-close and aria-labelledby/aria-describedby for free.
+ * The shared Dialog primitive is intentionally non-modal so this
+ * appears as an in-app panel rather than a blocking overlay.
  *
  * Default focus lands on the cancel button — never on the destructive
  * action — so a careless Enter press cannot delete data.

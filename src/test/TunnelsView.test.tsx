@@ -1,29 +1,8 @@
 import { describe, it, expect, vi } from "vitest";
-import { render, screen, fireEvent } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { TunnelsView, TunnelSession } from "@/components/TunnelsView";
 import { Connection, Credential } from "@/types";
-
-// Stub out TunnelTab so we don't need Tauri event APIs in tests.
-// The stub still surfaces the inner "Stop tunnel" affordance bound
-// to the wired-in `onDisconnect`, so we can assert that TunnelsView
-// routes that callback through the same ConfirmDialog as the row's
-// X button (Audit-3 P2#12).
-vi.mock("@/components/TunnelTab", () => ({
-  TunnelTab: ({
-    sessionId,
-    onDisconnect,
-  }: {
-    sessionId: string;
-    onDisconnect: () => void;
-  }) => (
-    <div data-testid={`tunnel-tab-${sessionId}`}>
-      <button type="button" onClick={onDisconnect}>
-        Stop tunnel
-      </button>
-    </div>
-  ),
-}));
 
 const portForwardConn: Connection = {
   id: "pf-1",
@@ -69,11 +48,13 @@ describe("TunnelsView", () => {
     expect(screen.getByText("Tunnels")).toBeInTheDocument();
   });
 
-  it("shows 'No tunnel is currently running' when there are no active sessions", () => {
+  it("renders every tunnel connection as a status row", () => {
     render(<TunnelsView {...defaultProps} sessions={[]} />);
-    expect(
-      screen.getByText("No tunnel is currently running."),
-    ).toBeInTheDocument();
+    const row = screen.getByTestId("tunnel-row-pf-1");
+    expect(row).toHaveAttribute("data-status", "disconnected");
+    expect(screen.getByTestId("tunnel-status-pf-1")).toHaveAccessibleName(
+      "api-tunnel: Not connected",
+    );
   });
 
   it("renders active session names", () => {
@@ -143,37 +124,45 @@ describe("TunnelsView", () => {
     expect(onCloseSession).not.toHaveBeenCalled();
   });
 
-  /*
-   * Audit-3 P2#12: the inner "Stop tunnel" button inside <TunnelTab>
-   * (the destructive button at the bottom of each session pane) MUST
-   * also route through the same ConfirmDialog as the row's X button.
-   * Both are destructive actions on a live session and AGENTS.md
-   * contract requires them to be confirmed. Pin both code paths so a
-   * future refactor that wires `onDisconnect` directly to the
-   * dispatcher cannot regress this.
-   */
-  it("inner 'Stop tunnel' button also opens the confirm dialog (Audit-3 P2#12)", async () => {
-    const user = userEvent.setup();
-    const onCloseSession = vi.fn();
+  it("shows red error status for failed tunnel connections", () => {
     const sessions: TunnelSession[] = [
       {
-        sessionId: "s-stop",
+        sessionId: "failed",
         connectionName: "api-tunnel",
         connection: portForwardConn,
+        error: "Connection refused",
       },
     ];
-    render(
-      <TunnelsView {...defaultProps} sessions={sessions} onCloseSession={onCloseSession} />,
+    render(<TunnelsView {...defaultProps} sessions={sessions} />);
+    expect(screen.getByTestId("tunnel-row-pf-1")).toHaveAttribute(
+      "data-status",
+      "error",
     );
-    await user.click(screen.getByRole("button", { name: /^stop tunnel$/i }));
-    // The confirm dialog must appear (NOT a direct disconnect).
-    expect(
-      screen.getByText(/Disconnecting "api-tunnel" will drop/i),
-    ).toBeInTheDocument();
-    expect(onCloseSession).not.toHaveBeenCalled();
-    // Confirming proceeds.
-    await user.click(screen.getByRole("button", { name: "Disconnect" }));
-    expect(onCloseSession).toHaveBeenCalledWith("s-stop");
+    expect(screen.getByTestId("tunnel-status-pf-1")).toHaveAccessibleName(
+      "api-tunnel: Error connecting",
+    );
+  });
+
+  it("expands details beneath the row and allows multiple rows to stay expanded", async () => {
+    const user = userEvent.setup();
+    const secondTunnel: Connection = {
+      ...portForwardConn,
+      id: "pf-2",
+      name: "db-tunnel",
+      local_port: 15432,
+      destination_host: "db.internal",
+      destination_port: 5432,
+    };
+    render(
+      <TunnelsView
+        {...defaultProps}
+        connections={[portForwardConn, secondTunnel]}
+      />,
+    );
+    await user.click(within(screen.getByTestId("tunnel-row-pf-1")).getAllByRole("button")[0]);
+    await user.click(within(screen.getByTestId("tunnel-row-pf-2")).getAllByRole("button")[0]);
+    expect(screen.getAllByText("gateway.dev:22")).toHaveLength(2);
+    expect(screen.getByText("db.internal:5432")).toBeInTheDocument();
   });
 
   it("filters tunnel definitions to port_forward connections only", () => {
@@ -184,21 +173,8 @@ describe("TunnelsView", () => {
     expect(screen.queryByText("prod-server")).not.toBeInTheDocument();
   });
 
-  it("passes layout to the LayoutToggle and calls onLayoutChange when toggled", () => {
-    const onLayoutChange = vi.fn();
-    render(
-      <TunnelsView {...defaultProps} layout="list" onLayoutChange={onLayoutChange} />,
-    );
-    // The List button is aria-pressed="true" for layout="list"
-    expect(
-      screen.getByRole("button", { name: "List view" }),
-    ).toHaveAttribute("aria-pressed", "true");
-    fireEvent.click(screen.getByRole("button", { name: "Tile view" }));
-    expect(onLayoutChange).toHaveBeenCalledWith("tile");
-  });
-
-  it("shows Tunnel definitions count", () => {
+  it("shows configured tunnel count", () => {
     render(<TunnelsView {...defaultProps} />);
-    expect(screen.getByText("Tunnel definitions (1)")).toBeInTheDocument();
+    expect(screen.getByText(/1 configured/i)).toBeInTheDocument();
   });
 });

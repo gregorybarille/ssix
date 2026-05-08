@@ -58,6 +58,27 @@ describe("Unsaved-changes guard — CredentialForm", () => {
     expect(onOpenChange).not.toHaveBeenCalled();
   });
 
+  it("shows the discard prompt on Escape in inline mode after edits (CredentialForm)", async () => {
+    const user = userEvent.setup();
+    const onOpenChange = vi.fn();
+    render(
+      <CredentialForm
+        open
+        inline
+        onOpenChange={onOpenChange}
+        credential={null}
+        onSubmit={vi.fn()}
+      />,
+    );
+    await waitFor(() =>
+      expect(screen.getByLabelText(/credential name/i)).toBeInTheDocument(),
+    );
+    await user.type(screen.getByLabelText(/credential name/i), "prod");
+    fireEvent.keyDown(window, { key: "Escape" });
+    await screen.findByRole("dialog", { name: /discard unsaved changes/i });
+    expect(onOpenChange).not.toHaveBeenCalled();
+  });
+
   it("'Keep editing' dismisses the prompt and keeps the form open", async () => {
     const user = userEvent.setup();
     const onOpenChange = vi.fn();
@@ -168,6 +189,27 @@ describe("Unsaved-changes guard — ConnectionForm", () => {
     );
     await user.type(screen.getByLabelText(/connection name/i), "web");
     fireEvent.click(screen.getByRole("button", { name: /cancel/i }));
+    await screen.findByRole("dialog", { name: /discard unsaved changes/i });
+    expect(onOpenChange).not.toHaveBeenCalled();
+  });
+
+  it("shows the discard prompt on Escape in inline mode after edits (ConnectionForm)", async () => {
+    const user = userEvent.setup();
+    const onOpenChange = vi.fn();
+    render(
+      <ConnectionForm
+        open
+        inline
+        onOpenChange={onOpenChange}
+        credentials={[]}
+        onSubmit={vi.fn()}
+      />,
+    );
+    await waitFor(() =>
+      expect(screen.getByLabelText(/connection name/i)).toBeInTheDocument(),
+    );
+    await user.type(screen.getByLabelText(/connection name/i), "web");
+    fireEvent.keyDown(window, { key: "Escape" });
     await screen.findByRole("dialog", { name: /discard unsaved changes/i });
     expect(onOpenChange).not.toHaveBeenCalled();
   });

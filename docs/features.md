@@ -47,8 +47,9 @@ The terminal tab bar is a true WAI-ARIA tablist. With focus on a tab:
 ## Tunnels
 
 - local port forwarding through a gateway
-- active tunnel status view
-- separate Tunnels view for running forwards and definitions
+- one row per tunnel definition with status indicator:
+  grey for not connected/connecting, green for connected, red for connection errors
+- expandable inline detail panes beneath each tunnel connection; multiple rows can stay expanded
 
 ## Search, Tags, And Colors
 
@@ -101,7 +102,8 @@ See [Git Sync](git-sync.md) for details.
 
 ## Settings
 
-- theme (light / dark; both calibrated to meet WCAG AA — body text and
+- theme (light / dark; switching previews immediately and auto-saves on
+  change; both themes are calibrated to meet WCAG AA — body text and
   tertiary metadata such as timestamps stay above the 4.5:1 contrast
   ratio on both themes)
 - font family
@@ -129,26 +131,26 @@ and (on Windows / Linux) the minimize / maximize / close window controls.
 
 ## Destructive-Action Confirmations
 
-SSIX shows a confirmation dialog before any destructive action:
+SSIX shows an in-app confirmation panel before any destructive action:
 
 - deleting a connection
 - deleting a credential
 - closing a live terminal pane
 - closing a tab whose panes still hold a live SSH session
 
-Confirmation dialogs default focus to the **Cancel** button so an
+Confirmation panels default focus to the **Cancel** button so an
 accidental Enter press never destroys data. Failed/never-opened
 sessions can be dismissed without confirmation since there is nothing
 to lose.
 
-When a dialog closes — whether through Cancel, Confirm, the Escape
+When a panel closes — whether through Cancel, Confirm, the Escape
 key, or clicking outside — focus returns to the control that opened
-it. This holds even when the dialog is opened from React state rather
+it. This holds even when the panel is opened from React state rather
 than via `<DialogTrigger>` (the pattern used everywhere in SSIX), which
 the stock Radix focus-restore can't always handle on its own. The
 shared `<DialogContent>` primitive in `src/components/ui/dialog.tsx`
 tracks the last interactive element the user touched outside any open
-dialog (via document-level `focusin` and `pointerdown` capture
+panel (via document-level `focusin` and `pointerdown` capture
 listeners) and restores focus to it on close.
 
 ## Form Accessibility
@@ -159,10 +161,12 @@ readers announce the error as soon as it appears. The submit button is
 wired to that error via `aria-describedby`, giving keyboard users
 context as they re-focus the action.
 
-Both dialogs use a sticky footer layout: the form body scrolls inside
-`DialogContent` while the **Cancel** / **Save** action row stays pinned
-to the bottom and never disappears, regardless of viewport height or
-expanded panels (Advanced options, inline credentials, etc.).
+The Connection and Credential editors open inline inside their
+respective views instead of in floating dialogs. Both use a sticky
+footer layout: the form body scrolls inside the in-app panel while the
+**Cancel** / **Save** action row stays pinned to the bottom and never
+disappears, regardless of viewport height or expanded panels (Advanced
+options, inline credentials, etc.).
 
 ### Port validation
 
@@ -296,9 +300,9 @@ return (
 ## Unsaved-changes guard
 
 `ConnectionForm` and `CredentialForm` snapshot their initial state when
-the dialog opens and watch for changes via the `useUnsavedChangesGuard`
+the app panel opens and watch for changes via the `useUnsavedChangesGuard`
 hook (`src/hooks/useUnsavedChangesGuard.ts`). When the user attempts to
-close the dialog (Cancel button, `Esc`, or click-outside) and the form
+close the panel (Cancel button, `Esc`, or click-outside) and the form
 state differs from the baseline, a destructive `<ConfirmDialog>`
 prompts:
 
@@ -307,7 +311,7 @@ prompts:
 > [ Keep editing ]   [ Discard ]
 
 Choosing **Keep editing** dismisses the prompt and returns focus to the
-form; **Discard** confirms and closes the dialog.
+form; **Discard** confirms and closes the panel.
 
 The guard self-disables for the close that immediately follows a
 successful save: submit handlers call `guard.markSaved()` before
@@ -319,7 +323,7 @@ The dirty check uses a stable `JSON.stringify` of every tracked field
 password into the inline-credential tab and trying to close also
 triggers the guard. Because the snapshot is captured one tick after
 the form initializes, no spurious "dirty" state is detected when the
-dialog first opens against an existing connection.
+panel first opens against an existing connection.
 
 ## Global Keyboard Shortcuts
 
@@ -373,7 +377,7 @@ hosts that carry no tags) and offers two bulk actions:
   actionable connection in the group. Sessions start in the same
   order as the connections list; SSH handshakes still run in
   parallel server-side.
-- **SCP** opens the **bulk transfer dialog** for the group:
+- **SCP** opens the **bulk transfer panel** for the group:
   - **Upload** sends the same local file/directory to the same
     remote path on every host. Use absolute paths so per-host
     `remote_path` defaults don't shift the target.

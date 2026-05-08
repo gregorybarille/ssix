@@ -237,10 +237,10 @@ export function TerminalTabs({
               aria-label={`Terminal ${label}${splitSuffix}${failureSuffix}${closeHintSuffix}`}
               tabIndex={isActive ? 0 : -1}
               className={cn(
-                "group flex items-center gap-1.5 px-3 py-1.5 text-xs cursor-pointer border-r border-border shrink-0 max-w-[200px] transition-colors text-left",
+                "group flex items-center gap-1.5 px-3 py-1.5 text-xs cursor-pointer border-r border-border/80 shadow-[inset_-1px_0_0_hsl(var(--border))] shrink-0 max-w-[200px] transition-colors text-left",
                 "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset",
                 isActive
-                  ? "bg-background text-foreground"
+                  ? "bg-background text-foreground shadow-[inset_-1px_0_0_hsl(var(--border)),inset_0_-2px_0_hsl(var(--primary))]"
                   : "bg-card text-muted-foreground hover:bg-accent/50 hover:text-foreground",
               )}
               style={color ? { borderLeft: `3px solid ${color}` } : undefined}

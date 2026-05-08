@@ -35,27 +35,72 @@ describe("SettingsPanel", () => {
     }
   });
 
-  /*
-   * P2-A11: the "Settings saved!" confirmation must live in a
-   * role=status / aria-live=polite region so screen readers announce
-   * it. The previous implementation toggled a plain green <span> in
-   * and out of the DOM, which AT does not announce because the live
-   * region itself was being mounted/unmounted.
-   */
-  it("announces Settings saved! via a polite live region", async () => {
+  it("keeps git sync text edits local until blur, then saves once", async () => {
     const onSave = vi.fn().mockResolvedValue(undefined);
     render(<SettingsPanel settings={defaults} onSave={onSave} />);
-    // The live region must exist on initial render (empty), so AT
-    // is already subscribed when the text appears.
+
+    const remote = screen.getByLabelText(/remote name/i);
+    fireEvent.change(remote, { target: { value: "upstream" } });
+    expect(onSave).not.toHaveBeenCalled();
+
+    fireEvent.blur(remote);
+    await waitFor(() => expect(onSave).toHaveBeenCalledTimes(1));
+    expect(onSave).toHaveBeenCalledWith(
+      expect.objectContaining({ git_sync_remote: "upstream" }),
+    );
+  });
+
+  it("auto-saves changes and announces Settings saved! via a polite live region", async () => {
+    const onSave = vi.fn().mockResolvedValue(undefined);
+    render(<SettingsPanel settings={defaults} onSave={onSave} />);
     const status = screen.getByRole("status");
     expect(status).toHaveAttribute("aria-live", "polite");
     expect(status.textContent).toBe("");
 
-    fireEvent.click(screen.getByRole("button", { name: /save settings/i }));
+    fireEvent.click(screen.getByRole("radio", { name: /light/i }));
     await waitFor(() => expect(onSave).toHaveBeenCalledTimes(1));
     await waitFor(() =>
       expect(screen.getByRole("status")).toHaveTextContent(/settings saved/i),
     );
+  });
+
+  it("shows a visible error when saving fails", async () => {
+    const onSave = vi.fn().mockRejectedValue(new Error("disk full"));
+    render(<SettingsPanel settings={defaults} onSave={onSave} />);
+
+    fireEvent.click(screen.getByRole("radio", { name: /light/i }));
+
+    await waitFor(() => expect(onSave).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent("disk full"));
+  });
+
+  it("ignores stale save completions when a newer save fails", async () => {
+    let resolveFirst: (() => void) | undefined;
+    let rejectSecond: ((error: Error) => void) | undefined;
+    const first = new Promise<void>((resolve) => {
+      resolveFirst = resolve;
+    });
+    const second = new Promise<void>((_, reject) => {
+      rejectSecond = reject;
+    });
+    const onSave = vi
+      .fn()
+      .mockImplementationOnce(() => first)
+      .mockImplementationOnce(() => second);
+    render(<SettingsPanel settings={defaults} onSave={onSave} />);
+
+    fireEvent.click(screen.getByRole("radio", { name: /light/i }));
+    fireEvent.click(screen.getByRole("radio", { name: /dark/i }));
+    await waitFor(() => expect(onSave).toHaveBeenCalledTimes(1));
+
+    resolveFirst?.();
+    await waitFor(() => expect(onSave).toHaveBeenCalledTimes(2));
+    rejectSecond?.(new Error("latest write failed"));
+
+    await waitFor(() =>
+      expect(screen.getByRole("alert")).toHaveTextContent("latest write failed"),
+    );
+    expect(screen.getByRole("status")).not.toHaveTextContent(/settings saved/i);
   });
 
   /*
@@ -78,7 +123,7 @@ describe("SettingsPanel", () => {
     expect(description?.textContent).toMatch(/cmd\/ctrl\+c still copies/i);
   });
 
-  it("flips the auto-copy switch and saves the new value", async () => {
+  it("flips the auto-copy switch and saves the new value immediately", async () => {
     const onSave = vi.fn().mockResolvedValue(undefined);
     render(<SettingsPanel settings={defaults} onSave={onSave} />);
     const toggle = screen.getByRole("switch", {
@@ -86,7 +131,6 @@ describe("SettingsPanel", () => {
     });
     fireEvent.click(toggle);
     expect(toggle).toHaveAttribute("aria-checked", "true");
-    fireEvent.click(screen.getByRole("button", { name: /save settings/i }));
     await waitFor(() => expect(onSave).toHaveBeenCalledTimes(1));
     expect(onSave.mock.calls[0][0].auto_copy_selection).toBe(true);
   });
@@ -125,6 +169,29 @@ describe("SettingsPanel", () => {
     expect(light).toHaveAttribute("aria-checked", "false");
   });
 
+  it("previews theme changes immediately and saves them immediately", async () => {
+    const onPreview = vi.fn();
+    const onSave = vi.fn().mockResolvedValue(undefined);
+    render(
+      <SettingsPanel
+        settings={{ ...defaults, theme: "dark" }}
+        onSave={onSave}
+        onPreview={onPreview}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("radio", { name: /light/i }));
+
+    expect(onPreview).toHaveBeenCalledWith(
+      expect.objectContaining({ theme: "light" }),
+    );
+    await waitFor(() =>
+      expect(onSave).toHaveBeenCalledWith(
+        expect.objectContaining({ theme: "light" }),
+      ),
+    );
+  });
+
   it("clicking a different swatch updates aria-checked and saves the choice", async () => {
     const onSave = vi.fn().mockResolvedValue(undefined);
     render(<SettingsPanel settings={defaults} onSave={onSave} />);
@@ -139,7 +206,6 @@ describe("SettingsPanel", () => {
     const newColor = target.getAttribute("aria-label")!;
     fireEvent.click(target);
     expect(target).toHaveAttribute("aria-checked", "true");
-    fireEvent.click(screen.getByRole("button", { name: /save settings/i }));
     await waitFor(() => expect(onSave).toHaveBeenCalledTimes(1));
     expect(onSave.mock.calls[0][0].color_scheme).toBe(newColor);
   });
@@ -213,7 +279,7 @@ describe("SettingsPanel", () => {
     const onSave = vi.fn(async () => {});
     render(<SettingsPanel settings={defaults} onSave={onSave} />);
 
-    fireEvent.click(screen.getByRole("button", { name: /save/i }));
+    fireEvent.click(screen.getByRole("radio", { name: /light/i }));
     await waitFor(() => expect(onSave).toHaveBeenCalled());
 
     const status = await screen.findByRole("status");

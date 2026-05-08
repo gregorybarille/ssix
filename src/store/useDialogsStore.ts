@@ -1,6 +1,11 @@
 import { create } from "zustand";
 import type { Connection, Credential, OpenMode } from "@/types";
 
+export interface ScreenshotToast {
+  kind: "success" | "error";
+  message: string;
+}
+
 /**
  * Audit-4 Phase 5d: every dialog in App.tsx (connection form,
  * credential form, clone form, ConnectPicker, ScpDialog, the three
@@ -34,7 +39,7 @@ interface DialogsState {
   contextMenu: { x: number; y: number } | null;
 
   // Screenshot saved/failed toast
-  screenshotToast: string | null;
+  screenshotToast: ScreenshotToast | null;
 
   // SCP file-transfer dialog
   scpConnection: Connection | null;
@@ -83,7 +88,7 @@ interface DialogsState {
   setPickerOpen: (open: boolean) => void;
 
   setContextMenu: (pos: { x: number; y: number } | null) => void;
-  setScreenshotToast: (msg: string | null) => void;
+  setScreenshotToast: (toast: ScreenshotToast | null) => void;
 
   openScp: (conn: Connection) => void;
   setScpOpen: (open: boolean) => void;
@@ -150,7 +155,7 @@ export const useDialogsStore = create<DialogsState>((set) => ({
   setPickerOpen: (open) => set({ pickerOpen: open }),
 
   setContextMenu: (pos) => set({ contextMenu: pos }),
-  setScreenshotToast: (msg) => set({ screenshotToast: msg }),
+  setScreenshotToast: (toast) => set({ screenshotToast: toast }),
 
   openScp: (conn) => set({ scpConnection: conn, scpOpen: true }),
   setScpOpen: (open) => set({ scpOpen: open }),

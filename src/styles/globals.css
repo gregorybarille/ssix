@@ -132,18 +132,18 @@
      * preserved so the WCAG-AA contrast notes below for
      * `--muted-foreground-soft` and `--destructive-text` remain valid.
      */
-    --background: 215 16% 9%;
+    --background: 215 16% 14%;
     --foreground: 210 20% 98%;
-    --card: 215 16% 11%;
+    --card: 215 16% 17%;
     --card-foreground: 210 20% 98%;
-    --popover: 215 16% 13%;
+    --popover: 215 16% 18%;
     --popover-foreground: 210 20% 98%;
     --primary: 210 20% 98%;
     --primary-foreground: 215 25% 13%;
-    --secondary: 215 16% 19%;
+    --secondary: 215 16% 24%;
     --secondary-foreground: 210 20% 98%;
-    --muted: 215 16% 19%;
-    --muted-foreground: 215 14% 65%;
+    --muted: 215 16% 24%;
+    --muted-foreground: 215 14% 74%;
     /*
      * `muted-soft` is a deliberately-toned-down variant of
      * `muted-foreground` for tertiary metadata (timestamps, inline
@@ -154,8 +154,8 @@
      * Dark theme (slate background ~ #14181d): hsl(215 14% 55%) ≈ #7d848e
      * yields ~5.0:1 contrast.
      */
-    --muted-foreground-soft: 215 14% 55%;
-    --accent: 215 16% 19%;
+    --muted-foreground-soft: 215 14% 66%;
+    --accent: 215 16% 24%;
     --accent-foreground: 210 20% 98%;
     --destructive: 0 62.8% 30.6%;
     --destructive-foreground: 210 40% 98%;
@@ -177,9 +177,9 @@
      * surface in the app (background, card, popover, accent, and the
      * common `bg-destructive/10` overlay).
      */
-    --destructive-text: 0 84.2% 72%;
-    --border: 215 16% 19%;
-    --input: 215 16% 19%;
+    --destructive-text: 0 84.2% 76%;
+    --border: 215 16% 26%;
+    --input: 215 16% 26%;
     --ring: 215 14% 70%;
     --radius: 0.5rem;
   }
