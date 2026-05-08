@@ -105,19 +105,21 @@ describe("Port forward (server-a → server-c:22)", () => {
     await click(sel.connectionFormSubmit);
 
     await navigateTo("tunnels");
-    // The tunnel definitions section uses <ConnectionList>; find the
-    // row by name and click its connect button to start the tunnel.
-    const defRow = await browser.$(sel.connectionRowByName("tunnel-05-c"));
-    await defRow.waitForExist({ timeout: 10_000 });
-    const startBtn = await defRow.$('[data-testid^="connect-button-"]');
+    // The tunnels view now renders one row per port-forward definition
+    // and updates that row in place as the session comes up.
+    const tunnelRow = await browser.$(sel.tunnelRowByName("tunnel-05-c"));
+    await tunnelRow.waitForExist({ timeout: 10_000 });
+    const startBtn = await tunnelRow.$('[data-testid^="connect-button-"]');
     await startBtn.waitForClickable({ timeout: 10_000 });
     await startBtn.click();
 
-    // Wait for the active session row to appear in the "Active" section.
-    const activeRow = await browser.$(`[data-testid^="tunnel-row-"][data-name="tunnel-05-c"]`);
-    await activeRow.waitForExist({
-      timeout: 30_000,
-    });
+    await browser.waitUntil(
+      async () => (await tunnelRow.getAttribute("data-status")) !== "disconnected",
+      {
+        timeout: 10_000,
+        timeoutMsg: "Tunnel row never left the disconnected state after starting",
+      },
+    );
 
     const banner = await readBannerEventually("127.0.0.1", LOCAL_PORT);
     expect(banner.toUpperCase()).toContain("SSH-2.0");

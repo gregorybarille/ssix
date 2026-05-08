@@ -22,26 +22,22 @@ async function click(selector: string): Promise<void> {
   await el.click();
 }
 
-async function clickDialogFooterButton(selector: string): Promise<void> {
+export async function clickDialogFooterButton(selector: string): Promise<void> {
   const el = await browser.$(selector);
   await el.waitForExist({ timeout: 10_000 });
 
-  // Linux tauri-driver/WebKit sometimes fails to scroll sticky dialog
-  // footer buttons into the viewport via WebDriver Actions, producing
-  // "move target out of bounds" and then a false non-clickable timeout.
-  // Force the same scroll from inside the page, then fall back to a DOM
-  // click only if the driver still refuses to perform a native click.
-  await browser.execute(
-    (button: HTMLElement) => button.scrollIntoView({ block: "center" }),
-    el,
-  );
-
-  try {
-    await el.waitForClickable({ timeout: 5_000 });
-    await el.click();
-  } catch {
-    await browser.execute((button: HTMLElement) => button.click(), el);
-  }
+  // Linux tauri-driver/WebKit can stale element handles while dialog
+  // footers reflow. Work purely from the selector inside the page so
+  // scroll + click target the current live node instead of a cached
+  // WebDriver element reference.
+  await browser.execute((targetSelector: string) => {
+    const button = document.querySelector<HTMLElement>(targetSelector);
+    if (!button) {
+      throw new Error(`Dialog footer button not found: ${targetSelector}`);
+    }
+    button.scrollIntoView({ block: "center" });
+    button.click();
+  }, selector);
 }
 
 export async function navigateTo(view: "connections" | "credentials" | "tunnels" | "settings" | "git-sync" | "logs"): Promise<void> {
@@ -80,6 +76,7 @@ export interface DirectConnectionInput {
   host: string;
   port: number;
   credentialName: string;
+  tags?: string[];
 }
 
 export async function saveConnectionForm(): Promise<void> {
@@ -103,6 +100,15 @@ export async function createDirectConnection(input: DirectConnectionInput): Prom
   const opt = await browser.$(`[role="option"][data-name="${input.credentialName}"]`);
   await opt.waitForClickable({ timeout: 10_000 });
   await opt.click();
+  if (input.tags && input.tags.length > 0) {
+    const tagsInput = await browser.$("#tags");
+    await tagsInput.waitForExist({ timeout: 10_000 });
+    for (const tag of input.tags) {
+      await tagsInput.click();
+      await tagsInput.setValue(tag);
+      await browser.keys(["Enter"]);
+    }
+  }
   await saveConnectionForm();
 }
 

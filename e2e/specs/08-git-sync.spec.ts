@@ -78,14 +78,14 @@ describe("Git sync export", () => {
       credentialName: "cred-gitsync",
     });
 
-    // Configure the repo path via the Settings UI. Save persists to
-    // disk AND updates the Zustand store, which the GitSyncView's
-    // useEffect listens to.
+    // Configure the repo path via the Settings UI. The settings panel
+    // now auto-saves git-sync text fields on blur instead of exposing
+    // a dedicated Save button.
     await navigateTo("settings");
     const repoInput = await browser.$(sel.settingsGitSyncRepoPath);
     await repoInput.waitForExist({ timeout: 10_000 });
     await repoInput.setValue(repo);
-    await (await browser.$(sel.settingsSave)).click();
+    await browser.execute((el: HTMLInputElement) => el.blur(), repoInput);
 
     await navigateTo("git-sync");
     // Confirm the view picked up the configured repo path.

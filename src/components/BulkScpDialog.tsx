@@ -127,7 +127,14 @@ export function BulkScpDialog({
   const errorCount = steps.filter((s) => s.status === "error").length;
 
   return (
-    <Dialog open={open} onOpenChange={(next) => { if (running) return; onOpenChange(next); }}>
+    <Dialog
+      open={open}
+      modal
+      onOpenChange={(next) => {
+        if (running) return;
+        onOpenChange(next);
+      }}
+    >
       <DialogContent
         className="sm:max-w-[640px]"
         data-testid="bulk-scp-dialog"

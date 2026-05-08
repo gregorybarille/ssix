@@ -92,6 +92,8 @@ export const sel = {
   // Tunnels
   // "Start" a tunnel = clicking Connect on its port-forward connection
   // row, so the button is the same as the generic connect button.
+  tunnelRowByName: (name: string) =>
+    `[data-testid^="tunnel-row-"][data-name="${name}"]`,
   tunnelStartButton: (id: string) => `[data-testid="connect-button-${id}"]`,
   tunnelStopButton: (id: string) => `[data-testid="tunnel-stop-${id}"]`,
   tunnelStatus: (id: string) => `[data-testid="tunnel-status-${id}"]`,
@@ -115,7 +117,6 @@ export const sel = {
   installKeyClose: '[data-testid="install-key-close"]',
 
   // Settings panel
-  settingsSave: '[data-testid="settings-save"]',
   settingsGitSyncRepoPath: '[data-testid="settings-git-sync-repo-path"]',
 
   // Layout toggle (list / tile / tags)
