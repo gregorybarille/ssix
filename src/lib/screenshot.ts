@@ -63,8 +63,8 @@ export async function takeScreenshot(): Promise<string> {
   }
 
   const separatorIndex = dataUrl.indexOf(",");
-  const prefix = separatorIndex > 0 ? dataUrl.slice(0, separatorIndex) : "";
-  const imageData = separatorIndex > 0 ? dataUrl.slice(separatorIndex + 1) : "";
+  const prefix = separatorIndex >= 0 ? dataUrl.slice(0, separatorIndex) : "";
+  const imageData = separatorIndex >= 0 ? dataUrl.slice(separatorIndex + 1) : "";
   // Data URLs are case-insensitive in practice across browsers/tooling,
   // so accept mixed-case media-type tokens while still requiring PNG+base64.
   if (
