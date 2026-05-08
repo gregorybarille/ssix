@@ -58,7 +58,7 @@ describe("Unsaved-changes guard — CredentialForm", () => {
     expect(onOpenChange).not.toHaveBeenCalled();
   });
 
-  it("shows the discard prompt on Escape in inline mode after edits", async () => {
+  it("shows the discard prompt on Escape in inline mode after edits (CredentialForm)", async () => {
     const user = userEvent.setup();
     const onOpenChange = vi.fn();
     render(
@@ -193,7 +193,7 @@ describe("Unsaved-changes guard — ConnectionForm", () => {
     expect(onOpenChange).not.toHaveBeenCalled();
   });
 
-  it("shows the discard prompt on Escape in inline mode after edits", async () => {
+  it("shows the discard prompt on Escape in inline mode after edits (ConnectionForm)", async () => {
     const user = userEvent.setup();
     const onOpenChange = vi.fn();
     render(
