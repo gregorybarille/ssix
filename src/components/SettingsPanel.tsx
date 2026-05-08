@@ -42,33 +42,35 @@ export function SettingsPanel({ settings, onSave, onPreview }: SettingsPanelProp
     return () => clearTimeout(id);
   }, [savedAt]);
 
+  const processSaveQueue = React.useCallback(async () => {
+    while (pendingSaveRef.current) {
+      const toSave = pendingSaveRef.current;
+      const saveVersion = latestSaveVersionRef.current;
+      pendingSaveRef.current = null;
+      try {
+        await onSave(toSave);
+        if (saveVersion === latestSaveVersionRef.current) {
+          setSavedAt(Date.now());
+        }
+      } catch (error) {
+        if (saveVersion !== latestSaveVersionRef.current) continue;
+        const message =
+          error instanceof Error && error.message.trim()
+            ? error.message.trim()
+            : "Failed to save settings.";
+        setSaveError(message);
+      }
+    }
+    isSavingRef.current = false;
+  }, [onSave]);
+
   const queueSave = (next: AppSettings) => {
     latestSaveVersionRef.current += 1;
     pendingSaveRef.current = next;
     setSaveError(null);
     if (isSavingRef.current) return;
     isSavingRef.current = true;
-    void (async () => {
-      while (pendingSaveRef.current) {
-        const toSave = pendingSaveRef.current;
-        const saveVersion = latestSaveVersionRef.current;
-        pendingSaveRef.current = null;
-        try {
-          await onSave(toSave);
-          if (saveVersion === latestSaveVersionRef.current) {
-            setSavedAt(Date.now());
-          }
-        } catch (error) {
-          if (saveVersion !== latestSaveVersionRef.current) continue;
-          const message =
-            error instanceof Error && error.message.trim()
-              ? error.message.trim()
-              : "Failed to save settings.";
-          setSaveError(message);
-        }
-      }
-      isSavingRef.current = false;
-    })();
+    void processSaveQueue();
   };
 
   const applySettings = (next: AppSettings) => {
