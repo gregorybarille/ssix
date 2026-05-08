@@ -59,6 +59,9 @@ export function TunnelsView({
 
   const latestSessionByConnectionId = useMemo(() => {
     const map = new Map<string, TunnelSession>();
+    // `sessions` is append-ordered in the tunnels store, so the last entry
+    // seen for each connection id is the same "latest session" previously
+    // returned by `filter(...).at(-1)`, but with O(1) lookup during render.
     for (const session of sessions) {
       map.set(session.connection.id, session);
     }

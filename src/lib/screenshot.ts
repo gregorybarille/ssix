@@ -64,7 +64,7 @@ export async function takeScreenshot(): Promise<string> {
 
   const separatorIndex = dataUrl.indexOf(",");
   const prefix = separatorIndex > 0 ? dataUrl.slice(0, separatorIndex) : "";
-  const imageData = separatorIndex >= 0 ? dataUrl.slice(separatorIndex + 1) : "";
+  const imageData = separatorIndex > 0 ? dataUrl.slice(separatorIndex + 1) : "";
   if (
     !/^data:image\/png;base64$/i.test(prefix) ||
     !imageData ||

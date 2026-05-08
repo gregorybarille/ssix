@@ -26,7 +26,9 @@ export function SettingsPanel({ settings, onSave, onPreview }: SettingsPanelProp
   const [form, setForm] = React.useState(settings);
   const [savedAt, setSavedAt] = React.useState(0);
   const [saveError, setSaveError] = React.useState<string | null>(null);
-  const saveRequestIdRef = React.useRef(0);
+  const latestSaveVersionRef = React.useRef(0);
+  const pendingSaveRef = React.useRef<AppSettings | null>(null);
+  const isSavingRef = React.useRef(false);
 
   useEffect(() => {
     setForm(settings);
@@ -41,21 +43,32 @@ export function SettingsPanel({ settings, onSave, onPreview }: SettingsPanelProp
   }, [savedAt]);
 
   const queueSave = (next: AppSettings) => {
-    const requestId = ++saveRequestIdRef.current;
+    latestSaveVersionRef.current += 1;
+    pendingSaveRef.current = next;
     setSaveError(null);
-    void onSave(next)
-      .then(() => {
-        if (requestId !== saveRequestIdRef.current) return;
-        setSavedAt(Date.now());
-      })
-      .catch((error) => {
-        if (requestId !== saveRequestIdRef.current) return;
-        const message =
-          error instanceof Error && error.message.trim()
-            ? error.message.trim()
-            : "Failed to save settings.";
-        setSaveError(message);
-      });
+    if (isSavingRef.current) return;
+    isSavingRef.current = true;
+    void (async () => {
+      while (pendingSaveRef.current) {
+        const toSave = pendingSaveRef.current;
+        const saveVersion = latestSaveVersionRef.current;
+        pendingSaveRef.current = null;
+        try {
+          await onSave(toSave);
+          if (saveVersion === latestSaveVersionRef.current) {
+            setSavedAt(Date.now());
+          }
+        } catch (error) {
+          if (saveVersion !== latestSaveVersionRef.current) continue;
+          const message =
+            error instanceof Error && error.message.trim()
+              ? error.message.trim()
+              : "Failed to save settings.";
+          setSaveError(message);
+        }
+      }
+      isSavingRef.current = false;
+    })();
   };
 
   const applySettings = (next: AppSettings) => {

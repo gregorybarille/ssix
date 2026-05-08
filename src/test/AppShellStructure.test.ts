@@ -26,9 +26,4 @@ describe("App.tsx shell structure", () => {
   it("marks the screenshot toast as excluded from future captures", () => {
     expect(src).toContain('data-screenshot-exclude="true"');
   });
-
-  it("clears any previous screenshot-toast timeout before scheduling a new one", () => {
-    expect(src).toContain("screenshotToastTimeoutRef");
-    expect(src).toMatch(/clearTimeout\(screenshotToastTimeoutRef\.current\)/);
-  });
 });

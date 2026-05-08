@@ -91,9 +91,10 @@ describe("SettingsPanel", () => {
 
     fireEvent.click(screen.getByRole("radio", { name: /light/i }));
     fireEvent.click(screen.getByRole("radio", { name: /dark/i }));
-    await waitFor(() => expect(onSave).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(onSave).toHaveBeenCalledTimes(1));
 
     resolveFirst?.();
+    await waitFor(() => expect(onSave).toHaveBeenCalledTimes(2));
     rejectSecond?.(new Error("latest write failed"));
 
     await waitFor(() =>
