@@ -2,10 +2,15 @@ import * as React from "react";
 
 import { cn } from "@/lib/utils";
 
-function Textarea({ className, ...props }: React.ComponentProps<"textarea">) {
+function Textarea({
+  autoComplete,
+  className,
+  ...props
+}: React.ComponentProps<"textarea">) {
   return (
     <textarea
       data-slot="textarea"
+      autoComplete={autoComplete ?? "off"}
       className={cn(
         // Audit: SSIX uses `font-mono` by default because the only
         // current callers render private-key contents (CredentialForm),

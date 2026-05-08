@@ -5,9 +5,10 @@ import { Dialog as DialogPrimitive } from "radix-ui";
 import { cn } from "@/lib/utils";
 
 function Dialog({
+  modal,
   ...props
 }: React.ComponentProps<typeof DialogPrimitive.Root>) {
-  return <DialogPrimitive.Root data-slot="dialog" {...props} />;
+  return <DialogPrimitive.Root data-slot="dialog" modal={modal ?? false} {...props} />;
 }
 
 function DialogTrigger({
@@ -129,9 +130,8 @@ function DialogContent({
 
   return (
     <DialogPortal data-slot="dialog-portal">
-      <DialogOverlay />
       <DialogPrimitive.Content
-        data-slot="dialog-content"
+        data-slot="app-panel-content"
         onCloseAutoFocus={(event) => {
           onCloseAutoFocus?.(event);
           if (event.defaultPrevented) return;
@@ -149,7 +149,7 @@ function DialogContent({
           }
         }}
         className={cn(
-          "fixed top-[50%] left-[50%] z-50 grid w-full max-w-[calc(100%-2rem)] translate-x-[-50%] translate-y-[-50%] gap-4 rounded-lg border bg-background p-6 shadow-lg duration-200 outline-none data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=closed]:zoom-out-95 data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=open]:zoom-in-95 sm:max-w-lg",
+          "fixed top-[50%] left-[50%] z-50 grid max-h-[calc(100vh-5rem)] w-full max-w-[calc(100vw-2rem)] translate-x-[-50%] translate-y-[-50%] gap-4 overflow-hidden rounded-xl border border-border/80 bg-card p-6 shadow-2xl shadow-black/25 duration-200 outline-none ring-1 ring-white/5 data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=closed]:zoom-out-95 data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=open]:zoom-in-95 sm:max-w-lg",
           className,
         )}
         {...props}

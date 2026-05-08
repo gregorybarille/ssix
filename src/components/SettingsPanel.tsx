@@ -1,6 +1,5 @@
-import React, { useActionState, useEffect } from "react";
+import React, { useEffect } from "react";
 import { AppSettings, OPEN_COLORS, FONT_FAMILIES, FONT_SIZES, LayoutMode, OpenMode } from "@/types";
-import { Button } from "./ui/button";
 import { Input } from "./ui/input";
 import { Label } from "./ui/label";
 import {
@@ -20,29 +19,16 @@ import { COLOR_VALUES } from "@/lib/colors";
 interface SettingsPanelProps {
   settings: AppSettings;
   onSave: (settings: AppSettings) => Promise<void>;
+  onPreview?: (settings: AppSettings) => void;
 }
 
-export function SettingsPanel({ settings, onSave }: SettingsPanelProps) {
+export function SettingsPanel({ settings, onSave, onPreview }: SettingsPanelProps) {
   const [form, setForm] = React.useState(settings);
   const [savedAt, setSavedAt] = React.useState(0);
 
   useEffect(() => {
     setForm(settings);
   }, [settings]);
-
-  /*
-   * React 19 useActionState replaces the prior trio of
-   * `isSaving` / `saved` / `setTimeout` flags. The action runs
-   * inside a transition so `isPending` is updated automatically
-   * for the duration of the await. We bump `savedAt` after a
-   * successful save so the polite live region can announce it
-   * and auto-clear after 2s.
-   */
-  const [, saveAction, isSaving] = useActionState<null>(async () => {
-    await onSave(form);
-    setSavedAt(Date.now());
-    return null;
-  }, null);
 
   const [savedVisible, setSavedVisible] = React.useState(false);
   useEffect(() => {
@@ -52,8 +38,23 @@ export function SettingsPanel({ settings, onSave }: SettingsPanelProps) {
     return () => clearTimeout(id);
   }, [savedAt]);
 
+  const applySettings = (next: AppSettings) => {
+    setForm(next);
+    onPreview?.(next);
+    void onSave(next).then(() => setSavedAt(Date.now()));
+  };
+
+  const updateLocalSettings = (next: AppSettings) => {
+    setForm(next);
+  };
+
+  const commitTextSettings = (next: AppSettings) => {
+    setForm(next);
+    void onSave(next).then(() => setSavedAt(Date.now()));
+  };
+
   return (
-    <form action={saveAction} className="space-y-6 p-6 max-w-lg">
+    <div className="space-y-6 p-6 max-w-lg">
       <div>
         <h2 className="text-lg font-semibold">Settings</h2>
         <p className="text-sm text-muted-foreground mt-1">
@@ -73,7 +74,7 @@ export function SettingsPanel({ settings, onSave }: SettingsPanelProps) {
           <Label htmlFor="font-family">Font Family</Label>
           <Select
             value={form.font_family}
-            onValueChange={(v) => setForm({ ...form, font_family: v })}
+            onValueChange={(v) => applySettings({ ...form, font_family: v })}
           >
             <SelectTrigger id="font-family">
               <SelectValue />
@@ -92,7 +93,7 @@ export function SettingsPanel({ settings, onSave }: SettingsPanelProps) {
           <Label htmlFor="font-size">Font Size</Label>
           <Select
             value={String(form.font_size)}
-            onValueChange={(v) => setForm({ ...form, font_size: parseInt(v) })}
+            onValueChange={(v) => applySettings({ ...form, font_size: parseInt(v) })}
           >
             <SelectTrigger id="font-size">
               <SelectValue />
@@ -142,7 +143,7 @@ export function SettingsPanel({ settings, onSave }: SettingsPanelProps) {
             orientation prop for the same reason.
           */
           value={form.color_scheme}
-          onValueChange={(v) => setForm({ ...form, color_scheme: v })}
+          onValueChange={(v) => applySettings({ ...form, color_scheme: v })}
           className="grid grid-cols-4 gap-2"
         >
           {OPEN_COLORS.map((color) => (
@@ -175,7 +176,9 @@ export function SettingsPanel({ settings, onSave }: SettingsPanelProps) {
           aria-labelledby="settings-theme-heading"
           orientation="horizontal"
           value={form.theme}
-          onValueChange={(v) => setForm({ ...form, theme: v as "dark" | "light" })}
+          onValueChange={(v) => {
+            applySettings({ ...form, theme: v as "dark" | "light" });
+          }}
           className="flex gap-3"
         >
           {(["dark", "light"] as const).map((theme) => (
@@ -218,7 +221,7 @@ export function SettingsPanel({ settings, onSave }: SettingsPanelProps) {
             <Label htmlFor={key}>{label}</Label>
             <Select
               value={form[key]}
-              onValueChange={(v) => setForm({ ...form, [key]: v as LayoutMode })}
+              onValueChange={(v) => applySettings({ ...form, [key]: v as LayoutMode })}
             >
               <SelectTrigger id={key}>
                 <SelectValue />
@@ -246,7 +249,7 @@ export function SettingsPanel({ settings, onSave }: SettingsPanelProps) {
           <Select
             value={form.default_open_mode}
             onValueChange={(v) =>
-              setForm({ ...form, default_open_mode: v as OpenMode })
+              applySettings({ ...form, default_open_mode: v as OpenMode })
             }
           >
             <SelectTrigger id="default-open-mode">
@@ -290,7 +293,7 @@ export function SettingsPanel({ settings, onSave }: SettingsPanelProps) {
           <Switch
             id="auto-copy-selection"
             checked={form.auto_copy_selection}
-            onCheckedChange={(v) => setForm({ ...form, auto_copy_selection: v })}
+            onCheckedChange={(v) => applySettings({ ...form, auto_copy_selection: v })}
             aria-describedby="auto-copy-selection-description"
           />
         </div>
@@ -317,7 +320,18 @@ export function SettingsPanel({ settings, onSave }: SettingsPanelProps) {
           <Input
             id="git-sync-repo-path"
             value={form.git_sync_repo_path ?? ""}
-            onChange={(e) => setForm({ ...form, git_sync_repo_path: e.target.value || undefined })}
+            onChange={(e) =>
+              updateLocalSettings({
+                ...form,
+                git_sync_repo_path: e.target.value || undefined,
+              })
+            }
+            onBlur={(e) =>
+              commitTextSettings({
+                ...form,
+                git_sync_repo_path: e.target.value || undefined,
+              })
+            }
             placeholder="/Users/me/config-repo"
             data-testid="settings-git-sync-repo-path"
           />
@@ -328,7 +342,18 @@ export function SettingsPanel({ settings, onSave }: SettingsPanelProps) {
           <Input
             id="git-sync-remote"
             value={form.git_sync_remote}
-            onChange={(e) => setForm({ ...form, git_sync_remote: e.target.value || "origin" })}
+            onChange={(e) =>
+              updateLocalSettings({
+                ...form,
+                git_sync_remote: e.target.value,
+              })
+            }
+            onBlur={(e) =>
+              commitTextSettings({
+                ...form,
+                git_sync_remote: e.target.value || "origin",
+              })
+            }
             placeholder="origin"
           />
         </div>
@@ -338,41 +363,41 @@ export function SettingsPanel({ settings, onSave }: SettingsPanelProps) {
           <Input
             id="git-sync-branch"
             value={form.git_sync_branch ?? ""}
-            onChange={(e) => setForm({ ...form, git_sync_branch: e.target.value || undefined })}
+            onChange={(e) =>
+              updateLocalSettings({
+                ...form,
+                git_sync_branch: e.target.value || undefined,
+              })
+            }
+            onBlur={(e) =>
+              commitTextSettings({
+                ...form,
+                git_sync_branch: e.target.value || undefined,
+              })
+            }
             placeholder="main"
           />
         </div>
       </div>
 
-      <div className="flex items-center gap-3">
-        <Button type="submit" disabled={isSaving} aria-busy={isSaving} data-testid="settings-save">
-          {isSaving ? "Saving..." : "Save Settings"}
-        </Button>
-        {/*
-          P2-A11: announce save success to screen readers. role=status
-          + aria-live=polite is the standard "transient confirmation"
-          pattern; visual color alone is invisible to AT and to color-
-          blind users on this background.
-
-          Audit-3 follow-up P3#9: AGENTS.md mandates that color is
-          supplementary — every status row must carry a glyph (or
-          chip styling) so colorblind users get the same signal.
-          The Check icon is rendered with aria-hidden because the
-          status text already announces the meaning to AT.
-        */}
-        <span
-          role="status"
-          aria-live="polite"
-          className="text-sm text-green-600 dark:text-green-400 inline-flex items-center gap-1.5"
-        >
-          {savedVisible && (
-            <>
-              <Check aria-hidden="true" className="h-3.5 w-3.5" />
-              Settings saved!
-            </>
-          )}
-        </span>
-      </div>
-    </form>
+      {/*
+        P2-A11: announce save success to screen readers. role=status
+        + aria-live=polite is the standard "transient confirmation"
+        pattern; visual color alone is invisible to AT and to color-
+        blind users on this background.
+      */}
+      <span
+        role="status"
+        aria-live="polite"
+        className="text-sm text-green-600 dark:text-green-400 inline-flex items-center gap-1.5"
+      >
+        {savedVisible && (
+          <>
+            <Check aria-hidden="true" className="h-3.5 w-3.5" />
+            Settings saved!
+          </>
+        )}
+      </span>
+    </div>
   );
 }

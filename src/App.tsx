@@ -119,6 +119,7 @@ function App() {
   const { settings, fetchSettings, saveSettings } = useSettingsStore();
   const { status: gitSyncStatus, fetchStatus: fetchGitSyncStatus } =
     useGitSyncStore();
+  const [previewSettings, setPreviewSettings] = React.useState<typeof settings | null>(null);
 
   // Dialog/UI state
   const dialogs = useDialogsStore();
@@ -134,7 +135,13 @@ function App() {
   const tunnelSessions = useTunnelsStore((s) => s.sessions);
   const closeTunnel = useTunnelsStore((s) => s.closeTunnel);
 
-  useApplySettings(settings);
+  useApplySettings(previewSettings ?? settings);
+
+  useEffect(() => {
+    if (view !== "settings" && previewSettings) {
+      setPreviewSettings(null);
+    }
+  }, [previewSettings, view]);
 
   useEffect(() => {
     fetchConnections();
@@ -213,13 +220,25 @@ function App() {
   /* ---------------------------- Submit handlers ---------------------------- */
 
   const handleTakeScreenshot = async () => {
+    const showScreenshotToast = (
+      kind: "success" | "error",
+      message: string,
+      timeoutMs: number,
+    ) => {
+      dialogs.setScreenshotToast({ kind, message });
+      setTimeout(() => dialogs.setScreenshotToast(null), timeoutMs);
+    };
+
+    dialogs.setScreenshotToast(null);
     try {
       const path = await takeScreenshot();
-      dialogs.setScreenshotToast(path);
-      setTimeout(() => dialogs.setScreenshotToast(null), 4000);
-    } catch {
-      dialogs.setScreenshotToast("Screenshot failed.");
-      setTimeout(() => dialogs.setScreenshotToast(null), 3000);
+      showScreenshotToast("success", `Screenshot saved to ${path}`, 4000);
+    } catch (error) {
+      const message =
+        error instanceof Error && error.message
+          ? error.message
+          : "Screenshot failed.";
+      showScreenshotToast("error", message, 6000);
     }
   };
 
@@ -414,7 +433,10 @@ function App() {
   // see fresh state without needing refs.
   useGlobalShortcuts({
     "mod+k": () => dialogs.setPickerOpen(true),
-    "mod+n": () => dialogs.openNewConnection(),
+    "mod+n": () => {
+      setView("connections");
+      dialogs.openNewConnection();
+    },
     "mod+,": () => setView("settings"),
     "mod+w": () => {
       if (view !== "terminals" || !activeTabId) return;
@@ -475,47 +497,69 @@ function App() {
                         onChange={(v) => updateLayout("connection_layout", v)}
                         showTags
                       />
-                      <Button size="sm" onClick={() => dialogs.openNewConnection()} data-testid="add-connection-button">
+                      <Button
+                        size="sm"
+                        onClick={() => {
+                          setView("connections");
+                          dialogs.openNewConnection();
+                        }}
+                        data-testid="add-connection-button"
+                      >
                         <Plus className="h-4 w-4 mr-1" />
                         New Connection
                       </Button>
                     </div>
                   </div>
-                  <div className="px-6 py-3 border-b border-border">
-                    <SearchBar
-                      value={searchQuery}
-                      onChange={setSearchQuery}
-                      onSearch={handleSearch}
-                      placeholder={
-                        settings.connection_layout === "tags"
-                          ? "Search tags…"
-                          : undefined
-                      }
+                  {dialogs.connFormOpen ? (
+                    <ConnectionForm
+                      inline
+                      open={dialogs.connFormOpen}
+                      onOpenChange={dialogs.setConnFormOpen}
+                      connection={dialogs.cloningConn ?? dialogs.editingConn}
+                      credentials={credentials}
+                      onSubmit={dialogs.cloningConn ? handleCloneSubmit : handleConnSubmit}
+                      onCreateCredential={handleCreateCredential}
+                      isClone={!!dialogs.cloningConn}
                     />
-                  </div>
-                  <div className="flex-1 overflow-y-auto px-4 py-2">
-                    {settings.connection_layout === "tags" ? (
-                      <Suspense fallback={<ViewFallback label="Loading tags…" />}>
-                        <TagGroupGrid
-                          connections={connections}
-                          query={searchQuery}
-                          onConnectAll={handleConnectAllInTag}
-                          onScpAll={handleScpAllInTag}
+                  ) : (
+                    <>
+                      <div className="px-6 py-3 border-b border-border">
+                        <SearchBar
+                          value={searchQuery}
+                          onChange={setSearchQuery}
+                          onSearch={handleSearch}
+                          placeholder={
+                            settings.connection_layout === "tags"
+                              ? "Search tags…"
+                              : undefined
+                          }
                         />
-                      </Suspense>
-                    ) : (
-                      <ConnectionList
-                        connections={connections}
-                        credentials={credentials}
-                        layout={settings.connection_layout}
-                        onEdit={(conn) => dialogs.openEditConnection(conn)}
-                        onDelete={handleDeleteConnection}
-                        onClone={(conn) => dialogs.openCloneConnection(conn)}
-                        onConnect={(c) => void connect(c)}
-                        onScp={(conn) => dialogs.openScp(conn)}
-                      />
-                    )}
-                  </div>
+                      </div>
+                      <div className="flex-1 overflow-y-auto px-4 py-2">
+                        {settings.connection_layout === "tags" ? (
+                          <Suspense fallback={<ViewFallback label="Loading tags…" />}>
+                            <TagGroupGrid
+                              connections={connections}
+                              query={searchQuery}
+                              onConnectAll={handleConnectAllInTag}
+                              onScpAll={handleScpAllInTag}
+                            />
+                          </Suspense>
+                        ) : (
+                          <ConnectionList
+                            connections={connections}
+                            credentials={credentials}
+                            layout={settings.connection_layout}
+                            onEdit={(conn) => dialogs.openEditConnection(conn)}
+                            onDelete={handleDeleteConnection}
+                            onClone={(conn) => dialogs.openCloneConnection(conn)}
+                            onConnect={(c) => void connect(c)}
+                            onScp={(conn) => dialogs.openScp(conn)}
+                          />
+                        )}
+                      </div>
+                    </>
+                  )}
                 </>
               )}
 
@@ -534,17 +578,27 @@ function App() {
                       </Button>
                     </div>
                   </div>
-                  <div className="flex-1 overflow-y-auto px-4 py-2">
-                    <CredentialList
-                      credentials={credentials}
-                      layout={settings.credential_layout}
-                      onEdit={(cred) => dialogs.openEditCredential(cred)}
-                      onDelete={(id) => {
-                        const cred = credentials.find((c) => c.id === id);
-                        if (cred) dialogs.setConfirmDeleteCred(cred);
-                      }}
+                  {dialogs.credFormOpen ? (
+                    <CredentialForm
+                      inline
+                      open={dialogs.credFormOpen}
+                      onOpenChange={dialogs.setCredFormOpen}
+                      credential={dialogs.editingCred}
+                      onSubmit={handleCredSubmit}
                     />
-                  </div>
+                  ) : (
+                    <div className="flex-1 overflow-y-auto px-4 py-2">
+                      <CredentialList
+                        credentials={credentials}
+                        layout={settings.credential_layout}
+                        onEdit={(cred) => dialogs.openEditCredential(cred)}
+                        onDelete={(id) => {
+                          const cred = credentials.find((c) => c.id === id);
+                          if (cred) dialogs.setConfirmDeleteCred(cred);
+                        }}
+                      />
+                    </div>
+                  )}
                 </>
               )}
 
@@ -581,8 +635,15 @@ function App() {
               )}
               {view === "settings" && (
                 <Suspense fallback={<ViewFallback label="Loading settings…" />}>
-                  <div className="flex-1 min-h-0 overflow-y-auto">
-                    <SettingsPanel settings={settings} onSave={saveSettings} />
+                  <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain">
+                    <SettingsPanel
+                      settings={settings}
+                      onSave={async (next) => {
+                        await saveSettings(next);
+                        setPreviewSettings(null);
+                      }}
+                      onPreview={setPreviewSettings}
+                    />
                   </div>
                 </Suspense>
               )}
@@ -626,7 +687,6 @@ function App() {
           items={[
             {
               label: "Take screenshot",
-              icon: <span aria-hidden="true">📸</span>,
               onClick: handleTakeScreenshot,
             },
           ]}
@@ -635,8 +695,18 @@ function App() {
 
       {/* Screenshot saved toast */}
       {dialogs.screenshotToast && (
-        <div className="fixed bottom-4 right-4 z-[9999] bg-popover border rounded-md shadow-lg px-4 py-2 text-sm max-w-xs truncate">
-          📸 Saved: {dialogs.screenshotToast}
+        <div
+          role={dialogs.screenshotToast.kind === "error" ? "alert" : "status"}
+          aria-live={dialogs.screenshotToast.kind === "error" ? "assertive" : "polite"}
+          aria-atomic="true"
+          data-screenshot-exclude="true"
+          className={`fixed bottom-4 right-4 z-[9999] rounded-md border shadow-lg px-4 py-2 text-sm max-w-md break-all ${
+            dialogs.screenshotToast.kind === "error"
+              ? "border-destructive/40 bg-destructive/10 text-destructive"
+              : "bg-popover text-popover-foreground"
+          }`}
+        >
+          {dialogs.screenshotToast.message}
         </div>
       )}
 
@@ -798,29 +868,6 @@ function App() {
         </DialogContent>
       </Dialog>
 
-      {/*
-       * ConnectionForm and CredentialForm are mounted at the App root
-       * so they are reachable from any view (Cmd+N opens the
-       * connection form even from Logs / Settings / Tunnels). Keeping
-       * them in the per-view branches caused the dialog to mount in
-       * the same render that switched view, which felt laggy and
-       * dropped any in-progress draft if the user navigated away.
-       */}
-      <ConnectionForm
-        open={dialogs.connFormOpen}
-        onOpenChange={dialogs.setConnFormOpen}
-        connection={dialogs.cloningConn ?? dialogs.editingConn}
-        credentials={credentials}
-        onSubmit={dialogs.cloningConn ? handleCloneSubmit : handleConnSubmit}
-        onCreateCredential={handleCreateCredential}
-        isClone={!!dialogs.cloningConn}
-      />
-      <CredentialForm
-        open={dialogs.credFormOpen}
-        onOpenChange={dialogs.setCredFormOpen}
-        credential={dialogs.editingCred}
-        onSubmit={handleCredSubmit}
-      />
     </div>
   );
 }

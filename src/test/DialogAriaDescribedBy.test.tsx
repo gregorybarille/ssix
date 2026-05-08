@@ -32,7 +32,10 @@ describe("Dialog aria-describedby wiring (P1#5)", () => {
     render(
       <ConnectionForm open onOpenChange={vi.fn()} credentials={[]} onSubmit={vi.fn()} />,
     );
-    expectDescribed(screen.getByRole("dialog"));
+    const dialog = screen.getByRole("dialog");
+    expectDescribed(dialog);
+    expect(dialog).toHaveAttribute("data-slot", "app-panel-content");
+    expect(document.querySelector('[data-slot="dialog-overlay"]')).toBeNull();
   });
 
   it("CredentialForm wires a non-empty description", () => {

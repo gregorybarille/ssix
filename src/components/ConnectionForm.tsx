@@ -44,6 +44,7 @@ interface ConnectionFormProps {
   onSubmit: (data: ConnectionInput | Connection) => Promise<void>;
   onCreateCredential?: (data: Omit<Credential, "id">) => Promise<Credential>;
   isClone?: boolean;
+  inline?: boolean;
 }
 
 const DEFAULT_FORM: ConnectionDraft = {
@@ -114,6 +115,7 @@ export function ConnectionForm({
   onSubmit,
   onCreateCredential,
   isClone = false,
+  inline = false,
 }: ConnectionFormProps) {
   const [form, setForm] = useState<ConnectionDraft>(DEFAULT_FORM);
   const [connectionType, setConnectionType] = useState<ConnectionType>("direct");
@@ -124,6 +126,9 @@ export function ConnectionForm({
   const [inlinePassphrase, setInlinePassphrase] = useState("");
   const [inlineCredentialName, setInlineCredentialName] = useState("");
   const [saveCredential, setSaveCredential] = useState(false);
+  const inlineTitleId = React.useId();
+  const inlineDescriptionId = React.useId();
+  const firstFieldRef = useRef<HTMLInputElement | null>(null);
 
   // Port inputs are managed as raw strings so we can validate without
   // silently coercing invalid input back to 22. The keys mirror the
@@ -277,6 +282,27 @@ export function ConnectionForm({
 
   const guard = useUnsavedChangesGuard(dirty);
   const requestCloseDialog = () => guard.requestClose(() => onOpenChange(false));
+
+  useEffect(() => {
+    if (!inline || !open) return;
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== "Escape" || event.defaultPrevented) return;
+      if (document.querySelector("[role='dialog']")) return;
+      event.preventDefault();
+      requestCloseDialog();
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [inline, open]);
+
+  useEffect(() => {
+    if (!inline || !open) return;
+    if (document.querySelector("[role='dialog']")) return;
+    const id = window.requestAnimationFrame(() => {
+      firstFieldRef.current?.focus();
+    });
+    return () => window.cancelAnimationFrame(id);
+  }, [inline, open, connection?.id, isClone]);
 
   const isTunnel = connectionType !== "direct";
   const needsDestinationAuth = connectionType !== "port_forward";
@@ -751,470 +777,499 @@ export function ConnectionForm({
     </div>
   );
 
-  return (
-    <Dialog
-      open={open}
-      onOpenChange={(o) => {
-        if (o) {
-          onOpenChange(true);
-          return;
-        }
-        // Intercept Esc / click-outside attempts to close so we can
-        // prompt for unsaved changes.
-        requestCloseDialog();
-      }}
-    >
-      <DialogContent className="sm:max-w-[560px] max-h-[90vh] flex flex-col p-0 gap-0">
-        <DialogHeader className="px-6 pt-6 pb-3 shrink-0 border-b">
-          <DialogTitle>{title}</DialogTitle>
-          {/* P1#5: sr-only description so the dialog has a wired aria-describedby. */}
-          <DialogDescription className="sr-only">
-            {connection
-              ? isClone
-                ? "Duplicate this connection's settings into a new entry."
-                : "Edit the host, authentication, and other settings for this connection."
-              : "Configure a new SSH connection: host, port, authentication, and optional advanced settings."}
-          </DialogDescription>
-        </DialogHeader>
-        <form
-          action={submitAction}
-          className="flex flex-col flex-1 min-h-0"
-          data-testid="connection-form"
-        >
-          <div className="flex-1 min-h-0 overflow-y-auto px-6 py-4 space-y-4">
-          <Tabs
-            value={connectionType}
-            onValueChange={(v) => setConnectionType(v as ConnectionType)}
-          >
-            <TabsList className="w-full">
-              <TabsTrigger value="direct" className="flex-1" data-testid="connection-form-kind-direct">
-                Direct
-              </TabsTrigger>
-              <TabsTrigger value="port_forward" className="flex-1" data-testid="connection-form-kind-portforward">
-                Port Forward
-              </TabsTrigger>
-              <TabsTrigger value="jump_shell" className="flex-1" data-testid="connection-form-kind-jumpshell">
-                Jump Shell
-              </TabsTrigger>
-            </TabsList>
-          </Tabs>
+  const formDescription = connection
+    ? isClone
+      ? "Duplicate this connection's settings into a new entry."
+      : "Edit the host, authentication, and other settings for this connection."
+    : "Configure a new SSH connection: host, port, authentication, and optional advanced settings.";
 
-          {/* Name is always shown */}
+  const kindTabs = (
+    <Tabs
+      value={connectionType}
+      onValueChange={(v) => setConnectionType(v as ConnectionType)}
+    >
+      <TabsList className="w-full gap-1 rounded-xl bg-muted/70 p-1">
+        <TabsTrigger
+          value="direct"
+          className="flex-1 data-[state=inactive]:bg-transparent data-[state=inactive]:hover:bg-background/70 data-[state=inactive]:hover:text-foreground data-[state=active]:bg-background data-[state=active]:shadow-sm"
+          data-testid="connection-form-kind-direct"
+        >
+          Direct
+        </TabsTrigger>
+        <TabsTrigger
+          value="port_forward"
+          className="flex-1 data-[state=inactive]:bg-transparent data-[state=inactive]:hover:bg-background/70 data-[state=inactive]:hover:text-foreground data-[state=active]:bg-background data-[state=active]:shadow-sm"
+          data-testid="connection-form-kind-portforward"
+        >
+          Port Forward
+        </TabsTrigger>
+        <TabsTrigger
+          value="jump_shell"
+          className="flex-1 data-[state=inactive]:bg-transparent data-[state=inactive]:hover:bg-background/70 data-[state=inactive]:hover:text-foreground data-[state=active]:bg-background data-[state=active]:shadow-sm"
+          data-testid="connection-form-kind-jumpshell"
+        >
+          Jump Shell
+        </TabsTrigger>
+      </TabsList>
+    </Tabs>
+  );
+
+  const formFields = (
+    <>
+      {kindTabs}
+
+      <div className="space-y-2">
+        <Label htmlFor="name">Connection Name *</Label>
+        <Input
+          id="name"
+          ref={firstFieldRef}
+          placeholder="my-server"
+          value={form.name}
+          onChange={(e) => {
+            setForm({ ...form, name: e.target.value });
+            clearFieldError("name");
+          }}
+          required
+          data-testid="connection-form-name"
+          aria-invalid={fieldErrors.name ? true : undefined}
+          aria-describedby={fieldErrors.name ? "name-error" : undefined}
+        />
+        {fieldErrors.name && (
+          <p id="name-error" role="alert" className="text-xs text-destructive">
+            {fieldErrors.name}
+          </p>
+        )}
+      </div>
+
+      {connectionType === "direct" && (
+        <div className="grid grid-cols-2 gap-4">
           <div className="space-y-2">
-            <Label htmlFor="name">Connection Name *</Label>
+            <Label htmlFor="host">Host *</Label>
             <Input
-              id="name"
-              placeholder="my-server"
-              value={form.name}
+              id="host"
+              placeholder="192.168.1.1"
+              value={form.host}
               onChange={(e) => {
-                setForm({ ...form, name: e.target.value });
-                clearFieldError("name");
+                setForm({ ...form, host: e.target.value });
+                clearFieldError("host");
               }}
               required
-              data-testid="connection-form-name"
-              aria-invalid={fieldErrors.name ? true : undefined}
-              aria-describedby={fieldErrors.name ? "name-error" : undefined}
+              data-testid="connection-form-host"
+              aria-invalid={fieldErrors.host ? true : undefined}
+              aria-describedby={fieldErrors.host ? "host-error" : undefined}
             />
-            {fieldErrors.name && (
-              <p id="name-error" role="alert" className="text-xs text-destructive">
-                {fieldErrors.name}
+            {fieldErrors.host && (
+              <p id="host-error" role="alert" className="text-xs text-destructive">
+                {fieldErrors.host}
               </p>
             )}
           </div>
+          <div className="space-y-2">
+            <Label htmlFor="port">Port</Label>
+            <Input
+              id="port"
+              type="text"
+              inputMode="numeric"
+              placeholder="22"
+              value={portInputs.port}
+              onChange={(e) => updatePort("port", e.target.value)}
+              data-testid="connection-form-port"
+              aria-invalid={portErrors.port ? true : undefined}
+              aria-describedby={portErrors.port ? "port-error" : undefined}
+            />
+            {portErrors.port && (
+              <p id="port-error" role="alert" className="text-xs text-destructive">
+                {portErrors.port}
+              </p>
+            )}
+          </div>
+        </div>
+      )}
 
-          {/* Direct: top-level host/port */}
-          {connectionType === "direct" && (
-            <div className="grid grid-cols-2 gap-4">
+      {isTunnel && (
+        <>
+          {gatewayBlock}
+          {destinationBlock}
+          {connectionType === "port_forward" && localPortBlock}
+        </>
+      )}
+
+      {needsDestinationAuth && (
+        <div className="space-y-3">
+          <Label>
+            {connectionType === "jump_shell"
+              ? "Destination Authentication"
+              : "Authentication"}
+          </Label>
+          <Tabs
+            value={authMethod}
+            onValueChange={(v) => setAuthMethod(v as AuthMethod)}
+          >
+            <TabsList className="w-full">
+              <TabsTrigger value="credential" className="flex-1 text-xs">
+                Saved Credential
+              </TabsTrigger>
+              <TabsTrigger value="password" className="flex-1 text-xs">
+                Password
+              </TabsTrigger>
+              <TabsTrigger value="ssh_key" className="flex-1 text-xs">
+                SSH Key
+              </TabsTrigger>
+            </TabsList>
+
+            <TabsContent value="credential" className="space-y-3 mt-3">
+              {credentialPicker}
+            </TabsContent>
+
+            <TabsContent value="password" className="space-y-3 mt-3">
               <div className="space-y-2">
-                <Label htmlFor="host">Host *</Label>
+                <Label htmlFor="inline-username">Username *</Label>
                 <Input
-                  id="host"
-                  placeholder="192.168.1.1"
-                  value={form.host}
-                  onChange={(e) => {
-                    setForm({ ...form, host: e.target.value });
-                    clearFieldError("host");
+                  id="inline-username"
+                  placeholder="root"
+                  value={inlineUsername}
+                  onChange={(e) => setInlineUsername(e.target.value)}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="inline-password">Password *</Label>
+                <PasswordInput
+                  id="inline-password"
+                  placeholder="••••••••"
+                  value={inlinePassword}
+                  onChange={(e) => setInlinePassword(e.target.value)}
+                />
+              </div>
+              <div className="flex items-center gap-2">
+                <Checkbox
+                  id="conn-save-credential-password"
+                  checked={saveCredential}
+                  onCheckedChange={(v) => {
+                    const checked = v === true;
+                    setSaveCredential(checked);
+                    if (!checked) {
+                      setInlineCredentialName("");
+                    } else if (!inlineCredentialName) {
+                      setInlineCredentialName(defaultCredentialName("password"));
+                    }
                   }}
-                  required
-                  data-testid="connection-form-host"
-                  aria-invalid={fieldErrors.host ? true : undefined}
-                  aria-describedby={fieldErrors.host ? "host-error" : undefined}
                 />
-                {fieldErrors.host && (
-                  <p id="host-error" role="alert" className="text-xs text-destructive">
-                    {fieldErrors.host}
-                  </p>
-                )}
+                <Label
+                  htmlFor="conn-save-credential-password"
+                  className="text-xs text-muted-foreground font-normal cursor-pointer select-none"
+                >
+                  Save as a named credential (visible in the Credentials list)
+                </Label>
+              </div>
+              {saveCredential && (
+                <div className="space-y-2">
+                  <Label htmlFor="password-cred-name">Credential Name *</Label>
+                  <Input
+                    id="password-cred-name"
+                    placeholder="server-cred"
+                    value={inlineCredentialName}
+                    onChange={(e) => setInlineCredentialName(e.target.value)}
+                  />
+                </div>
+              )}
+            </TabsContent>
+
+            <TabsContent value="ssh_key" className="space-y-3 mt-3">
+              <div className="space-y-2">
+                <Label htmlFor="key-username">Username *</Label>
+                <Input
+                  id="key-username"
+                  placeholder="root"
+                  value={inlineUsername}
+                  onChange={(e) => setInlineUsername(e.target.value)}
+                />
               </div>
               <div className="space-y-2">
-                <Label htmlFor="port">Port</Label>
+                <Label htmlFor="key-path">Private Key Path *</Label>
                 <Input
-                  id="port"
-                  type="text"
-                  inputMode="numeric"
-                  placeholder="22"
-                  value={portInputs.port}
-                  onChange={(e) => updatePort("port", e.target.value)}
-                  data-testid="connection-form-port"
-                  aria-invalid={portErrors.port ? true : undefined}
-                  aria-describedby={portErrors.port ? "port-error" : undefined}
+                  id="key-path"
+                  placeholder="~/.ssh/id_rsa"
+                  value={inlineKeyPath}
+                  onChange={(e) => setInlineKeyPath(e.target.value)}
                 />
-                {portErrors.port && (
-                  <p id="port-error" role="alert" className="text-xs text-destructive">
-                    {portErrors.port}
-                  </p>
-                )}
               </div>
-            </div>
-          )}
-
-          {/* Tunnel kinds: gateway + destination */}
-          {isTunnel && (
-            <>
-              {gatewayBlock}
-              {destinationBlock}
-              {connectionType === "port_forward" && localPortBlock}
-            </>
-          )}
-
-          {/* Auth section (skipped for port_forward) */}
-          {needsDestinationAuth && (
-            <div className="space-y-3">
-              <Label>
-                {connectionType === "jump_shell"
-                  ? "Destination Authentication"
-                  : "Authentication"}
-              </Label>
-              <Tabs
-                value={authMethod}
-                onValueChange={(v) => setAuthMethod(v as AuthMethod)}
-              >
-                <TabsList className="w-full">
-                  <TabsTrigger value="credential" className="flex-1 text-xs">
-                    Saved Credential
-                  </TabsTrigger>
-                  <TabsTrigger value="password" className="flex-1 text-xs">
-                    Password
-                  </TabsTrigger>
-                  <TabsTrigger value="ssh_key" className="flex-1 text-xs">
-                    SSH Key
-                  </TabsTrigger>
-                </TabsList>
-
-                <TabsContent value="credential" className="space-y-3 mt-3">
-                  {credentialPicker}
-                </TabsContent>
-
-                <TabsContent value="password" className="space-y-3 mt-3">
-                  <div className="space-y-2">
-                    <Label htmlFor="inline-username">Username *</Label>
-                    <Input
-                      id="inline-username"
-                      placeholder="root"
-                      value={inlineUsername}
-                      onChange={(e) => setInlineUsername(e.target.value)}
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="inline-password">Password *</Label>
-                    <PasswordInput
-                      id="inline-password"
-                      placeholder="••••••••"
-                      value={inlinePassword}
-                      onChange={(e) => setInlinePassword(e.target.value)}
-                    />
-                  </div>
-                  {/*
-                    Audit-3 follow-up P1#2: replaced the bare
-                    <input type="checkbox" className="accent-primary">
-                    with the shared <Checkbox> primitive (Radix-
-                    backed). The native checkbox bypassed the
-                    focus-visible ring, theme tokens, and rendered
-                    differently on every OS — same contract pinned
-                    by AGENTS.md and previously fixed in ScpDialog.
-                  */}
-                  <div className="flex items-center gap-2">
-                    <Checkbox
-                      id="conn-save-credential-password"
-                      checked={saveCredential}
-                      onCheckedChange={(v) => {
-                        const checked = v === true;
-                        setSaveCredential(checked);
-                        if (!checked) {
-                          setInlineCredentialName("");
-                        } else if (!inlineCredentialName) {
-                          setInlineCredentialName(defaultCredentialName("password"));
-                        }
-                      }}
-                    />
-                    <Label
-                      htmlFor="conn-save-credential-password"
-                      className="text-xs text-muted-foreground font-normal cursor-pointer select-none"
-                    >
-                      Save as a named credential (visible in the Credentials list)
-                    </Label>
-                  </div>
-                  {saveCredential && (
-                    <div className="space-y-2">
-                      <Label htmlFor="password-cred-name">
-                        Credential Name *
-                      </Label>
-                      <Input
-                        id="password-cred-name"
-                        placeholder="server-cred"
-                        value={inlineCredentialName}
-                        onChange={(e) => setInlineCredentialName(e.target.value)}
-                      />
-                    </div>
-                  )}
-                </TabsContent>
-
-                <TabsContent value="ssh_key" className="space-y-3 mt-3">
-                  <div className="space-y-2">
-                    <Label htmlFor="key-username">Username *</Label>
-                    <Input
-                      id="key-username"
-                      placeholder="root"
-                      value={inlineUsername}
-                      onChange={(e) => setInlineUsername(e.target.value)}
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="key-path">Private Key Path *</Label>
-                    <Input
-                      id="key-path"
-                      placeholder="~/.ssh/id_rsa"
-                      value={inlineKeyPath}
-                      onChange={(e) => setInlineKeyPath(e.target.value)}
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="key-passphrase">Passphrase (optional)</Label>
-                    <PasswordInput
-                      id="key-passphrase"
-                      placeholder="••••••••"
-                      value={inlinePassphrase}
-                      onChange={(e) => setInlinePassphrase(e.target.value)}
-                    />
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <Checkbox
-                      id="conn-save-credential-key"
-                      checked={saveCredential}
-                      onCheckedChange={(v) => {
-                        const checked = v === true;
-                        setSaveCredential(checked);
-                        if (!checked) {
-                          setInlineCredentialName("");
-                        } else if (!inlineCredentialName) {
-                          setInlineCredentialName(defaultCredentialName("ssh_key"));
-                        }
-                      }}
-                    />
-                    <Label
-                      htmlFor="conn-save-credential-key"
-                      className="text-xs text-muted-foreground font-normal cursor-pointer select-none"
-                    >
-                      Save as a named credential (visible in the Credentials list)
-                    </Label>
-                  </div>
-                  {saveCredential && (
-                    <div className="space-y-2">
-                      <Label htmlFor="ssh-cred-name">
-                        Credential Name *
-                      </Label>
-                      <Input
-                        id="ssh-cred-name"
-                        placeholder="server-key"
-                        value={inlineCredentialName}
-                        onChange={(e) => setInlineCredentialName(e.target.value)}
-                      />
-                    </div>
-                  )}
-                </TabsContent>
-              </Tabs>
-            </div>
-          )}
-
-          {/* Tags */}
-          <div className="space-y-2">
-            <Label htmlFor="tags">Tags</Label>
-            <TagInput
-              id="tags"
-              value={form.tags ?? []}
-              onChange={(tags) => setForm({ ...form, tags })}
-              placeholder="Press Enter or comma to add a tag"
-              aria-describedby="tags-hint"
-            />
-            <p id="tags-hint" className="text-xs text-muted-foreground">
-              Used for filtering — matches in the Connections search box.
-            </p>
-          </div>
-
-          {/* Color */}
-          {/*
-            Audit-3 follow-up P0#1: this picker MUST be a Radix
-            RadioGroup (per AGENTS.md). Previously it was a hand-rolled
-            <button> grid with title-only labels — each swatch announced
-            as an unlabeled button to screen readers, and the group had
-            no semantics. The "None" option uses the literal string
-            "__none__" as its RadioGroupItem value because Radix
-            RadioGroup requires every option to have a non-empty string
-            value (an empty value is treated as "no selection") — we
-            translate it back to `undefined` on `onValueChange` so the
-            persisted Connection model is unchanged.
-          */}
-          <div className="space-y-2">
-            <h3 id="conn-color-heading" className="text-sm font-medium">
-              Color
-            </h3>
-            <RadioGroup
-              aria-labelledby="conn-color-heading"
-              value={form.color ?? "__none__"}
-              onValueChange={(v) =>
-                setForm({ ...form, color: v === "__none__" ? undefined : v })
-              }
-              className="flex flex-wrap gap-2"
-            >
-              <RadioGroupItem
-                value="__none__"
-                aria-label="No color"
-                className={cn(
-                  "px-2 py-1 text-xs rounded-md border transition-colors",
-                  "data-[state=checked]:border-primary data-[state=checked]:bg-accent",
-                  "data-[state=unchecked]:border-input data-[state=unchecked]:text-muted-foreground data-[state=unchecked]:hover:text-foreground",
-                )}
-              >
-                None
-              </RadioGroupItem>
-              {OPEN_COLORS.map((c) => (
-                <RadioGroupItem
-                  key={c}
-                  value={c}
-                  aria-label={c}
-                  className={cn(
-                    "h-7 w-7 rounded-full border transition-all",
-                    "data-[state=checked]:ring-2 data-[state=checked]:ring-primary data-[state=checked]:ring-offset-2 data-[state=checked]:ring-offset-background",
-                    "data-[state=unchecked]:border-transparent data-[state=unchecked]:hover:scale-110",
-                  )}
-                  style={{ backgroundColor: COLOR_VALUES[c] }}
+              <div className="space-y-2">
+                <Label htmlFor="key-passphrase">Passphrase (optional)</Label>
+                <PasswordInput
+                  id="key-passphrase"
+                  placeholder="••••••••"
+                  value={inlinePassphrase}
+                  onChange={(e) => setInlinePassphrase(e.target.value)}
                 />
-              ))}
-            </RadioGroup>
-            <p id="conn-color-help" className="text-xs text-muted-foreground-soft">
-              Used as the terminal-tab accent.
-            </p>
-          </div>
+              </div>
+              <div className="flex items-center gap-2">
+                <Checkbox
+                  id="conn-save-credential-key"
+                  checked={saveCredential}
+                  onCheckedChange={(v) => {
+                    const checked = v === true;
+                    setSaveCredential(checked);
+                    if (!checked) {
+                      setInlineCredentialName("");
+                    } else if (!inlineCredentialName) {
+                      setInlineCredentialName(defaultCredentialName("ssh_key"));
+                    }
+                  }}
+                />
+                <Label
+                  htmlFor="conn-save-credential-key"
+                  className="text-xs text-muted-foreground font-normal cursor-pointer select-none"
+                >
+                  Save as a named credential (visible in the Credentials list)
+                </Label>
+              </div>
+              {saveCredential && (
+                <div className="space-y-2">
+                  <Label htmlFor="ssh-cred-name">Credential Name *</Label>
+                  <Input
+                    id="ssh-cred-name"
+                    placeholder="server-key"
+                    value={inlineCredentialName}
+                    onChange={(e) => setInlineCredentialName(e.target.value)}
+                  />
+                </div>
+              )}
+            </TabsContent>
+          </Tabs>
+        </div>
+      )}
 
-          {/* Advanced options */}
-          <div className="space-y-2">
-            <Label htmlFor="extra_args">Additional SSH Arguments</Label>
-            <Input
-              id="extra_args"
-              placeholder="-C (compression)"
-              value={form.extra_args ?? ""}
-              onChange={(e) => setForm({ ...form, extra_args: e.target.value })}
-              aria-describedby="extra_args-hint"
+      <div className="space-y-2">
+        <Label htmlFor="tags">Tags</Label>
+        <TagInput
+          id="tags"
+          value={form.tags ?? []}
+          onChange={(tags) => setForm({ ...form, tags })}
+          placeholder="Press Enter or comma to add a tag"
+          aria-describedby="tags-hint"
+        />
+        <p id="tags-hint" className="text-xs text-muted-foreground">
+          Used for filtering — matches in the Connections search box.
+        </p>
+      </div>
+
+      <div className="space-y-2">
+        <h3 id="conn-color-heading" className="text-sm font-medium">
+          Color
+        </h3>
+        <RadioGroup
+          aria-labelledby="conn-color-heading"
+          value={form.color ?? "__none__"}
+          onValueChange={(v) =>
+            setForm({ ...form, color: v === "__none__" ? undefined : v })
+          }
+          className="flex flex-wrap gap-2"
+        >
+          <RadioGroupItem
+            value="__none__"
+            aria-label="No color"
+            className={cn(
+              "px-2 py-1 text-xs rounded-md border transition-colors",
+              "data-[state=checked]:border-primary data-[state=checked]:bg-accent",
+              "data-[state=unchecked]:border-input data-[state=unchecked]:text-muted-foreground data-[state=unchecked]:hover:text-foreground",
+            )}
+          >
+            None
+          </RadioGroupItem>
+          {OPEN_COLORS.map((c) => (
+            <RadioGroupItem
+              key={c}
+              value={c}
+              aria-label={c}
+              className={cn(
+                "h-7 w-7 rounded-full border transition-all",
+                "data-[state=checked]:ring-2 data-[state=checked]:ring-primary data-[state=checked]:ring-offset-2 data-[state=checked]:ring-offset-background",
+                "data-[state=unchecked]:border-transparent data-[state=unchecked]:hover:scale-110",
+              )}
+              style={{ backgroundColor: COLOR_VALUES[c] }}
             />
-            <p id="extra_args-hint" className="text-xs text-muted-foreground">
-              Pass extra flags to the SSH session (e.g. <code>-C</code> to
-              enable compression). Unknown flags are ignored.
-            </p>
-          </div>
+          ))}
+        </RadioGroup>
+        <p id="conn-color-help" className="text-xs text-muted-foreground-soft">
+          Used as the terminal-tab accent.
+        </p>
+      </div>
 
-          <div className="space-y-2">
-            <Label htmlFor="login_command">Login Command</Label>
-            <Input
-              id="login_command"
-              placeholder="sudo su - deploy"
-              value={form.login_command ?? ""}
-              onChange={(e) => setForm({ ...form, login_command: e.target.value })}
-              aria-describedby="login_command-hint"
-            />
-            <p id="login_command-hint" className="text-xs text-muted-foreground">
-              Runs after login. Useful for switching users or bootstrapping a shell.
-            </p>
-          </div>
+      <div className="space-y-2">
+        <Label htmlFor="extra_args">Additional SSH Arguments</Label>
+        <Input
+          id="extra_args"
+          placeholder="-C (compression)"
+          value={form.extra_args ?? ""}
+          onChange={(e) => setForm({ ...form, extra_args: e.target.value })}
+          aria-describedby="extra_args-hint"
+        />
+        <p id="extra_args-hint" className="text-xs text-muted-foreground">
+          Pass extra flags to the SSH session (e.g. <code>-C</code> to enable
+          compression). Unknown flags are ignored.
+        </p>
+      </div>
 
-          <div className="space-y-2">
-            <Label htmlFor="remote_path">Remote Path</Label>
-            <Input
-              id="remote_path"
-              placeholder="/srv/app"
-              value={form.remote_path ?? ""}
-              onChange={(e) => setForm({ ...form, remote_path: e.target.value })}
-              aria-describedby="remote_path-hint"
-            />
-            <p id="remote_path-hint" className="text-xs text-muted-foreground">
-              Preferred starting directory for shells and default base path for SCP transfers.
-            </p>
-          </div>
+      <div className="space-y-2">
+        <Label htmlFor="login_command">Login Command</Label>
+        <Input
+          id="login_command"
+          placeholder="sudo su - deploy"
+          value={form.login_command ?? ""}
+          onChange={(e) => setForm({ ...form, login_command: e.target.value })}
+          aria-describedby="login_command-hint"
+        />
+        <p id="login_command-hint" className="text-xs text-muted-foreground">
+          Runs after login. Useful for switching users or bootstrapping a shell.
+        </p>
+      </div>
 
-          <div className="space-y-2">
-            <Label htmlFor="verbosity">Verbosity Level</Label>
-            <Select
-              value={String(form.verbosity ?? 0)}
-              onValueChange={(v) =>
-                setForm({ ...form, verbosity: parseInt(v) })
-              }
-            >
-              <SelectTrigger id="verbosity" aria-describedby="verbosity-hint">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="0">0 — Silent (default)</SelectItem>
-                <SelectItem value="1">1 — Info (connection events)</SelectItem>
-                <SelectItem value="2">2 — Debug (full SSH protocol trace)</SelectItem>
-              </SelectContent>
-            </Select>
-            <p id="verbosity-hint" className="text-xs text-muted-foreground">
-              Level 1 prints connection lifecycle messages (handshake,
-              authentication, channel open) to the terminal. Level 2 also
-              emits a low-level SSH protocol trace — useful for diagnosing
-              auth or transport failures, but very noisy.
-            </p>
-          </div>
+      <div className="space-y-2">
+        <Label htmlFor="remote_path">Remote Path</Label>
+        <Input
+          id="remote_path"
+          placeholder="/srv/app"
+          value={form.remote_path ?? ""}
+          onChange={(e) => setForm({ ...form, remote_path: e.target.value })}
+          aria-describedby="remote_path-hint"
+        />
+        <p id="remote_path-hint" className="text-xs text-muted-foreground">
+          Preferred starting directory for shells and default base path for SCP transfers.
+        </p>
+      </div>
 
-          {visibleError && (
-            <p
-              role="alert"
-              aria-live="assertive"
-              id="connection-form-error"
-              className="text-sm text-destructive bg-destructive/10 px-3 py-2 rounded-md"
-            >
-              {visibleError}
-            </p>
-          )}
-          </div>
+      <div className="space-y-2">
+        <Label htmlFor="verbosity">Verbosity Level</Label>
+        <Select
+          value={String(form.verbosity ?? 0)}
+          onValueChange={(v) => setForm({ ...form, verbosity: parseInt(v) })}
+        >
+          <SelectTrigger id="verbosity" aria-describedby="verbosity-hint">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="0">0 — Silent (default)</SelectItem>
+            <SelectItem value="1">1 — Info (connection events)</SelectItem>
+            <SelectItem value="2">2 — Debug (full SSH protocol trace)</SelectItem>
+          </SelectContent>
+        </Select>
+        <p id="verbosity-hint" className="text-xs text-muted-foreground">
+          Level 1 prints connection lifecycle messages (handshake, authentication,
+          channel open) to the terminal. Level 2 also emits a low-level SSH
+          protocol trace — useful for diagnosing auth or transport failures, but
+          very noisy.
+        </p>
+      </div>
 
-          <DialogFooter className="px-6 py-3 border-t bg-background shrink-0 gap-2 sm:[&>button]:min-w-28">
-            <Button
-              type="button"
-              variant="outline"
-              onClick={requestCloseDialog}
-              disabled={isSubmitting}
-              data-testid="connection-form-cancel"
-            >
-              Cancel
-            </Button>
-            <Button
-              type="submit"
-              disabled={isSubmitting}
-              aria-busy={isSubmitting}
-              data-testid="connection-form-submit"
-              aria-describedby={visibleError ? "connection-form-error" : undefined}
-            >
-              {isSubmitting
-                ? "Saving..."
-                : isClone
-                ? "Clone"
-                : connection
-                ? "Update"
-                : "Create"}
-            </Button>
-          </DialogFooter>
-        </form>
-      </DialogContent>
+      {visibleError && (
+        <p
+          role="alert"
+          aria-live="assertive"
+          id="connection-form-error"
+          className="text-sm text-destructive bg-destructive/10 px-3 py-2 rounded-md"
+        >
+          {visibleError}
+        </p>
+      )}
+    </>
+  );
+
+  const formFooter = (
+    <DialogFooter className="px-6 py-3 border-t bg-background shrink-0 gap-2 sm:[&>button]:min-w-28">
+      <Button
+        type="button"
+        variant="outline"
+        onClick={requestCloseDialog}
+        disabled={isSubmitting}
+        data-testid="connection-form-cancel"
+      >
+        Cancel
+      </Button>
+      <Button
+        type="submit"
+        disabled={isSubmitting}
+        aria-busy={isSubmitting}
+        data-testid="connection-form-submit"
+        aria-describedby={visibleError ? "connection-form-error" : undefined}
+      >
+        {isSubmitting
+          ? "Saving..."
+          : isClone
+          ? "Clone"
+          : connection
+          ? "Update"
+          : "Create"}
+      </Button>
+    </DialogFooter>
+  );
+
+  const renderedForm = (
+    <>
+      <DialogHeader className="px-6 pt-6 pb-3 shrink-0 border-b">
+        {inline ? (
+          <>
+            <h2 id={inlineTitleId} className="text-lg leading-none font-semibold">
+              {title}
+            </h2>
+            <p id={inlineDescriptionId} className="sr-only">
+              {formDescription}
+            </p>
+          </>
+        ) : (
+          <>
+            <DialogTitle>{title}</DialogTitle>
+            <DialogDescription className="sr-only">
+              {formDescription}
+            </DialogDescription>
+          </>
+        )}
+      </DialogHeader>
+      <form
+        action={submitAction}
+        className="flex flex-col flex-1 min-h-0"
+        data-testid="connection-form"
+        aria-labelledby={inline ? inlineTitleId : undefined}
+        aria-describedby={inline ? inlineDescriptionId : undefined}
+      >
+        <div className="flex-1 min-h-0 overflow-y-auto px-6 py-4 space-y-4">
+          {formFields}
+        </div>
+        {formFooter}
+      </form>
+    </>
+  );
+
+  return (
+    <>
+      {inline ? (
+        open ? (
+          <section
+            className="flex-1 overflow-y-auto px-4 py-4"
+            role="region"
+            aria-labelledby={inlineTitleId}
+            aria-describedby={inlineDescriptionId}
+          >
+            <div className="mx-auto flex min-h-full max-w-3xl flex-col overflow-hidden rounded-xl border border-border/80 bg-card shadow-lg">
+              {renderedForm}
+            </div>
+          </section>
+        ) : null
+      ) : (
+        <Dialog
+          open={open}
+          onOpenChange={(o) => {
+            if (o) {
+              onOpenChange(true);
+              return;
+            }
+            requestCloseDialog();
+          }}
+        >
+          <DialogContent className="sm:max-w-[560px] max-h-[90vh] flex flex-col p-0 gap-0">
+            {renderedForm}
+          </DialogContent>
+        </Dialog>
+      )}
       <ConfirmDialog
         open={guard.confirmOpen}
         onOpenChange={(o) => {
@@ -1227,6 +1282,6 @@ export function ConnectionForm({
         variant="destructive"
         onConfirm={guard.confirmDiscard}
       />
-    </Dialog>
+    </>
   );
 }

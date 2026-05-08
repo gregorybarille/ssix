@@ -77,14 +77,14 @@ const TOKENS = {
     destructiveText: "0 72% 35%",
   },
   dark: {
-    background: "222.2 84% 4.9%",
-    foreground: "210 40% 98%",
-    mutedForeground: "215 20.2% 65.1%",
-    mutedForegroundSoft: "215 20% 55%",
-    accent: "217.2 32.6% 17.5%",
-    popover: "217.2 32.6% 10%",
+    background: "215 16% 14%",
+    foreground: "210 20% 98%",
+    mutedForeground: "215 14% 74%",
+    mutedForegroundSoft: "215 14% 66%",
+    accent: "215 16% 24%",
+    popover: "215 16% 18%",
     destructive: "0 62.8% 30.6%",
-    destructiveText: "0 84.2% 72%",
+    destructiveText: "0 84.2% 76%",
   },
 } as const;
 

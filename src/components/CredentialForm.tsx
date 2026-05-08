@@ -1,4 +1,4 @@
-import { useActionState, useState, useEffect, useRef } from "react";
+import { useActionState, useState, useEffect, useRef, useId } from "react";
 import { Credential } from "@/types";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
@@ -25,6 +25,7 @@ interface CredentialFormProps {
   onOpenChange: (open: boolean) => void;
   credential?: Credential | null;
   onSubmit: (data: Omit<Credential, "id"> | Credential) => Promise<void>;
+  inline?: boolean;
 }
 
 type KeySource = "path" | "inline";
@@ -56,6 +57,7 @@ export function CredentialForm({
   onOpenChange,
   credential,
   onSubmit,
+  inline = false,
 }: CredentialFormProps) {
   const [name, setName] = useState("");
   const [username, setUsername] = useState("");
@@ -67,6 +69,9 @@ export function CredentialForm({
   const [passphrase, setPassphrase] = useState("");
   const [generatedPublicKey, setGeneratedPublicKey] = useState<string | null>(null);
   const [generateOpen, setGenerateOpen] = useState(false);
+  const inlineTitleId = useId();
+  const inlineDescriptionId = useId();
+  const firstFieldRef = useRef<HTMLInputElement | null>(null);
 
   // Inline per-field errors. Keys mirror the input identifiers.
   type FieldKey = "name" | "username" | "key_path" | "key_inline";
@@ -138,6 +143,27 @@ export function CredentialForm({
 
   const guard = useUnsavedChangesGuard(dirty);
   const requestCloseDialog = () => guard.requestClose(() => onOpenChange(false));
+
+  useEffect(() => {
+    if (!inline || !open) return;
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== "Escape" || event.defaultPrevented) return;
+      if (document.querySelector("[role='dialog']")) return;
+      event.preventDefault();
+      requestCloseDialog();
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [inline, open]);
+
+  useEffect(() => {
+    if (!inline || !open) return;
+    if (document.querySelector("[role='dialog']")) return;
+    const id = window.requestAnimationFrame(() => {
+      firstFieldRef.current?.focus();
+    });
+    return () => window.cancelAnimationFrame(id);
+  }, [inline, open, credential?.id]);
 
   const handleGenerated = (key: GeneratedKey, mode: KeyStorageMode) => {
     setGeneratedPublicKey(key.public_key);
@@ -232,39 +258,45 @@ export function CredentialForm({
   }, [error, errorEpoch]);
   const visibleError = error && errorEpochSeen === errorEpoch ? error : null;
 
-  return (
-    <Dialog
-      open={open}
-      onOpenChange={(o) => {
-        if (o) {
-          onOpenChange(true);
-          return;
-        }
-        requestCloseDialog();
-      }}
-    >
-      <DialogContent className="sm:max-w-[460px] max-h-[90vh] flex flex-col p-0 gap-0">
-        <DialogHeader className="px-6 pt-6 pb-3 shrink-0 border-b">
-          <DialogTitle>
-            {credential ? "Edit Credential" : "New Credential"}
-          </DialogTitle>
-          {/* P1#5: sr-only description so the dialog has a wired aria-describedby. */}
-          <DialogDescription className="sr-only">
-            {credential
-              ? "Edit the username and authentication for this credential."
-              : "Configure a new credential: username and authentication (password or SSH key)."}
-          </DialogDescription>
-        </DialogHeader>
-        <form
-          action={submitAction}
-          className="flex flex-col flex-1 min-h-0"
-          data-testid="credential-form"
-        >
-          <div className="flex-1 min-h-0 overflow-y-auto px-6 py-4 space-y-4">
+  const title = credential ? "Edit Credential" : "New Credential";
+  const description = credential
+    ? "Edit the username and authentication for this credential."
+    : "Configure a new credential: username and authentication (password or SSH key).";
+
+  const renderedForm = (
+    <>
+      <DialogHeader className="px-6 pt-6 pb-3 shrink-0 border-b">
+        {inline ? (
+          <>
+            <h2 id={inlineTitleId} className="text-lg leading-none font-semibold">
+              {title}
+            </h2>
+            <p id={inlineDescriptionId} className="sr-only">
+              {description}
+            </p>
+          </>
+        ) : (
+          <>
+            <DialogTitle>{title}</DialogTitle>
+            <DialogDescription className="sr-only">
+              {description}
+            </DialogDescription>
+          </>
+        )}
+      </DialogHeader>
+      <form
+        action={submitAction}
+        className="flex flex-col flex-1 min-h-0"
+        data-testid="credential-form"
+        aria-labelledby={inline ? inlineTitleId : undefined}
+        aria-describedby={inline ? inlineDescriptionId : undefined}
+      >
+        <div className="flex-1 min-h-0 overflow-y-auto px-6 py-4 space-y-4">
           <div className="space-y-2">
             <Label htmlFor="cred-name">Credential Name *</Label>
             <Input
               id="cred-name"
+              ref={firstFieldRef}
               placeholder="my-server-key"
               value={name}
               onChange={(e) => {
@@ -393,9 +425,7 @@ export function CredentialForm({
                         const picked = await pickFile({
                           title: "Select SSH private key",
                           defaultPath: privateKeyPath || undefined,
-                          filters: [
-                            { name: "All files", extensions: ["*"] },
-                          ],
+                          filters: [{ name: "All files", extensions: ["*"] }],
                         });
                         if (picked) {
                           setPrivateKeyPath(picked);
@@ -427,22 +457,10 @@ export function CredentialForm({
                       clearFieldError("key_inline");
                     }}
                     aria-invalid={fieldErrors.key_inline ? true : undefined}
-                    /*
-                      Audit-3 follow-up P2#6: AT users tabbing into
-                      this textarea need to hear BOTH the (potential)
-                      validation error AND the persistent security-
-                      relevant hint about where the secret is stored.
-                      The hint id is always present, the error id is
-                      conditional.
-                    */
-                    aria-describedby={
-                      [
-                        fieldErrors.key_inline ? "cred-key-inline-error" : null,
-                        "cred-key-inline-hint",
-                      ]
-                        .filter(Boolean)
-                        .join(" ")
-                    }
+                    aria-describedby={[
+                      fieldErrors.key_inline ? "cred-key-inline-error" : null,
+                      "cred-key-inline-hint",
+                    ].filter(Boolean).join(" ")}
                   />
                   {fieldErrors.key_inline && (
                     <p id="cred-key-inline-error" role="alert" className="text-xs text-destructive">
@@ -453,7 +471,7 @@ export function CredentialForm({
                     id="cred-key-inline-hint"
                     className="text-xs text-muted-foreground"
                   >
-                    Stored in SSIX's secrets file (~/.ssix/secrets.json) and used
+                    Stored in SSIX&apos;s secrets file (~/.ssix/secrets.json) and used
                     via in-memory authentication.
                   </p>
                 </div>
@@ -504,35 +522,68 @@ export function CredentialForm({
               {visibleError}
             </p>
           )}
-          </div>
+        </div>
 
-          <DialogFooter className="px-6 py-3 border-t bg-background shrink-0 gap-2 sm:[&>button]:min-w-28">
-            <Button
-              type="button"
-              variant="outline"
-              onClick={requestCloseDialog}
-              disabled={isSubmitting}
-            >
-              Cancel
-            </Button>
-            <Button
-              type="submit"
-              disabled={isSubmitting}
-              aria-busy={isSubmitting}
-              data-testid="credential-form-submit"
-              aria-describedby={visibleError ? "credential-form-error" : undefined}
-            >
-              {isSubmitting ? "Saving..." : credential ? "Update" : "Create"}
-            </Button>
-          </DialogFooter>
-        </form>
-        <GenerateKeyDialog
-          open={generateOpen}
-          onOpenChange={setGenerateOpen}
-          nameHint={name}
-          onGenerated={handleGenerated}
-        />
-      </DialogContent>
+        <DialogFooter className="px-6 py-3 border-t bg-background shrink-0 gap-2 sm:[&>button]:min-w-28">
+          <Button
+            type="button"
+            variant="outline"
+            onClick={requestCloseDialog}
+            disabled={isSubmitting}
+          >
+            Cancel
+          </Button>
+          <Button
+            type="submit"
+            disabled={isSubmitting}
+            aria-busy={isSubmitting}
+            data-testid="credential-form-submit"
+            aria-describedby={visibleError ? "credential-form-error" : undefined}
+          >
+            {isSubmitting ? "Saving..." : credential ? "Update" : "Create"}
+          </Button>
+        </DialogFooter>
+      </form>
+      <GenerateKeyDialog
+        open={generateOpen}
+        onOpenChange={setGenerateOpen}
+        nameHint={name}
+        onGenerated={handleGenerated}
+      />
+    </>
+  );
+
+  return (
+    <>
+      {inline ? (
+        open ? (
+          <section
+            className="flex-1 overflow-y-auto px-4 py-4"
+            role="region"
+            aria-labelledby={inlineTitleId}
+            aria-describedby={inlineDescriptionId}
+          >
+            <div className="mx-auto flex min-h-full max-w-3xl flex-col overflow-hidden rounded-xl border border-border/80 bg-card shadow-lg">
+              {renderedForm}
+            </div>
+          </section>
+        ) : null
+      ) : (
+        <Dialog
+          open={open}
+          onOpenChange={(o) => {
+            if (o) {
+              onOpenChange(true);
+              return;
+            }
+            requestCloseDialog();
+          }}
+        >
+          <DialogContent className="sm:max-w-[460px] max-h-[90vh] flex flex-col p-0 gap-0">
+            {renderedForm}
+          </DialogContent>
+        </Dialog>
+      )}
       <ConfirmDialog
         open={guard.confirmOpen}
         onOpenChange={(o) => {
@@ -545,6 +596,6 @@ export function CredentialForm({
         variant="destructive"
         onConfirm={guard.confirmDiscard}
       />
-    </Dialog>
+    </>
   );
 }

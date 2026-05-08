@@ -97,7 +97,11 @@ export function TagInput({
         onKeyDown={handleKeyDown}
         onBlur={() => commit(draft)}
         placeholder={value.length === 0 ? placeholder : ""}
+        autoCapitalize="off"
+        autoComplete="off"
+        autoCorrect="off"
         aria-describedby={ariaDescribedBy}
+        spellCheck={false}
         className="flex-1 min-w-[80px] bg-transparent outline-none text-sm placeholder:text-muted-foreground"
       />
     </div>
