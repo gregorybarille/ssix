@@ -102,8 +102,8 @@ See [Git Sync](git-sync.md) for details.
 
 ## Settings
 
-- theme (light / dark; switching previews immediately and persists when
-  **Save Settings** is clicked; both themes are calibrated to meet WCAG AA — body text and
+- theme (light / dark; switching previews immediately and auto-saves on
+  change; both themes are calibrated to meet WCAG AA — body text and
   tertiary metadata such as timestamps stay above the 4.5:1 contrast
   ratio on both themes)
 - font family

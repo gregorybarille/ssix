@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useMemo, useState } from "react";
 import { Connection, Credential, LayoutMode } from "@/types";
 import { Button } from "./ui/button";
 import { ConfirmDialog } from "./ConfirmDialog";
@@ -57,10 +57,16 @@ export function TunnelsView({
   const getCredentialName = (id?: string) =>
     id ? credentials.find((c) => c.id === id)?.name ?? "Unknown credential" : "No credential";
 
-  const getLatestSession = (conn: Extract<Connection, { type: "port_forward" }>) => {
-    const matches = sessions.filter((s) => s.connection.id === conn.id);
-    return matches[matches.length - 1] ?? null;
-  };
+  const latestSessionByConnectionId = useMemo(() => {
+    const map = new Map<string, TunnelSession>();
+    for (const session of sessions) {
+      map.set(session.connection.id, session);
+    }
+    return map;
+  }, [sessions]);
+
+  const getLatestSession = (conn: Extract<Connection, { type: "port_forward" }>) =>
+    latestSessionByConnectionId.get(conn.id) ?? null;
 
   const getStatus = (session: TunnelSession | null) => {
     if (!session) return "disconnected";

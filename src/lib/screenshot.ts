@@ -1,8 +1,6 @@
 import { toPng } from "html-to-image";
 import { invoke } from "@/lib/tauri";
 
-const DATA_URL_PREFIX = /^data:image\/png;base64,/;
-
 function getAppRoot(): HTMLElement {
   const root = document.getElementById("root");
   if (!(root instanceof HTMLElement)) {
@@ -64,9 +62,20 @@ export async function takeScreenshot(): Promise<string> {
     );
   }
 
+  const separatorIndex = dataUrl.indexOf(",");
+  const prefix = separatorIndex > 0 ? dataUrl.slice(0, separatorIndex) : "";
+  const imageData = separatorIndex >= 0 ? dataUrl.slice(separatorIndex + 1) : "";
+  if (
+    !/^data:image\/png;base64$/i.test(prefix) ||
+    !imageData ||
+    imageData.startsWith("data:")
+  ) {
+    throw new Error("Unable to save the screenshot: Unexpected screenshot data format.");
+  }
+
   try {
     return await invoke<string>("take_screenshot", {
-      imageData: dataUrl.replace(DATA_URL_PREFIX, ""),
+      imageData,
     });
   } catch (error) {
     throw new Error(

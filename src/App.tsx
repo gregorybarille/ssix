@@ -120,6 +120,7 @@ function App() {
   const { status: gitSyncStatus, fetchStatus: fetchGitSyncStatus } =
     useGitSyncStore();
   const [previewSettings, setPreviewSettings] = React.useState<typeof settings | null>(null);
+  const screenshotToastTimeoutRef = React.useRef<number | null>(null);
 
   // Dialog/UI state
   const dialogs = useDialogsStore();
@@ -148,6 +149,14 @@ function App() {
     fetchCredentials();
     fetchSettings();
     fetchGitSyncStatus();
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (screenshotToastTimeoutRef.current !== null) {
+        window.clearTimeout(screenshotToastTimeoutRef.current);
+      }
+    };
   }, []);
 
   // Re-fetch git-sync status whenever the data we'd serialize changes.
@@ -225,10 +234,20 @@ function App() {
       message: string,
       timeoutMs: number,
     ) => {
+      if (screenshotToastTimeoutRef.current !== null) {
+        window.clearTimeout(screenshotToastTimeoutRef.current);
+      }
       dialogs.setScreenshotToast({ kind, message });
-      setTimeout(() => dialogs.setScreenshotToast(null), timeoutMs);
+      screenshotToastTimeoutRef.current = window.setTimeout(() => {
+        dialogs.setScreenshotToast(null);
+        screenshotToastTimeoutRef.current = null;
+      }, timeoutMs);
     };
 
+    if (screenshotToastTimeoutRef.current !== null) {
+      window.clearTimeout(screenshotToastTimeoutRef.current);
+      screenshotToastTimeoutRef.current = null;
+    }
     dialogs.setScreenshotToast(null);
     try {
       const path = await takeScreenshot();

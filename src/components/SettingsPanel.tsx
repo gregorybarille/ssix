@@ -25,6 +25,8 @@ interface SettingsPanelProps {
 export function SettingsPanel({ settings, onSave, onPreview }: SettingsPanelProps) {
   const [form, setForm] = React.useState(settings);
   const [savedAt, setSavedAt] = React.useState(0);
+  const [saveError, setSaveError] = React.useState<string | null>(null);
+  const saveRequestIdRef = React.useRef(0);
 
   useEffect(() => {
     setForm(settings);
@@ -38,10 +40,28 @@ export function SettingsPanel({ settings, onSave, onPreview }: SettingsPanelProp
     return () => clearTimeout(id);
   }, [savedAt]);
 
+  const queueSave = (next: AppSettings) => {
+    const requestId = ++saveRequestIdRef.current;
+    setSaveError(null);
+    void onSave(next)
+      .then(() => {
+        if (requestId !== saveRequestIdRef.current) return;
+        setSavedAt(Date.now());
+      })
+      .catch((error) => {
+        if (requestId !== saveRequestIdRef.current) return;
+        const message =
+          error instanceof Error && error.message.trim()
+            ? error.message.trim()
+            : "Failed to save settings.";
+        setSaveError(message);
+      });
+  };
+
   const applySettings = (next: AppSettings) => {
     setForm(next);
     onPreview?.(next);
-    void onSave(next).then(() => setSavedAt(Date.now()));
+    queueSave(next);
   };
 
   const updateLocalSettings = (next: AppSettings) => {
@@ -50,7 +70,7 @@ export function SettingsPanel({ settings, onSave, onPreview }: SettingsPanelProp
 
   const commitTextSettings = (next: AppSettings) => {
     setForm(next);
-    void onSave(next).then(() => setSavedAt(Date.now()));
+    queueSave(next);
   };
 
   return (
@@ -398,6 +418,11 @@ export function SettingsPanel({ settings, onSave, onPreview }: SettingsPanelProp
           </>
         )}
       </span>
+      {saveError && (
+        <p role="alert" className="text-sm text-destructive">
+          {saveError}
+        </p>
+      )}
     </div>
   );
 }

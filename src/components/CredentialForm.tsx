@@ -154,7 +154,7 @@ export function CredentialForm({
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [inline, open]);
+  }, [inline, open, requestCloseDialog]);
 
   useEffect(() => {
     if (!inline || !open) return;

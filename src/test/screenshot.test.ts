@@ -72,6 +72,15 @@ describe("screenshot helpers", () => {
     );
   });
 
+  it("rejects malformed renderer output before invoking the backend", async () => {
+    vi.mocked(toPng).mockResolvedValue("not-a-data-url");
+
+    await expect(takeScreenshot()).rejects.toThrow(
+      "Unable to save the screenshot: Unexpected screenshot data format.",
+    );
+    expect(invoke).not.toHaveBeenCalled();
+  });
+
   it("normalizes verbose error strings for UI display", () => {
     expect(formatScreenshotError(new Error("Error: disk full"))).toBe("disk full");
     expect(formatScreenshotError("  simple failure  ")).toBe("simple failure");

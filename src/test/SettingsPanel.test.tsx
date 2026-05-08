@@ -64,6 +64,44 @@ describe("SettingsPanel", () => {
     );
   });
 
+  it("shows a visible error when saving fails", async () => {
+    const onSave = vi.fn().mockRejectedValue(new Error("disk full"));
+    render(<SettingsPanel settings={defaults} onSave={onSave} />);
+
+    fireEvent.click(screen.getByRole("radio", { name: /light/i }));
+
+    await waitFor(() => expect(onSave).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent("disk full"));
+  });
+
+  it("ignores stale save completions when a newer save fails", async () => {
+    let resolveFirst: (() => void) | undefined;
+    let rejectSecond: ((error: Error) => void) | undefined;
+    const first = new Promise<void>((resolve) => {
+      resolveFirst = resolve;
+    });
+    const second = new Promise<void>((_, reject) => {
+      rejectSecond = reject;
+    });
+    const onSave = vi
+      .fn()
+      .mockImplementationOnce(() => first)
+      .mockImplementationOnce(() => second);
+    render(<SettingsPanel settings={defaults} onSave={onSave} />);
+
+    fireEvent.click(screen.getByRole("radio", { name: /light/i }));
+    fireEvent.click(screen.getByRole("radio", { name: /dark/i }));
+    await waitFor(() => expect(onSave).toHaveBeenCalledTimes(2));
+
+    resolveFirst?.();
+    rejectSecond?.(new Error("latest write failed"));
+
+    await waitFor(() =>
+      expect(screen.getByRole("alert")).toHaveTextContent("latest write failed"),
+    );
+    expect(screen.getByRole("status")).not.toHaveTextContent(/settings saved/i);
+  });
+
   /*
    * Audit-3 P1#1: the auto-copy-on-selection toggle must default to OFF
    * (so the existing user contract — "highlighting text never silently
