@@ -128,6 +128,7 @@ fn add_credential_sync(input: AddCredentialInput) -> Result<Credential, String> 
     // The id doubles as the keychain key, so it is generated up front and
     // the keychain entry is rolled back if the data file cannot be saved.
     let cred_id = uuid::Uuid::new_v4().to_string();
+    let mut secrets_written = false;
 
     let result = with_data_mut(|data| {
         // Private credentials skip the unique-name check since they use
@@ -139,6 +140,7 @@ fn add_credential_sync(input: AddCredentialInput) -> Result<Credential, String> 
             ));
         }
         keychain::replace_for_credential(&cred_id, &secrets)?;
+        secrets_written = true;
 
         let credential = Credential {
             id: cred_id.clone(),
@@ -147,14 +149,15 @@ fn add_credential_sync(input: AddCredentialInput) -> Result<Credential, String> 
             kind: kind_for_json,
             is_private: input.is_private,
         };
-        // Return the credential enriched with its secret so the caller can
-        // use it immediately (e.g. for display or connection).
+        // Hand back the sanitised credential with its secrets filled in, so
+        // the caller sees exactly what `get_credentials` will return.
         let mut result = credential.clone();
-        result.kind = input.kind;
+        keychain::apply_secrets(&mut result, &secrets);
         data.credentials.push(credential);
         Ok(result)
     });
-    if result.is_err() {
+    // Only a failure after the secrets were written leaves anything to undo.
+    if result.is_err() && secrets_written {
         keychain::delete_all_for_credential(&cred_id);
     }
     result
@@ -174,6 +177,7 @@ fn update_credential_sync(input: UpdateCredentialInput) -> Result<Credential, St
     // Snapshot the current secrets so a failed save can put them back:
     // otherwise data.json and secrets.json would disagree.
     let previous = keychain::snapshot_for_credential(&input.id)?;
+    let mut secrets_written = false;
 
     let result = with_data_mut(|data| {
         if data
@@ -194,16 +198,17 @@ fn update_credential_sync(input: UpdateCredentialInput) -> Result<Credential, St
 
         // One atomic write replaces every secret for this credential.
         keychain::replace_for_credential(&input.id, &secrets)?;
+        secrets_written = true;
 
         data.credentials[idx].name = input.name;
         data.credentials[idx].username = input.username;
         data.credentials[idx].kind = kind_for_json;
 
         let mut updated = data.credentials[idx].clone();
-        updated.kind = input.kind;
+        keychain::apply_secrets(&mut updated, &secrets);
         Ok(updated)
     });
-    if result.is_err() {
+    if result.is_err() && secrets_written {
         let _ = keychain::replace_for_credential(&input.id, &previous);
     }
     result

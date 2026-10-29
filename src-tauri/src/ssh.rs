@@ -590,9 +590,29 @@ fn spawn_shell_worker(
     });
 }
 
+/// Longest we wait for a channel close to go out on a non-blocking session.
+const CLOSE_TIMEOUT: Duration = Duration::from_secs(2);
+
+fn is_eagain(e: &ssh2::Error) -> bool {
+    e.code() == ssh2::ErrorCode::Session(LIBSSH2_ERROR_EAGAIN)
+}
+
+/// Close a channel, retrying on `EAGAIN`: on a non-blocking session a
+/// single `close()` may only queue the request, and dropping the channel
+/// then leaks it in libssh2 (and half-open on the server) until the
+/// session ends.
 fn close_channel(channel: &mut ssh2::Channel) {
-    let _ = channel.close();
-    let _ = channel.wait_close();
+    let deadline = Instant::now() + CLOSE_TIMEOUT;
+    let retry = |step: &mut dyn FnMut() -> Result<(), ssh2::Error>| loop {
+        match step() {
+            Err(e) if is_eagain(&e) && Instant::now() < deadline => {
+                thread::sleep(Duration::from_millis(1));
+            }
+            _ => return,
+        }
+    };
+    retry(&mut || channel.close());
+    retry(&mut || channel.wait_close());
 }
 
 /// Write all of `data` to a non-blocking writer so a large paste or burst
@@ -738,7 +758,7 @@ fn open_direct_tcpip(
             Some((&peer_ip, peer.port())),
         ) {
             Ok(channel) => return Ok(channel),
-            Err(e) if e.code() == ssh2::ErrorCode::Session(LIBSSH2_ERROR_EAGAIN) => {
+            Err(e) if is_eagain(&e) => {
                 if Instant::now() >= deadline {
                     return Err(format!(
                         "timed out opening a channel to {}:{}",

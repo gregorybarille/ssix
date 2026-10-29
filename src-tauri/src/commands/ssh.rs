@@ -81,7 +81,8 @@ pub(crate) fn find_connection(
 
 /// Open a session for `connection_id`. Shell output is streamed to
 /// `on_output` as raw bytes; errors and the close notification arrive on the
-/// `ssix:ssh:error:{id}` / `ssix:ssh:closed:{id}` events.
+/// same channel as JSON `OutputEvent`s (see `crate::ssh::OutputEvent`), so
+/// they stay ordered with the bytes.
 ///
 /// Connecting does blocking network I/O (TCP connect, handshake, auth), so
 /// it runs on the blocking thread pool rather than the async runtime.

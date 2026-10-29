@@ -25,6 +25,10 @@ export function ScpDialog({ open, onOpenChange, connection }: ScpDialogProps) {
   // Per-field errors only show after the user attempts submit, so we
   // don't shout at them while they're still typing the first character.
   const [submitted, setSubmitted] = useState(false);
+  // Bumped every time the dialog is (re)opened or retargeted. The dialog is
+  // mounted once at the App root, so the action state outlives a close; a
+  // result is only shown for the opening that produced it.
+  const [opening, setOpening] = useState(0);
 
   /*
    * React 19: form-level error + result live in useActionState so
@@ -32,23 +36,29 @@ export function ScpDialog({ open, onOpenChange, connection }: ScpDialogProps) {
    * one channel. Field-level validation (`localPath`, `remotePath`)
    * remains in plain state — per AGENTS.md / migration plan.
    */
-  // `mode` records which transfer produced the result so a stale upload
-  // status is never shown while a download is running or pending.
-  type ScpState = { error: string | null; result: ScpResult | null; mode: ScpMode | null };
-  const initialScpState: ScpState = { error: null, result: null, mode: null };
+  // `mode` and `opening` record which transfer produced the result so a
+  // stale status is never shown for another mode, another connection, or a
+  // later opening of the dialog.
+  type ScpState = {
+    error: string | null;
+    result: ScpResult | null;
+    mode: ScpMode | null;
+    opening: number;
+  };
+  const initialScpState: ScpState = { error: null, result: null, mode: null, opening: -1 };
   const [state, scpAction, isSubmitting] =
     useActionState<ScpState>(async () => {
       if (!connection) {
-        return { error: null, result: null, mode };
+        return { error: null, result: null, mode, opening };
       }
       setSubmitted(true);
       // Mirror previous guard: bail without invoking when required
       // fields are blank. The local-state-driven errors above
       // (`localPathError` / `remotePathError`) handle the visible
       // alert; we just refuse to fire the IPC.
-      if (!localPath.trim()) return { error: null, result: null, mode };
+      if (!localPath.trim()) return { error: null, result: null, mode, opening };
       if (mode === "download" && !remotePath.trim())
-        return { error: null, result: null, mode };
+        return { error: null, result: null, mode, opening };
       try {
         const next =
           mode === "upload"
@@ -68,14 +78,14 @@ export function ScpDialog({ open, onOpenChange, connection }: ScpDialogProps) {
                   recursive,
                 },
               });
-        return { error: null, result: next, mode };
+        return { error: null, result: next, mode, opening };
       } catch (err) {
-        return { error: String(err), result: null, mode };
+        return { error: String(err), result: null, mode, opening };
       }
     }, initialScpState);
-  // Only surface the outcome of the transfer kind currently selected,
-  // and never while another transfer is in flight.
-  const showOutcome = !isSubmitting && state.mode === mode;
+  // Only surface the outcome of the transfer kind currently selected, from
+  // this opening of the dialog, and never while a transfer is in flight.
+  const showOutcome = !isSubmitting && state.mode === mode && state.opening === opening;
   const result = showOutcome ? state.result : null;
   const error = showOutcome ? state.error : null;
 
@@ -88,6 +98,7 @@ export function ScpDialog({ open, onOpenChange, connection }: ScpDialogProps) {
     setRemotePath(connection?.remote_path ?? "");
     setRecursive(false);
     setSubmitted(false);
+    setOpening((n) => n + 1);
   }, [open, connection]);
 
   // Reset the "submitted" flag whenever the user switches mode so the

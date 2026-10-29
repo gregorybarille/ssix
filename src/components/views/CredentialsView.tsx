@@ -3,6 +3,7 @@ import { CredentialList } from "../CredentialList";
 import { CredentialForm } from "../CredentialForm";
 import { LayoutToggle } from "../ui/layout-toggle";
 import { Button } from "../ui/button";
+import { useShallow } from "zustand/react/shallow";
 import { useDialogsStore } from "@/store/useDialogsStore";
 import type { AppSettings, Credential, LayoutMode } from "@/types";
 
@@ -20,7 +21,16 @@ export function CredentialsView({
   onLayoutChange,
   onSubmit,
 }: CredentialsViewProps) {
-  const dialogs = useDialogsStore();
+  const dialogs = useDialogsStore(
+    useShallow((s) => ({
+      credFormOpen: s.credFormOpen,
+      editingCred: s.editingCred,
+      openNewCredential: s.openNewCredential,
+      setCredFormOpen: s.setCredFormOpen,
+      openEditCredential: s.openEditCredential,
+      setConfirmDeleteCred: s.setConfirmDeleteCred,
+    })),
+  );
   return (
     <>
       <div className="flex items-center justify-between px-6 py-4 border-b border-border">

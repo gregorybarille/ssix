@@ -1,3 +1,6 @@
+import { isTypingSurface } from "@/lib/focus";
+
+export { isTypingSurface };
 import { useEffect, useRef } from "react";
 
 /**
@@ -41,20 +44,6 @@ export function blockedByTypingSurface(e: KeyboardEvent, binding: ShortcutBindin
   return isTypingSurface(e.target);
 }
 
-export function isTypingSurface(target: EventTarget | null): boolean {
-  if (!(target instanceof HTMLElement)) return false;
-  // xterm renders an off-screen textarea named .xterm-helper-textarea — when
-  // focus is inside any xterm instance the user is typing into the shell.
-  if (target.closest(".xterm")) return true;
-  if (target.isContentEditable) return true;
-  // Fallback for environments where the live `isContentEditable` property
-  // isn't reflected (e.g. jsdom): check the attribute directly.
-  const ce = target.getAttribute("contenteditable");
-  if (ce !== null && ce !== "false") return true;
-  const tag = target.tagName;
-  if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return true;
-  return false;
-}
 
 export function normalizeEvent(e: KeyboardEvent): string | null {
   // We only care about combos that include the platform mod key OR are bare

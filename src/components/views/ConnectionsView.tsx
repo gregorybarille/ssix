@@ -6,6 +6,7 @@ import { SearchBar } from "../SearchBar";
 import { LayoutToggle } from "../ui/layout-toggle";
 import { Button } from "../ui/button";
 import { ViewFallback } from "../ViewFallback";
+import { useShallow } from "zustand/react/shallow";
 import { useDialogsStore } from "@/store/useDialogsStore";
 import { filterConnections } from "@/lib/search";
 import type { TagGroup } from "@/lib/tags";
@@ -47,7 +48,18 @@ export function ConnectionsView({
   onConnectAllInTag,
   onScpAllInTag,
 }: ConnectionsViewProps) {
-  const dialogs = useDialogsStore();
+  const dialogs = useDialogsStore(
+    useShallow((s) => ({
+      connFormOpen: s.connFormOpen,
+      editingConn: s.editingConn,
+      cloningConn: s.cloningConn,
+      openNewConnection: s.openNewConnection,
+      setConnFormOpen: s.setConnFormOpen,
+      openEditConnection: s.openEditConnection,
+      openCloneConnection: s.openCloneConnection,
+      openScp: s.openScp,
+    })),
+  );
   const [searchQuery, setSearchQuery] = React.useState("");
 
   // Search is a pure filter over the loaded list; the tag-groups view

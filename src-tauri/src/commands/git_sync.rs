@@ -56,8 +56,10 @@ pub struct GitSyncCommitInput {
 }
 
 /// Reject a remote git could read as an option. A remote may be a name
-/// (`origin`) or a URL (`git@host:me/cfg.git`, `https://...`), so only the
-/// option-injection shape and unprintable characters are refused.
+/// (`origin`), a URL (`git@host:me/cfg.git`, `https://...`) or a local path
+/// (which may contain spaces: it is passed as one argv element, never
+/// through a shell), so only the option-injection shape and control
+/// characters are refused.
 pub(crate) fn validate_git_remote(value: &str) -> Result<(), String> {
     let v = value.trim();
     if v.is_empty() {
@@ -66,8 +68,8 @@ pub(crate) fn validate_git_remote(value: &str) -> Result<(), String> {
     if v.starts_with('-') {
         return Err("Git remote must not start with '-'.".to_string());
     }
-    if v.chars().any(|c| c.is_control() || c.is_whitespace()) {
-        return Err("Git remote must not contain whitespace or control characters.".to_string());
+    if v.chars().any(char::is_control) {
+        return Err("Git remote must not contain control characters.".to_string());
     }
     Ok(())
 }
@@ -620,14 +622,22 @@ mod tests {
             "https://github.com/me/cfg.git",
             "ssh://git@host:2222/me/cfg.git",
             "/srv/git/cfg.git",
+            "/Users/Greg B/sync.git",
         ] {
             assert!(validate_git_remote(ok).is_ok(), "{} should be valid", ok);
         }
     }
 
     #[test]
-    fn validate_git_remote_rejects_options_and_whitespace() {
-        for bad in ["", "   ", "-f", "--upload-pack=evil", "a b", "tab\there"] {
+    fn validate_git_remote_rejects_options_and_control_characters() {
+        for bad in [
+            "",
+            "   ",
+            "-f",
+            "--upload-pack=evil",
+            "tab\there",
+            "nl\nhere",
+        ] {
             assert!(
                 validate_git_remote(bad).is_err(),
                 "{:?} should be rejected",

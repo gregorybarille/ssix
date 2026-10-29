@@ -35,7 +35,7 @@ UI -> Zustand store -> `invoke()` -> Tauri command -> storage / SSH subsystem ->
 - `storage.rs` keeps the parsed document in memory, keyed by path and mtime, so reads never touch disk unless the file changed underneath the app; every write goes through `atomic_write` and refreshes the cache.
 - Secrets are stored separately from the main JSON file. A credential's secrets are read and replaced as one unit (`keychain::snapshot_for_credential` / `replace_for_credential`); commands that change a credential snapshot first and restore on a failed save so `data.json` and `secrets.json` never disagree. A corrupt secrets file is reported as such instead of being treated as empty.
 - Commands that write to disk, spawn `git`, or use the network are `async` and run their bodies through `commands::blocking` (the Tauri blocking pool) so the UI thread never waits on fsync or I/O.
-- Git remote and branch names are validated (`validate_git_name`) both when saved and when used, so a value starting with `-` can never reach `git` as an option.
+- Git remotes (`validate_git_remote`: names, URLs or local paths; no leading `-`, no control characters) and branches (`validate_git_branch`: valid ref names) are validated both when saved and when used, so a value starting with `-` can never reach `git` as an option.
 - Frontend and backend keep snake_case field names aligned because the Tauri payload is passed through directly.
 
 ## SSH Session Model

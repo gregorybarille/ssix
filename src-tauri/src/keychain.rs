@@ -167,11 +167,19 @@ pub fn delete_all_for_credential(credential_id: &str) {
 }
 
 fn enrich_from(cred: &mut Credential, secrets: &HashMap<String, String>) {
-    let found = secrets_of(secrets, &cred.id);
+    apply_secrets(cred, &secrets_of(secrets, &cred.id));
+}
+
+/// Fill the placeholders in `cred.kind` from `found`, without touching the
+/// secrets file. Used by add/update to hand back the sanitised credential
+/// (trimmed paths etc.) exactly as a later `get_credentials` would.
+pub fn apply_secrets(cred: &mut Credential, found: &CredentialSecrets) {
     match &cred.kind {
         CredentialKind::Password { password } if password.is_empty() => {
-            if let Some(pw) = found.password {
-                cred.kind = CredentialKind::Password { password: pw };
+            if let Some(pw) = &found.password {
+                cred.kind = CredentialKind::Password {
+                    password: pw.clone(),
+                };
             }
         }
         CredentialKind::SshKey {
@@ -181,8 +189,8 @@ fn enrich_from(cred: &mut Credential, secrets: &HashMap<String, String>) {
         } => {
             cred.kind = CredentialKind::SshKey {
                 private_key_path: private_key_path.clone(),
-                private_key: private_key.clone().or(found.private_key),
-                passphrase: passphrase.clone().or(found.passphrase),
+                private_key: private_key.clone().or_else(|| found.private_key.clone()),
+                passphrase: passphrase.clone().or_else(|| found.passphrase.clone()),
             };
         }
         _ => {}

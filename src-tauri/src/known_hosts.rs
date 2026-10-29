@@ -14,7 +14,7 @@ use std::sync::Mutex;
 
 use base64::engine::general_purpose::STANDARD_NO_PAD;
 use base64::Engine;
-use ssh2::{CheckResult, KnownHostFileKind, KnownHostKeyFormat, Session};
+use ssh2::{KnownHostFileKind, KnownHostKeyFormat, Session};
 
 /// Machine-readable marker at the start of a host-key mismatch error.
 /// Format: `HOST_KEY_MISMATCH host=<host> port=<port> fingerprint=<fp>`
@@ -98,37 +98,87 @@ pub(crate) fn check_and_record(
 ) -> Result<(), String> {
     let _guard = KNOWN_HOSTS_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let mut hosts = load(session, path)?;
-    // Exact-name check: libssh2's port-aware lookup falls back to the plain
-    // `host` entry, which would report a false mismatch for the same host
-    // on a different port (and `forget` could never clear it).
-    match hosts.check(&entry_name(host, port), key) {
-        CheckResult::Match => Ok(()),
-        CheckResult::NotFound => {
+    match lookup(&hosts, &entry_name(host, port), key)? {
+        Lookup::Match => Ok(()),
+        Lookup::Unknown { known_host } => {
             hosts
                 .add(&entry_name(host, port), key, "", format)
                 .map_err(|e| format!("known_hosts add failed: {}", e))?;
             persist(&hosts, path)?;
+            let what = if known_host {
+                "recorded additional host key type"
+            } else {
+                "recorded host key"
+            };
             crate::logs::log_local(
                 "info",
                 "ssh",
-                format!("recorded host key for {}:{} ({})", host, port, fingerprint),
+                format!("{} for {}:{} ({})", what, host, port, fingerprint),
             );
             Ok(())
         }
-        CheckResult::Mismatch => Err(format!(
+        Lookup::Mismatch => Err(format!(
             "{} host={} port={} fingerprint={}\n\
              The host key for {}:{} has changed. This happens when a server is \
              reinstalled, but it can also mean the connection is being intercepted. \
              New key: {}. If you expect this change, trust the new key and reconnect.",
             MISMATCH_PREFIX, host, port, fingerprint, host, port, fingerprint
         )),
-        CheckResult::Failure => Err(format!(
-            "Could not verify the host key for {}:{} against {}",
-            host,
-            port,
-            path.display()
-        )),
     }
+}
+
+enum Lookup {
+    /// An entry of this name and key type holds exactly this key.
+    Match,
+    /// No entry of this name has this key's type. `known_host` tells whether
+    /// the host is known under another key type (a server that gained an
+    /// ed25519 key next to its RSA one is not an interception).
+    Unknown { known_host: bool },
+    /// An entry of this name and key type holds a different key.
+    Mismatch,
+}
+
+/// Compare `key` against the entries named exactly `name`, keyed by the
+/// algorithm embedded in the key itself. libssh2's own check is
+/// type-agnostic (it compares raw bytes against whatever key is stored) and
+/// its port-aware lookup falls back to the plain host entry, so a server
+/// offering a second key type, or the same host on another port, would be
+/// reported as a changed key that `forget` could never clear.
+fn lookup(hosts: &ssh2::KnownHosts, name: &str, key: &[u8]) -> Result<Lookup, String> {
+    let offered = key_algorithm(key);
+    let mut known_host = false;
+    let mut same_type = false;
+    for entry in hosts
+        .hosts()
+        .map_err(|e| format!("known_hosts iteration failed: {}", e))?
+    {
+        if entry.name() != Some(name) {
+            continue;
+        }
+        known_host = true;
+        let stored = base64::engine::general_purpose::STANDARD
+            .decode(entry.key())
+            .map_err(|e| format!("known_hosts entry for {} is not base64: {}", name, e))?;
+        if key_algorithm(&stored) != offered {
+            continue;
+        }
+        same_type = true;
+        if stored == key {
+            return Ok(Lookup::Match);
+        }
+    }
+    Ok(if same_type {
+        Lookup::Mismatch
+    } else {
+        Lookup::Unknown { known_host }
+    })
+}
+
+/// The algorithm name at the front of an SSH public key blob
+/// (`string` = u32 big-endian length + bytes, e.g. `ssh-ed25519`).
+fn key_algorithm(blob: &[u8]) -> Option<&[u8]> {
+    let len = u32::from_be_bytes(blob.get(..4)?.try_into().ok()?) as usize;
+    blob.get(4..4 + len)
 }
 
 /// Remove every recorded key for `host:port`. Returns whether anything was removed.
@@ -253,6 +303,42 @@ mod tests {
         assert!(content.starts_with("b.example "));
         // After forgetting, a new key is accepted (trust-on-first-use again).
         check(&path, "a.example", 22, b"key-a2").unwrap();
+    }
+
+    /// Build a key blob the way SSH does: `string algorithm` + body.
+    fn wire_key(algorithm: &str, body: &[u8]) -> Vec<u8> {
+        let mut out = (algorithm.len() as u32).to_be_bytes().to_vec();
+        out.extend_from_slice(algorithm.as_bytes());
+        out.extend_from_slice(body);
+        out
+    }
+
+    #[test]
+    fn a_new_key_type_for_a_known_host_is_recorded_not_refused() {
+        let path = temp_path("keytype");
+        let rsa = wire_key("ssh-rsa", b"rsa-body");
+        let ed = wire_key("ssh-ed25519", b"ed-body");
+        check(&path, "example.com", 22, &rsa).unwrap();
+        // The server gained an ed25519 key: trust it alongside the RSA one.
+        check(&path, "example.com", 22, &ed).unwrap();
+        assert_eq!(fs::read_to_string(&path).unwrap().lines().count(), 2);
+        // Both keys keep matching afterwards.
+        check(&path, "example.com", 22, &rsa).unwrap();
+        check(&path, "example.com", 22, &ed).unwrap();
+        // A different key of a recorded type is still a mismatch.
+        let other_ed = wire_key("ssh-ed25519", b"evil-body");
+        let err = check(&path, "example.com", 22, &other_ed).unwrap_err();
+        assert!(err.starts_with(MISMATCH_PREFIX), "got: {}", err);
+    }
+
+    #[test]
+    fn key_algorithm_reads_the_leading_string() {
+        assert_eq!(
+            key_algorithm(&wire_key("ssh-ed25519", b"x")),
+            Some(&b"ssh-ed25519"[..])
+        );
+        assert_eq!(key_algorithm(b"key-one"), None);
+        assert_eq!(key_algorithm(b""), None);
     }
 
     #[test]

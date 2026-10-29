@@ -126,7 +126,11 @@ function App() {
   const [previewSettings, setPreviewSettings] = React.useState<typeof settings | null>(null);
 
   // Dialog/UI state
-  const dialogs = useDialogsStore();
+  // The connection / credential form fields are read by their views only;
+  // leaving them out keeps the shell from re-rendering while a form opens.
+  const dialogs = useDialogsStore(
+    useShallow(({ connFormOpen, editingConn, credFormOpen, editingCred, ...shell }) => shell),
+  );
   const captureScreenshot = useScreenshotToast();
 
   // Terminal & tunnel session state
