@@ -2,7 +2,7 @@
 
 ## Prerequisites
 
-- Node.js 22+ for frontend tooling and npm commands in this guide (`npm run tauri dev`, `npm run build`, and `npm test`)
+- Node.js 22.12+ (CI and the e2e Docker image use Node 24) for frontend tooling and npm commands in this guide (`npm run tauri dev`, `npm run build`, and `npm test`). Vitest 5 requires `^22.12 || ^24 || >=26`; concurrently 10, jest-dom 7 and WebdriverIO 10 require 22+.
 - Rust stable
 - Tauri CLI
 
@@ -63,7 +63,7 @@ SmartScreen warnings until code signing is added.
 
 ## Repo Structure
 
-- `src/` frontend app (React 19 + Vite 8 + TypeScript)
+- `src/` frontend app (React 19 + Vite 8 + TypeScript 7). `tsc` is the native TypeScript 7 compiler (per-platform binary, no JS compiler API); `npm run build` runs `tsc && vite build`
 - `src-tauri/` backend app
 - `docs/` product and engineering documentation
 - `docker/` local SSH test environment
@@ -80,7 +80,7 @@ SmartScreen warnings until code signing is added.
 
 Frontend:
 
-- Vitest
+- Vitest 5 (jest-dom matchers registered via the `@testing-library/jest-dom/vitest` entry in `src/test/setup.ts`)
 - Testing Library
 - Tauri APIs mocked centrally in `src/test/setup.ts`
 
