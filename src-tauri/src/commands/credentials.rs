@@ -1,6 +1,6 @@
 use crate::commands::blocking;
-use crate::keychain::{self, CredentialSecrets};
-use crate::models::{Credential, CredentialKind};
+use crate::keychain;
+use crate::models::{Credential, CredentialKind, CredentialSecrets};
 use crate::storage::{load_data, with_data_mut};
 use serde::Deserialize;
 
@@ -105,16 +105,60 @@ fn validate_credential_fields(name: &str, username: &str, is_private: bool) -> R
     Ok(())
 }
 
+/// Strip every secret from a credential before it crosses the IPC boundary.
+///
+/// Redaction rules: a password becomes `""`, an inline private key and a
+/// passphrase become `None`, and `private_key_path` is kept because a path
+/// is not a secret. `data.json` already stores these placeholders, so for
+/// current data this is a no-op; it exists so a legacy row that still
+/// carries a secret inline can never leak into the frontend store.
+fn redact_secrets(cred: &mut Credential) {
+    cred.kind = match &cred.kind {
+        CredentialKind::Password { .. } => CredentialKind::Password {
+            password: String::new(),
+        },
+        CredentialKind::SshKey {
+            private_key_path, ..
+        } => CredentialKind::SshKey {
+            private_key_path: private_key_path.clone(),
+            private_key: None,
+            passphrase: None,
+        },
+    };
+}
+
+fn redacted(mut cred: Credential) -> Credential {
+    redact_secrets(&mut cred);
+    cred
+}
+
+/// List the visible credentials with every secret redacted (see
+/// `redact_secrets`). The edit form fetches a single credential's secrets
+/// on demand through `get_credential_secrets`.
 #[tauri::command]
 pub fn get_credentials() -> Result<Vec<Credential>, String> {
     let data = load_data()?;
-    let mut credentials: Vec<Credential> = data
+    Ok(data
         .credentials
         .into_iter()
         .filter(|c| !c.is_private)
-        .collect();
-    keychain::enrich_credentials(&mut credentials)?;
-    Ok(credentials)
+        .map(redacted)
+        .collect())
+}
+
+/// Read the secrets of one credential. Only the credential edit form calls
+/// this, when it opens, so secrets never sit in the frontend store.
+#[tauri::command]
+pub async fn get_credential_secrets(id: String) -> Result<CredentialSecrets, String> {
+    blocking(move || get_credential_secrets_sync(&id)).await
+}
+
+fn get_credential_secrets_sync(id: &str) -> Result<CredentialSecrets, String> {
+    let data = load_data()?;
+    if !data.credentials.iter().any(|c| c.id == id) {
+        return Err("Credential not found".to_string());
+    }
+    keychain::snapshot_for_credential(id)
 }
 
 #[tauri::command]
@@ -149,10 +193,9 @@ fn add_credential_sync(input: AddCredentialInput) -> Result<Credential, String> 
             kind: kind_for_json,
             is_private: input.is_private,
         };
-        // Hand back the sanitised credential with its secrets filled in, so
-        // the caller sees exactly what `get_credentials` will return.
-        let mut result = credential.clone();
-        keychain::apply_secrets(&mut result, &secrets);
+        // Hand back the redacted credential, exactly what `get_credentials`
+        // will list; the form closes on success and never needs the secret.
+        let result = redacted(credential.clone());
         data.credentials.push(credential);
         Ok(result)
     });
@@ -204,9 +247,7 @@ fn update_credential_sync(input: UpdateCredentialInput) -> Result<Credential, St
         data.credentials[idx].username = input.username;
         data.credentials[idx].kind = kind_for_json;
 
-        let mut updated = data.credentials[idx].clone();
-        keychain::apply_secrets(&mut updated, &secrets);
-        Ok(updated)
+        Ok(redacted(data.credentials[idx].clone()))
     });
     if result.is_err() && secrets_written {
         let _ = keychain::replace_for_credential(&input.id, &previous);
@@ -230,7 +271,208 @@ pub async fn delete_credential(id: String) -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
-    use crate::models::{Credential, CredentialKind};
+    use super::{AddCredentialInput, UpdateCredentialInput};
+    use crate::models::{Credential, CredentialKind, CredentialSecrets};
+    use crate::storage::test_support::with_isolated_data_dir;
+
+    fn add(name: &str, kind: CredentialKind) -> Credential {
+        super::add_credential_sync(AddCredentialInput {
+            name: name.to_string(),
+            username: "user".to_string(),
+            kind,
+            is_private: false,
+        })
+        .unwrap()
+    }
+
+    fn inline_key_kind(key: &str, passphrase: Option<&str>) -> CredentialKind {
+        CredentialKind::SshKey {
+            private_key_path: None,
+            private_key: Some(key.to_string()),
+            passphrase: passphrase.map(str::to_string),
+        }
+    }
+
+    fn assert_redacted_password(cred: &Credential) {
+        match &cred.kind {
+            CredentialKind::Password { password } => assert!(password.is_empty()),
+            other => panic!("expected password kind, got {:?}", other),
+        }
+    }
+
+    fn assert_redacted_ssh_key(cred: &Credential, expected_path: Option<&str>) {
+        match &cred.kind {
+            CredentialKind::SshKey {
+                private_key_path,
+                private_key,
+                passphrase,
+            } => {
+                assert_eq!(private_key_path.as_deref(), expected_path);
+                assert!(private_key.is_none(), "inline key must be redacted");
+                assert!(passphrase.is_none(), "passphrase must be redacted");
+            }
+            other => panic!("expected ssh_key kind, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn add_credential_returns_redacted_shape() {
+        with_isolated_data_dir(|| {
+            let pw = add(
+                "pw",
+                CredentialKind::Password {
+                    password: "hunter2".into(),
+                },
+            );
+            assert_redacted_password(&pw);
+            let key = add("key", inline_key_kind("INLINE-KEY", Some("pp")));
+            assert_redacted_ssh_key(&key, None);
+        });
+    }
+
+    #[test]
+    fn get_credentials_redacts_secrets_but_keeps_key_path() {
+        with_isolated_data_dir(|| {
+            add(
+                "pw",
+                CredentialKind::Password {
+                    password: "hunter2".into(),
+                },
+            );
+            add("inline", inline_key_kind("INLINE-KEY", Some("pp")));
+            add(
+                "path",
+                CredentialKind::SshKey {
+                    private_key_path: Some("/home/u/.ssh/id_ed25519".into()),
+                    private_key: None,
+                    passphrase: Some("pp".into()),
+                },
+            );
+
+            let listed = super::get_credentials().unwrap();
+            assert_eq!(listed.len(), 3);
+            assert_redacted_password(&listed[0]);
+            assert_redacted_ssh_key(&listed[1], None);
+            assert_redacted_ssh_key(&listed[2], Some("/home/u/.ssh/id_ed25519"));
+        });
+    }
+
+    #[test]
+    fn get_credentials_redacts_legacy_rows_with_inline_secrets() {
+        with_isolated_data_dir(|| {
+            // A data.json written before secrets moved to secrets.json.
+            crate::storage::with_data_mut(|data| {
+                data.credentials.push(Credential {
+                    id: "legacy-pw".into(),
+                    name: "legacy-pw".into(),
+                    username: "u".into(),
+                    kind: CredentialKind::Password {
+                        password: "plain".into(),
+                    },
+                    is_private: false,
+                });
+                data.credentials.push(Credential {
+                    id: "legacy-key".into(),
+                    name: "legacy-key".into(),
+                    username: "u".into(),
+                    kind: CredentialKind::SshKey {
+                        private_key_path: Some("/k".into()),
+                        private_key: Some("INLINE".into()),
+                        passphrase: Some("pp".into()),
+                    },
+                    is_private: false,
+                });
+                Ok(())
+            })
+            .unwrap();
+
+            let listed = super::get_credentials().unwrap();
+            assert_redacted_password(&listed[0]);
+            assert_redacted_ssh_key(&listed[1], Some("/k"));
+        });
+    }
+
+    #[test]
+    fn get_credentials_hides_private_credentials() {
+        with_isolated_data_dir(|| {
+            super::add_credential_sync(AddCredentialInput {
+                name: String::new(),
+                username: "u".into(),
+                kind: CredentialKind::Password {
+                    password: "x".into(),
+                },
+                is_private: true,
+            })
+            .unwrap();
+            assert!(super::get_credentials().unwrap().is_empty());
+        });
+    }
+
+    #[test]
+    fn get_credential_secrets_returns_stored_secrets() {
+        with_isolated_data_dir(|| {
+            let pw = add(
+                "pw",
+                CredentialKind::Password {
+                    password: "hunter2".into(),
+                },
+            );
+            assert_eq!(
+                super::get_credential_secrets_sync(&pw.id).unwrap(),
+                CredentialSecrets {
+                    password: Some("hunter2".into()),
+                    ..CredentialSecrets::default()
+                }
+            );
+
+            let key = add("key", inline_key_kind("INLINE-KEY", Some("pp")));
+            assert_eq!(
+                super::get_credential_secrets_sync(&key.id).unwrap(),
+                CredentialSecrets {
+                    password: None,
+                    passphrase: Some("pp".into()),
+                    private_key: Some("INLINE-KEY".into()),
+                }
+            );
+        });
+    }
+
+    #[test]
+    fn get_credential_secrets_rejects_unknown_id() {
+        with_isolated_data_dir(|| {
+            let err = super::get_credential_secrets_sync("nope").unwrap_err();
+            assert!(err.contains("not found"), "got: {}", err);
+        });
+    }
+
+    #[test]
+    fn update_credential_returns_redacted_shape_and_replaces_secrets() {
+        with_isolated_data_dir(|| {
+            let pw = add(
+                "pw",
+                CredentialKind::Password {
+                    password: "old".into(),
+                },
+            );
+            let updated = super::update_credential_sync(UpdateCredentialInput {
+                id: pw.id.clone(),
+                name: "pw".into(),
+                username: "user".into(),
+                kind: CredentialKind::Password {
+                    password: "new".into(),
+                },
+            })
+            .unwrap();
+            assert_redacted_password(&updated);
+            assert_eq!(
+                super::get_credential_secrets_sync(&pw.id)
+                    .unwrap()
+                    .password
+                    .as_deref(),
+                Some("new")
+            );
+        });
+    }
 
     #[test]
     fn test_credential_new() {

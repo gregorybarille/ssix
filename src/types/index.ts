@@ -22,6 +22,19 @@ export interface Credential {
   is_private?: boolean;
 }
 
+/**
+ * Secret material for one credential, fetched on demand with
+ * `get_credential_secrets` when the edit form opens. List responses
+ * (`get_credentials`, `add_credential`, `update_credential`) are redacted:
+ * `password` is `""`, `private_key` / `passphrase` are absent, and only
+ * `private_key_path` (not a secret) is kept.
+ */
+export interface CredentialSecrets {
+  password?: string;
+  passphrase?: string;
+  private_key?: string;
+}
+
 export type ConnectionKind =
   | { type: "direct" }
   | {

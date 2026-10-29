@@ -28,6 +28,43 @@ fn file_stamp(path: &Path) -> Option<(SystemTime, u64)> {
 #[cfg(test)]
 pub(crate) static TEST_ENV_LOCK: Mutex<()> = Mutex::new(());
 
+#[cfg(test)]
+pub(crate) mod test_support {
+    use std::fs;
+    use std::path::PathBuf;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    static TMP_COUNTER: AtomicU64 = AtomicU64::new(0);
+
+    fn tmp_dir() -> PathBuf {
+        let n = TMP_COUNTER.fetch_add(1, Ordering::SeqCst);
+        let p =
+            std::env::temp_dir().join(format!("ssix-data-dir-test-{}-{}", std::process::id(), n));
+        let _ = fs::remove_dir_all(&p);
+        fs::create_dir_all(&p).unwrap();
+        p
+    }
+
+    /// Run `test` with `SSIX_DATA_DIR` pointed at a fresh temporary
+    /// directory so `data.json` and `secrets.json` never touch `~/.ssix`.
+    /// Serialised through `TEST_ENV_LOCK` because the variable is
+    /// process-global and cargo runs tests in parallel.
+    pub(crate) fn with_isolated_data_dir(test: impl FnOnce()) {
+        let _g = super::TEST_ENV_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let prev = std::env::var("SSIX_DATA_DIR").ok();
+        let dir = tmp_dir();
+        std::env::set_var("SSIX_DATA_DIR", &dir);
+        test();
+        match prev {
+            Some(v) => std::env::set_var("SSIX_DATA_DIR", v),
+            None => std::env::remove_var("SSIX_DATA_DIR"),
+        }
+        let _ = fs::remove_dir_all(&dir);
+    }
+}
+
 /// Returns the directory that holds SSIX state (`data.json`, `secrets.json`).
 ///
 /// In production this is `~/.ssix`. For E2E tests and other isolated

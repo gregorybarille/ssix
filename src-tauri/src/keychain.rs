@@ -7,7 +7,7 @@
 ///
 /// The file is a flat JSON object mapping a string key to a string secret:
 ///   { "<credential_id>": "password", "<credential_id>:passphrase": "pp" }
-use crate::models::{Credential, CredentialKind};
+use crate::models::{Credential, CredentialKind, CredentialSecrets};
 use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
@@ -107,14 +107,6 @@ fn private_key_key(credential_id: &str) -> String {
     format!("{}:private_key", credential_id)
 }
 
-/// Every secret that can belong to one credential.
-#[derive(Debug, Clone, Default, PartialEq)]
-pub struct CredentialSecrets {
-    pub password: Option<String>,
-    pub passphrase: Option<String>,
-    pub private_key: Option<String>,
-}
-
 fn secrets_of(map: &HashMap<String, String>, credential_id: &str) -> CredentialSecrets {
     CredentialSecrets {
         password: map.get(&password_key(credential_id)).cloned(),
@@ -171,9 +163,8 @@ fn enrich_from(cred: &mut Credential, secrets: &HashMap<String, String>) {
 }
 
 /// Fill the placeholders in `cred.kind` from `found`, without touching the
-/// secrets file. Used by add/update to hand back the sanitised credential
-/// (trimmed paths etc.) exactly as a later `get_credentials` would.
-pub fn apply_secrets(cred: &mut Credential, found: &CredentialSecrets) {
+/// secrets file.
+fn apply_secrets(cred: &mut Credential, found: &CredentialSecrets) {
     match &cred.kind {
         CredentialKind::Password { password } if password.is_empty() => {
             if let Some(pw) = &found.password {
@@ -201,53 +192,17 @@ pub fn apply_secrets(cred: &mut Credential, found: &CredentialSecrets) {
 ///
 /// The JSON data file stores empty-string placeholders for passwords and
 /// `None` for passphrases / inline keys. One read of the file serves all
-/// three lookups.
+/// three lookups. Backend-only: the result must never be returned over IPC
+/// (see `commands::credentials::redact_secrets`).
 pub fn enrich_credential(cred: &mut Credential) -> Result<(), String> {
     with_secrets(|s| enrich_from(cred, s))
-}
-
-/// Enrich many credentials with a single read of the secrets file.
-pub fn enrich_credentials(creds: &mut [Credential]) -> Result<(), String> {
-    with_secrets(|s| {
-        for cred in creds.iter_mut() {
-            enrich_from(cred, s);
-        }
-    })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::models::CredentialKind;
-    use std::fs;
-    use std::path::PathBuf;
-    use std::sync::atomic::{AtomicU64, Ordering};
-
-    static TMP_COUNTER: AtomicU64 = AtomicU64::new(0);
-
-    fn tmp_dir() -> PathBuf {
-        let n = TMP_COUNTER.fetch_add(1, Ordering::SeqCst);
-        let p =
-            std::env::temp_dir().join(format!("ssix-keychain-test-{}-{}", std::process::id(), n));
-        let _ = fs::remove_dir_all(&p);
-        fs::create_dir_all(&p).unwrap();
-        p
-    }
-
-    fn with_isolated_data_dir(test: impl FnOnce()) {
-        let _g = crate::storage::TEST_ENV_LOCK
-            .lock()
-            .unwrap_or_else(|e| e.into_inner());
-        let prev = std::env::var("SSIX_DATA_DIR").ok();
-        let dir = tmp_dir();
-        std::env::set_var("SSIX_DATA_DIR", &dir);
-        test();
-        match prev {
-            Some(v) => std::env::set_var("SSIX_DATA_DIR", v),
-            None => std::env::remove_var("SSIX_DATA_DIR"),
-        }
-        let _ = fs::remove_dir_all(&dir);
-    }
+    use crate::storage::test_support::with_isolated_data_dir;
 
     #[test]
     fn secrets_path_honors_ssix_data_dir_env_override() {

@@ -31,10 +31,12 @@ import type { AppData as GenAppData } from "@/types/generated/AppData";
 import type { AppSettings as GenAppSettings } from "@/types/generated/AppSettings";
 import type { Connection as GenConnection } from "@/types/generated/Connection";
 import type { Credential as GenCredential } from "@/types/generated/Credential";
+import type { CredentialSecrets as GenCredentialSecrets } from "@/types/generated/CredentialSecrets";
 import type {
   AppSettings as HandAppSettings,
   Connection as HandConnection,
   Credential as HandCredential,
+  CredentialSecrets as HandCredentialSecrets,
 } from "@/types";
 
 // Build a fully-populated instance of each generated shape. tsc will
@@ -62,6 +64,12 @@ const genCredential: GenCredential = {
   is_private: false,
   type: "password",
   password: "p",
+};
+
+const genCredentialSecrets: GenCredentialSecrets = {
+  password: "p",
+  passphrase: null,
+  private_key: null,
 };
 
 const genSettings: GenAppSettings = {
@@ -96,6 +104,12 @@ const handCredential: HandCredential = {
   username: "u",
   type: "password",
   password: "p",
+};
+
+const handCredentialSecrets: HandCredentialSecrets = {
+  password: "p",
+  passphrase: "pp",
+  private_key: "k",
 };
 
 const handSettings: HandAppSettings = {
@@ -164,6 +178,13 @@ describe("Phase 6a — ts-rs parity (Rust models <-> TS index.ts)", () => {
     const genFields = fieldSet(genCredential);
     const missing = [...genFields].filter((f) => !handAllFields.has(f));
     expect(missing, `Hand-written Credential is missing: ${missing.join(", ")}`).toEqual([]);
+  });
+
+  it("CredentialSecrets: every generated field exists on the hand-written interface", () => {
+    const genFields = fieldSet(genCredentialSecrets);
+    const handFields = fieldSet(handCredentialSecrets);
+    const missing = [...genFields].filter((f) => !handFields.has(f));
+    expect(missing, `Hand-written CredentialSecrets is missing: ${missing.join(", ")}`).toEqual([]);
   });
 
   it("AppSettings: every generated field exists on the hand-written interface", () => {

@@ -67,6 +67,24 @@ impl Credential {
     }
 }
 
+/// Secret material belonging to one credential.
+///
+/// Lives in `secrets.json`, never in `data.json`. The frontend only sees it
+/// through `get_credential_secrets`, which the credential edit form calls
+/// when it opens; `get_credentials`, `add_credential` and
+/// `update_credential` all return redacted credentials.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
+pub struct CredentialSecrets {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub password: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub passphrase: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub private_key: Option<String>,
+}
+
 /// Tunnel connection kinds.
 ///
 /// `PortForward` opens a local TCP listener on `127.0.0.1:local_port` and forwards

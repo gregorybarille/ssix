@@ -16,6 +16,7 @@ pub fn run() {
         .manage(SshState::new())
         .invoke_handler(tauri::generate_handler![
             commands::credentials::get_credentials,
+            commands::credentials::get_credential_secrets,
             commands::credentials::add_credential,
             commands::credentials::update_credential,
             commands::credentials::delete_credential,
