@@ -41,11 +41,11 @@ export function CredentialList({
     );
   }
 
-  // Audit-4 consistency fix: include focus-within:opacity-100 so keyboard
-  // users can reveal the action buttons by tabbing into them, matching
-  // the behaviour in ConnectionList. (Previously hover-only.)
+  // The action strip is hover-only for pointer users; it is also revealed
+  // while the row (roving tabindex) or any of its buttons has focus, so
+  // keyboard users and automation can reach Edit / Delete.
   const renderActions = (cred: Credential) => (
-    <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity">
+    <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 transition-opacity">
       {cred.type === "ssh_key" && (
         <Button
           variant="ghost"

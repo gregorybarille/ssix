@@ -79,6 +79,9 @@ export async function openCredentialEditor(name: string): Promise<void> {
   await navigateTo("credentials");
   const row = await browser.$(sel.credentialRowByName(name));
   await row.waitForExist({ timeout: 10_000 });
+  // The action strip is hidden until the row is hovered or focused; focus
+  // the row (its tabindex comes from the roving-focus hook) to reveal it.
+  await browser.execute((el: HTMLElement) => el.focus(), row as unknown as HTMLElement);
   const edit = await row.$(sel.credentialRowEditButton);
   await edit.waitForClickable({ timeout: 10_000 });
   await edit.click();
