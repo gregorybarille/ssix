@@ -18,6 +18,7 @@ import { GenerateKeyDialog, GeneratedKey, KeyStorageMode } from "./GenerateKeyDi
 import { ConfirmDialog } from "./ConfirmDialog";
 import { useUnsavedChangesGuard } from "@/hooks/useUnsavedChangesGuard";
 import { pickFile } from "@/lib/dialog";
+import { isTextInput } from "@/lib/focus";
 import { FolderOpen } from "lucide-react";
 
 interface CredentialFormProps {
@@ -164,6 +165,9 @@ export function CredentialForm({
     if (!inline || !open) return;
     if (document.querySelector("[role='dialog']")) return;
     const id = window.requestAnimationFrame(() => {
+      // The frame can land after the user (or a test) has already moved
+      // into another field; never pull focus away from a text input.
+      if (isTextInput(document.activeElement)) return;
       firstFieldRef.current?.focus();
     });
     return () => window.cancelAnimationFrame(id);

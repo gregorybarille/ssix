@@ -268,3 +268,19 @@ describe("Unsaved-changes guard — ConnectionForm", () => {
     expect(onOpenChange).not.toHaveBeenCalled();
   });
 });
+
+describe("Inline form autofocus", () => {
+  it("does not steal focus from a field the user already moved into", async () => {
+    const raf = vi
+      .spyOn(window, "requestAnimationFrame")
+      .mockImplementation((cb) => window.setTimeout(() => cb(0), 20));
+    render(
+      <CredentialForm inline open onOpenChange={vi.fn()} onSubmit={vi.fn()} />,
+    );
+    const username = screen.getByLabelText(/username/i);
+    username.focus();
+    await new Promise((r) => setTimeout(r, 40));
+    expect(document.activeElement).toBe(username);
+    raf.mockRestore();
+  });
+});

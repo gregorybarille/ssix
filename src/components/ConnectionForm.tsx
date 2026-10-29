@@ -27,6 +27,7 @@ import { RadioGroup, RadioGroupItem } from "./ui/radio-group";
 import { Checkbox } from "./ui/checkbox";
 import { COLOR_VALUES } from "@/lib/colors";
 import { parsePort } from "@/lib/port";
+import { isTextInput } from "@/lib/focus";
 import { UploadCloud } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useUnsavedChangesGuard } from "@/hooks/useUnsavedChangesGuard";
@@ -308,6 +309,9 @@ export function ConnectionForm({
     if (!inline || !open) return;
     if (document.querySelector("[role='dialog']")) return;
     const id = window.requestAnimationFrame(() => {
+      // The frame can land after the user (or a test) has already moved
+      // into another field; never pull focus away from a text input.
+      if (isTextInput(document.activeElement)) return;
       firstFieldRef.current?.focus();
     });
     return () => window.cancelAnimationFrame(id);

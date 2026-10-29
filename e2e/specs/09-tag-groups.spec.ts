@@ -26,6 +26,7 @@ import {
   clickDialogFooterButton,
   createPasswordCredential,
   createDirectConnection,
+  ensureConnectionRowsLayout,
   navigateTo,
 } from "../helpers/flows.js";
 import { sel } from "../helpers/selectors.js";
@@ -75,8 +76,14 @@ describe("Tag-group view + bulk actions", () => {
     upload = join(workDir, "tag-upload.txt");
     writeFileSync(upload, "ssix-tag-bulk-payload\n");
   });
-  after(() => {
+  after(async () => {
     rmSync(workDir, { recursive: true, force: true });
+    // Layout is persisted; leave the app in list mode for later specs.
+    try {
+      await ensureConnectionRowsLayout();
+    } catch {
+      // best effort
+    }
   });
 
   it("renders the tags layout with one tile per tag and gates bulk actions on confirm", async () => {

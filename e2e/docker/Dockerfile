@@ -6,7 +6,7 @@
 # it through tauri-driver under xvfb:
 #
 #   * Rust toolchain + cargo cache
-#   * Node 20 + npm
+#   * Node 24 + npm (WebdriverIO 10 and its driver managers need Node 22+)
 #   * webkit2gtk + GTK headers (Tauri runtime)
 #   * webkit2gtk-driver (the actual WebDriver tauri-driver proxies to)
 #   * xvfb (virtual display so the WebView can render)
@@ -38,8 +38,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         xvfb \
     && rm -rf /var/lib/apt/lists/*
 
-# Node 20 from NodeSource (Debian's package is too old for Vite 8).
-RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
+# Node 24 from NodeSource, matching CI (`.github/workflows/*.yml`).
+# Debian's package is too old for Vite and WebdriverIO 10.
+RUN curl -fsSL https://deb.nodesource.com/setup_24.x | bash - \
     && apt-get install -y --no-install-recommends nodejs \
     && rm -rf /var/lib/apt/lists/*
 

@@ -9,6 +9,8 @@ import { Checkbox } from "./ui/checkbox";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "./ui/dialog";
 import { cn } from "@/lib/utils";
 
+type ScpMode = "upload" | "download";
+
 interface ScpDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -16,7 +18,7 @@ interface ScpDialogProps {
 }
 
 export function ScpDialog({ open, onOpenChange, connection }: ScpDialogProps) {
-  const [mode, setMode] = useState<"upload" | "download">("upload");
+  const [mode, setMode] = useState<ScpMode>("upload");
   const [localPath, setLocalPath] = useState("");
   const [remotePath, setRemotePath] = useState("");
   const [recursive, setRecursive] = useState(false);
@@ -30,21 +32,23 @@ export function ScpDialog({ open, onOpenChange, connection }: ScpDialogProps) {
    * one channel. Field-level validation (`localPath`, `remotePath`)
    * remains in plain state — per AGENTS.md / migration plan.
    */
-  type ScpState = { error: string | null; result: ScpResult | null };
-  const initialScpState: ScpState = { error: null, result: null };
-  const [{ error, result }, scpAction, isSubmitting] =
+  // `mode` records which transfer produced the result so a stale upload
+  // status is never shown while a download is running or pending.
+  type ScpState = { error: string | null; result: ScpResult | null; mode: ScpMode | null };
+  const initialScpState: ScpState = { error: null, result: null, mode: null };
+  const [state, scpAction, isSubmitting] =
     useActionState<ScpState>(async () => {
       if (!connection) {
-        return { error: null, result: null };
+        return { error: null, result: null, mode };
       }
       setSubmitted(true);
       // Mirror previous guard: bail without invoking when required
       // fields are blank. The local-state-driven errors above
       // (`localPathError` / `remotePathError`) handle the visible
       // alert; we just refuse to fire the IPC.
-      if (!localPath.trim()) return { error: null, result: null };
+      if (!localPath.trim()) return { error: null, result: null, mode };
       if (mode === "download" && !remotePath.trim())
-        return { error: null, result: null };
+        return { error: null, result: null, mode };
       try {
         const next =
           mode === "upload"
@@ -64,11 +68,16 @@ export function ScpDialog({ open, onOpenChange, connection }: ScpDialogProps) {
                   recursive,
                 },
               });
-        return { error: null, result: next };
+        return { error: null, result: next, mode };
       } catch (err) {
-        return { error: String(err), result: null };
+        return { error: String(err), result: null, mode };
       }
     }, initialScpState);
+  // Only surface the outcome of the transfer kind currently selected,
+  // and never while another transfer is in flight.
+  const showOutcome = !isSubmitting && state.mode === mode;
+  const result = showOutcome ? state.result : null;
+  const error = showOutcome ? state.error : null;
 
   // Reset on every open (and on close) so the remote path always comes
   // from the connection the dialog was opened for, never from the one it

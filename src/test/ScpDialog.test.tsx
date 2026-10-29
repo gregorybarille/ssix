@@ -250,3 +250,28 @@ describe("ScpDialog", () => {
     expect(hint?.textContent ?? "").toMatch(/base directory/i);
   });
 });
+
+describe("ScpDialog result scoping", () => {
+  it("hides the previous transfer's status once the mode changes", async () => {
+    const user = userEvent.setup();
+    const { invoke } = await import("@/lib/tauri");
+    vi.mocked(invoke).mockResolvedValueOnce({
+      bytes: 3,
+      entries: 1,
+      local_path: "/tmp/up.txt",
+      remote_path: "/srv/up.txt",
+    });
+    render(
+      <ScpDialog
+        open
+        onOpenChange={vi.fn()}
+        connection={{ id: "c1", name: "prod", host: "host", port: 22, type: "direct" }}
+      />,
+    );
+    fireEvent.change(screen.getByTestId("scp-local-path"), { target: { value: "/tmp/up.txt" } });
+    fireEvent.click(screen.getByTestId("scp-upload"));
+    await screen.findByTestId("scp-status");
+    await user.click(screen.getByTestId("scp-mode-download"));
+    await waitFor(() => expect(screen.queryByTestId("scp-status")).toBeNull());
+  });
+});

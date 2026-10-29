@@ -119,8 +119,24 @@ export async function createDirectConnection(input: DirectConnectionInput): Prom
  * direct UI affordance is the per-row connect button (always visible,
  * not hidden behind hover state).
  */
-export async function connectToConnection(name: string): Promise<void> {
+/**
+ * Rows only exist in the list / tile layouts. A previous spec may have
+ * left the persisted layout on "tags", so switch back before looking
+ * for a row.
+ */
+export async function ensureConnectionRowsLayout(): Promise<void> {
   await navigateTo("connections");
+  const list = await browser.$(sel.connectionList);
+  if (await list.isExisting()) return;
+  const toggle = await browser.$(sel.layoutToggleList);
+  if (await toggle.isExisting()) {
+    await toggle.click();
+    await list.waitForExist({ timeout: 10_000 });
+  }
+}
+
+export async function connectToConnection(name: string): Promise<void> {
+  await ensureConnectionRowsLayout();
   const row = await browser.$(sel.connectionRowByName(name));
   await row.waitForExist({ timeout: 10_000 });
   const btn = await row.$('[data-testid^=\"connect-button-\"]');

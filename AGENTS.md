@@ -13,7 +13,7 @@
 | Command | Purpose |
 |---|---|
 | `npm install` | Install frontend deps |
-| `npm run tauri dev` | Dev mode (Node 20+, Rust stable, Tauri CLI required) |
+| `npm run tauri dev` | Dev mode (Node 22+, Rust stable, Tauri CLI required) |
 | `npm test` | Vitest frontend suite (excludes `e2e/**`) |
 | `npm test -- --run src/test/utils.test.ts` | Single test file |
 | `cd src-tauri && cargo test` | Rust backend tests |
