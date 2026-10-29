@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import { Credential } from "@/types";
+import { Credential, CredentialSecrets } from "@/types";
 import { invoke } from "@/lib/tauri";
 import { runAsync, runAsyncRethrow } from "@/lib/asyncAction";
 
@@ -8,6 +8,12 @@ interface CredentialsState {
   isLoading: boolean;
   error: string | null;
   fetchCredentials: () => Promise<void>;
+  /**
+   * Read one credential's secrets. Called by the edit form when it opens
+   * and deliberately not kept in store state: the list holds redacted
+   * credentials only, so secrets never outlive the form.
+   */
+  fetchCredentialSecrets: (id: string) => Promise<CredentialSecrets>;
   addCredential: (input: Omit<Credential, "id">) => Promise<Credential>;
   /** Creates a private (inline) credential without adding it to the visible store state. */
   addInlineCredential: (input: Omit<Credential, "id">) => Promise<Credential>;
@@ -21,11 +27,17 @@ export const useCredentialsStore = create<CredentialsState>((set) => ({
   isLoading: false,
   error: null,
 
+  // `get_credentials` returns redacted credentials (password "", no inline
+  // key / passphrase); only `private_key_path` survives because it is not
+  // a secret.
   fetchCredentials: () =>
     runAsync(set, async () => {
       const credentials = await invoke<Credential[]>("get_credentials");
       set({ credentials });
     }).then(() => undefined),
+
+  fetchCredentialSecrets: async (id) =>
+    (await invoke<CredentialSecrets | null>("get_credential_secrets", { id })) ?? {},
 
   addCredential: (input) =>
     runAsyncRethrow(set, async () => {

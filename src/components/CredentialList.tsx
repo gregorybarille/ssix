@@ -63,6 +63,7 @@ export function CredentialList({
         size="icon"
         className="h-7 w-7"
         onClick={() => onEdit(cred)}
+        data-testid={`edit-credential-${cred.id}`}
         aria-label={`Edit credential ${cred.name}`}
       >
         <Edit className="h-3.5 w-3.5" aria-hidden="true" />
@@ -179,11 +180,12 @@ export function CredentialList({
               </div>
               <p className="text-xs text-muted-foreground truncate">
                 {cred.username}
-                {cred.type === "ssh_key" && cred.private_key_path && (
-                  <span className="ml-2 opacity-70">· {cred.private_key_path}</span>
-                )}
-                {cred.type === "ssh_key" && cred.private_key && !cred.private_key_path && (
-                  <span className="ml-2 opacity-70">· inline</span>
+                {/* Listed credentials are redacted, so an ssh_key row
+                    without a path is one whose key is stored inline. */}
+                {cred.type === "ssh_key" && (
+                  <span className="ml-2 opacity-70">
+                    · {cred.private_key_path ? cred.private_key_path : "inline"}
+                  </span>
                 )}
               </p>
             </div>

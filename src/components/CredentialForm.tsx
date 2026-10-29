@@ -1,5 +1,6 @@
 import { useActionState, useState, useEffect, useRef, useId } from "react";
-import { Credential } from "@/types";
+import { Credential, CredentialSecrets } from "@/types";
+import { useCredentialsStore } from "@/store/useCredentialsStore";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
 import { PasswordInput } from "./ui/password-input";
@@ -42,9 +43,20 @@ type CredentialFormState = {
   passphrase: string;
 };
 
-/** Form values for a freshly opened dialog (defaults, or the saved credential). */
+/**
+ * Whether the saved secrets of the credential being edited are available.
+ * Listed credentials are redacted, so the form fetches them on open.
+ */
+type SecretsState = "none" | "loading" | "loaded" | "error";
+
+/**
+ * Form values for a freshly opened dialog: defaults, or the saved credential
+ * plus its secrets once `get_credential_secrets` has returned them (`null`
+ * while they are still loading, so the secret fields start empty).
+ */
 function initialCredentialState(
   credential: Credential | null | undefined,
+  secrets: CredentialSecrets | null,
 ): CredentialFormState {
   if (!credential) {
     return {
@@ -62,11 +74,14 @@ function initialCredentialState(
     name: credential.name,
     username: credential.username,
     credType: credential.type,
-    password: credential.password ?? "",
-    keySource: credential.private_key ? "inline" : "path",
+    password: secrets?.password ?? "",
+    // The key source is inferred from the one non-secret key field: an
+    // ssh_key credential without a path keeps its key inline.
+    keySource:
+      credential.type === "ssh_key" && !credential.private_key_path ? "inline" : "path",
     privateKeyPath: credential.private_key_path ?? "",
-    privateKey: credential.private_key ?? "",
-    passphrase: credential.passphrase ?? "",
+    privateKey: secrets?.private_key ?? "",
+    passphrase: secrets?.passphrase ?? "",
   };
 }
 
@@ -100,6 +115,10 @@ export function CredentialForm({
   const [passphrase, setPassphrase] = useState("");
   const [generatedPublicKey, setGeneratedPublicKey] = useState<string | null>(null);
   const [generateOpen, setGenerateOpen] = useState(false);
+  const fetchCredentialSecrets = useCredentialsStore((s) => s.fetchCredentialSecrets);
+  const [secretsState, setSecretsState] = useState<SecretsState>("none");
+  const [secretsError, setSecretsError] = useState<string | null>(null);
+  const secretsLoading = secretsState === "loading";
   const inlineTitleId = useId();
   const inlineDescriptionId = useId();
   const firstFieldRef = useRef<HTMLInputElement | null>(null);
@@ -119,7 +138,7 @@ export function CredentialForm({
   // the effect writes into state so it never lags a render behind.
   const baselineRef = useRef<string>("");
   useEffect(() => {
-    const init = initialCredentialState(credential);
+    const init = initialCredentialState(credential, null);
     setName(init.name);
     setUsername(init.username);
     setCredType(init.credType);
@@ -130,8 +149,40 @@ export function CredentialForm({
     setPassphrase(init.passphrase);
     setGeneratedPublicKey(null);
     setFieldErrors({});
+    setSecretsError(null);
     baselineRef.current = serializeCredentialState(init);
-  }, [credential, open]);
+
+    if (!open || !credential) {
+      setSecretsState("none");
+      return;
+    }
+    // Edit mode: the listed credential is redacted, so fetch its secrets
+    // now and move the guard baseline to the prefilled values, so opening
+    // and closing without edits never asks to discard changes. The secret
+    // fields are disabled until this settles, so the user cannot type
+    // something the response would overwrite.
+    let cancelled = false;
+    setSecretsState("loading");
+    fetchCredentialSecrets(credential.id).then(
+      (secrets) => {
+        if (cancelled) return;
+        const loaded = initialCredentialState(credential, secrets);
+        setPassword(loaded.password);
+        setPrivateKey(loaded.privateKey);
+        setPassphrase(loaded.passphrase);
+        baselineRef.current = serializeCredentialState(loaded);
+        setSecretsState("loaded");
+      },
+      (err: unknown) => {
+        if (cancelled) return;
+        setSecretsError(String(err));
+        setSecretsState("error");
+      },
+    );
+    return () => {
+      cancelled = true;
+    };
+  }, [credential, open, fetchCredentialSecrets]);
 
   const currentSnapshot = serializeCredentialState({
     name,
@@ -195,6 +246,10 @@ export function CredentialForm({
   const initialSubmitState: SubmitState = { error: null };
   const [{ error }, submitAction, isSubmitting] = useActionState<SubmitState>(
     async () => {
+      // The submit button is disabled while the saved secrets load; this
+      // guards the implicit (Enter key) submission path as well.
+      if (secretsLoading) return { error: null };
+
       // Required-field preflight: collect all problems at once so the
       // user sees every issue inline instead of one-at-a-time.
       const newFieldErrors: Partial<Record<FieldKey, string>> = {};
@@ -296,6 +351,7 @@ export function CredentialForm({
         action={submitAction}
         className="flex flex-col flex-1 min-h-0"
         data-testid="credential-form"
+        data-secrets-state={secretsState}
         aria-labelledby={inline ? inlineTitleId : undefined}
         aria-describedby={inline ? inlineDescriptionId : undefined}
       >
@@ -344,6 +400,23 @@ export function CredentialForm({
             )}
           </div>
 
+          {secretsLoading && (
+            <p role="status" className="text-xs text-muted-foreground-soft">
+              Loading saved secrets…
+            </p>
+          )}
+          {secretsState === "error" && (
+            <p
+              role="alert"
+              id="credential-form-secrets-error"
+              className="text-xs text-destructive"
+              data-testid="credential-form-secrets-error"
+            >
+              Could not load the saved secrets: {secretsError}. The secret fields
+              below are empty; saving will replace the stored secrets.
+            </p>
+          )}
+
           <Tabs
             value={credType}
             onValueChange={(v) => setCredType(v as "password" | "ssh_key")}
@@ -365,6 +438,8 @@ export function CredentialForm({
                   autoComplete="new-password"
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
+                  disabled={secretsLoading}
+                  aria-busy={secretsLoading || undefined}
                   data-testid="credential-form-password"
                 />
               </div>
@@ -386,6 +461,7 @@ export function CredentialForm({
                   variant="outline"
                   size="sm"
                   onClick={() => setGenerateOpen(true)}
+                  disabled={secretsLoading}
                   data-testid="generate-key-open"
                 >
                   Generate key…
@@ -446,6 +522,9 @@ export function CredentialForm({
                       setPrivateKey(e.target.value);
                       clearFieldError("key_inline");
                     }}
+                    disabled={secretsLoading}
+                    aria-busy={secretsLoading || undefined}
+                    data-testid="credential-form-private-key"
                     aria-invalid={fieldErrors.key_inline ? true : undefined}
                     aria-describedby={[
                       fieldErrors.key_inline ? "cred-key-inline-error" : null,
@@ -474,6 +553,9 @@ export function CredentialForm({
                   autoComplete="new-password"
                   value={passphrase}
                   onChange={(e) => setPassphrase(e.target.value)}
+                  disabled={secretsLoading}
+                  aria-busy={secretsLoading || undefined}
+                  data-testid="credential-form-passphrase"
                 />
               </div>
               {generatedPublicKey && (
@@ -520,13 +602,14 @@ export function CredentialForm({
             variant="outline"
             onClick={requestCloseDialog}
             disabled={isSubmitting}
+            data-testid="credential-form-cancel"
           >
             Cancel
           </Button>
           <Button
             type="submit"
-            disabled={isSubmitting}
-            aria-busy={isSubmitting}
+            disabled={isSubmitting || secretsLoading}
+            aria-busy={isSubmitting || secretsLoading}
             data-testid="credential-form-submit"
             aria-describedby={visibleError ? "credential-form-error" : undefined}
           >

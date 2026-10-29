@@ -72,7 +72,16 @@ export const sel = {
   credentialFormKindSshKey: '[data-testid="credential-form-kind-sshkey"]',
   credentialFormPassword: '[data-testid="credential-form-password"]',
   credentialFormPrivateKeyPath: '[data-testid="credential-form-private-key-path"]',
+  credentialFormPrivateKey: '[data-testid="credential-form-private-key"]',
+  credentialFormPassphrase: '[data-testid="credential-form-passphrase"]',
   credentialFormSubmit: '[data-testid="credential-form-submit"]',
+  credentialFormCancel: '[data-testid="credential-form-cancel"]',
+  // Edit mode fetches the credential's secrets on open; the form carries
+  // `data-secrets-state` = none | loading | loaded | error.
+  credentialFormSecretsState: (state: "none" | "loading" | "loaded" | "error") =>
+    `[data-testid="credential-form"][data-secrets-state="${state}"]`,
+  // Scoped under a credential row (see credentialRowByName).
+  credentialRowEditButton: '[data-testid^="edit-credential-"]',
 
   // Connect / terminal
   connectButton: (id: string) => `[data-testid="connect-button-${id}"]`,

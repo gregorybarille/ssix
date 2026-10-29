@@ -71,6 +71,21 @@ export async function createPasswordCredential(input: PasswordCredentialInput): 
   await form.waitForExist({ reverse: true, timeout: 10_000 });
 }
 
+/**
+ * Open the editor for the credential named `name` and wait until its
+ * secrets have been fetched (`get_credential_secrets`) and prefilled.
+ */
+export async function openCredentialEditor(name: string): Promise<void> {
+  await navigateTo("credentials");
+  const row = await browser.$(sel.credentialRowByName(name));
+  await row.waitForExist({ timeout: 10_000 });
+  const edit = await row.$(sel.credentialRowEditButton);
+  await edit.waitForClickable({ timeout: 10_000 });
+  await edit.click();
+  const loaded = await browser.$(sel.credentialFormSecretsState("loaded"));
+  await loaded.waitForExist({ timeout: 10_000 });
+}
+
 export interface DirectConnectionInput {
   name: string;
   host: string;

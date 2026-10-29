@@ -9,13 +9,22 @@ import {
 import userEvent from "@testing-library/user-event";
 import { CredentialForm } from "@/components/CredentialForm";
 import { ConnectionForm } from "@/components/ConnectionForm";
+import { invoke } from "@/lib/tauri";
+
+vi.mock("@/lib/tauri", () => ({
+  invoke: vi.fn(),
+}));
 
 beforeEach(() => {
   cleanup();
+  vi.clearAllMocks();
 });
 
 describe("Unsaved-changes guard — CredentialForm", () => {
   it("closes silently when editing an existing credential without changes", async () => {
+    // Edit mode fetches the redacted credential's secrets on open; the
+    // guard baseline must follow the prefilled values.
+    vi.mocked(invoke).mockResolvedValueOnce({ passphrase: "pp" });
     const onOpenChange = vi.fn();
     render(
       <CredentialForm
@@ -28,13 +37,17 @@ describe("Unsaved-changes guard — CredentialForm", () => {
           username: "deploy",
           type: "ssh_key",
           private_key_path: "/home/u/.ssh/id_ed25519",
-          passphrase: "pp",
         }}
       />,
     );
     await waitFor(() =>
-      expect(screen.getByLabelText(/credential name/i)).toHaveValue("deploy"),
+      expect(screen.getByTestId("credential-form")).toHaveAttribute(
+        "data-secrets-state",
+        "loaded",
+      ),
     );
+    expect(screen.getByLabelText(/credential name/i)).toHaveValue("deploy");
+    expect(screen.getByLabelText(/passphrase/i)).toHaveValue("pp");
     fireEvent.click(screen.getByRole("button", { name: /cancel/i }));
     expect(screen.queryByRole("dialog", { name: /discard unsaved changes/i })).toBeNull();
     expect(onOpenChange).toHaveBeenCalledWith(false);

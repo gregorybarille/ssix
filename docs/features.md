@@ -27,6 +27,15 @@ Supported credential modes:
 
 The connection form can create inline credentials and optionally save them as named credentials.
 
+The credentials list only holds redacted credentials. Opening **Edit**
+fetches that one credential's saved secrets (`get_credential_secrets`)
+and prefills them; the secret fields and the **Update** button are
+disabled with a "Loading saved secrets…" status until the fetch
+settles. If the fetch fails the form stays usable, shows the error, and
+warns that saving will replace the stored secrets with the (empty)
+field values. Closing the editor without edits never prompts to discard
+changes, because the unsaved-changes baseline follows the fetched values.
+
 ## Terminals
 
 - tabbed shell sessions
