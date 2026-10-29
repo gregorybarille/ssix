@@ -55,31 +55,47 @@ pub struct GitSyncCommitInput {
     pub message: String,
 }
 
-/// Reject remote and branch names git could read as options or that are
-/// not valid ref components. Settings are local, but a value starting
-/// with `-` would otherwise reach `git fetch`/`push` as a flag.
-pub(crate) fn validate_git_name(value: &str, what: &str) -> Result<(), String> {
+/// Reject a remote git could read as an option. A remote may be a name
+/// (`origin`) or a URL (`git@host:me/cfg.git`, `https://...`), so only the
+/// option-injection shape and unprintable characters are refused.
+pub(crate) fn validate_git_remote(value: &str) -> Result<(), String> {
     let v = value.trim();
     if v.is_empty() {
-        return Err(format!("{} is required.", what));
+        return Err("Git remote is required.".to_string());
     }
     if v.starts_with('-') {
-        return Err(format!("{} must not start with '-'.", what));
+        return Err("Git remote must not start with '-'.".to_string());
+    }
+    if v.chars().any(|c| c.is_control() || c.is_whitespace()) {
+        return Err("Git remote must not contain whitespace or control characters.".to_string());
+    }
+    Ok(())
+}
+
+/// Reject a branch that is not a valid ref component or that git could
+/// read as an option.
+pub(crate) fn validate_git_branch(value: &str) -> Result<(), String> {
+    let v = value.trim();
+    if v.is_empty() {
+        return Err("Git branch is required.".to_string());
+    }
+    if v.starts_with('-') {
+        return Err("Git branch must not start with '-'.".to_string());
     }
     if v.contains("..") || v.ends_with(".lock") || v.ends_with('/') || v.ends_with('.') {
-        return Err(format!("{} is not a valid git ref name.", what));
+        return Err("Git branch is not a valid git ref name.".to_string());
     }
     if v.chars().any(|c| {
         c.is_control() || c.is_whitespace() || matches!(c, '~' | '^' | ':' | '?' | '*' | '[' | '\\')
     }) {
-        return Err(format!("{} contains characters git does not allow.", what));
+        return Err("Git branch contains characters git does not allow.".to_string());
     }
     Ok(())
 }
 
 fn configured_remote(settings: &AppSettings) -> Result<String, String> {
     let remote = settings.git_sync_remote.trim();
-    validate_git_name(remote, "Git remote")?;
+    validate_git_remote(remote)?;
     Ok(remote.to_string())
 }
 
@@ -331,7 +347,7 @@ fn branch_name(repo_path: &Path, settings: &AppSettings) -> Result<String, Strin
         .map(str::trim)
         .filter(|branch| !branch.is_empty())
     {
-        validate_git_name(branch, "Git branch")?;
+        validate_git_branch(branch)?;
         return Ok(branch.to_string());
     }
     current_branch(repo_path)?.ok_or_else(|| "Could not determine current git branch".to_string())
@@ -556,14 +572,35 @@ mod tests {
     }
 
     #[test]
-    fn validate_git_name_accepts_ordinary_names() {
-        for ok in ["origin", "upstream", "main", "feature/x-1", "release-2.0", "user@host"] {
-            assert!(validate_git_name(ok, "x").is_ok(), "{} should be valid", ok);
+    fn validate_git_remote_accepts_names_and_urls() {
+        for ok in [
+            "origin",
+            "upstream",
+            "git@github.com:me/cfg.git",
+            "https://github.com/me/cfg.git",
+            "ssh://git@host:2222/me/cfg.git",
+            "/srv/git/cfg.git",
+        ] {
+            assert!(validate_git_remote(ok).is_ok(), "{} should be valid", ok);
         }
     }
 
     #[test]
-    fn validate_git_name_rejects_options_and_bad_refs() {
+    fn validate_git_remote_rejects_options_and_whitespace() {
+        for bad in ["", "   ", "-f", "--upload-pack=evil", "a b", "tab\there"] {
+            assert!(validate_git_remote(bad).is_err(), "{:?} should be rejected", bad);
+        }
+    }
+
+    #[test]
+    fn validate_git_branch_accepts_ordinary_names() {
+        for ok in ["main", "feature/x-1", "release-2.0", "user@host"] {
+            assert!(validate_git_branch(ok).is_ok(), "{} should be valid", ok);
+        }
+    }
+
+    #[test]
+    fn validate_git_branch_rejects_options_and_bad_refs() {
         for bad in [
             "",
             "   ",
@@ -577,7 +614,7 @@ mod tests {
             "star*",
             "tab\there",
         ] {
-            assert!(validate_git_name(bad, "x").is_err(), "{:?} should be rejected", bad);
+            assert!(validate_git_branch(bad).is_err(), "{:?} should be rejected", bad);
         }
     }
 }

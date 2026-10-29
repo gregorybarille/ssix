@@ -31,6 +31,10 @@ const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 /// libssh2 timeout for blocking calls during setup (handshake, auth, channel open).
 const SESSION_TIMEOUT_MS: u32 = 15_000;
 /// Longest an idle worker waits for socket readiness before re-checking its queue.
+/// Idle wait for a forwarder that shares its session with other clients.
+const SHARED_WAIT_MAX: Duration = Duration::from_millis(10);
+/// Longest single park while waiting for a socket to become writable.
+const WRITE_WAIT_MAX: Duration = Duration::from_millis(50);
 const WAIT_MAX: Duration = Duration::from_millis(250);
 /// Cap on bytes coalesced into one output message.
 const OUTPUT_COALESCE_MAX: usize = 256 * 1024;
@@ -83,6 +87,17 @@ pub struct SessionContext {
     pub output: Channel<InvokeResponseBody>,
 }
 
+/// Control messages travel on the same channel as the bytes, as JSON, so
+/// they are delivered in order with the output and buffered by the
+/// frontend sink if the terminal has not mounted yet (a shell that exits
+/// immediately is still reported).
+#[derive(serde::Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum OutputEvent {
+    Error { message: String },
+    Closed,
+}
+
 impl SessionContext {
     fn send_output(&self, bytes: &[u8]) {
         if bytes.is_empty() {
@@ -91,16 +106,33 @@ impl SessionContext {
         let _ = self.output.send(InvokeResponseBody::Raw(bytes.to_vec()));
     }
 
+    fn send_event(&self, event: OutputEvent) {
+        if let Ok(json) = serde_json::to_string(&event) {
+            let _ = self.output.send(InvokeResponseBody::Json(json));
+        }
+    }
+
     fn log(&self, level: &str, source: &str, message: String) {
         crate::logs::log(&self.app, level, source, message);
     }
 
     fn emit_error(&self, message: String) {
-        let _ = self.app.emit(&ssh_error_event(&self.session_id), message);
+        self.send_event(OutputEvent::Error { message });
     }
 
     fn emit_tunnel_status(&self, status: TunnelStatus) {
         let _ = self.app.emit(&tunnel_status_event(&self.session_id), status);
+    }
+
+    /// Put the session in the registry before its worker starts, so a
+    /// worker that exits at once still finds (and removes) its own entry.
+    fn register(&self, handle: SessionHandle) -> Result<(), String> {
+        let state = self
+            .app
+            .try_state::<SshState>()
+            .ok_or_else(|| "SSH state is not managed".to_string())?;
+        state.sessions.insert(self.session_id.clone(), handle);
+        Ok(())
     }
 
     /// Drop the session from the registry and tell the frontend it is gone.
@@ -108,7 +140,7 @@ impl SessionContext {
         if let Some(state) = self.app.try_state::<SshState>() {
             state.sessions.remove(&self.session_id);
         }
-        let _ = self.app.emit(&ssh_closed_event(&self.session_id), ());
+        self.send_event(OutputEvent::Closed);
     }
 }
 
@@ -119,9 +151,11 @@ pub enum SessionMsg {
 }
 
 /// Command-layer side of a session: queue a message and wake the worker.
+/// Cloneable so the registry and the caller can both hold one.
+#[derive(Clone)]
 pub struct SessionHandle {
     tx: Sender<SessionMsg>,
-    waker: wake::Waker,
+    waker: Arc<wake::Waker>,
 }
 
 impl SessionHandle {
@@ -143,7 +177,13 @@ struct ControlRx {
 fn control_channel() -> Result<(SessionHandle, ControlRx), String> {
     let (tx, rx) = mpsc::channel();
     let (waker, wake) = wake::pair().map_err(|e| format!("Failed to create wake pipe: {}", e))?;
-    Ok((SessionHandle { tx, waker }, ControlRx { rx, wake }))
+    Ok((
+        SessionHandle {
+            tx,
+            waker: Arc::new(waker),
+        },
+        ControlRx { rx, wake },
+    ))
 }
 
 /// Readiness waiting. On Unix a worker blocks in `poll(2)` on the SSH socket
@@ -190,13 +230,12 @@ mod wake {
         t.as_raw_fd()
     }
 
-    /// Block until one of `fds` is readable or `timeout` elapses.
-    pub fn wait_readable(fds: &[Fd], timeout: Duration) {
+    fn poll(fds: &[Fd], events: libc::c_short, timeout: Duration) {
         let mut polls: Vec<libc::pollfd> = fds
             .iter()
             .map(|&fd| libc::pollfd {
                 fd,
-                events: libc::POLLIN,
+                events,
                 revents: 0,
             })
             .collect();
@@ -206,6 +245,16 @@ mod wake {
         unsafe {
             libc::poll(polls.as_mut_ptr(), polls.len() as libc::nfds_t, ms);
         }
+    }
+
+    /// Block until one of `fds` is readable or `timeout` elapses.
+    pub fn wait_readable(fds: &[Fd], timeout: Duration) {
+        poll(fds, libc::POLLIN, timeout);
+    }
+
+    /// Block until `fd` is writable or `timeout` elapses.
+    pub fn wait_writable(fd: Fd, timeout: Duration) {
+        poll(&[fd], libc::POLLOUT, timeout);
     }
 }
 
@@ -243,6 +292,10 @@ mod wake {
     pub fn wait_readable(_fds: &[Fd], timeout: Duration) {
         std::thread::sleep(timeout.min(Duration::from_millis(5)));
     }
+
+    pub fn wait_writable(_fd: Fd, timeout: Duration) {
+        std::thread::sleep(timeout.min(Duration::from_millis(5)));
+    }
 }
 
 /// Session registry keyed by the UUID handed to the frontend on `ssh_connect`.
@@ -272,12 +325,6 @@ pub struct TunnelStatus {
 
 /// Event names are namespaced under `ssix:` and mirrored in
 /// `src/lib/events.ts`; both sides MUST go through these helpers.
-pub(crate) fn ssh_error_event(session_id: &str) -> String {
-    format!("ssix:ssh:error:{}", session_id)
-}
-pub(crate) fn ssh_closed_event(session_id: &str) -> String {
-    format!("ssix:ssh:closed:{}", session_id)
-}
 pub(crate) fn tunnel_status_event(session_id: &str) -> String {
     format!("ssix:tunnel:status:{}", session_id)
 }
@@ -490,6 +537,7 @@ pub fn start_ssh_session(
 ) -> Result<SessionHandle, String> {
     let (session, channel) = open_shell(&target, &opts)?;
     let (handle, control) = control_channel()?;
+    ctx.register(handle.clone())?;
     ctx.log(
         "info",
         "ssh",
@@ -536,9 +584,10 @@ fn close_channel(channel: &mut ssh2::Channel) {
     let _ = channel.wait_close();
 }
 
-/// Write all of `data` to a non-blocking writer, waiting briefly on
-/// `WouldBlock` so a large paste or burst is never truncated.
-fn write_all_nonblocking<W: Write>(w: &mut W, data: &[u8]) -> io::Result<()> {
+/// Write all of `data` to a non-blocking writer so a large paste or burst
+/// is never truncated. On `WouldBlock` the thread parks until `fd` (the
+/// socket behind `w`) is writable, or briefly sleeps when no fd is known.
+fn write_all_nonblocking<W: Write>(w: &mut W, data: &[u8], fd: Option<wake::Fd>) -> io::Result<()> {
     let mut written = 0;
     let start = Instant::now();
     while written < data.len() {
@@ -552,7 +601,10 @@ fn write_all_nonblocking<W: Write>(w: &mut W, data: &[u8]) -> io::Result<()> {
                         "peer stopped reading",
                     ));
                 }
-                thread::sleep(Duration::from_millis(1));
+                match fd {
+                    Some(fd) => wake::wait_writable(fd, WRITE_WAIT_MAX),
+                    None => thread::sleep(Duration::from_millis(1)),
+                }
             }
             Err(ref e) if e.kind() == io::ErrorKind::Interrupted => {}
             Err(e) => return Err(e),
@@ -609,7 +661,7 @@ fn run_io_loop(
             match control.rx.try_recv() {
                 Ok(SessionMsg::Write(data)) => {
                     active = true;
-                    if let Err(e) = write_all_nonblocking(&mut channel, &data) {
+                    if let Err(e) = write_all_nonblocking(&mut channel, &data, Some(fds[0])) {
                         close_channel(&mut channel);
                         return Err(format!("SSH write error: {}", e));
                     }
@@ -693,10 +745,21 @@ fn open_direct_tcpip(
 /// channel. Both ends are non-blocking; the thread sleeps in `poll(2)` on
 /// both sockets while idle, so neither direction can stall the other and an
 /// idle tunnel costs no CPU.
-pub(crate) fn forward_bidi(mut local: TcpStream, mut channel: ssh2::Channel, session: &Session) {
+/// `clients` counts the forwarders sharing `session`. With more than one,
+/// a sibling's read can pull this channel's packet into libssh2's buffer
+/// without the socket ever becoming readable for us, so the idle wait is
+/// kept short in that case instead of parking for the full `WAIT_MAX`.
+pub(crate) fn forward_bidi(
+    mut local: TcpStream,
+    mut channel: ssh2::Channel,
+    session: &Session,
+    clients: &AtomicUsize,
+) {
     local.set_nonblocking(true).ok();
     local.set_nodelay(true).ok();
-    let fds = [wake::fd_of(&local), wake::fd_of(session)];
+    let local_fd = wake::fd_of(&local);
+    let session_fd = wake::fd_of(session);
+    let fds = [local_fd, session_fd];
     let mut buf = vec![0u8; 64 * 1024];
 
     loop {
@@ -710,7 +773,7 @@ pub(crate) fn forward_bidi(mut local: TcpStream, mut channel: ssh2::Channel, ses
                 return;
             }
             Ok(n) => {
-                if write_all_nonblocking(&mut channel, &buf[..n]).is_err() {
+                if write_all_nonblocking(&mut channel, &buf[..n], Some(session_fd)).is_err() {
                     close_channel(&mut channel);
                     return;
                 }
@@ -730,7 +793,7 @@ pub(crate) fn forward_bidi(mut local: TcpStream, mut channel: ssh2::Channel, ses
                 return;
             }
             Ok(n) => {
-                if write_all_nonblocking(&mut local, &buf[..n]).is_err() {
+                if write_all_nonblocking(&mut local, &buf[..n], Some(local_fd)).is_err() {
                     close_channel(&mut channel);
                     return;
                 }
@@ -749,7 +812,12 @@ pub(crate) fn forward_bidi(mut local: TcpStream, mut channel: ssh2::Channel, ses
         }
 
         if idle {
-            wake::wait_readable(&fds, WAIT_MAX);
+            let timeout = if clients.load(Ordering::Relaxed) > 1 {
+                SHARED_WAIT_MAX
+            } else {
+                WAIT_MAX
+            };
+            wake::wait_readable(&fds, timeout);
         }
     }
 }
@@ -793,7 +861,7 @@ pub(crate) fn bridge_via_gateway(
                 Ok(channel) => {
                     session.set_blocking(false);
                     let _ = ready_tx.send(Ok(()));
-                    forward_bidi(local_stream, channel, &session);
+                    forward_bidi(local_stream, channel, &session, &AtomicUsize::new(1));
                 }
                 Err(e) => {
                     let _ = ready_tx.send(Err(format!("channel_direct_tcpip failed: {}", e)));
@@ -849,6 +917,7 @@ pub fn start_port_forward(
     session.set_blocking(false);
 
     let (handle, control) = control_channel()?;
+    ctx.register(handle.clone())?;
     let stop = Arc::new(AtomicBool::new(false));
     let active = Arc::new(AtomicUsize::new(0));
     let destination = format!("{}:{}", destination_host, destination_port);
@@ -919,7 +988,7 @@ pub fn start_port_forward(
                 };
                 active.fetch_add(1, Ordering::SeqCst);
                 status("client_connected", Some(format!("from {}", peer)));
-                forward_bidi(local_stream, channel, &session);
+                forward_bidi(local_stream, channel, &session, &active);
                 active.fetch_sub(1, Ordering::SeqCst);
                 status("client_closed", Some(format!("from {}", peer)));
             });
@@ -942,6 +1011,7 @@ pub fn start_jump_shell(
     let (session, channel) = open_shell_over_stream(stream, &destination, &opts)
         .map_err(|e| format!("Destination connect via gateway failed: {}", e))?;
     let (handle, control) = control_channel()?;
+    ctx.register(handle.clone())?;
     ctx.log(
         "info",
         "jump_shell",
@@ -1082,7 +1152,7 @@ mod tests {
             }
         }
         let mut w = Trickle { out: Vec::new(), calls: 0 };
-        write_all_nonblocking(&mut w, b"hello world").unwrap();
+        write_all_nonblocking(&mut w, b"hello world", None).unwrap();
         assert_eq!(w.out, b"hello world");
     }
 

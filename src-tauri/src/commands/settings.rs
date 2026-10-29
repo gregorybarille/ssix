@@ -1,5 +1,5 @@
 use crate::commands::blocking;
-use crate::commands::git_sync::validate_git_name;
+use crate::commands::git_sync::{validate_git_branch, validate_git_remote};
 use crate::models::AppSettings;
 use crate::storage::{load_data, with_data_mut};
 
@@ -15,10 +15,10 @@ pub async fn save_settings(settings: AppSettings) -> Result<AppSettings, String>
 }
 
 fn save_settings_sync(settings: AppSettings) -> Result<AppSettings, String> {
-    validate_git_name(&settings.git_sync_remote, "Git remote")?;
+    validate_git_remote(&settings.git_sync_remote)?;
     if let Some(branch) = settings.git_sync_branch.as_deref() {
         if !branch.trim().is_empty() {
-            validate_git_name(branch, "Git branch")?;
+            validate_git_branch(branch)?;
         }
     }
     with_data_mut(|data| {
@@ -65,5 +65,13 @@ mod tests {
         };
         let err = save_settings_sync(s).unwrap_err();
         assert!(err.contains("Git branch"), "got: {}", err);
+    }
+
+    /// URL remotes are valid `git fetch` arguments and must keep working.
+    #[test]
+    fn save_settings_accepts_url_remotes() {
+        for remote in ["git@github.com:me/cfg.git", "https://github.com/me/cfg.git"] {
+            assert!(validate_git_remote(remote).is_ok(), "{} should be accepted", remote);
+        }
     }
 }

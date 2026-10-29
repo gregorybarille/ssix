@@ -12,14 +12,17 @@ static DATA_LOCK: Mutex<()> = Mutex::new(());
 /// next load. Guarded by `DATA_LOCK` (never accessed without it).
 struct CachedData {
     path: PathBuf,
-    modified: Option<SystemTime>,
+    /// (mtime, length): the length guards against an edit that lands in
+    /// the same mtime tick on a coarse-granularity filesystem.
+    stamp: Option<(SystemTime, u64)>,
     data: AppData,
 }
 
 static DATA_CACHE: Mutex<Option<CachedData>> = Mutex::new(None);
 
-fn modified_time(path: &Path) -> Option<SystemTime> {
-    fs::metadata(path).and_then(|m| m.modified()).ok()
+fn file_stamp(path: &Path) -> Option<(SystemTime, u64)> {
+    let meta = fs::metadata(path).ok()?;
+    Some((meta.modified().ok()?, meta.len()))
 }
 
 #[cfg(test)]
@@ -59,11 +62,11 @@ fn load_data_unlocked() -> Result<AppData, String> {
     if !path.exists() {
         return Ok(AppData::default());
     }
-    let modified = modified_time(&path);
+    let stamp = file_stamp(&path);
 
     let mut cache = DATA_CACHE.lock().unwrap_or_else(|e| e.into_inner());
     if let Some(cached) = cache.as_ref() {
-        if cached.path == path && cached.modified.is_some() && cached.modified == modified {
+        if cached.path == path && cached.stamp.is_some() && cached.stamp == stamp {
             return Ok(cached.data.clone());
         }
     }
@@ -76,7 +79,7 @@ fn load_data_unlocked() -> Result<AppData, String> {
     data.migrate_to_current();
     *cache = Some(CachedData {
         path,
-        modified,
+        stamp,
         data: data.clone(),
     });
     Ok(data)
@@ -202,7 +205,7 @@ fn save_data_unlocked(data: &AppData) -> Result<(), String> {
     atomic_write(&path, content.as_bytes(), None)?;
     let mut cache = DATA_CACHE.lock().unwrap_or_else(|e| e.into_inner());
     *cache = Some(CachedData {
-        modified: modified_time(&path),
+        stamp: file_stamp(&path),
         path,
         data: data.clone(),
     });

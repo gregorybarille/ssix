@@ -310,7 +310,9 @@ export function ConnectionList({
                 selected && "bg-accent",
               )}
               style={color ? { borderLeft: `3px solid ${color}` } : undefined}
-              onClick={() => activateRow(index)}
+              // The second click of a double-click must not activate again
+              // (it used to open two sessions).
+              onClick={(e) => e.detail <= 1 && activateRow(index)}
               onContextMenu={(e) => {
                 setCtxConn(conn);
                 ctx.open(e);

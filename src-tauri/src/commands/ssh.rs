@@ -1,3 +1,4 @@
+use crate::commands::blocking;
 use crate::keychain;
 use crate::models::{Connection, ConnectionKind, Credential, CredentialKind};
 use crate::ssh::{
@@ -87,7 +88,6 @@ pub(crate) fn find_connection(
 #[tauri::command]
 pub async fn ssh_connect(
     app: tauri::AppHandle,
-    state: tauri::State<'_, SshState>,
     connection_id: String,
     on_output: Channel<InvokeResponseBody>,
 ) -> Result<String, String> {
@@ -107,7 +107,9 @@ pub async fn ssh_connect(
         ),
     };
 
-    let handle = tauri::async_runtime::spawn_blocking(move || match &conn.kind {
+    // The session registers itself (via `SessionContext::register`) before
+    // its worker thread starts, so nothing is inserted here.
+    blocking(move || match &conn.kind {
         ConnectionKind::Direct => {
             let cred_id = conn
                 .credential_id
@@ -162,10 +164,7 @@ pub async fn ssh_connect(
                 .to_string(),
         ),
     })
-    .await
-    .map_err(|e| format!("SSH connect task failed: {}", e))??;
-
-    state.sessions.insert(session_id.clone(), handle);
+    .await?;
     Ok(session_id)
 }
 
@@ -211,6 +210,6 @@ pub fn ssh_disconnect(
 /// records the server's current key (trust-on-first-use again). Returns
 /// whether an entry was removed.
 #[tauri::command]
-pub fn ssh_forget_host_key(host: String, port: u16) -> Result<bool, String> {
-    crate::known_hosts::forget(&host, port)
+pub async fn ssh_forget_host_key(host: String, port: u16) -> Result<bool, String> {
+    blocking(move || crate::known_hosts::forget(&host, port)).await
 }

@@ -10,6 +10,7 @@
 //! which calls [`forget`] and reconnects.
 
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
 
 use base64::engine::general_purpose::STANDARD_NO_PAD;
 use base64::Engine;
@@ -19,6 +20,11 @@ use ssh2::{CheckResult, KnownHostFileKind, KnownHostKeyFormat, Session};
 /// Format: `HOST_KEY_MISMATCH host=<host> port=<port> fingerprint=<fp>`
 /// followed by a newline and a human-readable explanation.
 pub const MISMATCH_PREFIX: &str = "HOST_KEY_MISMATCH";
+
+/// Serialises every read-modify-write of the known_hosts file: two
+/// first-time handshakes on separate threads must not drop each other's
+/// newly recorded key.
+static KNOWN_HOSTS_LOCK: Mutex<()> = Mutex::new(());
 
 pub fn known_hosts_path() -> PathBuf {
     crate::storage::data_dir().join("known_hosts")
@@ -90,8 +96,12 @@ pub(crate) fn check_and_record(
     fingerprint: &str,
     path: &Path,
 ) -> Result<(), String> {
+    let _guard = KNOWN_HOSTS_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let mut hosts = load(session, path)?;
-    match hosts.check_port(host, port, key) {
+    // Exact-name check: libssh2's port-aware lookup falls back to the plain
+    // `host` entry, which would report a false mismatch for the same host
+    // on a different port (and `forget` could never clear it).
+    match hosts.check(&entry_name(host, port), key) {
         CheckResult::Match => Ok(()),
         CheckResult::NotFound => {
             hosts
@@ -130,6 +140,7 @@ pub(crate) fn forget_in(host: &str, port: u16, path: &Path) -> Result<bool, Stri
     if !path.exists() {
         return Ok(false);
     }
+    let _guard = KNOWN_HOSTS_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let session = Session::new().map_err(|e| format!("SSH session create failed: {}", e))?;
     let hosts = load(&session, path)?;
     let name = entry_name(host, port);

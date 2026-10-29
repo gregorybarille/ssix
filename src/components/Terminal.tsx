@@ -3,7 +3,6 @@ import { Terminal as XTerm } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { WebglAddon } from "@xterm/addon-webgl";
 import { invoke } from "@/lib/tauri";
-import { sshClosedEvent, sshErrorEvent } from "@/lib/events";
 import { attachOutput } from "@/lib/terminalOutput";
 import { registerTerminal, unregisterTerminal } from "@/lib/terminalRegistry";
 import { terminalTheme } from "@/lib/terminalTheme";
@@ -162,8 +161,8 @@ export function Terminal({ sessionId, isVisible, onDisconnect, settings }: Termi
     /**
      * Surface ssh_write failures inline. A rejected ssh_write means the
      * backend session is gone; render one red banner per session rather
-     * than one per keystroke. The `ssix:ssh:closed:{id}` event follows
-     * shortly and triggers `onDisconnect()`.
+     * than one per keystroke. The `closed` notification follows shortly
+     * on the output channel and triggers `onDisconnect()`.
      */
     let writeFailed = false;
     const dataDisposable = term.onData((data) => {
@@ -198,37 +197,20 @@ export function Terminal({ sessionId, isVisible, onDisconnect, settings }: Termi
     };
     window.addEventListener("ssix:terminal-paste", pasteHandler);
 
-    // Shell output: raw bytes over the IPC channel created at connect time.
-    const detachOutput = attachOutput(sessionId, (bytes) => term.write(bytes));
-
-    // Error / closed notifications. `cancelled` guards against the effect
-    // being torn down before `listen` resolves (StrictMode double-mount,
-    // closing a tab immediately after opening it), which would otherwise
-    // leak the listener and write into a disposed terminal.
-    let cancelled = false;
-    const unlisteners: Array<() => void> = [];
-    (async () => {
-      try {
-        const { listen } = await import("@tauri-apps/api/event");
-        const unlistenError = await listen<string>(sshErrorEvent(sessionId), (event) => {
-          if (cancelled) return;
-          term.write(`\r\n\x1b[31mSSH Error: ${event.payload}\x1b[0m\r\n`);
-        });
-        const unlistenClosed = await listen(sshClosedEvent(sessionId), () => {
-          if (cancelled) return;
+    // Shell output and error / closed notifications: both arrive in order
+    // over the IPC channel created at connect time, buffered by the sink
+    // until this terminal attaches, so nothing is lost on a late mount.
+    const detachOutput = attachOutput(sessionId, {
+      write: (bytes) => term.write(bytes),
+      onEvent: (event) => {
+        if (event.kind === "error") {
+          term.write(`\r\n\x1b[31mSSH Error: ${event.message}\x1b[0m\r\n`);
+        } else {
           term.write("\r\n\x1b[33mConnection closed.\x1b[0m\r\n");
           onDisconnectRef.current();
-        });
-        if (cancelled) {
-          unlistenError();
-          unlistenClosed();
-          return;
         }
-        unlisteners.push(unlistenError, unlistenClosed);
-      } catch {
-        // not in Tauri
-      }
-    })();
+      },
+    });
 
     const resizeObserver = new ResizeObserver(() => {
       try {
@@ -242,12 +224,10 @@ export function Terminal({ sessionId, isVisible, onDisconnect, settings }: Termi
     resizeObserver.observe(termRef.current);
 
     return () => {
-      cancelled = true;
       dataDisposable.dispose();
       selectionDisposable.dispose();
       window.removeEventListener("ssix:terminal-paste", pasteHandler);
       detachOutput();
-      unlisteners.forEach((fn) => fn());
       resizeObserver.disconnect();
       unregisterTerminal(sessionId);
       term.dispose();
