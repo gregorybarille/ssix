@@ -80,12 +80,20 @@ describe("Git sync export", () => {
 
     // Configure the repo path via the Settings UI. The settings panel
     // now auto-saves git-sync text fields on blur instead of exposing
-    // a dedicated Save button.
+    // a dedicated Save button. Saves are debounced (~300 ms), so wait
+    // for the "Settings saved!" confirmation before leaving the panel:
+    // GitSyncView fetches status on mount and would otherwise race the
+    // flush that leaving the panel triggers.
     await navigateTo("settings");
     const repoInput = await browser.$(sel.settingsGitSyncRepoPath);
     await repoInput.waitForExist({ timeout: 10_000 });
     await repoInput.setValue(repo);
     await browser.execute((el: HTMLElement) => el.blur(), repoInput);
+    const savedStatus = await browser.$(sel.settingsSavedStatus);
+    await browser.waitUntil(
+      async () => /settings saved/i.test(await savedStatus.getText()),
+      { timeout: 10_000, timeoutMsg: "settings panel did not confirm the save" },
+    );
 
     await navigateTo("git-sync");
     // Confirm the view picked up the configured repo path.

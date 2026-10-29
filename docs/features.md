@@ -112,6 +112,17 @@ See [Git Sync](git-sync.md) for details.
 
 ## Settings
 
+Every control auto-saves; there is no Save button. Writes are debounced
+(300 ms after the last edit, `SETTINGS_SAVE_DEBOUNCE_MS` in
+`SettingsPanel.tsx`) so toggling several switches or clicking through
+swatches produces a single `save_settings` call carrying the final
+state. The pending save is flushed immediately when the panel is
+closed, when the window loses focus or is hidden, and on page unload,
+so the persisted state always equals what the panel shows. A green
+"Settings saved!" confirmation appears once the write lands; backend
+validation errors (for example an invalid Git remote or branch name)
+are shown inline for the final state of the burst.
+
 - theme (light / dark; switching previews immediately and auto-saves on
   change; terminal panes follow it too, swapping between the Tokyo Night
   and Tokyo Night Day palettes live without reconnecting;

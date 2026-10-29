@@ -122,6 +122,7 @@ export const sel = {
 
   // Settings panel
   settingsGitSyncRepoPath: '[data-testid="settings-git-sync-repo-path"]',
+  settingsSavedStatus: '[data-testid="settings-saved-status"]',
 
   // Layout toggle (list / tile / tags)
   layoutToggleList: '[data-testid="layout-toggle-list"]',

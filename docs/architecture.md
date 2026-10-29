@@ -8,7 +8,7 @@ SSIX is a Tauri v2 desktop application with a React frontend and a Rust backend.
 
 - `src/App.tsx` is the composition layer: it wires stores to the top-level layout, hosts the app-wide dialogs, and holds the cross-store submit handlers. It subscribes to stores through shallow selectors so loading/error flips in one store do not re-render the shell.
 - `src/components/views/` holds the tab-level views (`ConnectionsView`, `CredentialsView`); `src/components/` contains the remaining UI components and feature views.
-- `src/hooks/` holds reusable React hooks (`useGlobalShortcuts`, `useRovingFocus`, `useUnsavedChangesGuard`, `useScreenshotToast`, `useApplySettings`).
+- `src/hooks/` holds reusable React hooks (`useGlobalShortcuts`, `useRovingFocus`, `useUnsavedChangesGuard`, `useScreenshotToast`, `useApplySettings`, `useDebouncedCallback`).
 - `src/lib/` holds pure helpers shared across components (`search.ts` for the connection filter, `terminalTheme.ts` for the xterm palettes, `port.ts`, `hostKey.ts`, ...).
 - `src/components/ui/` contains shared Radix-based primitives.
 - `src/store/` contains Zustand stores that act as the async boundary for the UI.
@@ -35,6 +35,7 @@ UI -> Zustand store -> `invoke()` -> Tauri command -> storage / SSH subsystem ->
 - `storage.rs` keeps the parsed document in memory, keyed by path and mtime, so reads never touch disk unless the file changed underneath the app; every write goes through `atomic_write` and refreshes the cache.
 - Secrets are stored separately from the main JSON file. A credential's secrets are read and replaced as one unit (`keychain::snapshot_for_credential` / `replace_for_credential`); commands that change a credential snapshot first and restore on a failed save so `data.json` and `secrets.json` never disagree. A corrupt secrets file is reported as such instead of being treated as empty.
 - Commands that write to disk, spawn `git`, or use the network are `async` and run their bodies through `commands::blocking` (the Tauri blocking pool) so the UI thread never waits on fsync or I/O.
+- `SettingsPanel` coalesces writes: edits are debounced for 300 ms (`useDebouncedCallback`) and at most one `save_settings` is in flight; a newer edit made during a save is queued behind it rather than issued in parallel. The pending save is flushed on panel unmount, window blur/hide and `pagehide`, and the panel refuses to adopt the store's echoed settings while a save is pending or in flight, so the UI state is never overwritten by a stale value.
 - Git remotes (`validate_git_remote`: names, URLs or local paths; no leading `-`, no control characters) and branches (`validate_git_branch`: valid ref names) are validated both when saved and when used, so a value starting with `-` can never reach `git` as an option.
 - Frontend and backend keep snake_case field names aligned because the Tauri payload is passed through directly.
 
