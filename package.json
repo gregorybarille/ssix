@@ -51,7 +51,7 @@
     "@wdio/mocha-framework": "^10.1.0",
     "@wdio/spec-reporter": "^10.1.0",
     "@wdio/types": "^10.1.0",
-    "concurrently": "^9.2.1",
+    "concurrently": "^10.0.6",
     "expect-webdriverio": "^8.0.0",
     "jsdom": "^29.0.2",
     "tailwindcss": "^4.2.4",
