@@ -112,6 +112,9 @@ End-to-end:
   ```bash
   npm run e2e            # build image, run full suite
   npm run e2e:shell      # interactive shell inside the runner
+  # one spec only (the runner forwards extra args to the container):
+  docker compose --profile e2e -f docker/docker-compose.yml run --rm --build \
+    e2e-runner npx wdio run e2e/wdio.conf.ts --spec /workspace/e2e/specs/10-host-key.spec.ts
   npm run e2e:teardown   # stop containers, drop named volumes
   ```
 
