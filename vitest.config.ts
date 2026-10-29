@@ -15,7 +15,9 @@ export default mergeConfig(
       // E2E specs run under WebdriverIO + Mocha (see e2e/wdio.conf.ts),
       // not vitest. Excluding them prevents `ReferenceError: before is
       // not defined` when running `npm test`.
-      exclude: ["**/node_modules/**", "**/dist/**", "e2e/**"],
+      // `.claude/worktrees/` holds agent worktrees (full repo copies with
+      // their own node_modules); their tests must not run from here.
+      exclude: ["**/node_modules/**", "**/dist/**", "e2e/**", ".claude/**"],
     },
   }),
 );

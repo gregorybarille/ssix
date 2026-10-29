@@ -5,3 +5,6 @@ src-tauri/target/
 # E2E test artifacts (screenshots, wdio logs, docker logs, temp data dirs)
 e2e/.artifacts/
 e2e/.tmp/
+
+# Agent worktrees created by Claude Code (full checkouts, never committed)
+.claude/worktrees/
