@@ -160,6 +160,7 @@ pub(crate) fn tunnel_status_event(session_id: &str) -> String {
     format!("ssix:tunnel:status:{}", session_id)
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn start_ssh_session(
     host: String,
     port: u16,
@@ -631,6 +632,7 @@ pub(crate) fn forward_bidi(mut local: TcpStream, mut channel: ssh2::Channel) {
 /// and `Resize` are ignored.
 ///
 /// Errors at bind or gateway-connect time are returned synchronously.
+#[allow(clippy::too_many_arguments)]
 pub fn start_port_forward(
     gateway_host: String,
     gateway_port: u16,
@@ -797,6 +799,7 @@ pub fn start_port_forward(
 ///
 /// Errors at any synchronous step (bind, gateway connect, destination connect,
 /// auth, PTY/shell) surface immediately.
+#[allow(clippy::too_many_arguments)]
 pub fn start_jump_shell(
     gateway_host: String,
     gateway_port: u16,

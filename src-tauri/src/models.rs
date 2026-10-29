@@ -260,13 +260,13 @@ pub struct AppData {
 /// Current `AppData.schema_version` written by this build.
 ///
 /// Version history:
-///  - 0 — implicit; pre-Phase-6b files with no `schema_version` field.
-///        Treated identically to v1 in-memory; `migrate_legacy_kinds`
-///        already covered the LegacyTunnel → JumpShell rewrite that
-///        was the only on-disk shape change to date.
-///  - 1 — first explicit stamp. No data shape change vs v0; the
-///        version is recorded so future migrations can branch on
-///        "before/after this point" without ambiguity.
+/// - 0 — implicit; pre-Phase-6b files with no `schema_version` field.
+///   Treated identically to v1 in-memory; `migrate_legacy_kinds`
+///   already covered the LegacyTunnel → JumpShell rewrite that
+///   was the only on-disk shape change to date.
+/// - 1 — first explicit stamp. No data shape change vs v0; the
+///   version is recorded so future migrations can branch on
+///   "before/after this point" without ambiguity.
 pub const CURRENT_SCHEMA_VERSION: u32 = 1;
 
 impl Default for AppData {
@@ -650,8 +650,10 @@ mod tests {
 
     #[test]
     fn test_app_settings_auto_copy_selection_roundtrip() {
-        let mut s = AppSettings::default();
-        s.auto_copy_selection = true;
+        let s = AppSettings {
+            auto_copy_selection: true,
+            ..AppSettings::default()
+        };
         let json = serde_json::to_string(&s).unwrap();
         assert!(json.contains(r#""auto_copy_selection":true"#));
         let back: AppSettings = serde_json::from_str(&json).unwrap();

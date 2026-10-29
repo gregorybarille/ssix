@@ -13,7 +13,7 @@ use serde::{Deserialize, Serialize};
 use ssh_key::{LineEnding, PrivateKey};
 use std::io::Read;
 use std::net::TcpStream;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 #[derive(Debug, Deserialize)]
@@ -91,7 +91,7 @@ fn default_key_path(name_hint: Option<&str>) -> Result<PathBuf, String> {
 }
 
 fn write_key_files(
-    path: &PathBuf,
+    path: &Path,
     private_pem: &str,
     public_line: &str,
 ) -> Result<(), String> {
@@ -220,7 +220,7 @@ pub fn shell_single_quote(s: &str) -> String {
 pub fn build_install_script(public_key: &str) -> String {
     // Trim trailing newlines AND carriage returns so the literal we
     // append is exactly one line (and CRLF input matches LF entries).
-    let key_line = public_key.trim_end_matches(|c| c == '\n' || c == '\r');
+    let key_line = public_key.trim_end_matches(['\n', '\r']);
     let q = shell_single_quote(key_line);
     format!(
         "set -e; \

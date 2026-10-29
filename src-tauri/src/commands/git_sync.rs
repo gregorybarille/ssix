@@ -413,7 +413,7 @@ fn append_output(target: &mut String, result: &GitOutput) {
         return;
     }
     if !target.is_empty() {
-        target.push_str("\n");
+        target.push('\n');
     }
     target.push_str(&next);
 }

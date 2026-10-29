@@ -572,9 +572,7 @@ fn directory_creation_sequence(remote_path: &str, home_dir: &str) -> Vec<String>
     }
 
     let clean_home = home_dir.trim_end_matches('/');
-    let mut segments = if trimmed.starts_with('/') {
-        Vec::new()
-    } else if clean_home.is_empty() {
+    let mut segments = if trimmed.starts_with('/') || clean_home.is_empty() {
         Vec::new()
     } else {
         clean_home

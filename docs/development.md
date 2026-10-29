@@ -88,6 +88,14 @@ Backend:
 
 - Rust unit tests inside the relevant modules
 
+Continuous integration (`.github/workflows/test.yml`, required on PRs):
+
+- Frontend: `npm audit --omit=dev --audit-level=high`, `npm test`, `npm run build`
+- Backend: `cargo clippy --all-targets -- -D warnings`, `cargo test`, and a
+  `git diff --exit-code src/types/generated/` check so regenerated ts-rs
+  bindings are always committed
+- `cargo audit` via `rustsec/audit-check` for advisories in `Cargo.lock`
+
 End-to-end:
 
 - WebdriverIO + `tauri-driver` drives the real built Tauri app against
