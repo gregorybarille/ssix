@@ -71,7 +71,11 @@ mod tests {
     #[test]
     fn save_settings_accepts_url_remotes() {
         for remote in ["git@github.com:me/cfg.git", "https://github.com/me/cfg.git"] {
-            assert!(validate_git_remote(remote).is_ok(), "{} should be accepted", remote);
+            assert!(
+                validate_git_remote(remote).is_ok(),
+                "{} should be accepted",
+                remote
+            );
         }
     }
 }

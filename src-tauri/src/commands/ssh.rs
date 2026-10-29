@@ -132,7 +132,13 @@ pub async fn ssh_connect(
                 *gateway_port,
                 gateway_credential_id,
             )?;
-            start_port_forward(gateway, *local_port, destination_host.clone(), *destination_port, ctx)
+            start_port_forward(
+                gateway,
+                *local_port,
+                destination_host.clone(),
+                *destination_port,
+                ctx,
+            )
         }
         ConnectionKind::JumpShell {
             gateway_host,
@@ -174,10 +180,7 @@ pub fn ssh_write(
     session_id: String,
     data: String,
 ) -> Result<(), String> {
-    let handle = state
-        .sessions
-        .get(&session_id)
-        .ok_or("Session not found")?;
+    let handle = state.sessions.get(&session_id).ok_or("Session not found")?;
     handle.send(SessionMsg::Write(data.into_bytes()))
 }
 
@@ -188,18 +191,12 @@ pub fn ssh_resize(
     cols: u32,
     rows: u32,
 ) -> Result<(), String> {
-    let handle = state
-        .sessions
-        .get(&session_id)
-        .ok_or("Session not found")?;
+    let handle = state.sessions.get(&session_id).ok_or("Session not found")?;
     handle.send(SessionMsg::Resize { cols, rows })
 }
 
 #[tauri::command]
-pub fn ssh_disconnect(
-    state: tauri::State<'_, SshState>,
-    session_id: String,
-) -> Result<(), String> {
+pub fn ssh_disconnect(state: tauri::State<'_, SshState>, session_id: String) -> Result<(), String> {
     if let Some((_, handle)) = state.sessions.remove(&session_id) {
         let _ = handle.send(SessionMsg::Disconnect);
     }

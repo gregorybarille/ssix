@@ -170,10 +170,12 @@ pub(crate) fn atomic_write(path: &Path, content: &[u8], mode: Option<u32>) -> Re
         #[cfg(not(unix))]
         let _ = mode;
 
-        f.write_all(content).map_err(|e| format!("write temp file: {}", e))?;
+        f.write_all(content)
+            .map_err(|e| format!("write temp file: {}", e))?;
         // Push data + metadata to disk before the rename — without this,
         // a crash after rename can still lose the data on some filesystems.
-        f.sync_all().map_err(|e| format!("fsync temp file: {}", e))?;
+        f.sync_all()
+            .map_err(|e| format!("fsync temp file: {}", e))?;
     }
 
     fs::rename(&tmp_path, path).map_err(|e| {
@@ -272,7 +274,11 @@ mod tests {
     fn atomic_write_overwrites_existing_target_in_full() {
         let dir = tmp_dir();
         let target = dir.join("data.json");
-        fs::write(&target, b"OLD-VERY-LONG-CONTENT-THAT-MUST-BE-FULLY-REPLACED").unwrap();
+        fs::write(
+            &target,
+            b"OLD-VERY-LONG-CONTENT-THAT-MUST-BE-FULLY-REPLACED",
+        )
+        .unwrap();
         atomic_write(&target, b"new", None).unwrap();
         assert_eq!(fs::read_to_string(&target).unwrap(), "new");
         let _ = fs::remove_dir_all(&dir);
@@ -372,8 +378,9 @@ mod tests {
 
         let dir = Arc::new(tmp_dir());
         let target = Arc::new(dir.join("data.json"));
-        let payloads: Vec<String> =
-            (0..8).map(|i| format!("payload-from-writer-{:02}", i)).collect();
+        let payloads: Vec<String> = (0..8)
+            .map(|i| format!("payload-from-writer-{:02}", i))
+            .collect();
 
         let handles: Vec<_> = payloads
             .iter()
@@ -428,7 +435,11 @@ mod tests {
             .unwrap()
             .set_modified(later)
             .unwrap();
-        assert_eq!(load_data().unwrap().settings.font_size, 33, "mtime change must bust the cache");
+        assert_eq!(
+            load_data().unwrap().settings.font_size,
+            33,
+            "mtime change must bust the cache"
+        );
 
         // A write through the storage layer refreshes the cache in place.
         with_data_mut(|data| {

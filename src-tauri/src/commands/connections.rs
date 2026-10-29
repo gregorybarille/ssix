@@ -93,8 +93,7 @@ fn add_connection_sync(input: AddConnectionInput) -> Result<Connection, String> 
         if data.connections.iter().any(|c| c.name == f.name) {
             return Err(format!("A connection named '{}' already exists", f.name));
         }
-        let mut connection =
-            Connection::new(f.name, f.host, f.port, f.credential_id, f.kind);
+        let mut connection = Connection::new(f.name, f.host, f.port, f.credential_id, f.kind);
         connection.verbosity = f.verbosity;
         connection.extra_args = f.extra_args;
         connection.login_command = normalize_optional_text(f.login_command);
@@ -151,7 +150,10 @@ fn update_connection_sync(input: UpdateConnectionInput) -> Result<Connection, St
         // doesn't become an invisible orphan.
         if let Some(ref old_id) = old_cred_id {
             if f.credential_id.as_deref() != Some(old_id.as_str()) {
-                let is_private = data.credentials.iter().any(|c| c.id == *old_id && c.is_private);
+                let is_private = data
+                    .credentials
+                    .iter()
+                    .any(|c| c.id == *old_id && c.is_private);
                 if is_private {
                     let still_referenced = data
                         .connections
@@ -186,12 +188,20 @@ pub async fn delete_connection(id: String) -> Result<(), String> {
 #[tauri::command]
 pub fn get_orphan_private_credential(conn_id: String) -> Result<Option<String>, String> {
     let data = load_data()?;
-    let conn = data.connections.iter().find(|c| c.id == conn_id)
+    let conn = data
+        .connections
+        .iter()
+        .find(|c| c.id == conn_id)
         .ok_or_else(|| "Connection not found".to_string())?;
     if let Some(ref cred_id) = conn.credential_id {
-        let is_private = data.credentials.iter().any(|c| c.id == *cred_id && c.is_private);
+        let is_private = data
+            .credentials
+            .iter()
+            .any(|c| c.id == *cred_id && c.is_private);
         if is_private {
-            let other_refs = data.connections.iter()
+            let other_refs = data
+                .connections
+                .iter()
                 .filter(|c| c.id != conn_id && c.credential_id.as_deref() == Some(cred_id))
                 .count();
             if other_refs == 0 {
@@ -233,7 +243,10 @@ fn clone_connection_sync(input: CloneConnectionInput) -> Result<Connection, Stri
 
     let result = with_data_mut(|data| {
         if data.connections.iter().any(|c| c.name == input.new_name) {
-            return Err(format!("A connection named '{}' already exists", input.new_name));
+            return Err(format!(
+                "A connection named '{}' already exists",
+                input.new_name
+            ));
         }
         let original = data
             .connections
@@ -264,8 +277,10 @@ fn clone_connection_sync(input: CloneConnectionInput) -> Result<Connection, Stri
                             let new_cred_id = Uuid::new_v4().to_string();
                             // Copy every secret in one read and one write.
                             let secrets = crate::keychain::snapshot_for_credential(orig_cred_id)?;
-                            if matches!(orig_cred.kind, crate::models::CredentialKind::Password { .. })
-                                && secrets.password.is_none()
+                            if matches!(
+                                orig_cred.kind,
+                                crate::models::CredentialKind::Password { .. }
+                            ) && secrets.password.is_none()
                             {
                                 return Err("Failed to read password from secrets store while duplicating private credential".to_string());
                             }
@@ -278,8 +293,7 @@ fn clone_connection_sync(input: CloneConnectionInput) -> Result<Connection, Stri
                                     }
                                 }
                                 crate::models::CredentialKind::SshKey {
-                                    private_key_path,
-                                    ..
+                                    private_key_path, ..
                                 } => crate::models::CredentialKind::SshKey {
                                     private_key_path: private_key_path.clone(),
                                     private_key: None,
@@ -385,7 +399,10 @@ mod tests {
             "us-east".to_string(),
         ];
         let out = normalize_tags(tags);
-        assert_eq!(out, vec!["Prod".to_string(), "DB".to_string(), "us-east".to_string()]);
+        assert_eq!(
+            out,
+            vec!["Prod".to_string(), "DB".to_string(), "us-east".to_string()]
+        );
     }
 
     #[test]
@@ -446,7 +463,10 @@ mod tests {
     #[test]
     fn test_normalize_optional_text_drops_blank_values() {
         assert_eq!(normalize_optional_text(Some("   ".into())), None);
-        assert_eq!(normalize_optional_text(Some(" cmd ".into())), Some("cmd".into()));
+        assert_eq!(
+            normalize_optional_text(Some(" cmd ".into())),
+            Some("cmd".into())
+        );
     }
 
     #[test]

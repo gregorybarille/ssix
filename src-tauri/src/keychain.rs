@@ -35,11 +35,19 @@ fn load_secrets() -> Result<HashMap<String, String>, String> {
         return Ok(HashMap::new());
     }
     let content = fs::read_to_string(&path).map_err(|e| {
-        crate::logs::log_local("error", "secrets", format!("failed to read secrets file: {}", e));
+        crate::logs::log_local(
+            "error",
+            "secrets",
+            format!("failed to read secrets file: {}", e),
+        );
         format!("failed to read secrets file: {}", e)
     })?;
     serde_json::from_str(&content).map_err(|e| {
-        crate::logs::log_local("error", "secrets", format!("failed to parse secrets file: {}", e));
+        crate::logs::log_local(
+            "error",
+            "secrets",
+            format!("failed to parse secrets file: {}", e),
+        );
         format!(
             "failed to parse secrets file (refusing to save and overwrite existing entries): {}",
             e
@@ -123,7 +131,10 @@ pub fn snapshot_for_credential(credential_id: &str) -> Result<CredentialSecrets,
 /// Replace every secret for a credential in one atomic write: entries not
 /// present in `secrets` are removed. Used for updates (so the old and new
 /// values never coexist on disk) and for rolling back a failed save.
-pub fn replace_for_credential(credential_id: &str, secrets: &CredentialSecrets) -> Result<(), String> {
+pub fn replace_for_credential(
+    credential_id: &str,
+    secrets: &CredentialSecrets,
+) -> Result<(), String> {
     let entries = [
         (password_key(credential_id), secrets.password.clone()),
         (passphrase_key(credential_id), secrets.passphrase.clone()),
@@ -208,11 +219,8 @@ mod tests {
 
     fn tmp_dir() -> PathBuf {
         let n = TMP_COUNTER.fetch_add(1, Ordering::SeqCst);
-        let p = std::env::temp_dir().join(format!(
-            "ssix-keychain-test-{}-{}",
-            std::process::id(),
-            n
-        ));
+        let p =
+            std::env::temp_dir().join(format!("ssix-keychain-test-{}-{}", std::process::id(), n));
         let _ = fs::remove_dir_all(&p);
         fs::create_dir_all(&p).unwrap();
         p
@@ -356,13 +364,19 @@ mod tests {
     fn delete_all_removes_every_entry() {
         with_isolated_data_dir(|| {
             let id = "ssix-test-delete-all-da7e3f8c";
-            store(id, CredentialSecrets {
-                password: Some("pw".into()),
-                passphrase: Some("pp".into()),
-                private_key: Some("key-data".into()),
-            });
+            store(
+                id,
+                CredentialSecrets {
+                    password: Some("pw".into()),
+                    passphrase: Some("pp".into()),
+                    private_key: Some("key-data".into()),
+                },
+            );
             delete_all_for_credential(id);
-            assert_eq!(snapshot_for_credential(id).unwrap(), CredentialSecrets::default());
+            assert_eq!(
+                snapshot_for_credential(id).unwrap(),
+                CredentialSecrets::default()
+            );
         });
     }
 
@@ -370,11 +384,14 @@ mod tests {
     fn replace_drops_empty_values() {
         with_isolated_data_dir(|| {
             let id = "ssix-test-empty-da7e3f8c";
-            store(id, CredentialSecrets {
-                password: Some(String::new()),
-                passphrase: None,
-                private_key: Some("k".into()),
-            });
+            store(
+                id,
+                CredentialSecrets {
+                    password: Some(String::new()),
+                    passphrase: None,
+                    private_key: Some("k".into()),
+                },
+            );
             let snap = snapshot_for_credential(id).unwrap();
             assert!(snap.password.is_none(), "empty password must not be stored");
             assert_eq!(snap.private_key.as_deref(), Some("k"));
@@ -385,10 +402,13 @@ mod tests {
     fn enrich_credential_loads_inline_private_key_from_secrets() {
         with_isolated_data_dir(|| {
             let id = "ssix-test-enrich-pk-da7e3f8c";
-            store(id, CredentialSecrets {
-                private_key: Some("SECRET-KEY-BODY".into()),
-                ..CredentialSecrets::default()
-            });
+            store(
+                id,
+                CredentialSecrets {
+                    private_key: Some("SECRET-KEY-BODY".into()),
+                    ..CredentialSecrets::default()
+                },
+            );
             let mut cred = Credential {
                 id: id.to_string(),
                 name: "k".to_string(),
@@ -414,11 +434,14 @@ mod tests {
     fn replace_for_credential_swaps_all_entries_atomically_and_snapshot_reads_them() {
         with_isolated_data_dir(|| {
             let id = "ssix-test-replace-da7e3f8c";
-            store(id, CredentialSecrets {
-                password: Some("old-pw".into()),
-                passphrase: Some("old-pp".into()),
-                private_key: None,
-            });
+            store(
+                id,
+                CredentialSecrets {
+                    password: Some("old-pw".into()),
+                    passphrase: Some("old-pp".into()),
+                    private_key: None,
+                },
+            );
 
             let next = CredentialSecrets {
                 password: None,
@@ -431,11 +454,15 @@ mod tests {
             assert_eq!(snap, next, "old password gone, new entries present");
 
             // Restoring the previous snapshot is the rollback path.
-            replace_for_credential(id, &CredentialSecrets {
-                password: Some("old-pw".into()),
-                passphrase: Some("old-pp".into()),
-                private_key: None,
-            }).unwrap();
+            replace_for_credential(
+                id,
+                &CredentialSecrets {
+                    password: Some("old-pw".into()),
+                    passphrase: Some("old-pp".into()),
+                    private_key: None,
+                },
+            )
+            .unwrap();
             let restored = snapshot_for_credential(id).unwrap();
             assert_eq!(restored.password.as_deref(), Some("old-pw"));
             assert!(restored.private_key.is_none());

@@ -58,7 +58,13 @@ pub struct GeneratedKey {
 fn sanitise_name(input: &str) -> String {
     let cleaned: String = input
         .chars()
-        .map(|c| if c.is_ascii_alphanumeric() || c == '-' || c == '_' { c } else { '_' })
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '-' || c == '_' {
+                c
+            } else {
+                '_'
+            }
+        })
         .collect();
     let trimmed = cleaned.trim_matches('_').to_string();
     if trimmed.is_empty() {
@@ -89,11 +95,7 @@ fn default_key_path(name_hint: Option<&str>) -> Result<PathBuf, String> {
     Ok(candidate)
 }
 
-fn write_key_files(
-    path: &Path,
-    private_pem: &str,
-    public_line: &str,
-) -> Result<(), String> {
+fn write_key_files(path: &Path, private_pem: &str, public_line: &str) -> Result<(), String> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).map_err(|e| format!("create dir: {}", e))?;
         #[cfg(unix)]
@@ -182,7 +184,9 @@ fn generate_ssh_key_sync(input: GenerateSshKeyInput) -> Result<GeneratedKey, Str
 }
 
 fn hostname() -> Option<String> {
-    std::env::var("HOSTNAME").ok().or_else(|| std::env::var("HOST").ok())
+    std::env::var("HOSTNAME")
+        .ok()
+        .or_else(|| std::env::var("HOST").ok())
 }
 
 // Audit-4 Phase 4: removed `InstallPublicKeyInput` and the
@@ -394,7 +398,6 @@ fn public_key_from_private_text(
         .map_err(|e| format!("Failed to serialise public key: {}", e))
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -514,10 +517,7 @@ mod tests {
 
     #[test]
     fn generate_ssh_key_custom_path_writes_files_and_refuses_overwrite() {
-        let dir = std::env::temp_dir().join(format!(
-            "ssix-keygen-{}",
-            uuid::Uuid::new_v4()
-        ));
+        let dir = std::env::temp_dir().join(format!("ssix-keygen-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("id_test");
         let out = generate_ssh_key_sync(GenerateSshKeyInput {
@@ -529,7 +529,10 @@ mod tests {
             comment: None,
         })
         .unwrap();
-        assert_eq!(out.private_key_path.as_deref(), Some(path.to_string_lossy().as_ref()));
+        assert_eq!(
+            out.private_key_path.as_deref(),
+            Some(path.to_string_lossy().as_ref())
+        );
         assert!(path.exists());
         assert!(path.with_extension("pub").exists());
         #[cfg(unix)]

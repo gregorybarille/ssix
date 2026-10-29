@@ -158,7 +158,11 @@ pub(crate) fn forget_in(host: &str, port: u16, path: &Path) -> Result<bool, Stri
     }
     if removed {
         persist(&hosts, path)?;
-        crate::logs::log_local("warn", "ssh", format!("forgot host key for {}:{}", host, port));
+        crate::logs::log_local(
+            "warn",
+            "ssh",
+            format!("forgot host key for {}:{}", host, port),
+        );
     }
     Ok(removed)
 }
@@ -199,7 +203,11 @@ mod tests {
         check(&path, "example.com", 22, b"key-one").unwrap();
         assert!(path.exists(), "known_hosts must be created on first use");
         let content = fs::read_to_string(&path).unwrap();
-        assert!(content.starts_with("example.com ssh-ed25519 "), "got: {}", content);
+        assert!(
+            content.starts_with("example.com ssh-ed25519 "),
+            "got: {}",
+            content
+        );
         check(&path, "example.com", 22, b"key-one").unwrap();
     }
 
@@ -220,7 +228,11 @@ mod tests {
         let path = temp_path("port");
         check(&path, "example.com", 2222, b"key-one").unwrap();
         let content = fs::read_to_string(&path).unwrap();
-        assert!(content.starts_with("[example.com]:2222 "), "got: {}", content);
+        assert!(
+            content.starts_with("[example.com]:2222 "),
+            "got: {}",
+            content
+        );
         // Same host on another port is a different entry, not a mismatch.
         check(&path, "example.com", 22, b"key-two").unwrap();
         assert_eq!(fs::read_to_string(&path).unwrap().lines().count(), 2);
@@ -232,7 +244,10 @@ mod tests {
         check(&path, "a.example", 22, b"key-a").unwrap();
         check(&path, "b.example", 22, b"key-b").unwrap();
         assert!(forget_in("a.example", 22, &path).unwrap());
-        assert!(!forget_in("a.example", 22, &path).unwrap(), "second forget is a no-op");
+        assert!(
+            !forget_in("a.example", 22, &path).unwrap(),
+            "second forget is a no-op"
+        );
         let content = fs::read_to_string(&path).unwrap();
         assert_eq!(content.lines().count(), 1);
         assert!(content.starts_with("b.example "));

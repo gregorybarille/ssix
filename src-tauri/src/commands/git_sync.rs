@@ -265,7 +265,10 @@ fn git_sync_run_sync() -> Result<GitSyncRunResult, String> {
     if behind_before_pull > 0 {
         let pull = git(&repo_path, &["pull", "--ff-only", &remote, &branch])?;
         append_output(&mut combined_output, &pull);
-        steps.push(format!("Pulled {} commit(s) from {}/{}", behind_before_pull, remote, branch));
+        steps.push(format!(
+            "Pulled {} commit(s) from {}/{}",
+            behind_before_pull, remote, branch
+        ));
     }
 
     let status = git(&repo_path, &["status", "--short", EXPORT_DIR])?;
@@ -287,7 +290,10 @@ fn git_sync_run_sync() -> Result<GitSyncRunResult, String> {
     if ahead_after_commit > 0 {
         let push = git(&repo_path, &["push", &remote, &format!("HEAD:{}", branch)])?;
         append_output(&mut combined_output, &push);
-        steps.push(format!("Pushed {} commit(s) to {}/{}", ahead_after_commit, remote, branch));
+        steps.push(format!(
+            "Pushed {} commit(s) to {}/{}",
+            ahead_after_commit, remote, branch
+        ));
     } else {
         steps.push("Nothing to push".to_string());
     }
@@ -332,10 +338,16 @@ fn require_configured_repo() -> Result<(crate::models::AppData, PathBuf), String
 
 fn ensure_repo_exists(repo_path: &Path) -> Result<(), String> {
     if !repo_path.exists() {
-        return Err(format!("Git sync repository does not exist: {}", repo_path.display()));
+        return Err(format!(
+            "Git sync repository does not exist: {}",
+            repo_path.display()
+        ));
     }
     if !repo_path.join(".git").exists() {
-        return Err(format!("Directory is not a git repository: {}", repo_path.display()));
+        return Err(format!(
+            "Directory is not a git repository: {}",
+            repo_path.display()
+        ));
     }
     Ok(())
 }
@@ -363,12 +375,24 @@ fn current_branch(repo_path: &Path) -> Result<Option<String>, String> {
     }
 }
 
-fn ahead_behind(repo_path: &Path, remote: &str, branch: Option<&str>) -> Result<(u32, u32), String> {
+fn ahead_behind(
+    repo_path: &Path,
+    remote: &str,
+    branch: Option<&str>,
+) -> Result<(u32, u32), String> {
     let Some(branch) = branch else {
         return Ok((0, 0));
     };
     let remote_ref = format!("{}/{}", remote, branch);
-    let result = git(repo_path, &["rev-list", "--left-right", "--count", &format!("HEAD...{}", remote_ref)])?;
+    let result = git(
+        repo_path,
+        &[
+            "rev-list",
+            "--left-right",
+            "--count",
+            &format!("HEAD...{}", remote_ref),
+        ],
+    )?;
     let mut parts = result.stdout.split_whitespace();
     let ahead = parts.next().and_then(|n| n.parse().ok()).unwrap_or(0);
     let behind = parts.next().and_then(|n| n.parse().ok()).unwrap_or(0);
@@ -449,7 +473,11 @@ fn git(repo_path: &Path, args: &[&str]) -> Result<GitOutput, String> {
     let stderr = String::from_utf8_lossy(&output.stderr).to_string();
     let status = output.status.code().unwrap_or(-1);
     if output.status.success() {
-        Ok(GitOutput { stdout, stderr, status })
+        Ok(GitOutput {
+            stdout,
+            stderr,
+            status,
+        })
     } else {
         Err(format!("git {} failed: {}", args.join(" "), stderr.trim()))
     }
@@ -537,13 +565,22 @@ mod tests {
 
     #[test]
     fn test_parse_status_path_extracts_relative_path() {
-        assert_eq!(parse_status_path(" M .ssix-sync/data.json"), Some(".ssix-sync/data.json".into()));
+        assert_eq!(
+            parse_status_path(" M .ssix-sync/data.json"),
+            Some(".ssix-sync/data.json".into())
+        );
     }
 
     #[test]
     fn test_render_summary_mentions_counts() {
         let mut data = AppData::default();
-        data.connections.push(Connection::new("prod".into(), "host".into(), 22, None, ConnectionKind::Direct));
+        data.connections.push(Connection::new(
+            "prod".into(),
+            "host".into(),
+            22,
+            None,
+            ConnectionKind::Direct,
+        ));
         let summary = render_summary(&data);
         assert!(summary.contains("Connections: 1"));
     }
@@ -554,7 +591,10 @@ mod tests {
             git_sync_repo_path: Some(" /tmp/repo ".into()),
             ..AppSettings::default()
         };
-        assert_eq!(configured_repo_path(&settings), Some(PathBuf::from("/tmp/repo")));
+        assert_eq!(
+            configured_repo_path(&settings),
+            Some(PathBuf::from("/tmp/repo"))
+        );
     }
 
     #[test]
@@ -588,7 +628,11 @@ mod tests {
     #[test]
     fn validate_git_remote_rejects_options_and_whitespace() {
         for bad in ["", "   ", "-f", "--upload-pack=evil", "a b", "tab\there"] {
-            assert!(validate_git_remote(bad).is_err(), "{:?} should be rejected", bad);
+            assert!(
+                validate_git_remote(bad).is_err(),
+                "{:?} should be rejected",
+                bad
+            );
         }
     }
 
@@ -614,7 +658,11 @@ mod tests {
             "star*",
             "tab\there",
         ] {
-            assert!(validate_git_branch(bad).is_err(), "{:?} should be rejected", bad);
+            assert!(
+                validate_git_branch(bad).is_err(),
+                "{:?} should be rejected",
+                bad
+            );
         }
     }
 }

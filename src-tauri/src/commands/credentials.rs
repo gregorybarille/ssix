@@ -133,7 +133,10 @@ fn add_credential_sync(input: AddCredentialInput) -> Result<Credential, String> 
         // Private credentials skip the unique-name check since they use
         // auto-generated UUID-based names and are never shown in the UI list.
         if !input.is_private && data.credentials.iter().any(|c| c.name == input.name) {
-            return Err(format!("A credential named '{}' already exists", input.name));
+            return Err(format!(
+                "A credential named '{}' already exists",
+                input.name
+            ));
         }
         keychain::replace_for_credential(&cred_id, &secrets)?;
 
@@ -178,7 +181,10 @@ fn update_credential_sync(input: UpdateCredentialInput) -> Result<Credential, St
             .iter()
             .any(|c| c.name == input.name && c.id != input.id)
         {
-            return Err(format!("A credential named '{}' already exists", input.name));
+            return Err(format!(
+                "A credential named '{}' already exists",
+                input.name
+            ));
         }
         let idx = data
             .credentials
@@ -223,7 +229,9 @@ mod tests {
 
     #[test]
     fn test_credential_new() {
-        let kind = CredentialKind::Password { password: "secret".to_string() };
+        let kind = CredentialKind::Password {
+            password: "secret".to_string(),
+        };
         let cred = Credential::new("test".to_string(), "user".to_string(), kind);
         assert_eq!(cred.name, "test");
         assert_eq!(cred.username, "user");
@@ -243,7 +251,9 @@ mod tests {
 
     #[test]
     fn test_credential_new_is_not_private_by_default() {
-        let kind = CredentialKind::Password { password: "pw".to_string() };
+        let kind = CredentialKind::Password {
+            password: "pw".to_string(),
+        };
         let cred = Credential::new("test".to_string(), "user".to_string(), kind);
         assert!(!cred.is_private);
     }
@@ -298,16 +308,23 @@ mod tests {
             }
             _ => panic!("unexpected kind"),
         }
-        assert_eq!(secrets.private_key.as_deref(), Some("INLINE-PRIVATE-KEY-CONTENT"));
+        assert_eq!(
+            secrets.private_key.as_deref(),
+            Some("INLINE-PRIVATE-KEY-CONTENT")
+        );
         assert_eq!(secrets.passphrase.as_deref(), Some("pp"));
         assert!(secrets.password.is_none());
     }
 
     #[test]
     fn test_split_secrets_password_moves_to_secrets() {
-        let kind = CredentialKind::Password { password: "hunter2".into() };
+        let kind = CredentialKind::Password {
+            password: "hunter2".into(),
+        };
         let (sanitized, secrets) = super::split_secrets(&kind).unwrap();
-        assert!(matches!(sanitized, CredentialKind::Password { ref password } if password.is_empty()));
+        assert!(
+            matches!(sanitized, CredentialKind::Password { ref password } if password.is_empty())
+        );
         assert_eq!(secrets.password.as_deref(), Some("hunter2"));
     }
 

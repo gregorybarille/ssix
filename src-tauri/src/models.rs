@@ -153,7 +153,13 @@ pub struct Connection {
 }
 
 impl Connection {
-    pub fn new(name: String, host: String, port: u16, credential_id: Option<String>, kind: ConnectionKind) -> Self {
+    pub fn new(
+        name: String,
+        host: String,
+        port: u16,
+        credential_id: Option<String>,
+        kind: ConnectionKind,
+    ) -> Self {
         Self {
             id: Uuid::new_v4().to_string(),
             name,
@@ -212,13 +218,27 @@ pub struct AppSettings {
     pub git_sync_branch: Option<String>,
 }
 
-fn default_font_size() -> u8 { 14 }
-fn default_font_family() -> String { "JetBrains Mono".to_string() }
-fn default_color_scheme() -> String { "blue".to_string() }
-fn default_theme() -> String { "dark".to_string() }
-fn default_layout() -> String { "list".to_string() }
-fn default_open_mode() -> String { "tab".to_string() }
-fn default_git_remote() -> String { "origin".to_string() }
+fn default_font_size() -> u8 {
+    14
+}
+fn default_font_family() -> String {
+    "JetBrains Mono".to_string()
+}
+fn default_color_scheme() -> String {
+    "blue".to_string()
+}
+fn default_theme() -> String {
+    "dark".to_string()
+}
+fn default_layout() -> String {
+    "list".to_string()
+}
+fn default_open_mode() -> String {
+    "tab".to_string()
+}
+fn default_git_remote() -> String {
+    "origin".to_string()
+}
 
 impl Default for AppSettings {
     fn default() -> Self {
@@ -554,7 +574,8 @@ mod tests {
     #[test]
     fn test_ssh_key_legacy_path_only_deserializes() {
         // Legacy JSON: SshKey with private_key_path as required string and no private_key field.
-        let json = r#"{"type":"ssh_key","private_key_path":"/home/u/.ssh/id_rsa","passphrase":null}"#;
+        let json =
+            r#"{"type":"ssh_key","private_key_path":"/home/u/.ssh/id_rsa","passphrase":null}"#;
         let kind: CredentialKind = serde_json::from_str(json).unwrap();
         match kind {
             CredentialKind::SshKey {
@@ -608,9 +629,7 @@ mod tests {
 
     #[test]
     fn test_connection_with_tags_and_color_roundtrip() {
-        let mut c = Connection::new(
-            "prod".into(), "h".into(), 22, None, ConnectionKind::Direct,
-        );
+        let mut c = Connection::new("prod".into(), "h".into(), 22, None, ConnectionKind::Direct);
         c.tags = vec!["prod".into(), "us-east".into()];
         c.color = Some("violet".into());
         let json = serde_json::to_string(&c).unwrap();
@@ -623,9 +642,7 @@ mod tests {
 
     #[test]
     fn test_connection_color_omitted_when_none() {
-        let c = Connection::new(
-            "prod".into(), "h".into(), 22, None, ConnectionKind::Direct,
-        );
+        let c = Connection::new("prod".into(), "h".into(), 22, None, ConnectionKind::Direct);
         let json = serde_json::to_string(&c).unwrap();
         assert!(!json.contains("color"));
     }
@@ -641,14 +658,19 @@ mod tests {
         assert_eq!(s.default_open_mode, "tab");
         assert_eq!(s.git_sync_remote, "origin");
         assert!(s.git_sync_repo_path.is_none());
-        assert!(!s.auto_copy_selection, "legacy data must default to opt-in auto-copy=false");
+        assert!(
+            !s.auto_copy_selection,
+            "legacy data must default to opt-in auto-copy=false"
+        );
     }
 
     #[test]
     fn test_app_settings_default_auto_copy_selection_is_false() {
         let s = AppSettings::default();
-        assert!(!s.auto_copy_selection,
-            "default must be off — selecting text MUST NOT silently overwrite the clipboard");
+        assert!(
+            !s.auto_copy_selection,
+            "default must be off — selecting text MUST NOT silently overwrite the clipboard"
+        );
     }
 
     #[test]
@@ -744,10 +766,7 @@ mod tests {
     fn test_app_data_roundtrip_preserves_schema_version() {
         let data = AppData::default();
         let json = serde_json::to_string(&data).unwrap();
-        assert!(json.contains(&format!(
-            r#""schema_version":{}"#,
-            CURRENT_SCHEMA_VERSION
-        )));
+        assert!(json.contains(&format!(r#""schema_version":{}"#, CURRENT_SCHEMA_VERSION)));
         let back: AppData = serde_json::from_str(&json).unwrap();
         assert_eq!(back.schema_version, CURRENT_SCHEMA_VERSION);
     }

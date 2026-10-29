@@ -121,7 +121,9 @@ impl SessionContext {
     }
 
     fn emit_tunnel_status(&self, status: TunnelStatus) {
-        let _ = self.app.emit(&tunnel_status_event(&self.session_id), status);
+        let _ = self
+            .app
+            .emit(&tunnel_status_event(&self.session_id), status);
     }
 
     /// Put the session in the registry before its worker starts, so a
@@ -521,7 +523,10 @@ fn open_shell_over_stream(
     Ok((session, channel))
 }
 
-fn open_shell(endpoint: &Endpoint, opts: &ShellOptions) -> Result<(Session, ssh2::Channel), String> {
+fn open_shell(
+    endpoint: &Endpoint,
+    opts: &ShellOptions,
+) -> Result<(Session, ssh2::Channel), String> {
     let tcp = connect_tcp(&endpoint.host, endpoint.port)?;
     open_shell_over_stream(tcp, endpoint, opts)
 }
@@ -543,7 +548,9 @@ pub fn start_ssh_session(
         "ssh",
         format!(
             "session {} opened to {}@{}",
-            ctx.session_id, target.username, target.addr()
+            ctx.session_id,
+            target.username,
+            target.addr()
         ),
     );
     let banner = if opts.verbosity >= 1 {
@@ -570,7 +577,11 @@ fn spawn_shell_worker(
     thread::spawn(move || {
         ctx.send_output(banner.as_bytes());
         if let Err(e) = run_io_loop(&session, channel, &ctx, control) {
-            ctx.log("error", source, format!("session {}: {}", ctx.session_id, e));
+            ctx.log(
+                "error",
+                source,
+                format!("session {}: {}", ctx.session_id, e),
+            );
             ctx.emit_error(e);
         }
         ctx.finish();
@@ -979,13 +990,14 @@ pub fn start_port_forward(
             let active = Arc::clone(&active);
             let status = status.clone();
             thread::spawn(move || {
-                let channel = match open_direct_tcpip(&session, &destination_host, destination_port, peer) {
-                    Ok(channel) => channel,
-                    Err(e) => {
-                        status("error", Some(format!("channel_direct_tcpip failed: {}", e)));
-                        return;
-                    }
-                };
+                let channel =
+                    match open_direct_tcpip(&session, &destination_host, destination_port, peer) {
+                        Ok(channel) => channel,
+                        Err(e) => {
+                            status("error", Some(format!("channel_direct_tcpip failed: {}", e)));
+                            return;
+                        }
+                    };
                 active.fetch_add(1, Ordering::SeqCst);
                 status("client_connected", Some(format!("from {}", peer)));
                 forward_bidi(local_stream, channel, &session, &active);
@@ -1065,7 +1077,9 @@ mod tests {
         let (handle, control) = control_channel().unwrap();
 
         handle.send(SessionMsg::Write(b"hello".to_vec())).unwrap();
-        handle.send(SessionMsg::Resize { cols: 80, rows: 24 }).unwrap();
+        handle
+            .send(SessionMsg::Resize { cols: 80, rows: 24 })
+            .unwrap();
         handle.send(SessionMsg::Disconnect).unwrap();
 
         match control.rx.recv().unwrap() {
@@ -1093,7 +1107,10 @@ mod tests {
     fn dropped_handle_is_seen_as_disconnected() {
         let (handle, control) = control_channel().unwrap();
         drop(handle);
-        assert!(matches!(control.rx.try_recv(), Err(TryRecvError::Disconnected)));
+        assert!(matches!(
+            control.rx.try_recv(),
+            Err(TryRecvError::Disconnected)
+        ));
     }
 
     /// A queued message must wake a worker parked in `wait_readable`
@@ -1119,7 +1136,10 @@ mod tests {
         });
         let start = Instant::now();
         wake::wait_readable(&fds, Duration::from_secs(5));
-        assert!(start.elapsed() < Duration::from_secs(2), "wait did not wake on input");
+        assert!(
+            start.elapsed() < Duration::from_secs(2),
+            "wait did not wake on input"
+        );
         let _handle = waker.join().unwrap();
 
         control.wake.drain();
@@ -1151,7 +1171,10 @@ mod tests {
                 Ok(())
             }
         }
-        let mut w = Trickle { out: Vec::new(), calls: 0 };
+        let mut w = Trickle {
+            out: Vec::new(),
+            calls: 0,
+        };
         write_all_nonblocking(&mut w, b"hello world", None).unwrap();
         assert_eq!(w.out, b"hello world");
     }

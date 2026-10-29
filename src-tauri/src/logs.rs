@@ -8,8 +8,8 @@ use std::collections::VecDeque;
 use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use std::sync::LazyLock;
 use serde::{Deserialize, Serialize};
+use std::sync::LazyLock;
 use tauri::{AppHandle, Emitter};
 
 pub const MAX_ENTRIES: usize = 1000;

@@ -258,12 +258,18 @@ fn upload_bytes_sftp(
         .session
         .sftp()
         .map_err(|e| format!("Failed to open SFTP session: {}", e))?;
-    let mut remote = sftp
-        .create(Path::new(remote_path))
-        .map_err(|e| format!("SFTP upload to {} failed ({}): {}", remote_path, ssh.destination_label, e))?;
-    remote
-        .write_all(bytes)
-        .map_err(|e| format!("SFTP upload to {} failed while writing ({}): {}", remote_path, ssh.destination_label, e))?;
+    let mut remote = sftp.create(Path::new(remote_path)).map_err(|e| {
+        format!(
+            "SFTP upload to {} failed ({}): {}",
+            remote_path, ssh.destination_label, e
+        )
+    })?;
+    remote.write_all(bytes).map_err(|e| {
+        format!(
+            "SFTP upload to {} failed while writing ({}): {}",
+            remote_path, ssh.destination_label, e
+        )
+    })?;
     // ssh2's File closes on Drop, but explicit close surfaces protocol
     // errors (full disk, permission denied on rename, etc).
     drop(remote);
@@ -278,30 +284,53 @@ fn upload_bytes_scp(
     let mut remote = ssh
         .session
         .scp_send(Path::new(remote_path), 0o644, bytes.len() as u64, None)
-        .map_err(|e| format!("SCP upload to {} failed ({}): {}", remote_path, ssh.destination_label, e))?;
-    remote
-        .write_all(bytes)
-        .map_err(|e| format!("SCP upload to {} failed while writing ({}): {}", remote_path, ssh.destination_label, e))?;
+        .map_err(|e| {
+            format!(
+                "SCP upload to {} failed ({}): {}",
+                remote_path, ssh.destination_label, e
+            )
+        })?;
+    remote.write_all(bytes).map_err(|e| {
+        format!(
+            "SCP upload to {} failed while writing ({}): {}",
+            remote_path, ssh.destination_label, e
+        )
+    })?;
     // Flush the SCP protocol exchange. If the remote `scp` helper is missing
     // or exits non-zero, libssh2 surfaces it during the close/wait_close
     // sequence below (or via a non-zero channel exit status). Swallowing
     // these previously caused phantom "Transferred N bytes" successes when
     // the file never landed on disk.
-    remote
-        .send_eof()
-        .map_err(|e| format!("SCP upload to {} failed during send_eof ({}): {}", remote_path, ssh.destination_label, e))?;
-    remote
-        .wait_eof()
-        .map_err(|e| format!("SCP upload to {} failed during wait_eof ({}): {}", remote_path, ssh.destination_label, e))?;
-    remote
-        .close()
-        .map_err(|e| format!("SCP upload to {} failed during close ({}): {}", remote_path, ssh.destination_label, e))?;
-    remote
-        .wait_close()
-        .map_err(|e| format!("SCP upload to {} failed during wait_close ({}): {}", remote_path, ssh.destination_label, e))?;
-    let exit = remote
-        .exit_status()
-        .map_err(|e| format!("SCP upload to {} failed reading exit status ({}): {}", remote_path, ssh.destination_label, e))?;
+    remote.send_eof().map_err(|e| {
+        format!(
+            "SCP upload to {} failed during send_eof ({}): {}",
+            remote_path, ssh.destination_label, e
+        )
+    })?;
+    remote.wait_eof().map_err(|e| {
+        format!(
+            "SCP upload to {} failed during wait_eof ({}): {}",
+            remote_path, ssh.destination_label, e
+        )
+    })?;
+    remote.close().map_err(|e| {
+        format!(
+            "SCP upload to {} failed during close ({}): {}",
+            remote_path, ssh.destination_label, e
+        )
+    })?;
+    remote.wait_close().map_err(|e| {
+        format!(
+            "SCP upload to {} failed during wait_close ({}): {}",
+            remote_path, ssh.destination_label, e
+        )
+    })?;
+    let exit = remote.exit_status().map_err(|e| {
+        format!(
+            "SCP upload to {} failed reading exit status ({}): {}",
+            remote_path, ssh.destination_label, e
+        )
+    })?;
     if exit != 0 {
         return Err(format!(
             "SCP upload to {} failed ({}): remote scp exited with status {} (is the `scp` binary installed on the remote host?)",
@@ -311,20 +340,16 @@ fn upload_bytes_scp(
     Ok(remote_path.to_string())
 }
 
-fn download_bytes(
-    ssh: &mut ConnectedSession,
-    remote_path: &str,
-) -> Result<(Vec<u8>, u64), String> {
+fn download_bytes(ssh: &mut ConnectedSession, remote_path: &str) -> Result<(Vec<u8>, u64), String> {
     match download_bytes_sftp(ssh, remote_path) {
         Ok(result) => Ok(result),
-        Err(sftp_err) if is_sftp_unavailable(&sftp_err) => {
-            download_bytes_scp(ssh, remote_path).map_err(|scp_err| {
+        Err(sftp_err) if is_sftp_unavailable(&sftp_err) => download_bytes_scp(ssh, remote_path)
+            .map_err(|scp_err| {
                 format!(
                     "Download from {} failed via both transports ({}). SFTP: {}. SCP: {}",
                     remote_path, ssh.destination_label, sftp_err, scp_err
                 )
-            })
-        }
+            }),
         Err(e) => Err(e),
     }
 }
@@ -337,16 +362,25 @@ fn download_bytes_sftp(
         .session
         .sftp()
         .map_err(|e| format!("Failed to open SFTP session: {}", e))?;
-    let stat = sftp
-        .stat(Path::new(remote_path))
-        .map_err(|e| format!("SFTP download from {} failed to stat ({}): {}", remote_path, ssh.destination_label, e))?;
-    let mut remote = sftp
-        .open(Path::new(remote_path))
-        .map_err(|e| format!("SFTP download from {} failed to open ({}): {}", remote_path, ssh.destination_label, e))?;
+    let stat = sftp.stat(Path::new(remote_path)).map_err(|e| {
+        format!(
+            "SFTP download from {} failed to stat ({}): {}",
+            remote_path, ssh.destination_label, e
+        )
+    })?;
+    let mut remote = sftp.open(Path::new(remote_path)).map_err(|e| {
+        format!(
+            "SFTP download from {} failed to open ({}): {}",
+            remote_path, ssh.destination_label, e
+        )
+    })?;
     let mut bytes = Vec::new();
-    remote
-        .read_to_end(&mut bytes)
-        .map_err(|e| format!("SFTP download from {} failed while reading ({}): {}", remote_path, ssh.destination_label, e))?;
+    remote.read_to_end(&mut bytes).map_err(|e| {
+        format!(
+            "SFTP download from {} failed while reading ({}): {}",
+            remote_path, ssh.destination_label, e
+        )
+    })?;
     let size = stat.size.unwrap_or(bytes.len() as u64);
     Ok((bytes, size))
 }
@@ -355,29 +389,49 @@ fn download_bytes_scp(
     ssh: &mut ConnectedSession,
     remote_path: &str,
 ) -> Result<(Vec<u8>, u64), String> {
-    let (mut remote, stat) = ssh
-        .session
-        .scp_recv(Path::new(remote_path))
-        .map_err(|e| format!("SCP download from {} failed ({}): {}", remote_path, ssh.destination_label, e))?;
+    let (mut remote, stat) = ssh.session.scp_recv(Path::new(remote_path)).map_err(|e| {
+        format!(
+            "SCP download from {} failed ({}): {}",
+            remote_path, ssh.destination_label, e
+        )
+    })?;
     let mut bytes = Vec::new();
-    remote
-        .read_to_end(&mut bytes)
-        .map_err(|e| format!("SCP download from {} failed while reading ({}): {}", remote_path, ssh.destination_label, e))?;
-    remote
-        .send_eof()
-        .map_err(|e| format!("SCP download from {} failed during send_eof ({}): {}", remote_path, ssh.destination_label, e))?;
-    remote
-        .wait_eof()
-        .map_err(|e| format!("SCP download from {} failed during wait_eof ({}): {}", remote_path, ssh.destination_label, e))?;
-    remote
-        .close()
-        .map_err(|e| format!("SCP download from {} failed during close ({}): {}", remote_path, ssh.destination_label, e))?;
-    remote
-        .wait_close()
-        .map_err(|e| format!("SCP download from {} failed during wait_close ({}): {}", remote_path, ssh.destination_label, e))?;
-    let exit = remote
-        .exit_status()
-        .map_err(|e| format!("SCP download from {} failed reading exit status ({}): {}", remote_path, ssh.destination_label, e))?;
+    remote.read_to_end(&mut bytes).map_err(|e| {
+        format!(
+            "SCP download from {} failed while reading ({}): {}",
+            remote_path, ssh.destination_label, e
+        )
+    })?;
+    remote.send_eof().map_err(|e| {
+        format!(
+            "SCP download from {} failed during send_eof ({}): {}",
+            remote_path, ssh.destination_label, e
+        )
+    })?;
+    remote.wait_eof().map_err(|e| {
+        format!(
+            "SCP download from {} failed during wait_eof ({}): {}",
+            remote_path, ssh.destination_label, e
+        )
+    })?;
+    remote.close().map_err(|e| {
+        format!(
+            "SCP download from {} failed during close ({}): {}",
+            remote_path, ssh.destination_label, e
+        )
+    })?;
+    remote.wait_close().map_err(|e| {
+        format!(
+            "SCP download from {} failed during wait_close ({}): {}",
+            remote_path, ssh.destination_label, e
+        )
+    })?;
+    let exit = remote.exit_status().map_err(|e| {
+        format!(
+            "SCP download from {} failed reading exit status ({}): {}",
+            remote_path, ssh.destination_label, e
+        )
+    })?;
     if exit != 0 {
         return Err(format!(
             "SCP download from {} failed ({}): remote scp exited with status {} (is the `scp` binary installed on the remote host?)",
@@ -407,7 +461,10 @@ fn upload_directory(
     remote_path: &str,
 ) -> Result<TransferStats, String> {
     ensure_remote_dir(ssh, remote_path)?;
-    let mut stats = TransferStats { bytes: 0, entries: 0 };
+    let mut stats = TransferStats {
+        bytes: 0,
+        entries: 0,
+    };
     for entry in fs::read_dir(local_path).map_err(|e| e.to_string())? {
         let entry = entry.map_err(|e| e.to_string())?;
         let child_local = entry.path();
@@ -434,9 +491,18 @@ fn download_directory(
     local_path: &Path,
 ) -> Result<TransferStats, String> {
     fs::create_dir_all(local_path).map_err(|e| e.to_string())?;
-    let sftp = ssh.session.sftp().map_err(|e| format!("Failed to open SFTP session: {}", e))?;
-    let mut stats = TransferStats { bytes: 0, entries: 0 };
-    for (path, stat) in sftp.readdir(Path::new(remote_path)).map_err(|e| e.to_string())? {
+    let sftp = ssh
+        .session
+        .sftp()
+        .map_err(|e| format!("Failed to open SFTP session: {}", e))?;
+    let mut stats = TransferStats {
+        bytes: 0,
+        entries: 0,
+    };
+    for (path, stat) in sftp
+        .readdir(Path::new(remote_path))
+        .map_err(|e| e.to_string())?
+    {
         let name = match path.file_name().and_then(|name| name.to_str()) {
             Some(".") | Some("..") | None => continue,
             Some(name) => name,
@@ -458,8 +524,7 @@ fn download_directory(
             // the partial child to disk while the parent counter
             // continues incrementing — leaving a corrupt directory
             // tree that's hard to detect.
-            crate::storage::atomic_write(&child_local, &bytes, None)
-                .map_err(|e| e.to_string())?;
+            crate::storage::atomic_write(&child_local, &bytes, None).map_err(|e| e.to_string())?;
             stats.bytes += size;
             stats.entries += 1;
         }
@@ -468,7 +533,10 @@ fn download_directory(
 }
 
 fn ensure_remote_dir(ssh: &ConnectedSession, remote_path: &str) -> Result<(), String> {
-    let sftp = ssh.session.sftp().map_err(|e| format!("Failed to open SFTP session: {}", e))?;
+    let sftp = ssh
+        .session
+        .sftp()
+        .map_err(|e| format!("Failed to open SFTP session: {}", e))?;
     let home_dir = sftp
         .realpath(Path::new("."))
         .map_err(|e| format!("Failed to resolve remote home directory: {}", e))?;
@@ -534,7 +602,11 @@ fn directory_creation_sequence(remote_path: &str, home_dir: &str) -> Vec<String>
 fn resolve_remote_target_path(base: Option<&str>, file_name: &str) -> String {
     let cleaned = base.unwrap_or(".").trim();
     if cleaned.is_empty() || cleaned.ends_with('/') {
-        format!("{}{}", if cleaned.is_empty() { "./" } else { cleaned }, file_name)
+        format!(
+            "{}{}",
+            if cleaned.is_empty() { "./" } else { cleaned },
+            file_name
+        )
     } else {
         format!("{}/{}", cleaned, file_name)
     }
@@ -545,7 +617,12 @@ fn resolve_download_remote_path(conn: &Connection, remote_path: &str) -> String 
     if trimmed.starts_with('/') || trimmed.starts_with('~') {
         return trimmed.to_string();
     }
-    match conn.remote_path.as_deref().map(str::trim).filter(|path| !path.is_empty()) {
+    match conn
+        .remote_path
+        .as_deref()
+        .map(str::trim)
+        .filter(|path| !path.is_empty())
+    {
         Some(base) => format!("{}/{}", base.trim_end_matches('/'), trimmed),
         None => trimmed.to_string(),
     }
@@ -558,21 +635,33 @@ mod scp_tests {
 
     #[test]
     fn test_resolve_remote_target_path_appends_file_name() {
-        assert_eq!(resolve_remote_target_path(Some("/tmp"), "file.txt"), "/tmp/file.txt");
-        assert_eq!(resolve_remote_target_path(Some("/tmp/"), "file.txt"), "/tmp/file.txt");
+        assert_eq!(
+            resolve_remote_target_path(Some("/tmp"), "file.txt"),
+            "/tmp/file.txt"
+        );
+        assert_eq!(
+            resolve_remote_target_path(Some("/tmp/"), "file.txt"),
+            "/tmp/file.txt"
+        );
     }
 
     #[test]
     fn test_resolve_download_remote_path_uses_connection_base() {
         let mut conn = Connection::new("n".into(), "h".into(), 22, None, ConnectionKind::Direct);
         conn.remote_path = Some("/srv/app".into());
-        assert_eq!(resolve_download_remote_path(&conn, "logs/app.log"), "/srv/app/logs/app.log");
+        assert_eq!(
+            resolve_download_remote_path(&conn, "logs/app.log"),
+            "/srv/app/logs/app.log"
+        );
     }
 
     #[test]
     fn test_resolve_download_remote_path_keeps_absolute_path() {
         let conn = Connection::new("n".into(), "h".into(), 22, None, ConnectionKind::Direct);
-        assert_eq!(resolve_download_remote_path(&conn, "/var/log/syslog"), "/var/log/syslog");
+        assert_eq!(
+            resolve_download_remote_path(&conn, "/var/log/syslog"),
+            "/var/log/syslog"
+        );
     }
 
     #[test]
