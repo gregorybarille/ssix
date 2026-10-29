@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import { Settings, Minus, Square, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 

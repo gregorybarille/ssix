@@ -1,4 +1,4 @@
-import React, { useEffect, useRef } from "react";
+import { useEffect, useRef } from "react";
 import { Terminal as XTerm } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { WebglAddon } from "@xterm/addon-webgl";
@@ -6,6 +6,7 @@ import { invoke } from "@/lib/tauri";
 import { sshClosedEvent, sshErrorEvent } from "@/lib/events";
 import { attachOutput } from "@/lib/terminalOutput";
 import { registerTerminal, unregisterTerminal } from "@/lib/terminalRegistry";
+import { terminalTheme } from "@/lib/terminalTheme";
 import { AppSettings } from "@/types";
 import "@xterm/xterm/css/xterm.css";
 
@@ -73,6 +74,13 @@ export function Terminal({ sessionId, isVisible, onDisconnect, settings }: Termi
     fitAddonRef.current?.fit();
   }, [settings?.font_size, settings?.font_family]);
 
+  // Swap the colour scheme live when the app theme changes.
+  const theme = terminalTheme(settings?.theme);
+  useEffect(() => {
+    const term = xtermRef.current;
+    if (term) term.options.theme = theme;
+  }, [theme]);
+
   useEffect(() => {
     if (!termRef.current) return;
 
@@ -86,28 +94,7 @@ export function Terminal({ sessionId, isVisible, onDisconnect, settings }: Termi
       fontFamily: safeFontFamily
         ? `'${safeFontFamily}', monospace`
         : "'JetBrains Mono', 'Fira Code', monospace",
-      theme: {
-        background: "#1a1b26",
-        foreground: "#c0caf5",
-        cursor: "#c0caf5",
-        selectionBackground: "#33467c",
-        black: "#15161e",
-        red: "#f7768e",
-        green: "#9ece6a",
-        yellow: "#e0af68",
-        blue: "#7aa2f7",
-        magenta: "#bb9af7",
-        cyan: "#7dcfff",
-        white: "#a9b1d6",
-        brightBlack: "#414868",
-        brightRed: "#f7768e",
-        brightGreen: "#9ece6a",
-        brightYellow: "#e0af68",
-        brightBlue: "#7aa2f7",
-        brightMagenta: "#bb9af7",
-        brightCyan: "#7dcfff",
-        brightWhite: "#c0caf5",
-      },
+      theme: terminalTheme(settings?.theme),
     });
 
     const fitAddon = new FitAddon();
@@ -274,7 +261,11 @@ export function Terminal({ sessionId, isVisible, onDisconnect, settings }: Termi
       data-testid="terminal-container"
       data-session-id={sessionId}
     >
-      <div ref={termRef} className="flex-1 min-h-0 p-1 bg-[#1a1b26]" />
+      <div
+        ref={termRef}
+        className="flex-1 min-h-0 p-1"
+        style={{ backgroundColor: theme.background }}
+      />
     </div>
   );
 }

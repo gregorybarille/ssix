@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import { useState } from "react";
 import { AlertCircle, RefreshCw, Pencil, ShieldAlert } from "lucide-react";
 import { Button } from "./ui/button";
 import { Connection } from "@/types";
@@ -46,7 +46,7 @@ export function FailedTerminal({
 
   return (
     <div
-      className="absolute inset-0 flex items-center justify-center bg-[#1a1b26]"
+      className="absolute inset-0 flex items-center justify-center bg-background"
       style={{ display: isVisible ? "flex" : "none" }}
       data-testid="failed-terminal"
       data-error={error || ""}

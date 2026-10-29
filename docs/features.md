@@ -113,7 +113,9 @@ See [Git Sync](git-sync.md) for details.
 ## Settings
 
 - theme (light / dark; switching previews immediately and auto-saves on
-  change; both themes are calibrated to meet WCAG AA — body text and
+  change; terminal panes follow it too, swapping between the Tokyo Night
+  and Tokyo Night Day palettes live without reconnecting;
+  both themes are calibrated to meet WCAG AA — body text and
   tertiary metadata such as timestamps stay above the 4.5:1 contrast
   ratio on both themes)
 - font family
@@ -236,10 +238,11 @@ tabindex pattern (via the shared `useRovingFocus` hook in
   next focusable element.
 - `↑` / `↓` move the focused row, wrapping at the ends. `Home` / `End`
   jump to the first/last row. In tile layout `←` / `→` work as well.
-- `↵` or `Space` activates the row. On a connection this calls the
-  same selection handler the click does (or falls back to **Connect**
-  if no selection handler is wired). On a credential it opens the
-  **Edit** form.
+- `↵`, `Space` or a click activates the row. On a connection this
+  calls the selection handler when one is wired, otherwise it
+  **connects** (the Connections tab wires no selection handler, so a
+  click on a row opens a shell). On a credential it opens the **Edit**
+  form.
 - Action buttons inside a row (Edit / Clone / Delete / Connect / etc.)
   keep their own focus and their own keyboard semantics — pressing
   `↵` while focused on **Delete** activates Delete, not row selection.

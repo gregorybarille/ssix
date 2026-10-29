@@ -132,7 +132,7 @@ export function SettingsPanel({ settings, onSave, onPreview }: SettingsPanelProp
           <Label htmlFor="font-size">Font Size</Label>
           <Select
             value={String(form.font_size)}
-            onValueChange={(v) => applySettings({ ...form, font_size: parseInt(v) })}
+            onValueChange={(v) => applySettings({ ...form, font_size: Number(v) })}
           >
             <SelectTrigger id="font-size">
               <SelectValue />

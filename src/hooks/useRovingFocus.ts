@@ -7,12 +7,12 @@ import type { KeyboardEvent as ReactKeyboardEvent } from "react";
  *
  * Usage pattern:
  *
- *   const { containerRef, getItemProps, focusedIndex } = useRovingFocus({
+ *   const { onKeyDown, getItemProps, focusedIndex } = useRovingFocus({
  *     itemCount: items.length,
  *     onActivate: (i) => onSelect(items[i]),
  *   });
  *
- *   <div ref={containerRef} role="list" onKeyDown={...}>
+ *   <div role="list" onKeyDown={onKeyDown}>
  *     {items.map((item, i) => (
  *       <div key={item.id} {...getItemProps(i)}>...</div>
  *     ))}
@@ -51,7 +51,6 @@ export function useRovingFocus({
   orientation = "vertical",
   initialIndex = 0,
 }: UseRovingFocusOptions) {
-  const containerRef = useRef<HTMLElement | null>(null);
   const itemRefs = useRef<(HTMLElement | null)[]>([]);
   const [focusedIndex, setFocusedIndex] = useState<number>(() =>
     Math.min(initialIndex, Math.max(0, itemCount - 1)),
@@ -136,7 +135,6 @@ export function useRovingFocus({
   );
 
   return {
-    containerRef,
     onKeyDown,
     focusedIndex,
     setFocusedIndex,

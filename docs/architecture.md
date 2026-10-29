@@ -6,8 +6,10 @@ SSIX is a Tauri v2 desktop application with a React frontend and a Rust backend.
 
 ### Frontend
 
-- `src/App.tsx` coordinates views, inline editors/panels, terminal tabs, tunnel sessions, and high-level actions.
-- `src/components/` contains UI components and feature views.
+- `src/App.tsx` is the composition layer: it wires stores to the top-level layout, hosts the app-wide dialogs, and holds the cross-store submit handlers. It subscribes to stores through shallow selectors so loading/error flips in one store do not re-render the shell.
+- `src/components/views/` holds the tab-level views (`ConnectionsView`, `CredentialsView`); `src/components/` contains the remaining UI components and feature views.
+- `src/hooks/` holds reusable React hooks (`useGlobalShortcuts`, `useRovingFocus`, `useUnsavedChangesGuard`, `useScreenshotToast`, `useApplySettings`).
+- `src/lib/` holds pure helpers shared across components (`search.ts` for the connection filter, `terminalTheme.ts` for the xterm palettes, `port.ts`, `hostKey.ts`, ...).
 - `src/components/ui/` contains shared Radix-based primitives.
 - `src/store/` contains Zustand stores that act as the async boundary for the UI.
 - `src/lib/tauri.ts` lazy-loads Tauri `invoke()` so frontend tests can mock it.

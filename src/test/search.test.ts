@@ -22,6 +22,7 @@ const conns: Connection[] = [
     type: "port_forward",
     gateway_host: "gw.example",
     gateway_port: 22,
+    gateway_credential_id: "gw-cred",
     local_port: 5432,
     destination_host: "pg.internal",
     destination_port: 5432,

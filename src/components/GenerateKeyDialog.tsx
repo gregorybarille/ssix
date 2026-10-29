@@ -1,4 +1,4 @@
-import React, { useActionState, useState, useEffect } from "react";
+import { useActionState, useState, useEffect } from "react";
 import { invoke } from "@/lib/tauri";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";

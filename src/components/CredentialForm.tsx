@@ -367,34 +367,16 @@ export function CredentialForm({
             </TabsContent>
             <TabsContent value="ssh_key" className="space-y-4 mt-4">
               <div className="flex items-center justify-between">
-                <div role="tablist" aria-label="Key source" className="inline-flex rounded-md border border-input p-0.5 bg-background">
-                  <button
-                    type="button"
-                    role="tab"
-                    aria-selected={keySource === "path"}
-                    onClick={() => setKeySource("path")}
-                    className={`px-3 py-1 text-xs rounded ${
-                      keySource === "path"
-                        ? "bg-accent text-accent-foreground"
-                        : "text-muted-foreground"
-                    }`}
-                  >
-                    Path
-                  </button>
-                  <button
-                    type="button"
-                    role="tab"
-                    aria-selected={keySource === "inline"}
-                    onClick={() => setKeySource("inline")}
-                    className={`px-3 py-1 text-xs rounded border-l ${
-                      keySource === "inline"
-                        ? "bg-accent text-accent-foreground border-l-transparent"
-                        : "text-muted-foreground border-border/60"
-                    } ${keySource === "path" ? "border-l-transparent" : ""}`}
-                  >
-                    Paste key
-                  </button>
-                </div>
+                <Tabs value={keySource} onValueChange={(v) => setKeySource(v as KeySource)}>
+                  <TabsList aria-label="Key source" className="h-8">
+                    <TabsTrigger value="path" className="text-xs px-3" data-testid="credential-form-key-source-path">
+                      Path
+                    </TabsTrigger>
+                    <TabsTrigger value="inline" className="text-xs px-3" data-testid="credential-form-key-source-inline">
+                      Paste key
+                    </TabsTrigger>
+                  </TabsList>
+                </Tabs>
                 <Button
                   type="button"
                   variant="outline"

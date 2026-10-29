@@ -1,4 +1,3 @@
-import React from "react";
 import { LayoutMode } from "@/types";
 import { LayoutGrid, List, Tags as TagsIcon } from "lucide-react";
 import { cn } from "@/lib/utils";

@@ -20,6 +20,7 @@ import {
   SelectValue,
 } from "./ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "./ui/tabs";
+import { CredentialSelect, FieldError, PortField } from "./ConnectionFormFields";
 import { InstallKeyDialog } from "./InstallKeyDialog";
 import { TagInput } from "./ui/tag-input";
 import { RadioGroup, RadioGroupItem } from "./ui/radio-group";
@@ -566,27 +567,12 @@ export function ConnectionForm({
 
   const credentialPicker = (
     <div className="space-y-2">
-      <Select
-        value={form.credential_id ?? "none"}
-        onValueChange={(v) =>
-          setForm({
-            ...form,
-            credential_id: v === "none" ? undefined : v,
-          })
-        }
-      >
-        <SelectTrigger data-testid="connection-form-credential">
-          <SelectValue placeholder="Select credential..." />
-        </SelectTrigger>
-        <SelectContent>
-          <SelectItem value="none" data-name="None">None</SelectItem>
-          {credentials.map((cred) => (
-            <SelectItem key={cred.id} value={cred.id} data-name={cred.name}>
-              {cred.name} ({cred.username})
-            </SelectItem>
-          ))}
-        </SelectContent>
-      </Select>
+      <CredentialSelect
+        credentials={credentials}
+        value={form.credential_id}
+        onChange={(credential_id) => setForm({ ...form, credential_id })}
+        testId="connection-form-credential"
+      />
       {canInstallKey && selectedCredential && (
         <>
           <Button
@@ -595,7 +581,7 @@ export function ConnectionForm({
             size="sm"
             onClick={() => setInstallOpen(true)}
           >
-            <UploadCloud className="h-3.5 w-3.5 mr-1.5" />
+            <UploadCloud className="h-3.5 w-3.5 mr-1.5" aria-hidden="true" />
             Install on remote
           </Button>
           <InstallKeyDialog
@@ -635,66 +621,30 @@ export function ConnectionForm({
             </p>
           )}
         </div>
-        <div className="space-y-2">
-          <Label htmlFor="gateway_port">Gateway Port</Label>
-          <Input
-            id="gateway_port"
-            type="text"
-            inputMode="numeric"
-            placeholder="22"
-            value={portInputs.gateway_port}
-            onChange={(e) => updatePort("gateway_port", e.target.value)}
-            data-testid="connection-form-gateway-port"
-            aria-invalid={portErrors.gateway_port ? true : undefined}
-            aria-describedby={portErrors.gateway_port ? "gateway_port-error" : undefined}
-          />
-          {portErrors.gateway_port && (
-            <p
-              id="gateway_port-error"
-              role="alert"
-              className="text-xs text-destructive"
-            >
-              {portErrors.gateway_port}
-            </p>
-          )}
-        </div>
+        <PortField
+          id="gateway_port"
+          label="Gateway Port"
+          value={portInputs.gateway_port}
+          onChange={(raw) => updatePort("gateway_port", raw)}
+          error={portErrors.gateway_port}
+          testId="connection-form-gateway-port"
+        />
       </div>
       <div className="space-y-2">
         <Label htmlFor="gateway_credential">Gateway Credential *</Label>
-        <Select
-          value={form.gateway_credential_id ?? "none"}
-          onValueChange={(v) => {
-            setForm({
-              ...form,
-              gateway_credential_id: v === "none" ? undefined : v,
-            });
+        <CredentialSelect
+          id="gateway_credential"
+          credentials={credentials}
+          value={form.gateway_credential_id}
+          onChange={(gateway_credential_id) => {
+            setForm({ ...form, gateway_credential_id });
             clearFieldError("gateway_credential_id");
           }}
-        >
-          <SelectTrigger
-            id="gateway_credential"
-            data-testid="connection-form-gateway-credential"
-            aria-invalid={fieldErrors.gateway_credential_id ? true : undefined}
-            aria-describedby={
-              fieldErrors.gateway_credential_id ? "gateway_credential-error" : undefined
-            }
-          >
-            <SelectValue placeholder="Select credential..." />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="none" data-name="None">None</SelectItem>
-            {credentials.map((cred) => (
-              <SelectItem key={cred.id} value={cred.id} data-name={cred.name}>
-                {cred.name} ({cred.username})
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-        {fieldErrors.gateway_credential_id && (
-          <p id="gateway_credential-error" role="alert" className="text-xs text-destructive">
-            {fieldErrors.gateway_credential_id}
-          </p>
-        )}
+          testId="connection-form-gateway-credential"
+          error={fieldErrors.gateway_credential_id}
+          errorId="gateway_credential-error"
+        />
+        <FieldError id="gateway_credential-error" message={fieldErrors.gateway_credential_id} />
       </div>
     </div>
   );
@@ -729,60 +679,35 @@ export function ConnectionForm({
             </p>
           )}
         </div>
-        <div className="space-y-2">
-          <Label htmlFor="destination_port">Destination Port</Label>
-          <Input
-            id="destination_port"
-            type="text"
-            inputMode="numeric"
-            placeholder={connectionType === "port_forward" ? "80" : "22"}
-            value={portInputs.destination_port}
-            onChange={(e) => updatePort("destination_port", e.target.value)}
-            data-testid="connection-form-dest-port"
-            aria-invalid={portErrors.destination_port ? true : undefined}
-            aria-describedby={portErrors.destination_port ? "destination_port-error" : undefined}
-          />
-          {portErrors.destination_port && (
-            <p
-              id="destination_port-error"
-              role="alert"
-              className="text-xs text-destructive"
-            >
-              {portErrors.destination_port}
-            </p>
-          )}
-        </div>
+        <PortField
+          id="destination_port"
+          label="Destination Port"
+          placeholder={connectionType === "port_forward" ? "80" : "22"}
+          value={portInputs.destination_port}
+          onChange={(raw) => updatePort("destination_port", raw)}
+          error={portErrors.destination_port}
+          testId="connection-form-dest-port"
+        />
       </div>
     </div>
   );
 
   const localPortBlock = (
-    <div className="space-y-2">
-      <Label htmlFor="local_port">Local Port *</Label>
-      <Input
-        id="local_port"
-        type="text"
-        inputMode="numeric"
-        placeholder="9000"
-        value={portInputs.local_port}
-        onChange={(e) => updatePort("local_port", e.target.value)}
-        data-testid="connection-form-local-port"
-        aria-invalid={portErrors.local_port ? true : undefined}
-        aria-describedby={
-          portErrors.local_port ? "local_port-error" : "local_port-help"
-        }
-      />
-      {portErrors.local_port ? (
-        <p id="local_port-error" role="alert" className="text-xs text-destructive">
-          {portErrors.local_port}
-        </p>
-      ) : (
-        <p id="local_port-help" className="text-xs text-muted-foreground">
+    <PortField
+      id="local_port"
+      label="Local Port *"
+      placeholder="9000"
+      value={portInputs.local_port}
+      onChange={(raw) => updatePort("local_port", raw)}
+      error={portErrors.local_port}
+      testId="connection-form-local-port"
+      help={
+        <>
           SSIX will listen on <code>127.0.0.1:&lt;local_port&gt;</code> and forward
           connections through the gateway to the destination.
-        </p>
-      )}
-    </div>
+        </>
+      }
+    />
   );
 
   const formDescription = connection
@@ -872,25 +797,14 @@ export function ConnectionForm({
               </p>
             )}
           </div>
-          <div className="space-y-2">
-            <Label htmlFor="port">Port</Label>
-            <Input
-              id="port"
-              type="text"
-              inputMode="numeric"
-              placeholder="22"
-              value={portInputs.port}
-              onChange={(e) => updatePort("port", e.target.value)}
-              data-testid="connection-form-port"
-              aria-invalid={portErrors.port ? true : undefined}
-              aria-describedby={portErrors.port ? "port-error" : undefined}
-            />
-            {portErrors.port && (
-              <p id="port-error" role="alert" className="text-xs text-destructive">
-                {portErrors.port}
-              </p>
-            )}
-          </div>
+          <PortField
+            id="port"
+            label="Port"
+            value={portInputs.port}
+            onChange={(raw) => updatePort("port", raw)}
+            error={portErrors.port}
+            testId="connection-form-port"
+          />
         </div>
       )}
 
@@ -1150,7 +1064,7 @@ export function ConnectionForm({
         <Label htmlFor="verbosity">Verbosity Level</Label>
         <Select
           value={String(form.verbosity ?? 0)}
-          onValueChange={(v) => setForm({ ...form, verbosity: parseInt(v) })}
+          onValueChange={(v) => setForm({ ...form, verbosity: Number(v) })}
         >
           <SelectTrigger id="verbosity" aria-describedby="verbosity-hint">
             <SelectValue />

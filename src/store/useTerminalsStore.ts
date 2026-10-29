@@ -54,9 +54,6 @@ interface TerminalsState {
 
   /** Switch to terminals view and select the Nth (0-indexed) tab, if it exists. */
   selectTabByIndex: (index: number) => void;
-
-  /** Total live + failed panes across all tabs (for the sidebar badge). */
-  totalSessionCount: () => number;
 }
 
 export const useTerminalsStore = create<TerminalsState>((set, get) => {
@@ -271,8 +268,5 @@ export const useTerminalsStore = create<TerminalsState>((set, get) => {
       useViewStore.getState().setView("terminals");
       set({ activeTabId: tab.id });
     },
-
-    totalSessionCount: () =>
-      get().tabs.reduce((n, t) => n + t.panes.length, 0),
   };
 });

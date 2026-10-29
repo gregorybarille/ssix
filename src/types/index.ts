@@ -125,16 +125,6 @@ export type DistributiveOmit<T, K extends keyof T> = T extends unknown
 export type ConnectionInput = DistributiveOmit<Connection, "id">;
 
 /**
- * Type guard for the (rare) case where you have a Connection but want
- * the gateway-related fields without a switch.
- */
-export function hasGateway(
-  conn: Connection,
-): conn is PortForwardConnection | JumpShellConnection {
-  return conn.type === "port_forward" || conn.type === "jump_shell";
-}
-
-/**
  * Audit-4 Phase 4b: form-only "every-field-optional" view of a
  * Connection. The form is a builder UI that lets the user fill in any
  * combination of fields and only commits to a specific variant on

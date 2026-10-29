@@ -1,61 +1,16 @@
 import React, { Suspense, useEffect, lazy } from "react";
 import { Sidebar } from "./components/Sidebar";
 import { TitleBar } from "./components/TitleBar";
-import { ConnectionList } from "./components/ConnectionList";
-import { ConnectionForm } from "./components/ConnectionForm";
-import { CredentialList } from "./components/CredentialList";
-import { CredentialForm } from "./components/CredentialForm";
-import { SearchBar } from "./components/SearchBar";
 import { TerminalTabs } from "./components/TerminalTabs";
 import { TunnelsView } from "./components/TunnelsView";
-import { LayoutToggle } from "./components/ui/layout-toggle";
+import { ConnectionsView } from "./components/views/ConnectionsView";
+import { CredentialsView } from "./components/views/CredentialsView";
 import { ConnectPicker } from "./components/ConnectPicker";
 import { ContextMenu } from "./components/ContextMenu";
 import { ConfirmDialog } from "./components/ConfirmDialog";
+import { ScreenshotToast } from "./components/ScreenshotToast";
+import { ViewFallback } from "./components/ViewFallback";
 import { Button } from "./components/ui/button";
-
-/**
- * Audit-4 Phase 5e: Settings, Git-Sync, Logs and the SCP dialog are
- * all leaf views that the user opens infrequently and that pull in
- * sizeable component trees (settings panels, git diff renderers,
- * log virtualization, file-transfer state). Lazy-loading them keeps
- * the initial bundle small and shifts their cost to first use.
- */
-const SettingsPanel = lazy(() =>
-  import("./components/SettingsPanel").then((m) => ({ default: m.SettingsPanel })),
-);
-const GitSyncView = lazy(() =>
-  import("./components/GitSyncView").then((m) => ({ default: m.GitSyncView })),
-);
-const LogsView = lazy(() =>
-  import("./components/LogsView").then((m) => ({ default: m.LogsView })),
-);
-const ScpDialog = lazy(() =>
-  import("./components/ScpDialog").then((m) => ({ default: m.ScpDialog })),
-);
-const BulkScpDialog = lazy(() =>
-  import("./components/BulkScpDialog").then((m) => ({
-    default: m.BulkScpDialog,
-  })),
-);
-const TagGroupGrid = lazy(() =>
-  import("./components/TagGroupGrid").then((m) => ({
-    default: m.TagGroupGrid,
-  })),
-);
-
-/**
- * Minimal Suspense fallback for lazy-loaded views. Intentionally
- * spartan — chunks load fast on local disk and a skeleton would
- * just flash. Centralised so all view fallbacks look identical.
- */
-function ViewFallback({ label }: { label: string }) {
-  return (
-    <div className="flex-1 flex items-center justify-center text-sm text-muted-foreground-soft">
-      {label}
-    </div>
-  );
-}
 import {
   Dialog,
   DialogContent,
@@ -74,29 +29,48 @@ import { useTerminalsStore } from "./store/useTerminalsStore";
 import { useTunnelsStore } from "./store/useTunnelsStore";
 import { useApplySettings } from "./hooks/useApplySettings";
 import { useGlobalShortcuts } from "./hooks/useGlobalShortcuts";
-import { filterConnections } from "./lib/search";
+import { useScreenshotToast } from "./hooks/useScreenshotToast";
 import { useShallow } from "zustand/react/shallow";
-import { takeScreenshot } from "./lib/screenshot";
 import { log as appLog } from "./lib/log";
 import { Connection, ConnectionInput, Credential, LayoutMode } from "./types";
 import { connectMany } from "./lib/bulk-actions";
 import type { TagGroup } from "./lib/tags";
-import { Plus } from "lucide-react";
 
 /**
- * Audit-4 Phase 5d: App.tsx is now a pure composition layer. Terminal
- * pane lifecycle, tunnel session lifecycle, dialog UI state and the
- * current view live in dedicated Zustand stores. App owns only:
+ * Settings, Git-Sync, Logs and the SCP dialogs are leaf views the user
+ * opens infrequently and that pull in sizeable component trees.
+ * Lazy-loading them keeps the initial bundle small and shifts their
+ * cost to first use.
+ */
+const SettingsPanel = lazy(() =>
+  import("./components/SettingsPanel").then((m) => ({ default: m.SettingsPanel })),
+);
+const GitSyncView = lazy(() =>
+  import("./components/GitSyncView").then((m) => ({ default: m.GitSyncView })),
+);
+const LogsView = lazy(() =>
+  import("./components/LogsView").then((m) => ({ default: m.LogsView })),
+);
+const ScpDialog = lazy(() =>
+  import("./components/ScpDialog").then((m) => ({ default: m.ScpDialog })),
+);
+const BulkScpDialog = lazy(() =>
+  import("./components/BulkScpDialog").then((m) => ({ default: m.BulkScpDialog })),
+);
+
+/**
+ * App is the composition layer. Terminal pane lifecycle, tunnel session
+ * lifecycle, dialog UI state and the current view live in dedicated
+ * Zustand stores; the Connections and Credentials tabs are their own
+ * components under `components/views/`. App owns only:
  *
- *  - the search input string (purely a controlled-form value)
  *  - cross-store submit handlers (e.g. clone uses connections + dialogs)
- *  - the top-level layout JSX
+ *  - terminal-driven side effects (close/edit from a pane)
+ *  - the top-level layout and the app-wide dialogs
  */
 function App() {
   const view = useViewStore((s) => s.view);
   const setView = useViewStore((s) => s.setView);
-
-  const [searchQuery, setSearchQuery] = React.useState("");
 
   // Select only what App renders. Store actions are stable, so these
   // shallow selectors keep `isLoading`/`error` flips in the stores from
@@ -149,18 +123,11 @@ function App() {
   const { status: gitSyncStatus, fetchStatus: fetchGitSyncStatus } = useGitSyncStore(
     useShallow((s) => ({ status: s.status, fetchStatus: s.fetchStatus })),
   );
-
-  // Search is a pure filter over the loaded list; the tag-groups view
-  // filters tag labels itself and always receives every connection.
-  const visibleConnections = React.useMemo(
-    () => filterConnections(connections, searchQuery),
-    [connections, searchQuery],
-  );
   const [previewSettings, setPreviewSettings] = React.useState<typeof settings | null>(null);
-  const screenshotToastTimeoutRef = React.useRef<number | null>(null);
 
   // Dialog/UI state
   const dialogs = useDialogsStore();
+  const captureScreenshot = useScreenshotToast();
 
   // Terminal & tunnel session state
   const tabs = useTerminalsStore((s) => s.tabs);
@@ -186,14 +153,6 @@ function App() {
     fetchCredentials();
     fetchSettings();
     fetchGitSyncStatus();
-  }, []);
-
-  useEffect(() => {
-    return () => {
-      if (screenshotToastTimeoutRef.current !== null) {
-        window.clearTimeout(screenshotToastTimeoutRef.current);
-      }
-    };
   }, []);
 
   // Re-fetch git-sync status whenever the data we'd serialize changes.
@@ -266,39 +225,6 @@ function App() {
 
   /* ---------------------------- Submit handlers ---------------------------- */
 
-  const handleTakeScreenshot = async () => {
-    const showScreenshotToast = (
-      kind: "success" | "error",
-      message: string,
-      timeoutMs: number,
-    ) => {
-      if (screenshotToastTimeoutRef.current !== null) {
-        window.clearTimeout(screenshotToastTimeoutRef.current);
-      }
-      dialogs.setScreenshotToast({ kind, message });
-      screenshotToastTimeoutRef.current = window.setTimeout(() => {
-        dialogs.setScreenshotToast(null);
-        screenshotToastTimeoutRef.current = null;
-      }, timeoutMs);
-    };
-
-    if (screenshotToastTimeoutRef.current !== null) {
-      window.clearTimeout(screenshotToastTimeoutRef.current);
-      screenshotToastTimeoutRef.current = null;
-    }
-    dialogs.setScreenshotToast(null);
-    try {
-      const path = await takeScreenshot();
-      showScreenshotToast("success", `Screenshot saved to ${path}`, 4000);
-    } catch (error) {
-      const message =
-        error instanceof Error && error.message
-          ? error.message
-          : "Screenshot failed.";
-      showScreenshotToast("error", message, 6000);
-    }
-  };
-
   const handleConnSubmit = async (data: ConnectionInput | Connection) => {
     if ("id" in data) {
       await updateConnection(data);
@@ -326,9 +252,16 @@ function App() {
     const payload = dialogs.orphanCredDialog;
     if (!payload) return;
     dialogs.setOrphanCredDialog(null);
-    await deleteConnection(payload.connId);
-    if (deleteCredToo) {
-      await deleteCredential(payload.credId);
+    try {
+      await deleteConnection(payload.connId);
+      if (deleteCredToo) {
+        await deleteCredential(payload.credId);
+      }
+    } catch (error) {
+      appLog.error(
+        "connections",
+        `Failed to delete connection: ${error instanceof Error ? error.message : String(error)}`,
+      );
     }
   };
 
@@ -360,13 +293,11 @@ function App() {
   };
 
   /**
-   * Bulk-connect every actionable host in a tag group. Routed through
-   * a confirmation dialog regardless of host count: a misclick on
-   * "Connect all" can spawn dozens of SSH sessions and is genuinely
-   * costly to undo (each one has to be closed individually). The
-   * confirm handler calls `connectMany` (sequentially awaited so tabs
-   * appear in deterministic order; SSH handshakes still run in
-   * parallel server-side).
+   * Bulk actions on a tag group always go through a confirmation,
+   * regardless of host count: "Connect all" can spawn dozens of SSH
+   * sessions and bulk SCP is hard to interrupt cleanly. The confirm
+   * handler runs `connectMany` (sequential so tabs appear in order) or
+   * opens the bulk SCP dialog with the membership frozen at click time.
    */
   const handleConnectAllInTag = (group: TagGroup) => {
     dialogs.setConfirmTagAction({
@@ -375,14 +306,6 @@ function App() {
       connections: group.connections,
     });
   };
-
-  /**
-   * Open the bulk-SCP dialog for a tag group. Confirmation comes
-   * first (same rationale as Connect-all — bulk file transfer to
-   * many hosts is hard to interrupt cleanly); the bulk dialog then
-   * freezes the member snapshot at confirm time (see `openBulkScp`
-   * doc).
-   */
   const handleScpAllInTag = (group: TagGroup) => {
     dialogs.setConfirmTagAction({
       kind: "scp",
@@ -393,10 +316,7 @@ function App() {
 
   /* ---------------------- Terminal-driven side effects ---------------------- */
 
-  const handleEditFromTerminal = (
-    conn: Connection,
-    failedSessionId: string,
-  ) => {
+  const handleEditFromTerminal = (conn: Connection, failedSessionId: string) => {
     void closePane(failedSessionId);
     dialogs.openEditConnection(conn);
     setView("connections");
@@ -415,7 +335,7 @@ function App() {
         void closePane(sessionId);
         return;
       }
-      dialogs.setConfirmClosePane({ sessionId, name: pane.connectionName });
+      dialogs.setConfirmClosePane({ kind: "pane", sessionId, name: pane.connectionName });
       return;
     }
   };
@@ -430,16 +350,15 @@ function App() {
     }
     if (tab.panes.length === 1) {
       dialogs.setConfirmClosePane({
+        kind: "pane",
         sessionId: tab.panes[0].sessionId,
         name: tab.panes[0].connectionName,
       });
       return;
     }
-    // Multi-pane tab: stash all session IDs as a synthetic confirm
-    // keyed by `__tab__:<tabId>` so the confirm dialog's onConfirm
-    // can route to closeTab(tabId).
     dialogs.setConfirmClosePane({
-      sessionId: `__tab__:${tabId}`,
+      kind: "tab",
+      tabId,
       name: tab.panes.map((p) => p.connectionName).join(" + "),
     });
   };
@@ -464,8 +383,8 @@ function App() {
   const gitPending =
     gitSyncStatus.has_local_changes || gitSyncStatus.has_remote_changes;
 
-  // Global keyboard shortcuts — closures rebuild each render so they
-  // see fresh state without needing refs.
+  // Global keyboard shortcuts. The hook reads the latest map from a ref,
+  // so these closures can be rebuilt each render and still see fresh state.
   useGlobalShortcuts({
     "mod+k": () => dialogs.setPickerOpen(true),
     "mod+n": () => {
@@ -510,130 +429,37 @@ function App() {
               activeTabId={activeTabId}
               onSelectTab={setActiveTabId}
               onCloseTab={handleCloseTabRequest}
-              onClosePane={(_tabId, sessionId) =>
-                handleClosePaneRequest(sessionId)
-              }
+              onClosePane={(_tabId, sessionId) => handleClosePaneRequest(sessionId)}
               onNewTab={(mode) => dialogs.openPicker(mode)}
-              onRetry={(conn, replaceSessionId) =>
-                void connect(conn, { replaceSessionId })
-              }
+              onRetry={(conn, replaceSessionId) => void connect(conn, { replaceSessionId })}
               onEdit={handleEditFromTerminal}
               settings={settings}
             />
           ) : (
             <>
               {view === "connections" && (
-                <>
-                  <div className="flex items-center justify-between px-6 py-4 border-b border-border">
-                    <h1 className="text-lg font-semibold">Connections</h1>
-                    <div className="flex items-center gap-2">
-                      <LayoutToggle
-                        value={settings.connection_layout}
-                        onChange={(v) => updateLayout("connection_layout", v)}
-                        showTags
-                      />
-                      <Button
-                        size="sm"
-                        onClick={() => {
-                          setView("connections");
-                          dialogs.openNewConnection();
-                        }}
-                        data-testid="add-connection-button"
-                      >
-                        <Plus className="h-4 w-4 mr-1" />
-                        New Connection
-                      </Button>
-                    </div>
-                  </div>
-                  {dialogs.connFormOpen ? (
-                    <ConnectionForm
-                      inline
-                      open={dialogs.connFormOpen}
-                      onOpenChange={dialogs.setConnFormOpen}
-                      connection={dialogs.cloningConn ?? dialogs.editingConn}
-                      credentials={credentials}
-                      onSubmit={dialogs.cloningConn ? handleCloneSubmit : handleConnSubmit}
-                      onCreateCredential={handleCreateCredential}
-                      isClone={!!dialogs.cloningConn}
-                    />
-                  ) : (
-                    <>
-                      <div className="px-6 py-3 border-b border-border">
-                        <SearchBar
-                          value={searchQuery}
-                          onChange={setSearchQuery}
-                          placeholder={
-                            settings.connection_layout === "tags"
-                              ? "Search tags…"
-                              : undefined
-                          }
-                        />
-                      </div>
-                      <div className="flex-1 overflow-y-auto px-4 py-2">
-                        {settings.connection_layout === "tags" ? (
-                          <Suspense fallback={<ViewFallback label="Loading tags…" />}>
-                            <TagGroupGrid
-                              connections={connections}
-                              query={searchQuery}
-                              onConnectAll={handleConnectAllInTag}
-                              onScpAll={handleScpAllInTag}
-                            />
-                          </Suspense>
-                        ) : (
-                          <ConnectionList
-                            connections={visibleConnections}
-                            credentials={credentials}
-                            layout={settings.connection_layout}
-                            onEdit={(conn) => dialogs.openEditConnection(conn)}
-                            onDelete={handleDeleteConnection}
-                            onClone={(conn) => dialogs.openCloneConnection(conn)}
-                            onConnect={(c) => void connect(c)}
-                            onScp={(conn) => dialogs.openScp(conn)}
-                          />
-                        )}
-                      </div>
-                    </>
-                  )}
-                </>
+                <ConnectionsView
+                  connections={connections}
+                  credentials={credentials}
+                  settings={settings}
+                  onLayoutChange={(v) => updateLayout("connection_layout", v)}
+                  onSubmit={handleConnSubmit}
+                  onCloneSubmit={handleCloneSubmit}
+                  onCreateCredential={handleCreateCredential}
+                  onDelete={handleDeleteConnection}
+                  onConnect={(c) => void connect(c)}
+                  onConnectAllInTag={handleConnectAllInTag}
+                  onScpAllInTag={handleScpAllInTag}
+                />
               )}
 
               {view === "credentials" && (
-                <>
-                  <div className="flex items-center justify-between px-6 py-4 border-b border-border">
-                    <h1 className="text-lg font-semibold">Credentials</h1>
-                    <div className="flex items-center gap-2">
-                      <LayoutToggle
-                        value={settings.credential_layout}
-                        onChange={(v) => updateLayout("credential_layout", v)}
-                      />
-                      <Button size="sm" onClick={() => dialogs.openNewCredential()} data-testid="add-credential-button">
-                        <Plus className="h-4 w-4 mr-1" />
-                        New Credential
-                      </Button>
-                    </div>
-                  </div>
-                  {dialogs.credFormOpen ? (
-                    <CredentialForm
-                      inline
-                      open={dialogs.credFormOpen}
-                      onOpenChange={dialogs.setCredFormOpen}
-                      credential={dialogs.editingCred}
-                      onSubmit={handleCredSubmit}
-                    />
-                  ) : (
-                    <div className="flex-1 overflow-y-auto px-4 py-2">
-                      <CredentialList
-                        credentials={credentials}
-                        layout={settings.credential_layout}
-                        onEdit={(cred) => dialogs.openEditCredential(cred)}
-                        onDelete={(id) => {
-                          const cred = credentials.find((c) => c.id === id);
-                          if (cred) dialogs.setConfirmDeleteCred(cred);
-                        }}
-                      />
-                    </div>
-                  )}
-                </>
+                <CredentialsView
+                  credentials={credentials}
+                  settings={settings}
+                  onLayoutChange={(v) => updateLayout("credential_layout", v)}
+                  onSubmit={handleCredSubmit}
+                />
               )}
 
               {view === "tunnels" && (
@@ -641,8 +467,6 @@ function App() {
                   sessions={tunnelSessions}
                   connections={connections}
                   credentials={credentials}
-                  layout={settings.tunnel_layout}
-                  onLayoutChange={(v) => updateLayout("tunnel_layout", v)}
                   onCloseSession={closeTunnel}
                   onConnect={(c) => void connect(c)}
                   onEdit={(conn) => {
@@ -721,28 +545,13 @@ function App() {
           items={[
             {
               label: "Take screenshot",
-              onClick: handleTakeScreenshot,
+              onClick: () => void captureScreenshot(),
             },
           ]}
         />
       )}
 
-      {/* Screenshot saved toast */}
-      {dialogs.screenshotToast && (
-        <div
-          role={dialogs.screenshotToast.kind === "error" ? "alert" : "status"}
-          aria-live={dialogs.screenshotToast.kind === "error" ? "assertive" : "polite"}
-          aria-atomic="true"
-          data-screenshot-exclude="true"
-          className={`fixed bottom-4 right-4 z-[9999] rounded-md border shadow-lg px-4 py-2 text-sm max-w-md break-all ${
-            dialogs.screenshotToast.kind === "error"
-              ? "border-destructive/40 bg-destructive/10 text-destructive"
-              : "bg-popover text-popover-foreground"
-          }`}
-        >
-          {dialogs.screenshotToast.message}
-        </div>
-      )}
+      <ScreenshotToast />
 
       <ConfirmDialog
         open={!!dialogs.confirmDeleteConn}
@@ -802,20 +611,14 @@ function App() {
         confirmLabel="Close"
         variant="destructive"
         onConfirm={async () => {
-          const payload = dialogs.confirmClosePane;
-          if (!payload) return;
-          if (payload.sessionId.startsWith("__tab__:")) {
-            const tabId = payload.sessionId.slice("__tab__:".length);
-            await closeTab(tabId);
-          } else {
-            await closePane(payload.sessionId);
-          }
+          const target = dialogs.confirmClosePane;
+          if (!target) return;
+          if (target.kind === "tab") await closeTab(target.tabId);
+          else await closePane(target.sessionId);
         }}
       />
 
-      {/* Tag-group bulk action confirm. Always shown before
-          Connect-all or SCP-all regardless of host count — see
-          handleConnectAllInTag/handleScpAllInTag rationale. */}
+      {/* Tag-group bulk action confirm (see handleConnectAllInTag). */}
       <ConfirmDialog
         open={!!dialogs.confirmTagAction}
         onOpenChange={(o) => !o && dialogs.setConfirmTagAction(null)}
@@ -888,20 +691,19 @@ function App() {
             </Button>
             <Button
               variant="secondary"
-              onClick={() => handleOrphanCredDialogConfirm(false)}
+              onClick={() => void handleOrphanCredDialogConfirm(false)}
             >
               Delete connection only
             </Button>
             <Button
               variant="destructive"
-              onClick={() => handleOrphanCredDialogConfirm(true)}
+              onClick={() => void handleOrphanCredDialogConfirm(true)}
             >
               Delete connection and credential
             </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
-
     </div>
   );
 }

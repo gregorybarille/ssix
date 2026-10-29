@@ -6,6 +6,10 @@ export interface ScreenshotToast {
   message: string;
 }
 
+export type ClosePaneTarget =
+  | { kind: "pane"; sessionId: string; name: string }
+  | { kind: "tab"; tabId: string; name: string };
+
 /**
  * Audit-4 Phase 5d: every dialog in App.tsx (connection form,
  * credential form, clone form, ConnectPicker, ScpDialog, the three
@@ -61,7 +65,9 @@ interface DialogsState {
   // Confirmation dialogs
   confirmDeleteConn: Connection | null;
   confirmDeleteCred: Credential | null;
-  confirmClosePane: { sessionId: string; name: string } | null;
+  // What "Close terminal?" will close on confirm: one pane, or every
+  // pane of a split tab. `name` is the human label shown in the prompt.
+  confirmClosePane: ClosePaneTarget | null;
   // Tag-group bulk action confirmation. We always confirm before
   // running Connect-all or SCP-all on a tag group regardless of
   // host count — these actions can spawn dozens of SSH sessions
@@ -101,9 +107,7 @@ interface DialogsState {
   ) => void;
   setConfirmDeleteConn: (conn: Connection | null) => void;
   setConfirmDeleteCred: (cred: Credential | null) => void;
-  setConfirmClosePane: (
-    payload: { sessionId: string; name: string } | null,
-  ) => void;
+  setConfirmClosePane: (payload: ClosePaneTarget | null) => void;
   setConfirmTagAction: (
     payload:
       | { kind: "connect" | "scp"; label: string; connections: Connection[] }

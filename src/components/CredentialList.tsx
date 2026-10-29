@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import { useState } from "react";
 import { Credential, LayoutMode } from "@/types";
 import { Button } from "./ui/button";
 import { Badge } from "./ui/badge";
@@ -117,9 +117,9 @@ export function CredentialList({
                 <div className="flex items-start justify-between gap-2">
                   <div className="flex items-center gap-2 min-w-0">
                     {cred.type === "ssh_key" ? (
-                      <Key className="h-5 w-5 text-muted-foreground" />
+                      <Key className="h-5 w-5 text-muted-foreground" aria-hidden="true" />
                     ) : (
-                      <Lock className="h-5 w-5 text-muted-foreground" />
+                      <Lock className="h-5 w-5 text-muted-foreground" aria-hidden="true" />
                     )}
                     <span className="font-medium text-sm truncate">{cred.name}</span>
                   </div>
@@ -165,9 +165,9 @@ export function CredentialList({
           >
             <div className="flex-shrink-0">
               {cred.type === "ssh_key" ? (
-                <Key className="h-5 w-5 text-muted-foreground" />
+                <Key className="h-5 w-5 text-muted-foreground" aria-hidden="true" />
               ) : (
-                <Lock className="h-5 w-5 text-muted-foreground" />
+                <Lock className="h-5 w-5 text-muted-foreground" aria-hidden="true" />
               )}
             </div>
             <div className="flex-1 min-w-0">
