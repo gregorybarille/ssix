@@ -1,3 +1,4 @@
+use crate::commands::blocking;
 use crate::models::{Connection, ConnectionKind};
 use crate::storage::{load_data, with_data_mut};
 use serde::Deserialize;
@@ -81,7 +82,11 @@ fn validate_connection_fields(name: &str, host: &str, port: u16) -> Result<(), S
 }
 
 #[tauri::command]
-pub fn add_connection(input: AddConnectionInput) -> Result<Connection, String> {
+pub async fn add_connection(input: AddConnectionInput) -> Result<Connection, String> {
+    blocking(move || add_connection_sync(input)).await
+}
+
+fn add_connection_sync(input: AddConnectionInput) -> Result<Connection, String> {
     let f = input.fields;
     validate_connection_fields(&f.name, &f.host, f.port)?;
     with_data_mut(|data| {
@@ -102,7 +107,11 @@ pub fn add_connection(input: AddConnectionInput) -> Result<Connection, String> {
 }
 
 #[tauri::command]
-pub fn update_connection(input: UpdateConnectionInput) -> Result<Connection, String> {
+pub async fn update_connection(input: UpdateConnectionInput) -> Result<Connection, String> {
+    blocking(move || update_connection_sync(input)).await
+}
+
+fn update_connection_sync(input: UpdateConnectionInput) -> Result<Connection, String> {
     let id = input.id;
     let f = input.fields;
     validate_connection_fields(&f.name, &f.host, f.port)?;
@@ -160,11 +169,14 @@ pub fn update_connection(input: UpdateConnectionInput) -> Result<Connection, Str
 }
 
 #[tauri::command]
-pub fn delete_connection(id: String) -> Result<(), String> {
-    with_data_mut(|data| {
-        data.connections.retain(|c| c.id != id);
-        Ok(())
+pub async fn delete_connection(id: String) -> Result<(), String> {
+    blocking(move || {
+        with_data_mut(|data| {
+            data.connections.retain(|c| c.id != id);
+            Ok(())
+        })
     })
+    .await
 }
 
 /// Returns the ID of the private credential associated with the given connection
@@ -191,7 +203,11 @@ pub fn get_orphan_private_credential(conn_id: String) -> Result<Option<String>, 
 }
 
 #[tauri::command]
-pub fn clone_connection(input: CloneConnectionInput) -> Result<Connection, String> {
+pub async fn clone_connection(input: CloneConnectionInput) -> Result<Connection, String> {
+    blocking(move || clone_connection_sync(input)).await
+}
+
+fn clone_connection_sync(input: CloneConnectionInput) -> Result<Connection, String> {
     // Audit-4 H6: validate the new name (host/port are validated below once
     // the original is loaded and we know the effective values).
     if input.new_name.trim().is_empty() {
@@ -209,22 +225,11 @@ pub fn clone_connection(input: CloneConnectionInput) -> Result<Connection, Strin
         }
     }
 
-    // Audit-4 Logic M4: previously, when cloning a connection that owned a
-    // private credential, we duplicated the secret into the keychain
-    // *inside* the `with_data_mut` closure — but `with_data_mut` only
-    // commits `data.json` *after* the closure returns. If `save_data`
-    // then failed (disk full, permissions, etc.), we'd leave orphan
-    // keychain entries pointing at a credential id that doesn't exist
-    // on disk, with no way to clean them up (the secrets-cleanup pass
-    // only runs against credentials that did make it into data.json).
-    //
-    // Fix: track every keychain id we wrote inside the closure, then
-    // delete them if `with_data_mut` returns Err. The keychain writes
-    // themselves stay inside the closure so the in-memory `data` and
-    // the keychain are in sync at the moment we serialize.
-    let written_secret_ids: std::sync::Arc<std::sync::Mutex<Vec<String>>> =
-        std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
-    let written_secret_ids_clone = std::sync::Arc::clone(&written_secret_ids);
+    // When the clone duplicates a private credential its secrets are
+    // written inside the `with_data_mut` closure, but data.json is only
+    // committed after the closure returns. Remember the new id so a failed
+    // save can remove the orphaned keychain entry.
+    let mut created_private_credential: Option<String> = None;
 
     let result = with_data_mut(|data| {
         if data.connections.iter().any(|c| c.name == input.new_name) {
@@ -257,46 +262,29 @@ pub fn clone_connection(input: CloneConnectionInput) -> Result<Connection, Strin
                             .cloned()
                         {
                             let new_cred_id = Uuid::new_v4().to_string();
-                            // Copy the secret from the keychain to the new credential's entry.
+                            // Copy every secret in one read and one write.
+                            let secrets = crate::keychain::snapshot_for_credential(orig_cred_id)?;
+                            if matches!(orig_cred.kind, crate::models::CredentialKind::Password { .. })
+                                && secrets.password.is_none()
+                            {
+                                return Err("Failed to read password from secrets store while duplicating private credential".to_string());
+                            }
+                            crate::keychain::replace_for_credential(&new_cred_id, &secrets)?;
+                            created_private_credential = Some(new_cred_id.clone());
                             let new_kind = match &orig_cred.kind {
                                 crate::models::CredentialKind::Password { .. } => {
-                                    let secret = crate::keychain::get_password(orig_cred_id).ok_or_else(|| {
-                                        "Failed to read password from secrets store while duplicating private credential".to_string()
-                                    })?;
-                                    crate::keychain::store_password(&new_cred_id, &secret)?;
-                                    written_secret_ids_clone
-                                        .lock()
-                                        .map_err(|e| e.to_string())?
-                                        .push(new_cred_id.clone());
                                     crate::models::CredentialKind::Password {
                                         password: String::new(),
                                     }
                                 }
                                 crate::models::CredentialKind::SshKey {
                                     private_key_path,
-                                    private_key: _,
                                     ..
-                                } => {
-                                    if let Some(pp) = crate::keychain::get_passphrase(orig_cred_id) {
-                                        crate::keychain::store_passphrase(&new_cred_id, &pp)?;
-                                        written_secret_ids_clone
-                                            .lock()
-                                            .map_err(|e| e.to_string())?
-                                            .push(new_cred_id.clone());
-                                    }
-                                    if let Some(pk) = crate::keychain::get_private_key(orig_cred_id) {
-                                        crate::keychain::store_private_key(&new_cred_id, &pk)?;
-                                        written_secret_ids_clone
-                                            .lock()
-                                            .map_err(|e| e.to_string())?
-                                            .push(new_cred_id.clone());
-                                    }
-                                    crate::models::CredentialKind::SshKey {
-                                        private_key_path: private_key_path.clone(),
-                                        private_key: None,
-                                        passphrase: None,
-                                    }
-                                }
+                                } => crate::models::CredentialKind::SshKey {
+                                    private_key_path: private_key_path.clone(),
+                                    private_key: None,
+                                    passphrase: None,
+                                },
                             };
                             let new_cred = crate::models::Credential {
                                 id: new_cred_id.clone(),
@@ -337,14 +325,12 @@ pub fn clone_connection(input: CloneConnectionInput) -> Result<Connection, Strin
         Ok(cloned)
     });
 
-    // If with_data_mut failed (validation Err returned from closure, or
-    // save_data failure after the closure ran), strip any keychain
-    // entries we created so the next run doesn't see ghost secrets.
+    // If with_data_mut failed (validation Err from the closure, or a
+    // save_data failure after it ran), strip the keychain entry we created
+    // so the next run doesn't see ghost secrets.
     if result.is_err() {
-        if let Ok(ids) = written_secret_ids.lock() {
-            for id in ids.iter() {
-                crate::keychain::delete_all_for_credential(id);
-            }
+        if let Some(id) = created_private_credential {
+            crate::keychain::delete_all_for_credential(&id);
         }
     }
 

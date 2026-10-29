@@ -3,8 +3,24 @@ use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
+use std::time::SystemTime;
 
 static DATA_LOCK: Mutex<()> = Mutex::new(());
+
+/// Parsed copy of the last `data.json` read or written, keyed by the path
+/// and the file's mtime so a hand-edited or rotated file is noticed on the
+/// next load. Guarded by `DATA_LOCK` (never accessed without it).
+struct CachedData {
+    path: PathBuf,
+    modified: Option<SystemTime>,
+    data: AppData,
+}
+
+static DATA_CACHE: Mutex<Option<CachedData>> = Mutex::new(None);
+
+fn modified_time(path: &Path) -> Option<SystemTime> {
+    fs::metadata(path).and_then(|m| m.modified()).ok()
+}
 
 #[cfg(test)]
 pub(crate) static TEST_ENV_LOCK: Mutex<()> = Mutex::new(());
@@ -35,17 +51,34 @@ pub fn load_data() -> Result<AppData, String> {
     load_data_unlocked()
 }
 
+/// Load `data.json`, serving from the in-memory copy when the file on disk
+/// is unchanged since it was last read or written. Callers must hold
+/// `DATA_LOCK`.
 fn load_data_unlocked() -> Result<AppData, String> {
     let path = get_data_path();
     if !path.exists() {
         return Ok(AppData::default());
     }
+    let modified = modified_time(&path);
+
+    let mut cache = DATA_CACHE.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some(cached) = cache.as_ref() {
+        if cached.path == path && cached.modified.is_some() && cached.modified == modified {
+            return Ok(cached.data.clone());
+        }
+    }
+
     let content = fs::read_to_string(&path).map_err(|e| e.to_string())?;
     let mut data: AppData = serde_json::from_str(&content).map_err(|e| e.to_string())?;
-    // Audit-4 Phase 6b: walk the loaded `schema_version` up to the
-    // current one (also runs the LegacyTunnel → JumpShell rewrite for
-    // pre-stamp v0 files). Idempotent for files already at HEAD.
+    // Walk the loaded `schema_version` up to the current one (also runs the
+    // LegacyTunnel → JumpShell rewrite for pre-stamp v0 files). Idempotent
+    // for files already at HEAD.
     data.migrate_to_current();
+    *cache = Some(CachedData {
+        path,
+        modified,
+        data: data.clone(),
+    });
     Ok(data)
 }
 
@@ -166,7 +199,14 @@ pub(crate) fn atomic_write(path: &Path, content: &[u8], mode: Option<u32>) -> Re
 fn save_data_unlocked(data: &AppData) -> Result<(), String> {
     let path = get_data_path();
     let content = serde_json::to_string_pretty(data).map_err(|e| e.to_string())?;
-    atomic_write(&path, content.as_bytes(), None)
+    atomic_write(&path, content.as_bytes(), None)?;
+    let mut cache = DATA_CACHE.lock().unwrap_or_else(|e| e.into_inner());
+    *cache = Some(CachedData {
+        modified: modified_time(&path),
+        path,
+        data: data.clone(),
+    });
+    Ok(())
 }
 
 /// Execute a read-modify-write transaction against AppData under one lock.
@@ -353,6 +393,53 @@ mod tests {
             final_content
         );
         let _ = fs::remove_dir_all(&*dir);
+    }
+
+    /// The cache must serve repeat loads without touching the file, and
+    /// must notice when the file changes underneath it (hand edits, or a
+    /// different `SSIX_DATA_DIR`).
+    #[test]
+    fn load_data_is_cached_until_the_file_changes() {
+        let _g = TEST_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let prev = std::env::var("SSIX_DATA_DIR").ok();
+        let dir = tmp_dir();
+        std::env::set_var("SSIX_DATA_DIR", &dir);
+
+        with_data_mut(|data| {
+            data.settings.font_size = 21;
+            Ok(())
+        })
+        .unwrap();
+        assert_eq!(load_data().unwrap().settings.font_size, 21);
+
+        // Simulate an external edit with a distinct mtime.
+        let path = get_data_path();
+        let mut edited = load_data().unwrap();
+        edited.settings.font_size = 33;
+        let json = serde_json::to_string_pretty(&edited).unwrap();
+        fs::write(&path, json).unwrap();
+        let later = SystemTime::now() + std::time::Duration::from_secs(5);
+        fs::File::options()
+            .write(true)
+            .open(&path)
+            .unwrap()
+            .set_modified(later)
+            .unwrap();
+        assert_eq!(load_data().unwrap().settings.font_size, 33, "mtime change must bust the cache");
+
+        // A write through the storage layer refreshes the cache in place.
+        with_data_mut(|data| {
+            data.settings.font_size = 44;
+            Ok(())
+        })
+        .unwrap();
+        assert_eq!(load_data().unwrap().settings.font_size, 44);
+
+        match prev {
+            Some(v) => std::env::set_var("SSIX_DATA_DIR", v),
+            None => std::env::remove_var("SSIX_DATA_DIR"),
+        }
+        let _ = fs::remove_dir_all(&dir);
     }
 
     /// `data_dir()` and `secrets_path()` (via the same helper) MUST

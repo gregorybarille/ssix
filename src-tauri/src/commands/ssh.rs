@@ -18,7 +18,7 @@ pub(crate) fn resolve_credential(
         .find(|c| c.id == cred_id)
         .ok_or_else(|| format!("Credential {} not found", cred_id))?
         .clone();
-    keychain::enrich_credential(&mut cred);
+    keychain::enrich_credential(&mut cred)?;
     let username = cred.username.clone();
     let auth = match &cred.kind {
         CredentialKind::Password { password } => AuthMethod::Password(password.clone()),

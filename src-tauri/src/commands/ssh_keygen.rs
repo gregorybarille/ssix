@@ -7,6 +7,7 @@
 //!   target host and idempotently appends a public key line to
 //!   `~/.ssh/authorized_keys` with the standard 700/600 permission setup.
 
+use crate::commands::blocking;
 use crate::ssh::{open_authenticated_session, AuthMethod, Endpoint};
 use rand_core::OsRng;
 use serde::{Deserialize, Serialize};
@@ -120,7 +121,11 @@ fn write_key_files(
 }
 
 #[tauri::command]
-pub fn generate_ssh_key(input: GenerateSshKeyInput) -> Result<GeneratedKey, String> {
+pub async fn generate_ssh_key(input: GenerateSshKeyInput) -> Result<GeneratedKey, String> {
+    blocking(move || generate_ssh_key_sync(input)).await
+}
+
+fn generate_ssh_key_sync(input: GenerateSshKeyInput) -> Result<GeneratedKey, String> {
     let mut private = PrivateKey::random(&mut OsRng, ssh_key::Algorithm::Ed25519)
         .map_err(|e| format!("Key generation failed: {}", e))?;
 
@@ -301,17 +306,20 @@ pub struct InstallPublicKeyByCredentialInput {
 /// the remote host. Convenience wrapper used by the frontend so it doesn't
 /// need to pass the public key text around.
 #[tauri::command]
-pub fn ssh_install_public_key_by_credential(
+pub async fn ssh_install_public_key_by_credential(
     input: InstallPublicKeyByCredentialInput,
 ) -> Result<(), String> {
-    let public_key = derive_public_key_for_credential(&input.credential_id)?;
-    install_public_key_with_password(
-        &input.host,
-        input.port,
-        &input.username,
-        &input.password,
-        &public_key,
-    )
+    blocking(move || {
+        let public_key = derive_public_key_for_credential(&input.credential_id)?;
+        install_public_key_with_password(
+            &input.host,
+            input.port,
+            &input.username,
+            &input.password,
+            &public_key,
+        )
+    })
+    .await
 }
 
 /// Look up an ssh_key credential by id and produce the corresponding public
@@ -331,7 +339,7 @@ fn derive_public_key_for_credential(credential_id: &str) -> Result<String, Strin
         .iter_mut()
         .find(|c| c.id == credential_id)
         .ok_or_else(|| format!("Credential {} not found", credential_id))?;
-    crate::keychain::enrich_credential(cred);
+    crate::keychain::enrich_credential(cred)?;
     match &cred.kind {
         CredentialKind::Password { .. } => {
             Err("This credential is a password, not an SSH key".to_string())
@@ -488,7 +496,7 @@ mod tests {
 
     #[test]
     fn generate_ssh_key_inline_returns_parseable_keypair() {
-        let out = generate_ssh_key(GenerateSshKeyInput {
+        let out = generate_ssh_key_sync(GenerateSshKeyInput {
             storage: KeyStorage::Inline,
             name_hint: None,
             passphrase: None,
@@ -512,7 +520,7 @@ mod tests {
         ));
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("id_test");
-        let out = generate_ssh_key(GenerateSshKeyInput {
+        let out = generate_ssh_key_sync(GenerateSshKeyInput {
             storage: KeyStorage::CustomPath {
                 path: path.to_string_lossy().to_string(),
             },
@@ -543,7 +551,7 @@ mod tests {
             assert_eq!(pub_mode, 0o644);
         }
         // Refuse to overwrite.
-        let err = generate_ssh_key(GenerateSshKeyInput {
+        let err = generate_ssh_key_sync(GenerateSshKeyInput {
             storage: KeyStorage::CustomPath {
                 path: path.to_string_lossy().to_string(),
             },
@@ -558,7 +566,7 @@ mod tests {
 
     #[test]
     fn generate_ssh_key_with_passphrase_encrypts_key() {
-        let out = generate_ssh_key(GenerateSshKeyInput {
+        let out = generate_ssh_key_sync(GenerateSshKeyInput {
             storage: KeyStorage::Inline,
             name_hint: None,
             passphrase: Some("test-pass".into()),
@@ -573,7 +581,7 @@ mod tests {
 
     #[test]
     fn public_key_from_private_text_unencrypted_matches_generation() {
-        let out = generate_ssh_key(GenerateSshKeyInput {
+        let out = generate_ssh_key_sync(GenerateSshKeyInput {
             storage: KeyStorage::Inline,
             name_hint: None,
             passphrase: None,
@@ -586,7 +594,7 @@ mod tests {
 
     #[test]
     fn public_key_from_private_text_encrypted_requires_passphrase() {
-        let out = generate_ssh_key(GenerateSshKeyInput {
+        let out = generate_ssh_key_sync(GenerateSshKeyInput {
             storage: KeyStorage::Inline,
             name_hint: None,
             passphrase: Some("p4ss".into()),

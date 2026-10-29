@@ -326,10 +326,13 @@ impl AppData {
                         destination_port: *destination_port,
                     },
                     None => {
-                        eprintln!(
-                            "[migration] Connection {} had legacy tunnel without gateway \
-                             credential; converting to Direct",
-                            conn.id
+                        crate::logs::log_local(
+                            "warn",
+                            "migration",
+                            format!(
+                                "Connection {} had legacy tunnel without gateway credential; converting to Direct",
+                                conn.id
+                            ),
                         );
                         ConnectionKind::Direct
                     }

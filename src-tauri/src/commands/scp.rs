@@ -11,6 +11,7 @@
 //! `commands/ssh.rs`; gateway bridging is `crate::ssh::bridge_via_gateway`,
 //! the same code path the jump-shell terminal uses.
 
+use crate::commands::blocking;
 use crate::commands::ssh::{find_connection, resolve_endpoint};
 use crate::models::{Connection, ConnectionKind};
 use crate::ssh::{
@@ -48,7 +49,11 @@ pub struct ScpResult {
 }
 
 #[tauri::command]
-pub fn scp_upload(input: ScpUploadInput) -> Result<ScpResult, String> {
+pub async fn scp_upload(input: ScpUploadInput) -> Result<ScpResult, String> {
+    blocking(move || scp_upload_sync(input)).await
+}
+
+fn scp_upload_sync(input: ScpUploadInput) -> Result<ScpResult, String> {
     let (data, conn) = find_connection(&input.connection_id)?;
 
     if matches!(conn.kind, ConnectionKind::PortForward { .. }) {
@@ -94,7 +99,11 @@ pub fn scp_upload(input: ScpUploadInput) -> Result<ScpResult, String> {
 }
 
 #[tauri::command]
-pub fn scp_download(input: ScpDownloadInput) -> Result<ScpResult, String> {
+pub async fn scp_download(input: ScpDownloadInput) -> Result<ScpResult, String> {
+    blocking(move || scp_download_sync(input)).await
+}
+
+fn scp_download_sync(input: ScpDownloadInput) -> Result<ScpResult, String> {
     let (data, conn) = find_connection(&input.connection_id)?;
 
     if matches!(conn.kind, ConnectionKind::PortForward { .. }) {

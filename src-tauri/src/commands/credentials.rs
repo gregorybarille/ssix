@@ -1,4 +1,5 @@
-use crate::keychain;
+use crate::commands::blocking;
+use crate::keychain::{self, CredentialSecrets};
 use crate::models::{Credential, CredentialKind};
 use crate::storage::{load_data, with_data_mut};
 use serde::Deserialize;
@@ -22,106 +23,58 @@ pub struct UpdateCredentialInput {
     pub kind: CredentialKind,
 }
 
-/// Audit-4 Logic M3: dry-run validation of a `CredentialKind` shape that
-/// returns the same errors as `store_secrets_and_sanitize` would but
-/// without touching the keychain. Lets `update_credential` validate the
-/// proposed update BEFORE wiping the existing secrets.
-fn validate_credential_kind_shape(kind: &CredentialKind) -> Result<(), String> {
+/// Split a `CredentialKind` into the sanitised shape that goes into
+/// `data.json` (passwords as `""`, passphrases and inline keys as `None`)
+/// and the secrets that go into the keychain. Pure: validates the shape
+/// without touching any file.
+fn split_secrets(kind: &CredentialKind) -> Result<(CredentialKind, CredentialSecrets), String> {
     match kind {
-        CredentialKind::Password { .. } => Ok(()),
-        CredentialKind::SshKey {
-            private_key_path,
-            private_key,
-            ..
-        } => {
-            let path_set = private_key_path
-                .as_deref()
-                .map(|s| !s.trim().is_empty())
-                .unwrap_or(false);
-            let inline_set = private_key
-                .as_deref()
-                .map(|s| !s.trim().is_empty())
-                .unwrap_or(false);
-            if !path_set && !inline_set {
-                return Err(
-                    "SSH key credential requires either a private key path or inline key contents"
-                        .to_string(),
-                );
-            }
-            if path_set && inline_set {
-                return Err(
-                    "SSH key credential cannot have both a path and inline contents; choose one"
-                        .to_string(),
-                );
-            }
-            Ok(())
-        }
-    }
-}
-
-/// Extract the secret fields from a `CredentialKind`, persist them to the OS
-/// keychain keyed by `credential_id`, and return a sanitised `CredentialKind`
-/// suitable for JSON storage (passwords replaced by `""`, passphrases by `None`).
-fn store_secrets_and_sanitize(
-    credential_id: &str,
-    kind: &CredentialKind,
-) -> Result<CredentialKind, String> {
-    match kind {
-        CredentialKind::Password { password } => {
-            keychain::store_password(credential_id, password)?;
-            Ok(CredentialKind::Password {
+        CredentialKind::Password { password } => Ok((
+            CredentialKind::Password {
                 password: String::new(),
-            })
-        }
+            },
+            CredentialSecrets {
+                password: Some(password.clone()),
+                ..CredentialSecrets::default()
+            },
+        )),
         CredentialKind::SshKey {
             private_key_path,
             private_key,
             passphrase,
         } => {
-            let path_set = private_key_path
+            let path = private_key_path
                 .as_deref()
-                .map(|s| !s.trim().is_empty())
-                .unwrap_or(false);
-            let inline_set = private_key
+                .map(str::trim)
+                .filter(|s| !s.is_empty());
+            let inline = private_key
                 .as_deref()
-                .map(|s| !s.trim().is_empty())
-                .unwrap_or(false);
-            if !path_set && !inline_set {
+                .map(str::trim)
+                .filter(|s| !s.is_empty());
+            if path.is_none() && inline.is_none() {
                 return Err(
                     "SSH key credential requires either a private key path or inline key contents"
                         .to_string(),
                 );
             }
-            if path_set && inline_set {
+            if path.is_some() && inline.is_some() {
                 return Err(
                     "SSH key credential cannot have both a path and inline contents; choose one"
                         .to_string(),
                 );
             }
-            if let Some(pp) = passphrase.as_deref() {
-                if !pp.is_empty() {
-                    keychain::store_passphrase(credential_id, pp)?;
-                }
-            }
-            if inline_set {
-                // Persist the inline key body to the secrets file and strip it
-                // from the JSON-bound copy.
-                keychain::store_private_key(
-                    credential_id,
-                    private_key.as_deref().unwrap(),
-                )?;
-                Ok(CredentialKind::SshKey {
-                    private_key_path: None,
+            Ok((
+                CredentialKind::SshKey {
+                    private_key_path: path.map(str::to_string),
                     private_key: None,
                     passphrase: None,
-                })
-            } else {
-                Ok(CredentialKind::SshKey {
-                    private_key_path: private_key_path.clone(),
-                    private_key: None,
-                    passphrase: None,
-                })
-            }
+                },
+                CredentialSecrets {
+                    password: None,
+                    passphrase: passphrase.clone().filter(|pp| !pp.is_empty()),
+                    private_key: private_key.clone().filter(|pk| !pk.trim().is_empty()),
+                },
+            ))
         }
     }
 }
@@ -155,58 +108,71 @@ fn validate_credential_fields(name: &str, username: &str, is_private: bool) -> R
 #[tauri::command]
 pub fn get_credentials() -> Result<Vec<Credential>, String> {
     let data = load_data()?;
-    let credentials = data
+    let mut credentials: Vec<Credential> = data
         .credentials
         .into_iter()
         .filter(|c| !c.is_private)
-        .map(|mut c| {
-            keychain::enrich_credential(&mut c);
-            c
-        })
         .collect();
+    keychain::enrich_credentials(&mut credentials)?;
     Ok(credentials)
 }
 
 #[tauri::command]
-pub fn add_credential(input: AddCredentialInput) -> Result<Credential, String> {
+pub async fn add_credential(input: AddCredentialInput) -> Result<Credential, String> {
+    blocking(move || add_credential_sync(input)).await
+}
+
+fn add_credential_sync(input: AddCredentialInput) -> Result<Credential, String> {
     validate_credential_fields(&input.name, &input.username, input.is_private)?;
-    with_data_mut(|data| {
+    let (kind_for_json, secrets) = split_secrets(&input.kind)?;
+    // The id doubles as the keychain key, so it is generated up front and
+    // the keychain entry is rolled back if the data file cannot be saved.
+    let cred_id = uuid::Uuid::new_v4().to_string();
+
+    let result = with_data_mut(|data| {
         // Private credentials skip the unique-name check since they use
         // auto-generated UUID-based names and are never shown in the UI list.
         if !input.is_private && data.credentials.iter().any(|c| c.name == input.name) {
             return Err(format!("A credential named '{}' already exists", input.name));
         }
-
-        // Generate the ID here so we can use it as the keychain key.
-        let cred_id = uuid::Uuid::new_v4().to_string();
-        let kind_for_json = store_secrets_and_sanitize(&cred_id, &input.kind)?;
+        keychain::replace_for_credential(&cred_id, &secrets)?;
 
         let credential = Credential {
-            id: cred_id,
+            id: cred_id.clone(),
             name: input.name,
             username: input.username,
             kind: kind_for_json,
             is_private: input.is_private,
         };
-
-        // Return the credential enriched with its secret so the caller can use it
-        // immediately (e.g. for display or connection).
+        // Return the credential enriched with its secret so the caller can
+        // use it immediately (e.g. for display or connection).
         let mut result = credential.clone();
-        keychain::enrich_credential(&mut result);
-
+        result.kind = input.kind;
         data.credentials.push(credential);
         Ok(result)
-    })
+    });
+    if result.is_err() {
+        keychain::delete_all_for_credential(&cred_id);
+    }
+    result
 }
 
 #[tauri::command]
-pub fn update_credential(input: UpdateCredentialInput) -> Result<Credential, String> {
-    // Audit-4 H6: validate fields before any mutation.
-    // We can't tell whether this credential is private without loading it,
-    // but the frontend never calls update on private credentials (they're
+pub async fn update_credential(input: UpdateCredentialInput) -> Result<Credential, String> {
+    blocking(move || update_credential_sync(input)).await
+}
+
+fn update_credential_sync(input: UpdateCredentialInput) -> Result<Credential, String> {
+    // The frontend never calls update on private credentials (they're
     // managed via update_connection); validate as if non-private.
     validate_credential_fields(&input.name, &input.username, false)?;
-    with_data_mut(|data| {
+    let (kind_for_json, secrets) = split_secrets(&input.kind)?;
+
+    // Snapshot the current secrets so a failed save can put them back:
+    // otherwise data.json and secrets.json would disagree.
+    let previous = keychain::snapshot_for_credential(&input.id)?;
+
+    let result = with_data_mut(|data| {
         if data
             .credentials
             .iter()
@@ -220,41 +186,35 @@ pub fn update_credential(input: UpdateCredentialInput) -> Result<Credential, Str
             .position(|c| c.id == input.id)
             .ok_or_else(|| "Credential not found".to_string())?;
 
-        // Audit-4 Logic M3: validate the new kind BEFORE wiping the existing
-        // keychain entries. The previous order called
-        // `delete_all_for_credential` first, then `store_secrets_and_sanitize`
-        // — if sanitize returned an error (e.g. SshKey with neither path
-        // nor inline body), the user lost their existing password/passphrase
-        // with no way to roll back. We now sanitize into a temp ID first,
-        // then move the secrets atomically.
-        //
-        // Strategy: validate the kind shape WITHOUT touching the keychain
-        // by performing a dry-run validation, then delete + store.
-        validate_credential_kind_shape(&input.kind)?;
-
-        // Replace keychain entries with updated values.
-        keychain::delete_all_for_credential(&input.id);
-        let kind_for_json = store_secrets_and_sanitize(&input.id, &input.kind)?;
+        // One atomic write replaces every secret for this credential.
+        keychain::replace_for_credential(&input.id, &secrets)?;
 
         data.credentials[idx].name = input.name;
         data.credentials[idx].username = input.username;
         data.credentials[idx].kind = kind_for_json;
 
         let mut updated = data.credentials[idx].clone();
-        keychain::enrich_credential(&mut updated);
+        updated.kind = input.kind;
         Ok(updated)
-    })
+    });
+    if result.is_err() {
+        let _ = keychain::replace_for_credential(&input.id, &previous);
+    }
+    result
 }
 
 #[tauri::command]
-pub fn delete_credential(id: String) -> Result<(), String> {
-    with_data_mut(|data| {
-        data.credentials.retain(|c| c.id != id);
+pub async fn delete_credential(id: String) -> Result<(), String> {
+    blocking(move || {
+        with_data_mut(|data| {
+            data.credentials.retain(|c| c.id != id);
+            Ok(())
+        })?;
+        // Remove secrets from the keychain after the JSON entry is gone.
+        keychain::delete_all_for_credential(&id);
         Ok(())
-    })?;
-    // Remove secrets from the keychain after the JSON entry is gone.
-    keychain::delete_all_for_credential(&id);
-    Ok(())
+    })
+    .await
 }
 
 #[cfg(test)]
@@ -297,49 +257,74 @@ mod tests {
     }
 
     #[test]
-    fn test_sanitize_rejects_neither_path_nor_inline() {
+    fn test_split_secrets_rejects_neither_path_nor_inline() {
         let kind = CredentialKind::SshKey {
             private_key_path: None,
             private_key: None,
             passphrase: None,
         };
-        let err = super::store_secrets_and_sanitize("test-id-bad-1", &kind).unwrap_err();
+        let err = super::split_secrets(&kind).unwrap_err();
         assert!(err.to_lowercase().contains("either"));
     }
 
     #[test]
-    fn test_sanitize_rejects_both_path_and_inline() {
+    fn test_split_secrets_rejects_both_path_and_inline() {
         let kind = CredentialKind::SshKey {
             private_key_path: Some("/tmp/x".into()),
             private_key: Some("KEY".into()),
             passphrase: None,
         };
-        let err = super::store_secrets_and_sanitize("test-id-bad-2", &kind).unwrap_err();
+        let err = super::split_secrets(&kind).unwrap_err();
         assert!(err.to_lowercase().contains("both"));
     }
 
     #[test]
-    fn test_sanitize_inline_strips_key_and_persists_secret() {
-        let id = "test-id-sanitize-inline-da7e3f8c";
+    fn test_split_secrets_inline_strips_key_into_secrets() {
         let kind = CredentialKind::SshKey {
             private_key_path: None,
             private_key: Some("INLINE-PRIVATE-KEY-CONTENT".into()),
-            passphrase: None,
+            passphrase: Some("pp".into()),
         };
-        let sanitized = super::store_secrets_and_sanitize(id, &kind).unwrap();
+        let (sanitized, secrets) = super::split_secrets(&kind).unwrap();
         match &sanitized {
             CredentialKind::SshKey {
                 private_key,
                 private_key_path,
-                ..
+                passphrase,
             } => {
                 assert!(private_key.is_none());
                 assert!(private_key_path.is_none());
+                assert!(passphrase.is_none());
             }
             _ => panic!("unexpected kind"),
         }
-        // Cleanup
-        crate::keychain::delete_all_for_credential(id);
+        assert_eq!(secrets.private_key.as_deref(), Some("INLINE-PRIVATE-KEY-CONTENT"));
+        assert_eq!(secrets.passphrase.as_deref(), Some("pp"));
+        assert!(secrets.password.is_none());
+    }
+
+    #[test]
+    fn test_split_secrets_password_moves_to_secrets() {
+        let kind = CredentialKind::Password { password: "hunter2".into() };
+        let (sanitized, secrets) = super::split_secrets(&kind).unwrap();
+        assert!(matches!(sanitized, CredentialKind::Password { ref password } if password.is_empty()));
+        assert_eq!(secrets.password.as_deref(), Some("hunter2"));
+    }
+
+    #[test]
+    fn test_split_secrets_path_key_trims_and_drops_empty_passphrase() {
+        let kind = CredentialKind::SshKey {
+            private_key_path: Some("  /home/u/.ssh/id_ed25519  ".into()),
+            private_key: None,
+            passphrase: Some(String::new()),
+        };
+        let (sanitized, secrets) = super::split_secrets(&kind).unwrap();
+        assert!(matches!(
+            sanitized,
+            CredentialKind::SshKey { ref private_key_path, .. }
+                if private_key_path.as_deref() == Some("/home/u/.ssh/id_ed25519")
+        ));
+        assert!(secrets.passphrase.is_none());
     }
 
     // Audit-4 H6 regression tests: backend validation of credential fields.
@@ -366,35 +351,5 @@ mod tests {
         let long = "x".repeat(129);
         let err = super::validate_credential_fields(&long, "user", false).unwrap_err();
         assert!(err.contains("128"), "got: {}", err);
-    }
-
-    // Audit-4 Logic M3 regression: validate_credential_kind_shape mirrors
-    // store_secrets_and_sanitize errors without touching the keychain.
-    #[test]
-    fn test_kind_shape_rejects_neither_path_nor_inline() {
-        let kind = CredentialKind::SshKey {
-            private_key_path: None,
-            private_key: None,
-            passphrase: None,
-        };
-        let err = super::validate_credential_kind_shape(&kind).unwrap_err();
-        assert!(err.to_lowercase().contains("either"), "got: {}", err);
-    }
-
-    #[test]
-    fn test_kind_shape_rejects_both_path_and_inline() {
-        let kind = CredentialKind::SshKey {
-            private_key_path: Some("/tmp/x".into()),
-            private_key: Some("KEY".into()),
-            passphrase: None,
-        };
-        let err = super::validate_credential_kind_shape(&kind).unwrap_err();
-        assert!(err.to_lowercase().contains("both"), "got: {}", err);
-    }
-
-    #[test]
-    fn test_kind_shape_accepts_password() {
-        let kind = CredentialKind::Password { password: "x".into() };
-        assert!(super::validate_credential_kind_shape(&kind).is_ok());
     }
 }

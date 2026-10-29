@@ -4,10 +4,13 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use base64::{engine::general_purpose::STANDARD, Engine};
 
 #[tauri::command]
-pub fn take_screenshot(image_data: String) -> Result<String, String> {
-    let desktop = dirs::desktop_dir()
-        .ok_or_else(|| "Could not locate Desktop directory".to_string())?;
-    take_screenshot_into_dir(&desktop, &image_data, SystemTime::now())
+pub async fn take_screenshot(image_data: String) -> Result<String, String> {
+    crate::commands::blocking(move || {
+        let desktop = dirs::desktop_dir()
+            .ok_or_else(|| "Could not locate Desktop directory".to_string())?;
+        take_screenshot_into_dir(&desktop, &image_data, SystemTime::now())
+    })
+    .await
 }
 
 fn take_screenshot_into_dir(
