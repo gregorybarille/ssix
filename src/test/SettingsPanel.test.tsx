@@ -282,8 +282,11 @@ describe("SettingsPanel", () => {
     fireEvent.click(screen.getByRole("radio", { name: /light/i }));
     await waitFor(() => expect(onSave).toHaveBeenCalled());
 
-    const status = await screen.findByRole("status");
-    expect(status).toHaveTextContent(/settings saved/i);
+    // The role=status region is always mounted; its text appears once
+    // the save resolves and the 2s auto-hide timer starts, so wait for
+    // the text rather than asserting right after the first render.
+    const status = screen.getByRole("status");
+    await waitFor(() => expect(status).toHaveTextContent(/settings saved/i));
     // The status row should contain a decorative SVG (the lucide
     // Check glyph). svg elements are not exposed to AT but are
     // present in the DOM.
