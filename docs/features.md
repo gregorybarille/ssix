@@ -34,6 +34,16 @@ The connection form can create inline credentials and optionally save them as na
 - split down
 - retry failed sessions
 - edit source connection from failure UI
+- GPU-accelerated rendering (xterm WebGL addon) when the WebView supports it, 10 000 lines of scrollback
+- right-click pastes into the terminal under the cursor only
+
+### Host-key verification
+
+Every SSH connection — direct, gateway, the destination behind a gateway, SCP and the public-key installer — verifies the server's host key before a password or key is sent.
+
+- The first time a `host:port` is seen its key is recorded in `~/.ssix/known_hosts` (OpenSSH format, so `ssh-keygen -F`/`-R` work on it).
+- If the key later differs the connection is refused. The failure view names the host, shows the new SHA256 fingerprint and offers **Trust new host key**, which forgets the stale entry and reconnects. Use it only when you know the server was reinstalled or re-keyed.
+- Connections time out after 10 s (TCP) / 15 s (SSH setup) instead of hanging on a dead host.
 
 ### Terminal tab keyboard shortcuts
 

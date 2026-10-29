@@ -3654,6 +3654,7 @@ dependencies = [
  "base64 0.23.1",
  "dashmap",
  "dirs",
+ "libc",
  "openssl-sys",
  "rand_core",
  "serde",

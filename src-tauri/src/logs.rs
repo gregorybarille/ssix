@@ -51,7 +51,6 @@ pub fn log(app: &AppHandle, level: &str, source: &str, message: impl Into<String
 
 /// Variant for code paths that don't have an `AppHandle` (e.g. helpers used
 /// before a session has been wired). Stored but no event emitted.
-#[allow(dead_code)]
 pub fn log_local(level: &str, source: &str, message: impl Into<String>) {
     push(LogEntry {
         ts: now_ms(),

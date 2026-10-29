@@ -1,5 +1,6 @@
 mod commands;
 mod keychain;
+mod known_hosts;
 mod logs;
 mod models;
 mod ssh;
@@ -39,6 +40,7 @@ pub fn run() {
             commands::ssh::ssh_write,
             commands::ssh::ssh_resize,
             commands::ssh::ssh_disconnect,
+            commands::ssh::ssh_forget_host_key,
             commands::scp::scp_upload,
             commands::scp::scp_download,
             commands::ssh_keygen::generate_ssh_key,

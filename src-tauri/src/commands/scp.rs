@@ -7,27 +7,19 @@
 //! are unchanged, so the frontend `invoke()` calls in
 //! `src/store/useFileTransferStore.ts` continue to work unmodified.
 //!
-//! The shared helpers `find_connection` and `resolve_credential` live in
-//! `commands/ssh.rs` and are re-exported as `pub(super)` so this module
-//! can use them without duplicating logic. We intentionally keep the
-//! gateway-bridging helper (`bridge_via_gateway`) here rather than in
-//! `ssh.rs` because it is only used by SCP — `ssh_connect` for
-//! jump-shell builds its own bridge through `start_jump_shell` in the
-//! lower-level `crate::ssh` module.
+//! The shared helpers `find_connection` and `resolve_endpoint` live in
+//! `commands/ssh.rs`; gateway bridging is `crate::ssh::bridge_via_gateway`,
+//! the same code path the jump-shell terminal uses.
 
-use crate::commands::ssh::{find_connection, resolve_credential};
+use crate::commands::ssh::{find_connection, resolve_endpoint};
 use crate::models::{Connection, ConnectionKind};
 use crate::ssh::{
-    forward_bidi, open_authenticated_session, open_authenticated_session_over_stream,
-    open_gateway_session, AuthMethod,
+    bridge_via_gateway, open_authenticated_session, open_authenticated_session_over_stream,
 };
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::io::{Read, Write};
-use std::net::{TcpListener, TcpStream};
 use std::path::Path;
-use std::sync::{Arc, Barrier, Mutex};
-use std::thread;
 
 #[derive(Debug, Deserialize)]
 pub struct ScpUploadInput {
@@ -168,18 +160,12 @@ fn connect_file_transfer_session(
                 .credential_id
                 .as_ref()
                 .ok_or_else(|| "No credential configured for this connection".to_string())?;
-            let (username, auth) = resolve_credential(&data.credentials, cred_id)?;
-            let session = open_authenticated_session(
-                &conn.host,
-                conn.port,
-                &username,
-                &auth,
-                conn.verbosity,
-                &conn.extra_args,
-            )?;
+            let target = resolve_endpoint(&data.credentials, &conn.host, conn.port, cred_id)?;
+            let session =
+                open_authenticated_session(&target, conn.verbosity, conn.extra_args.as_deref())?;
             Ok(ConnectedSession {
                 session,
-                destination_label: format!("{}@{}:{}", username, conn.host, conn.port),
+                destination_label: format!("{}@{}", target.username, target.addr()),
             })
         }
         ConnectionKind::JumpShell {
@@ -192,28 +178,32 @@ fn connect_file_transfer_session(
             let dest_cred_id = conn.credential_id.as_ref().ok_or_else(|| {
                 "Jump-shell connection requires a destination credential".to_string()
             })?;
-            let (gw_user, gw_auth) = resolve_credential(&data.credentials, gateway_credential_id)?;
-            let (dest_user, dest_auth) = resolve_credential(&data.credentials, dest_cred_id)?;
-            let stream = bridge_via_gateway(
+            let gateway = resolve_endpoint(
+                &data.credentials,
                 gateway_host,
                 *gateway_port,
-                &gw_user,
-                &gw_auth,
+                gateway_credential_id,
+            )?;
+            let destination = resolve_endpoint(
+                &data.credentials,
                 destination_host,
                 *destination_port,
+                dest_cred_id,
             )?;
+            let stream = bridge_via_gateway(&gateway, &destination.host, destination.port)?;
             let session = open_authenticated_session_over_stream(
                 stream,
-                &dest_user,
-                &dest_auth,
+                &destination,
                 conn.verbosity,
-                &conn.extra_args,
+                conn.extra_args.as_deref(),
             )?;
             Ok(ConnectedSession {
                 session,
                 destination_label: format!(
-                    "{}@{}:{} via {}:{}",
-                    dest_user, destination_host, destination_port, gateway_host, gateway_port
+                    "{}@{} via {}",
+                    destination.username,
+                    destination.addr(),
+                    gateway.addr()
                 ),
             })
         }
@@ -221,85 +211,6 @@ fn connect_file_transfer_session(
             Err("SCP is only available for direct and jump-shell connections".to_string())
         }
     }
-}
-
-fn bridge_via_gateway(
-    gateway_host: &str,
-    gateway_port: u16,
-    gateway_user: &str,
-    gateway_auth: &AuthMethod,
-    destination_host: &str,
-    destination_port: u16,
-) -> Result<TcpStream, String> {
-    let listener = TcpListener::bind("127.0.0.1:0")
-        .map_err(|e| format!("Failed to bind ephemeral loopback port: {}", e))?;
-    let local_addr = listener
-        .local_addr()
-        .map_err(|e| format!("local_addr() failed: {}", e))?;
-    let gateway_session = open_gateway_session(gateway_host, gateway_port, gateway_user, gateway_auth)?;
-    let gateway_session = Arc::new(Mutex::new(gateway_session));
-    let barrier = Arc::new(Barrier::new(2));
-    let forward_err: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
-    listener.set_nonblocking(false).ok();
-
-    {
-        let gateway_session = Arc::clone(&gateway_session);
-        let barrier = Arc::clone(&barrier);
-        let forward_err = Arc::clone(&forward_err);
-        let destination_host = destination_host.to_string();
-        thread::spawn(move || {
-            match listener.accept() {
-                Ok((local_stream, peer)) => {
-                    let chan_result = {
-                        let sess = crate::ssh::lock_recover(&gateway_session);
-                        sess.channel_direct_tcpip(
-                            &destination_host,
-                            destination_port,
-                            Some((&peer.ip().to_string(), peer.port())),
-                        )
-                    };
-                    match chan_result {
-                        Ok(channel) => {
-                            crate::ssh::lock_recover(&gateway_session).set_blocking(false);
-                            barrier.wait();
-                            forward_bidi(local_stream, channel);
-                        }
-                        Err(e) => {
-                            *crate::ssh::lock_recover(&forward_err) =
-                                Some(format!("channel_direct_tcpip failed: {}", e));
-                            let _ = local_stream.shutdown(std::net::Shutdown::Both);
-                            barrier.wait();
-                        }
-                    }
-                }
-                Err(e) => {
-                    *crate::ssh::lock_recover(&forward_err) = Some(format!("accept() failed: {}", e));
-                    barrier.wait();
-                }
-            }
-        });
-    }
-
-    let connect_result = TcpStream::connect(("127.0.0.1", local_addr.port()))
-        .map_err(|e| format!("Failed to connect inner SSH session: {}", e));
-
-    // Mirror the H5 fix from start_jump_shell: if TcpStream::connect() failed
-    // the spawned forwarder is still blocked in listener.accept() and will
-    // never reach barrier.wait(). Do a best-effort self-connect so accept()
-    // wakes up and the thread can exit, then return the real error without
-    // touching the barrier (which would deadlock the main thread).
-    let stream = match connect_result {
-        Ok(s) => s,
-        Err(e) => {
-            let _ = TcpStream::connect(("127.0.0.1", local_addr.port()));
-            return Err(e);
-        }
-    };
-    barrier.wait();
-    if let Some(err) = crate::ssh::lock_recover(&forward_err).take() {
-        return Err(format!("Destination connect via gateway failed: {}", err));
-    }
-    Ok(stream)
 }
 
 fn upload_bytes(

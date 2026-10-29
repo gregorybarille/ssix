@@ -204,12 +204,13 @@ function App() {
       if (target.closest("input, textarea, [contenteditable]")) return;
       e.preventDefault();
       if (target.closest(".xterm-screen, .xterm-rows")) {
+        const sessionId = target.closest<HTMLElement>("[data-session-id]")?.dataset.sessionId;
         navigator.clipboard
           .readText()
           .then((text) => {
             if (text) {
               window.dispatchEvent(
-                new CustomEvent("ssix:terminal-paste", { detail: { text } }),
+                new CustomEvent("ssix:terminal-paste", { detail: { text, sessionId } }),
               );
             }
           })

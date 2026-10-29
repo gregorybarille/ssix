@@ -34,6 +34,9 @@ dashmap = "6.2"
 # `src/types/generated/`. Keeping ts-rs out of the release crate
 # graph avoids pulling its transitive deps into the desktop binary
 # and means a future drop of ts-rs is a single-file change.
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
 [dev-dependencies]
 ts-rs = "12"
 

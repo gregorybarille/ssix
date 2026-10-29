@@ -7,14 +7,12 @@
 //!   target host and idempotently appends a public key line to
 //!   `~/.ssh/authorized_keys` with the standard 700/600 permission setup.
 
-use crate::ssh::AuthMethod;
+use crate::ssh::{open_authenticated_session, AuthMethod, Endpoint};
 use rand_core::OsRng;
 use serde::{Deserialize, Serialize};
 use ssh_key::{LineEnding, PrivateKey};
 use std::io::Read;
-use std::net::TcpStream;
 use std::path::{Path, PathBuf};
-use std::time::Duration;
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "snake_case", tag = "storage")]
@@ -254,34 +252,13 @@ fn install_public_key_with_password(
         return Err("Public key is empty".to_string());
     }
 
-    let auth = AuthMethod::Password(password.to_string());
-    let addr = format!("{}:{}", host, port);
-    let socket_addr = addr
-        .to_socket_addrs()
-        .map_err(|e| format!("Resolve {}: {}", addr, e))?
-        .next()
-        .ok_or_else(|| format!("No address for {}", addr))?;
-    let tcp = TcpStream::connect_timeout(&socket_addr, Duration::from_secs(10))
-        .map_err(|e| format!("TCP connect to {} failed: {}", addr, e))?;
-    tcp.set_nonblocking(false).ok();
-
-    let mut session =
-        ssh2::Session::new().map_err(|e| format!("SSH session create failed: {}", e))?;
-    session.set_tcp_stream(tcp);
-    session
-        .handshake()
-        .map_err(|e| format!("SSH handshake failed: {}", e))?;
-
-    match &auth {
-        AuthMethod::Password(pw) => session
-            .userauth_password(username, pw)
-            .map_err(|e| format!("Password auth failed: {}", e))?,
-        _ => unreachable!(),
-    }
-
-    if !session.authenticated() {
-        return Err("Authentication failed".to_string());
-    }
+    let target = Endpoint {
+        host: host.to_string(),
+        port,
+        username: username.to_string(),
+        auth: AuthMethod::Password(password.to_string()),
+    };
+    let session = open_authenticated_session(&target, 0, None)?;
 
     let mut channel = session
         .channel_session()
@@ -409,7 +386,6 @@ fn public_key_from_private_text(
         .map_err(|e| format!("Failed to serialise public key: {}", e))
 }
 
-use std::net::ToSocketAddrs;
 
 #[cfg(test)]
 mod tests {

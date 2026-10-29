@@ -15,6 +15,13 @@ if (typeof globalThis.ResizeObserver === "undefined") {
 
 vi.mock("@tauri-apps/api/core", () => ({
   invoke: vi.fn(),
+  Channel: class {
+    id = 0;
+    onmessage: (payload: unknown) => void;
+    constructor(onmessage?: (payload: unknown) => void) {
+      this.onmessage = onmessage ?? (() => {});
+    }
+  },
 }));
 
 vi.mock("@tauri-apps/api/event", () => ({

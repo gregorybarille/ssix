@@ -76,6 +76,8 @@ export const sel = {
   connectButton: (id: string) => `[data-testid="connect-button-${id}"]`,
   editConnection: (id: string) => `[data-testid="edit-connection-${id}"]`,
   terminalContainer: '[data-testid="terminal-container"]',
+  failedTerminal: '[data-testid="failed-terminal"]',
+  trustHostKeyButton: '[data-testid="trust-host-key-button"]',
   terminalTabClose: (id: string) => `[data-testid="close-tab-${id}"]`,
 
   // SCP dialog

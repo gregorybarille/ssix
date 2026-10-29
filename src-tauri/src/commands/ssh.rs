@@ -2,15 +2,13 @@ use crate::keychain;
 use crate::models::{Connection, ConnectionKind, Credential, CredentialKind};
 use crate::ssh::{
     build_startup_command, start_jump_shell, start_port_forward, start_ssh_session, AuthMethod,
-    SessionMsg, SshState,
+    Endpoint, SessionContext, SessionMsg, ShellOptions, SshState,
 };
 use crate::storage;
+use tauri::ipc::{Channel, InvokeResponseBody};
 
 /// Resolve a credential by id from the loaded data, enriching it with the
 /// secret material from the keychain. Returns the username and `AuthMethod`.
-///
-/// Audit-4 Phase 5a: re-exposed as `pub(crate)` so the file-transfer
-/// commands in `commands/scp.rs` can reuse the same lookup logic.
 pub(crate) fn resolve_credential(
     credentials: &[Credential],
     cred_id: &str,
@@ -48,17 +46,28 @@ pub(crate) fn resolve_credential(
     Ok((username, auth))
 }
 
-/// Audit-4 Dup M2: shared connection lookup used by ssh_connect, scp_upload,
-/// and scp_download. Previously each site duplicated the same `iter().find()
-/// .ok_or().clone()` chain with subtly different error messages ("Connection
-/// not found" vs "Connection not found".to_string() vs the bare &str). One
-/// helper, one error string, one place to add future logging.
-///
-/// Returns `(AppData, Connection)` so callers don't have to re-load the
-/// data when they need both (most do, e.g. for credential lookup).
-///
-/// Audit-4 Phase 5a: re-exposed as `pub(crate)` for `commands/scp.rs`.
-pub(crate) fn find_connection(connection_id: &str) -> Result<(crate::models::AppData, Connection), String> {
+/// Build the SSH endpoint for `host:port` authenticated with credential `cred_id`.
+pub(crate) fn resolve_endpoint(
+    credentials: &[Credential],
+    host: &str,
+    port: u16,
+    cred_id: &str,
+) -> Result<Endpoint, String> {
+    let (username, auth) = resolve_credential(credentials, cred_id)?;
+    Ok(Endpoint {
+        host: host.to_string(),
+        port,
+        username,
+        auth,
+    })
+}
+
+/// Shared connection lookup used by ssh_connect, scp_upload and
+/// scp_download. Returns `(AppData, Connection)` so callers don't have to
+/// re-load the data when they also need credentials.
+pub(crate) fn find_connection(
+    connection_id: &str,
+) -> Result<(crate::models::AppData, Connection), String> {
     let data = storage::load_data()?;
     let conn = data
         .connections
@@ -69,38 +78,43 @@ pub(crate) fn find_connection(connection_id: &str) -> Result<(crate::models::App
     Ok((data, conn))
 }
 
+/// Open a session for `connection_id`. Shell output is streamed to
+/// `on_output` as raw bytes; errors and the close notification arrive on the
+/// `ssix:ssh:error:{id}` / `ssix:ssh:closed:{id}` events.
+///
+/// Connecting does blocking network I/O (TCP connect, handshake, auth), so
+/// it runs on the blocking thread pool rather than the async runtime.
 #[tauri::command]
 pub async fn ssh_connect(
     app: tauri::AppHandle,
     state: tauri::State<'_, SshState>,
     connection_id: String,
+    on_output: Channel<InvokeResponseBody>,
 ) -> Result<String, String> {
     let (data, conn) = find_connection(&connection_id)?;
-
     let session_id = uuid::Uuid::new_v4().to_string();
-    let startup_command = build_startup_command(
-        conn.remote_path.as_deref(),
-        conn.login_command.as_deref(),
-    );
+    let ctx = SessionContext {
+        app,
+        session_id: session_id.clone(),
+        output: on_output,
+    };
+    let opts = ShellOptions {
+        verbosity: conn.verbosity,
+        extra_args: conn.extra_args.clone(),
+        startup_command: build_startup_command(
+            conn.remote_path.as_deref(),
+            conn.login_command.as_deref(),
+        ),
+    };
 
-    let tx = match &conn.kind {
+    let handle = tauri::async_runtime::spawn_blocking(move || match &conn.kind {
         ConnectionKind::Direct => {
             let cred_id = conn
                 .credential_id
-                .as_ref()
+                .as_deref()
                 .ok_or("No credential configured for this connection")?;
-            let (username, auth) = resolve_credential(&data.credentials, cred_id)?;
-            start_ssh_session(
-                conn.host.clone(),
-                conn.port,
-                username,
-                auth,
-                app,
-                session_id.clone(),
-                conn.verbosity,
-                conn.extra_args.clone(),
-                startup_command,
-            )?
+            let target = resolve_endpoint(&data.credentials, &conn.host, conn.port, cred_id)?;
+            start_ssh_session(target, opts, ctx)
         }
         ConnectionKind::PortForward {
             gateway_host,
@@ -110,19 +124,13 @@ pub async fn ssh_connect(
             destination_host,
             destination_port,
         } => {
-            let (gw_user, gw_auth) =
-                resolve_credential(&data.credentials, gateway_credential_id)?;
-            start_port_forward(
-                gateway_host.clone(),
+            let gateway = resolve_endpoint(
+                &data.credentials,
+                gateway_host,
                 *gateway_port,
-                gw_user,
-                gw_auth,
-                *local_port,
-                destination_host.clone(),
-                *destination_port,
-                app,
-                session_id.clone(),
-            )?
+                gateway_credential_id,
+            )?;
+            start_port_forward(gateway, *local_port, destination_host.clone(), *destination_port, ctx)
         }
         ConnectionKind::JumpShell {
             gateway_host,
@@ -133,54 +141,45 @@ pub async fn ssh_connect(
         } => {
             let dest_cred_id = conn
                 .credential_id
-                .as_ref()
+                .as_deref()
                 .ok_or("Jump-shell connection requires a destination credential")?;
-            let (gw_user, gw_auth) =
-                resolve_credential(&data.credentials, gateway_credential_id)?;
-            let (dest_user, dest_auth) = resolve_credential(&data.credentials, dest_cred_id)?;
-            start_jump_shell(
-                gateway_host.clone(),
+            let gateway = resolve_endpoint(
+                &data.credentials,
+                gateway_host,
                 *gateway_port,
-                gw_user,
-                gw_auth,
-                destination_host.clone(),
+                gateway_credential_id,
+            )?;
+            let destination = resolve_endpoint(
+                &data.credentials,
+                destination_host,
                 *destination_port,
-                dest_user,
-                dest_auth,
-                app,
-                session_id.clone(),
-                conn.verbosity,
-                conn.extra_args.clone(),
-                startup_command,
-            )?
+                dest_cred_id,
+            )?;
+            start_jump_shell(gateway, destination, opts, ctx)
         }
-        ConnectionKind::LegacyTunnel { .. } => {
-            // Should not happen — `storage::load_data` migrates these to JumpShell.
-            return Err(
-                "Legacy tunnel connection encountered after migration. \
-                 Please re-save this connection."
-                    .to_string(),
-            );
-        }
-    };
+        ConnectionKind::LegacyTunnel { .. } => Err(
+            "Legacy tunnel connection encountered after migration. Please re-save this connection."
+                .to_string(),
+        ),
+    })
+    .await
+    .map_err(|e| format!("SSH connect task failed: {}", e))??;
 
-    state.sessions.insert(session_id.clone(), tx);
-
+    state.sessions.insert(session_id.clone(), handle);
     Ok(session_id)
 }
-
 
 #[tauri::command]
 pub fn ssh_write(
     state: tauri::State<'_, SshState>,
     session_id: String,
-    data: Vec<u8>,
+    data: String,
 ) -> Result<(), String> {
-    let tx = state
+    let handle = state
         .sessions
         .get(&session_id)
         .ok_or("Session not found")?;
-    tx.send(SessionMsg::Write(data)).map_err(|e| e.to_string())
+    handle.send(SessionMsg::Write(data.into_bytes()))
 }
 
 #[tauri::command]
@@ -190,12 +189,11 @@ pub fn ssh_resize(
     cols: u32,
     rows: u32,
 ) -> Result<(), String> {
-    let tx = state
+    let handle = state
         .sessions
         .get(&session_id)
         .ok_or("Session not found")?;
-    tx.send(SessionMsg::Resize { cols, rows })
-        .map_err(|e| e.to_string())
+    handle.send(SessionMsg::Resize { cols, rows })
 }
 
 #[tauri::command]
@@ -203,8 +201,16 @@ pub fn ssh_disconnect(
     state: tauri::State<'_, SshState>,
     session_id: String,
 ) -> Result<(), String> {
-    if let Some((_, tx)) = state.sessions.remove(&session_id) {
-        let _ = tx.send(SessionMsg::Disconnect);
+    if let Some((_, handle)) = state.sessions.remove(&session_id) {
+        let _ = handle.send(SessionMsg::Disconnect);
     }
     Ok(())
+}
+
+/// Forget the recorded host key for `host:port` so the next connection
+/// records the server's current key (trust-on-first-use again). Returns
+/// whether an entry was removed.
+#[tauri::command]
+pub fn ssh_forget_host_key(host: String, port: u16) -> Result<bool, String> {
+    crate::known_hosts::forget(&host, port)
 }

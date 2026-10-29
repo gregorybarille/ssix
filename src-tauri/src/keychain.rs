@@ -35,11 +35,11 @@ fn load_secrets() -> Result<HashMap<String, String>, String> {
         return Ok(HashMap::new());
     }
     let content = fs::read_to_string(&path).map_err(|e| {
-        eprintln!("[secrets] failed to read secrets file: {}", e);
+        crate::logs::log_local("error", "secrets", format!("failed to read secrets file: {}", e));
         format!("failed to read secrets file: {}", e)
     })?;
     serde_json::from_str(&content).map_err(|e| {
-        eprintln!("[secrets] failed to parse secrets file: {}", e);
+        crate::logs::log_local("error", "secrets", format!("failed to parse secrets file: {}", e));
         format!(
             "failed to parse secrets file (refusing to save and overwrite existing entries): {}",
             e
@@ -65,7 +65,11 @@ fn save_secrets(secrets: &HashMap<String, String>) -> Result<(), String> {
 fn with_secrets<T>(f: impl FnOnce(&mut HashMap<String, String>) -> T) -> T {
     let _guard = SECRETS_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let mut secrets = load_secrets().unwrap_or_else(|e| {
-        eprintln!("[secrets] load failed during read-only access: {}", e);
+        crate::logs::log_local(
+            "error",
+            "secrets",
+            format!("load failed during read-only access: {}", e),
+        );
         HashMap::new()
     });
     f(&mut secrets)

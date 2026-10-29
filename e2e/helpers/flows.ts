@@ -129,16 +129,40 @@ export async function connectToConnection(name: string): Promise<void> {
 }
 
 /**
- * Read the visible terminal text. xterm.js renders rows as
- * `.xterm-rows > div`; we concatenate them.
+ * Read the terminal text. The app exposes every open terminal's buffer via
+ * `window.__ssixTerminalText` (see `src/lib/terminalRegistry.ts`) because
+ * the WebGL renderer draws to a canvas and leaves no text in the DOM. Fall
+ * back to the DOM-renderer rows when the hook is unavailable.
  */
 export async function readTerminalText(): Promise<string> {
+  const fromBuffer = await browser.execute(
+    () => window.__ssixTerminalText?.() ?? null,
+  );
+  if (typeof fromBuffer === "string") return fromBuffer;
   const rows = await browser.$$(`${sel.terminalContainer} .xterm-rows > div`);
   const parts: string[] = [];
   for (const r of rows) {
     parts.push(await r.getText());
   }
   return parts.join("\n");
+}
+
+/** Wait for a FailedTerminal whose backend error contains `needle`. */
+export async function waitForFailedTerminalError(needle: string, timeoutMs = 30_000): Promise<string> {
+  let lastError = "";
+  await browser.waitUntil(
+    async () => {
+      const failed = await browser.$(sel.failedTerminal);
+      if (!(await failed.isExisting())) return false;
+      lastError = (await failed.getAttribute("data-error")) ?? "";
+      return lastError.includes(needle);
+    },
+    {
+      timeout: timeoutMs,
+      timeoutMsg: `No FailedTerminal with error containing ${JSON.stringify(needle)} within ${timeoutMs}ms (last: ${JSON.stringify(lastError)})`,
+    },
+  );
+  return lastError;
 }
 
 export async function waitForTerminalContains(needle: string, timeoutMs = 30_000): Promise<void> {

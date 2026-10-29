@@ -1,10 +1,16 @@
-import React, { useEffect, useRef, useCallback } from "react";
+import React, { useEffect, useRef } from "react";
 import { Terminal as XTerm } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
+import { WebglAddon } from "@xterm/addon-webgl";
 import { invoke } from "@/lib/tauri";
-import { sshClosedEvent, sshErrorEvent, sshOutputEvent } from "@/lib/events";
+import { sshClosedEvent, sshErrorEvent } from "@/lib/events";
+import { attachOutput } from "@/lib/terminalOutput";
+import { registerTerminal, unregisterTerminal } from "@/lib/terminalRegistry";
 import { AppSettings } from "@/types";
 import "@xterm/xterm/css/xterm.css";
+
+/** Lines kept above the viewport. xterm's default (1000) is low for an SSH client. */
+const SCROLLBACK_LINES = 10_000;
 
 interface TerminalProps {
   sessionId: string;
@@ -14,17 +20,18 @@ interface TerminalProps {
   settings?: AppSettings;
 }
 
-export function Terminal({ sessionId, connectionName, isVisible, onDisconnect, settings }: TerminalProps) {
+export interface TerminalPasteDetail {
+  text: string;
+  /** Session under the cursor when the paste was requested. */
+  sessionId?: string;
+}
+
+export function Terminal({ sessionId, isVisible, onDisconnect, settings }: TerminalProps) {
   const termRef = useRef<HTMLDivElement>(null);
   const xtermRef = useRef<XTerm | null>(null);
   const fitAddonRef = useRef<FitAddon | null>(null);
-  const listenersRef = useRef<Array<() => void>>([]);
-  // Audit-4 H2: keep `onDisconnect` in a ref so the listener registered
-  // inside the [sessionId]-deps effect always calls the LATEST callback.
-  // Without this, a parent re-render that produces a new onDisconnect
-  // identity would leave the listener calling the original closure
-  // forever (silent: the disconnect appears to work but stale handlers
-  // mutate stale state).
+  // Keep `onDisconnect` in a ref so the listener registered inside the
+  // [sessionId]-deps effect always calls the latest callback.
   const onDisconnectRef = useRef(onDisconnect);
   useEffect(() => {
     onDisconnectRef.current = onDisconnect;
@@ -74,6 +81,7 @@ export function Terminal({ sessionId, connectionName, isVisible, onDisconnect, s
       : null;
     const term = new XTerm({
       cursorBlink: true,
+      scrollback: SCROLLBACK_LINES,
       fontSize: settings?.font_size ?? 14,
       fontFamily: safeFontFamily
         ? `'${safeFontFamily}', monospace`
@@ -105,32 +113,39 @@ export function Terminal({ sessionId, connectionName, isVisible, onDisconnect, s
     const fitAddon = new FitAddon();
     term.loadAddon(fitAddon);
     term.open(termRef.current);
+
+    // GPU rendering when the WebView offers WebGL; the DOM renderer stays
+    // in place otherwise (and takes over again if the context is lost).
+    try {
+      const webgl = new WebglAddon();
+      webgl.onContextLoss(() => webgl.dispose());
+      term.loadAddon(webgl);
+    } catch {
+      // WebGL unavailable — DOM renderer.
+    }
+
     fitAddon.fit();
 
     xtermRef.current = term;
     fitAddonRef.current = fitAddon;
+    registerTerminal(sessionId, term);
 
     const { cols, rows } = term;
-        invoke("ssh_resize", { sessionId, cols, rows }).catch(() => {});
+    invoke("ssh_resize", { sessionId, cols, rows }).catch(() => {});
 
     /**
-     * P1#1: Cmd/Ctrl+C copies the active xterm selection to the system
-     * clipboard *only* when the user explicitly invokes the shortcut. We
-     * return `false` from `attachCustomKeyEventHandler` to swallow the
-     * event so xterm doesn't also forward Ctrl+C as SIGINT to the remote
-     * shell when there's a selection to copy (matching iTerm/Terminal.app
-     * convention). When there is no selection, the keystroke flows through
-     * to xterm's default `onData` handler, which writes Ctrl+C to the
-     * remote shell as expected.
+     * Cmd/Ctrl+C copies the active xterm selection to the system clipboard
+     * only when the user explicitly invokes the shortcut. Returning `false`
+     * swallows the event so xterm doesn't also forward Ctrl+C as SIGINT
+     * when there is a selection to copy (iTerm/Terminal.app convention).
+     * With no selection the keystroke flows through to the remote shell.
      *
-     * Also handles Cmd/Ctrl+V paste so that keyboard paste works on macOS
-     * (xterm's default Ctrl+V on macOS is captured by the WebView).
+     * Cmd/Ctrl+V pastes so keyboard paste works on macOS (xterm's default
+     * Ctrl+V on macOS is captured by the WebView).
      *
-      * In-app panels are non-modal so they don't feel like dialog boxes.
-      * That means xterm's hidden textarea can theoretically keep focus
-      * while a panel is open. Never forward terminal keystrokes in that
-      * state; the user's intent belongs to the panel.
-      */
+     * In-app panels are non-modal, so xterm's hidden textarea can keep
+     * focus while a panel is open. Never forward keystrokes in that state.
+     */
     term.attachCustomKeyEventHandler((e) => {
       if (e.type !== "keydown") return true;
       if (document.querySelector('[data-slot="app-panel-content"]')) {
@@ -158,19 +173,14 @@ export function Terminal({ sessionId, connectionName, isVisible, onDisconnect, s
     });
 
     /**
-     * P1#2: Surface ssh_write failures inline in the terminal. A rejected
-     * ssh_write means the backend session thread is gone (panic, channel
-     * dropped, lost tx in SshState) — the user keeps typing into a dead
-     * terminal otherwise. We render a single red banner the first time it
-     * happens per session so we don't spam on every keystroke after the
-     * connection is dead. The `ssix:ssh:closed:{id}` event will follow shortly
-     * afterward and trigger `onDisconnect()`.
+     * Surface ssh_write failures inline. A rejected ssh_write means the
+     * backend session is gone; render one red banner per session rather
+     * than one per keystroke. The `ssix:ssh:closed:{id}` event follows
+     * shortly and triggers `onDisconnect()`.
      */
     let writeFailed = false;
     const dataDisposable = term.onData((data) => {
-      const encoder = new TextEncoder();
-      const bytes = Array.from(encoder.encode(data));
-      invoke("ssh_write", { sessionId, data: bytes }).catch((err) => {
+      invoke("ssh_write", { sessionId, data }).catch((err) => {
         if (!writeFailed) {
           writeFailed = true;
           const msg = typeof err === "string" ? err : String(err ?? "session lost");
@@ -180,15 +190,10 @@ export function Terminal({ sessionId, connectionName, isVisible, onDisconnect, s
     });
 
     /**
-     * P1#1 (auto-copy-selection setting): when `settings.auto_copy_selection`
-     * is true (off by default), reproduce the classic xterm behavior of
-     * copying every selection to the clipboard immediately. This is the
-     * legacy SSIX behavior — preserved behind a setting for users who want
-     * it, but no longer the default since it silently overwrites the
-     * clipboard on highlight (a privacy/UX foot-gun on macOS).
-     *
-     * `autoCopyEnabledRef` is read inside the disposable so the toggle
-     * takes effect without re-mounting the terminal.
+     * Opt-in auto-copy (`settings.auto_copy_selection`, off by default):
+     * classic xterm behaviour of copying every selection immediately.
+     * `autoCopyEnabledRef` is read inside the disposable so the toggle takes
+     * effect without re-mounting the terminal.
      */
     const selectionDisposable = term.onSelectionChange(() => {
       if (!autoCopyEnabledRef.current) return;
@@ -198,46 +203,51 @@ export function Terminal({ sessionId, connectionName, isVisible, onDisconnect, s
       }
     });
 
-    // Right-click paste: main.tsx dispatches this when the user right-clicks
-    // inside the xterm canvas area and the clipboard has text.
+    // Right-click paste: App.tsx dispatches this with the session id of the
+    // terminal under the cursor. Only that terminal pastes.
     const pasteHandler = (e: Event) => {
-      const text = (e as CustomEvent<{ text: string }>).detail.text;
-      if (isVisible && text) term.paste(text);
+      const { text, sessionId: target } = (e as CustomEvent<TerminalPasteDetail>).detail;
+      if (text && target === sessionId) term.paste(text);
     };
     window.addEventListener("ssix:terminal-paste", pasteHandler);
 
-    const setupListeners = async () => {
+    // Shell output: raw bytes over the IPC channel created at connect time.
+    const detachOutput = attachOutput(sessionId, (bytes) => term.write(bytes));
+
+    // Error / closed notifications. `cancelled` guards against the effect
+    // being torn down before `listen` resolves (StrictMode double-mount,
+    // closing a tab immediately after opening it), which would otherwise
+    // leak the listener and write into a disposed terminal.
+    let cancelled = false;
+    const unlisteners: Array<() => void> = [];
+    (async () => {
       try {
         const { listen } = await import("@tauri-apps/api/event");
-
-        const unlistenOutput = await listen<number[]>(sshOutputEvent(sessionId), (event) => {
-          const bytes = new Uint8Array(event.payload);
-          term.write(bytes);
-        });
-
         const unlistenError = await listen<string>(sshErrorEvent(sessionId), (event) => {
+          if (cancelled) return;
           term.write(`\r\n\x1b[31mSSH Error: ${event.payload}\x1b[0m\r\n`);
         });
-
         const unlistenClosed = await listen(sshClosedEvent(sessionId), () => {
+          if (cancelled) return;
           term.write("\r\n\x1b[33mConnection closed.\x1b[0m\r\n");
-          // Audit-4 H2: call through the ref so we always invoke the
-          // current onDisconnect, not the one captured at mount.
           onDisconnectRef.current();
         });
-
-        listenersRef.current = [unlistenOutput, unlistenError, unlistenClosed];
+        if (cancelled) {
+          unlistenError();
+          unlistenClosed();
+          return;
+        }
+        unlisteners.push(unlistenError, unlistenClosed);
       } catch {
         // not in Tauri
       }
-    };
-    setupListeners();
+    })();
 
     const resizeObserver = new ResizeObserver(() => {
       try {
         fitAddon.fit();
         const { cols, rows } = term;
-    invoke("ssh_resize", { sessionId, cols, rows }).catch(() => {});
+        invoke("ssh_resize", { sessionId, cols, rows }).catch(() => {});
       } catch {
         // ignore resize errors
       }
@@ -245,11 +255,14 @@ export function Terminal({ sessionId, connectionName, isVisible, onDisconnect, s
     resizeObserver.observe(termRef.current);
 
     return () => {
+      cancelled = true;
       dataDisposable.dispose();
       selectionDisposable.dispose();
       window.removeEventListener("ssix:terminal-paste", pasteHandler);
-      listenersRef.current.forEach((fn) => fn());
+      detachOutput();
+      unlisteners.forEach((fn) => fn());
       resizeObserver.disconnect();
+      unregisterTerminal(sessionId);
       term.dispose();
     };
   }, [sessionId]);
