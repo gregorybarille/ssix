@@ -72,7 +72,7 @@ fn sanitise_name(input: &str) -> String {
 /// Pick a non-existing path under `~/.ssh/id_ed25519_<name>`, suffixing with
 /// `_2`, `_3`, ... if the file already exists.
 fn default_key_path(name_hint: Option<&str>) -> Result<PathBuf, String> {
-    let home = dirs_next::home_dir().ok_or_else(|| "Could not resolve home directory".to_string())?;
+    let home = dirs::home_dir().ok_or_else(|| "Could not resolve home directory".to_string())?;
     let ssh_dir = home.join(".ssh");
     let base = match name_hint {
         Some(s) if !s.trim().is_empty() => format!("id_ed25519_{}", sanitise_name(s)),

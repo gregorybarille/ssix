@@ -22,7 +22,7 @@ pub fn data_dir() -> PathBuf {
             return PathBuf::from(override_dir);
         }
     }
-    let home = dirs_next::home_dir().unwrap_or_else(|| PathBuf::from("."));
+    let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("."));
     home.join(".ssix")
 }
 
@@ -382,7 +382,7 @@ mod tests {
         let prev = std::env::var("SSIX_DATA_DIR").ok();
         std::env::remove_var("SSIX_DATA_DIR");
         let resolved = data_dir();
-        let expected = dirs_next::home_dir()
+        let expected = dirs::home_dir()
             .unwrap_or_else(|| PathBuf::from("."))
             .join(".ssix");
         assert_eq!(resolved, expected);

@@ -5,4 +5,4 @@ export type Credential = { id: string, name: string, username: string,
  * When true the credential was auto-created for inline auth and is not
  * shown in the credentials list. Treated as false when absent (legacy data).
  */
-is_private: boolean, } & ({ "type": "password", password: string, } | { "type": "ssh_key", private_key_path: string | null, private_key: string | null, passphrase: string | null, });
+is_private: boolean, } & ({ "type": "password", password: string, } | { "type": "ssh_key", private_key_path?: string | null, private_key?: string | null, passphrase?: string | null, });

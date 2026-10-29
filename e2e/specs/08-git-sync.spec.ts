@@ -85,7 +85,7 @@ describe("Git sync export", () => {
     const repoInput = await browser.$(sel.settingsGitSyncRepoPath);
     await repoInput.waitForExist({ timeout: 10_000 });
     await repoInput.setValue(repo);
-    await browser.execute((el: HTMLInputElement) => el.blur(), repoInput);
+    await browser.execute((el: HTMLElement) => el.blur(), repoInput);
 
     await navigateTo("git-sync");
     // Confirm the view picked up the configured repo path.

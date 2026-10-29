@@ -8,7 +8,7 @@ use std::collections::VecDeque;
 use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use once_cell::sync::Lazy;
+use std::sync::LazyLock;
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter};
 
@@ -25,8 +25,8 @@ pub struct LogEntry {
     pub message: String,
 }
 
-static BUFFER: Lazy<Mutex<VecDeque<LogEntry>>> =
-    Lazy::new(|| Mutex::new(VecDeque::with_capacity(MAX_ENTRIES)));
+static BUFFER: LazyLock<Mutex<VecDeque<LogEntry>>> =
+    LazyLock::new(|| Mutex::new(VecDeque::with_capacity(MAX_ENTRIES)));
 
 fn now_ms() -> u64 {
     SystemTime::now()

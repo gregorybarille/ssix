@@ -11,20 +11,20 @@ verbosity: number,
  * Additional CLI-style flags passed to the SSH subsystem (e.g. `-C` for
  * compression). Parsed and applied before the handshake.
  */
-extra_args: string | null, 
+extra_args?: string | null, 
 /**
  * Command to run after the shell session opens, e.g. `sudo su - deploy`.
  */
-login_command: string | null, 
+login_command?: string | null, 
 /**
  * Preferred starting directory on the remote host.
  */
-remote_path: string | null, 
+remote_path?: string | null, 
 /**
  * User-defined tags. Used for filtering/search. Empty by default.
  */
-tags: Array<string>, 
+tags?: Array<string>, 
 /**
  * Optional Open Color name (e.g. "blue", "violet") used as the tab accent.
  */
-color: string | null, } & ({ "type": "direct" } | { "type": "port_forward", gateway_host: string, gateway_port: number, gateway_credential_id: string, local_port: number, destination_host: string, destination_port: number, } | { "type": "jump_shell", gateway_host: string, gateway_port: number, gateway_credential_id: string, destination_host: string, destination_port: number, } | { "type": "tunnel", gateway_host: string, gateway_port: number, gateway_credential_id: string | null, destination_host: string, destination_port: number, });
+color?: string | null, } & ({ "type": "direct" } | { "type": "port_forward", gateway_host: string, gateway_port: number, gateway_credential_id: string, local_port: number, destination_host: string, destination_port: number, } | { "type": "jump_shell", gateway_host: string, gateway_port: number, gateway_credential_id: string, destination_host: string, destination_port: number, } | { "type": "tunnel", gateway_host: string, gateway_port: number, gateway_credential_id: string | null, destination_host: string, destination_port: number, });

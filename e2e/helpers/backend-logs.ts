@@ -33,8 +33,8 @@ export interface BackendLogEntry {
  */
 export async function fetchBackendLogs(): Promise<BackendLogEntry[] | null> {
   try {
-    return await browser.executeAsync<BackendLogEntry[] | null>(
-      function (done) {
+    return await browser.execute<BackendLogEntry[] | null, []>(
+      async () => {
         // Tauri v2's public JS package delegates through the internal
         // runtime bridge. Under tauri-driver, probing only
         // window.__TAURI__.core.invoke is unreliable and made failed
@@ -49,14 +49,14 @@ export async function fetchBackendLogs(): Promise<BackendLogEntry[] | null> {
           w?.__TAURI__?.invoke;
 
         if (typeof invoke !== "function") {
-          done(null);
-          return;
+          return null;
         }
 
-        invoke("get_logs")
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          .then((entries: any) => done(entries))
-          .catch(() => done(null));
+        try {
+          return (await invoke("get_logs")) as BackendLogEntry[];
+        } catch {
+          return null;
+        }
       },
     );
   } catch {

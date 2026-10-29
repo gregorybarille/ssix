@@ -39,7 +39,8 @@ async function setTextInputValue(selector: string, value: string): Promise<void>
   const input = await browser.$(selector);
   await input.waitForExist({ timeout: 10_000 });
   await browser.execute(
-    (el: HTMLInputElement, nextValue: string) => {
+    (target: HTMLElement, nextValue: string) => {
+      const el = target as HTMLInputElement;
       const previousValue = el.value;
       const setter = Object.getOwnPropertyDescriptor(
         HTMLInputElement.prototype,

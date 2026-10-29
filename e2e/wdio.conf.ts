@@ -15,7 +15,6 @@ import { spawn, type ChildProcess } from "node:child_process";
 import { mkdirSync, existsSync, openSync, writeFileSync } from "node:fs";
 import { join, resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
-import type { Options } from "@wdio/types";
 import { resolveBinaryPath } from "./helpers/app.js";
 import { setupTestDataDir, cleanupTestDataDir } from "./helpers/data-dir.js";
 import { fetchBackendLogs, formatBackendLogs } from "./helpers/backend-logs.js";
@@ -28,7 +27,7 @@ mkdirSync(ARTIFACTS, { recursive: true });
 let tauriDriver: ChildProcess | null = null;
 let driverExit = false;
 
-export const config: Options.Testrunner = {
+export const config: WebdriverIO.Config = {
   runner: "local",
   tsConfigPath: resolve(__dirname, "tsconfig.json"),
 
