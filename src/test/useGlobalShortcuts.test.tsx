@@ -1,6 +1,10 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { renderHook } from "@testing-library/react";
-import { useGlobalShortcuts, isTypingSurface } from "@/hooks/useGlobalShortcuts";
+import {
+  useGlobalShortcuts,
+  isTypingSurface,
+  blockedByTypingSurface,
+} from "@/hooks/useGlobalShortcuts";
 
 // Mirror the same platform detection used by the hook so tests are
 // platform-independent: on macOS jsdom/CI the mod key is Meta, elsewhere Ctrl.
@@ -75,7 +79,7 @@ describe("useGlobalShortcuts", () => {
     expect(handler).toHaveBeenCalledTimes(1);
   });
 
-  it("skips shortcuts when focus is inside an xterm instance", () => {
+  it("skips Ctrl shortcuts inside xterm but lets Cmd shortcuts through on macOS", () => {
     const onW = vi.fn();
     renderHook(() => useGlobalShortcuts({ "mod+w": onW }));
     const xterm = document.createElement("div");
@@ -85,7 +89,36 @@ describe("useGlobalShortcuts", () => {
     xterm.appendChild(helper);
     document.body.appendChild(xterm);
     dispatch({ key: "w", [MOD]: true, target: helper });
-    expect(onW).not.toHaveBeenCalled();
+    // Cmd+W is never a readline binding, so on macOS the app shortcut
+    // must work while the shell has focus. Ctrl+W elsewhere is
+    // "delete word" in the shell and must pass through untouched.
+    if (isMac) expect(onW).toHaveBeenCalledTimes(1);
+    else expect(onW).not.toHaveBeenCalled();
+  });
+
+  it("blockedByTypingSurface honours allowInTypingSurface and the platform rule", () => {
+    const input = document.createElement("input");
+    document.body.appendChild(input);
+    const ev = new KeyboardEvent("keydown", { key: "k", [MOD]: true });
+    Object.defineProperty(ev, "target", { value: input });
+    expect(blockedByTypingSurface(ev, { handler: vi.fn(), allowInTypingSurface: true })).toBe(false);
+    expect(blockedByTypingSurface(ev, { handler: vi.fn() })).toBe(!isMac);
+  });
+
+  it("uses the latest map without re-registering the listener", () => {
+    const first = vi.fn();
+    const second = vi.fn();
+    const add = vi.spyOn(window, "addEventListener");
+    const { rerender } = renderHook(({ m }) => useGlobalShortcuts(m), {
+      initialProps: { m: { "mod+k": first } },
+    });
+    const registered = add.mock.calls.filter((c) => c[0] === "keydown").length;
+    rerender({ m: { "mod+k": second } });
+    expect(add.mock.calls.filter((c) => c[0] === "keydown").length).toBe(registered);
+    dispatch({ key: "k", [MOD]: true });
+    expect(first).not.toHaveBeenCalled();
+    expect(second).toHaveBeenCalledTimes(1);
+    add.mockRestore();
   });
 
   it("isTypingSurface returns true for contentEditable elements", () => {

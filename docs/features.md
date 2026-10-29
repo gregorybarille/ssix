@@ -63,9 +63,9 @@ The terminal tab bar is a true WAI-ARIA tablist. With focus on a tab:
 
 ## Search, Tags, And Colors
 
-- search is backend-driven
-- query terms are AND-matched
-- matches run across connection name, host, and tags
+- search filters the loaded list in the frontend (`src/lib/search.ts`); no backend call per keystroke
+- query terms are AND-matched, case-insensitive
+- matches run across connection name, host, gateway/destination host, and tags; the same matcher powers the Connect Picker
 - color accents appear on connection cards and terminal tabs
 
 ## SCP File Transfer
@@ -348,11 +348,15 @@ macOS and `Ctrl` everywhere else.
 | `Mod+W`        | Close the active terminal tab (with confirm if live)     |
 | `Mod+1`…`Mod+9`| Switch to terminal tab N                                 |
 
-Shortcuts are suppressed when focus is in an input, textarea,
-`contenteditable` element, or anywhere inside an `xterm` instance, so
-typing in the shell or filling forms is never intercepted. To avoid
-swallowing well-known terminal readline bindings, combos that mix
-`Ctrl` and `Cmd` simultaneously are ignored.
+On macOS the shortcuts work everywhere, including while a terminal
+has focus: `Cmd+K`, `Cmd+W` or `Cmd+1` are never consumed by the shell
+or by a text field, so a Mac user can jump between tabs or open the
+picker without clicking out of the terminal first. On Linux and
+Windows, `Ctrl` combos are suppressed when focus is in an input,
+textarea, `contenteditable` element, or anywhere inside an `xterm`
+instance, because `Ctrl+K`, `Ctrl+W` and friends are readline bindings
+inside the shell. To avoid swallowing those bindings, combos that mix
+`Ctrl` and `Cmd` simultaneously are ignored on every platform.
 
 The terminal tab strip itself also implements its own WAI-ARIA
 keyboard model (Arrow keys, Home/End, Delete) — see the Terminals

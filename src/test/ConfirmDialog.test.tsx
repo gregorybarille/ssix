@@ -54,6 +54,27 @@ describe("ConfirmDialog", () => {
     await waitFor(() => expect(onOpenChange).toHaveBeenCalledWith(false));
   });
 
+  it("stays open and shows the error when onConfirm rejects", async () => {
+    const onConfirm = vi.fn().mockRejectedValue(new Error("disk full"));
+    const onOpenChange = vi.fn();
+    render(
+      <ConfirmDialog
+        open
+        onOpenChange={onOpenChange}
+        title="x"
+        description="y"
+        confirmLabel="Yes"
+        onConfirm={onConfirm}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Yes" }));
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent("disk full");
+    expect(onOpenChange).not.toHaveBeenCalledWith(false);
+    // The buttons are usable again so the user can retry or cancel.
+    expect(screen.getByRole("button", { name: "Yes" })).toBeEnabled();
+  });
+
   it("does not call onConfirm when cancel is clicked", () => {
     const onConfirm = vi.fn();
     const onOpenChange = vi.fn();

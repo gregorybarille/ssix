@@ -101,10 +101,10 @@ export function ConnectionList({
     return credentials.find((c) => c.id === credId)?.name ?? null;
   };
 
-  // Roving tabindex + keyboard activation for the list / grid. Enter / Space
-  // on a row prefers onSelect (caller-controlled selection); if no onSelect
-  // is wired, fall back to onConnect (the primary action). Action buttons
-  // inside the row keep their own focus and aren't intercepted.
+  // Roving tabindex + activation for the list / grid. Click, Enter and
+  // Space on a row prefer onSelect (caller-controlled selection); if no
+  // onSelect is wired, fall back to onConnect (the primary action). Action
+  // buttons inside the row stop propagation and keep their own behaviour.
   const activateRow = (index: number) => {
     const conn = connections[index];
     if (!conn) return;
@@ -219,7 +219,7 @@ export function ConnectionList({
                   ? { borderLeft: `3px solid ${color}` }
                   : undefined
               }
-              onClick={() => onSelect?.(conn)}
+              onClick={() => activateRow(connections.indexOf(conn))}
               onContextMenu={(e) => openContextMenu(e, conn)}
               onKeyDown={(e) => {
                 // Open the context menu via keyboard (Shift+F10 or
@@ -390,7 +390,7 @@ export function ConnectionList({
               selectedId === conn.id && "bg-accent",
             )}
             style={color ? { borderLeft: `3px solid ${color}` } : undefined}
-            onClick={() => onSelect?.(conn)}
+            onClick={() => activateRow(connections.indexOf(conn))}
             onContextMenu={(e) => openContextMenu(e, conn)}
             onKeyDown={(e) => {
               // Keyboard alternative for context menu (WCAG 2.1.1).

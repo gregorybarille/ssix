@@ -33,4 +33,35 @@ describe("Connections CRUD", () => {
     await row.waitForExist({ timeout: 10_000 });
     expect(await row.isExisting()).toBe(true);
   });
+
+  it("filters the list client-side as the user types", async () => {
+    await createDirectConnection({
+      name: "conn-a-other",
+      host: TARGETS.b.host,
+      port: TARGETS.b.sshPort,
+      credentialName: "cred-a",
+    });
+    await navigateTo("connections");
+    await (await browser.$(sel.connectionRowByName("conn-a-other"))).waitForExist({ timeout: 10_000 });
+
+    const search = await browser.$(sel.connectionSearchInput);
+    await search.setValue("other");
+    await browser.waitUntil(
+      async () => !(await (await browser.$(sel.connectionRowByName("conn-a"))).isExisting()),
+      { timeout: 5_000, timeoutMsg: "non-matching row should disappear" },
+    );
+    expect(await (await browser.$(sel.connectionRowByName("conn-a-other"))).isExisting()).toBe(true);
+
+    // Terms are AND-matched; a token that matches nothing empties the list.
+    await search.setValue("other nope");
+    await browser.waitUntil(
+      async () => !(await (await browser.$(sel.connectionRowByName("conn-a-other"))).isExisting()),
+      { timeout: 5_000 },
+    );
+
+    // Clearing restores the full list without a reload.
+    await (await browser.$(sel.connectionSearchClear)).click();
+    await (await browser.$(sel.connectionRowByName("conn-a"))).waitForExist({ timeout: 5_000 });
+    expect(await (await browser.$(sel.connectionRowByName("conn-a-other"))).isExisting()).toBe(true);
+  });
 });

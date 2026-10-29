@@ -30,7 +30,7 @@ interface CredentialFormProps {
 
 type KeySource = "path" | "inline";
 
-function serializeCredentialState(s: {
+type CredentialFormState = {
   name: string;
   username: string;
   credType: "password" | "ssh_key";
@@ -39,7 +39,37 @@ function serializeCredentialState(s: {
   privateKeyPath: string;
   privateKey: string;
   passphrase: string;
-}): string {
+};
+
+/** Form values for a freshly opened dialog (defaults, or the saved credential). */
+function initialCredentialState(
+  credential: Credential | null | undefined,
+): CredentialFormState {
+  if (!credential) {
+    return {
+      name: "",
+      username: "",
+      credType: "password",
+      password: "",
+      keySource: "path",
+      privateKeyPath: "",
+      privateKey: "",
+      passphrase: "",
+    };
+  }
+  return {
+    name: credential.name,
+    username: credential.username,
+    credType: credential.type,
+    password: credential.password ?? "",
+    keySource: credential.private_key ? "inline" : "path",
+    privateKeyPath: credential.private_key_path ?? "",
+    privateKey: credential.private_key ?? "",
+    passphrase: credential.passphrase ?? "",
+  };
+}
+
+function serializeCredentialState(s: CredentialFormState): string {
   return JSON.stringify([
     s.name,
     s.username,
@@ -84,48 +114,22 @@ export function CredentialForm({
       return next;
     });
 
-  useEffect(() => {
-    if (credential) {
-      setName(credential.name);
-      setUsername(credential.username);
-      setCredType(credential.type);
-      setPassword(credential.password ?? "");
-      setPrivateKeyPath(credential.private_key_path ?? "");
-      setPrivateKey(credential.private_key ?? "");
-      setKeySource(credential.private_key ? "inline" : "path");
-      setPassphrase(credential.passphrase ?? "");
-    } else {
-      setName("");
-      setUsername("");
-      setCredType("password");
-      setPassword("");
-      setPrivateKeyPath("");
-      setPrivateKey("");
-      setKeySource("path");
-      setPassphrase("");
-    }
-    setGeneratedPublicKey(null);
-    setFieldErrors({});
-  }, [credential, open]);
-
-  // Snapshot baseline state for unsaved-changes detection. Recomputed
-  // whenever the dialog opens or the backing credential changes.
+  // Baseline for unsaved-changes detection, derived from the same values
+  // the effect writes into state so it never lags a render behind.
   const baselineRef = useRef<string>("");
   useEffect(() => {
-    const id = setTimeout(() => {
-      baselineRef.current = serializeCredentialState({
-        name,
-        username,
-        credType,
-        password,
-        keySource,
-        privateKeyPath,
-        privateKey,
-        passphrase,
-      });
-    }, 0);
-    return () => clearTimeout(id);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    const init = initialCredentialState(credential);
+    setName(init.name);
+    setUsername(init.username);
+    setCredType(init.credType);
+    setPassword(init.password);
+    setPrivateKeyPath(init.privateKeyPath);
+    setPrivateKey(init.privateKey);
+    setKeySource(init.keySource);
+    setPassphrase(init.passphrase);
+    setGeneratedPublicKey(null);
+    setFieldErrors({});
+    baselineRef.current = serializeCredentialState(init);
   }, [credential, open]);
 
   const currentSnapshot = serializeCredentialState({

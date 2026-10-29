@@ -74,6 +74,8 @@ import { useTerminalsStore } from "./store/useTerminalsStore";
 import { useTunnelsStore } from "./store/useTunnelsStore";
 import { useApplySettings } from "./hooks/useApplySettings";
 import { useGlobalShortcuts } from "./hooks/useGlobalShortcuts";
+import { filterConnections } from "./lib/search";
+import { useShallow } from "zustand/react/shallow";
 import { takeScreenshot } from "./lib/screenshot";
 import { log as appLog } from "./lib/log";
 import { Connection, ConnectionInput, Credential, LayoutMode } from "./types";
@@ -96,6 +98,9 @@ function App() {
 
   const [searchQuery, setSearchQuery] = React.useState("");
 
+  // Select only what App renders. Store actions are stable, so these
+  // shallow selectors keep `isLoading`/`error` flips in the stores from
+  // re-rendering the whole shell.
   const {
     connections,
     fetchConnections,
@@ -103,9 +108,18 @@ function App() {
     updateConnection,
     deleteConnection,
     cloneConnection,
-    searchConnections,
     getOrphanPrivateCredential,
-  } = useConnectionsStore();
+  } = useConnectionsStore(
+    useShallow((s) => ({
+      connections: s.connections,
+      fetchConnections: s.fetchConnections,
+      addConnection: s.addConnection,
+      updateConnection: s.updateConnection,
+      deleteConnection: s.deleteConnection,
+      cloneConnection: s.cloneConnection,
+      getOrphanPrivateCredential: s.getOrphanPrivateCredential,
+    })),
+  );
 
   const {
     credentials,
@@ -114,11 +128,34 @@ function App() {
     addInlineCredential,
     updateCredential,
     deleteCredential,
-  } = useCredentialsStore();
+  } = useCredentialsStore(
+    useShallow((s) => ({
+      credentials: s.credentials,
+      fetchCredentials: s.fetchCredentials,
+      addCredential: s.addCredential,
+      addInlineCredential: s.addInlineCredential,
+      updateCredential: s.updateCredential,
+      deleteCredential: s.deleteCredential,
+    })),
+  );
 
-  const { settings, fetchSettings, saveSettings } = useSettingsStore();
-  const { status: gitSyncStatus, fetchStatus: fetchGitSyncStatus } =
-    useGitSyncStore();
+  const { settings, fetchSettings, saveSettings } = useSettingsStore(
+    useShallow((s) => ({
+      settings: s.settings,
+      fetchSettings: s.fetchSettings,
+      saveSettings: s.saveSettings,
+    })),
+  );
+  const { status: gitSyncStatus, fetchStatus: fetchGitSyncStatus } = useGitSyncStore(
+    useShallow((s) => ({ status: s.status, fetchStatus: s.fetchStatus })),
+  );
+
+  // Search is a pure filter over the loaded list; the tag-groups view
+  // filters tag labels itself and always receives every connection.
+  const visibleConnections = React.useMemo(
+    () => filterConnections(connections, searchQuery),
+    [connections, searchQuery],
+  );
   const [previewSettings, setPreviewSettings] = React.useState<typeof settings | null>(null);
   const screenshotToastTimeoutRef = React.useRef<number | null>(null);
 
@@ -320,28 +357,6 @@ function App() {
       return await addInlineCredential(data);
     }
     return await addCredential(data);
-  };
-
-  const handleSearch = (query: string) => {
-    setSearchQuery(query);
-    // In tags view the search bar filters tag labels client-side
-    // (the whole UX point is to find tag *groups*, not individual
-    // hosts), so we deliberately don't trigger the backend search
-    // — that would replace the connections array and prevent the
-    // grouping logic from seeing every host. The TagGroupGrid
-    // reads `searchQuery` directly and filters its own groups.
-    if (settings.connection_layout === "tags") {
-      // Make sure we have the unfiltered list to group from. If
-      // the previous mode was list/tile and the user had a query,
-      // the store currently holds a filtered slice; refresh it.
-      void fetchConnections();
-      return;
-    }
-    if (query) {
-      searchConnections(query);
-    } else {
-      fetchConnections();
-    }
   };
 
   /**
@@ -547,7 +562,6 @@ function App() {
                         <SearchBar
                           value={searchQuery}
                           onChange={setSearchQuery}
-                          onSearch={handleSearch}
                           placeholder={
                             settings.connection_layout === "tags"
                               ? "Search tags…"
@@ -567,7 +581,7 @@ function App() {
                           </Suspense>
                         ) : (
                           <ConnectionList
-                            connections={connections}
+                            connections={visibleConnections}
                             credentials={credentials}
                             layout={settings.connection_layout}
                             onEdit={(conn) => dialogs.openEditConnection(conn)}

@@ -49,16 +49,25 @@ export function ConfirmDialog({
   testId,
 }: ConfirmDialogProps) {
   const [busy, setBusy] = React.useState(false);
+  const [error, setError] = React.useState<string | null>(null);
   // Focus-return on close is implemented in the shared <DialogContent>
-  // primitive (Audit-3 #2) so every dialog in the app benefits without
-  // per-call wiring.
+  // primitive so every dialog in the app benefits without per-call wiring.
 
+  React.useEffect(() => {
+    if (!open) setError(null);
+  }, [open]);
+
+  // A failing action keeps the dialog open and shows why, instead of
+  // closing on success only and leaving the rejection unhandled.
   const handleConfirm = async () => {
     if (busy) return;
     setBusy(true);
+    setError(null);
     try {
       await onConfirm();
       onOpenChange(false);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
     } finally {
       setBusy(false);
     }
@@ -71,6 +80,15 @@ export function ConfirmDialog({
           <DialogTitle>{title}</DialogTitle>
           <DialogDescription>{description}</DialogDescription>
         </DialogHeader>
+        {error && (
+          <p
+            role="alert"
+            className="text-sm text-destructive break-words"
+            data-testid={testId ? `${testId}-error` : undefined}
+          >
+            {error}
+          </p>
+        )}
         <DialogFooter className="gap-2 sm:[&>button]:min-w-28">
           <Button
             variant="ghost"

@@ -30,7 +30,11 @@ export function SettingsPanel({ settings, onSave, onPreview }: SettingsPanelProp
   const pendingSaveRef = React.useRef<AppSettings | null>(null);
   const isSavingRef = React.useRef(false);
 
+  // Adopt settings from the store only while nothing of ours is in
+  // flight: each saved value echoes back through this prop, and taking
+  // it while a newer edit is queued would clobber what the user typed.
   useEffect(() => {
+    if (isSavingRef.current || pendingSaveRef.current) return;
     setForm(settings);
   }, [settings]);
 

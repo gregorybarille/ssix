@@ -16,6 +16,31 @@ beforeEach(() => {
 });
 
 describe("Unsaved-changes guard — CredentialForm", () => {
+  it("closes silently when editing an existing credential without changes", async () => {
+    const onOpenChange = vi.fn();
+    render(
+      <CredentialForm
+        open
+        onOpenChange={onOpenChange}
+        onSubmit={vi.fn()}
+        credential={{
+          id: "k1",
+          name: "deploy",
+          username: "deploy",
+          type: "ssh_key",
+          private_key_path: "/home/u/.ssh/id_ed25519",
+          passphrase: "pp",
+        }}
+      />,
+    );
+    await waitFor(() =>
+      expect(screen.getByLabelText(/credential name/i)).toHaveValue("deploy"),
+    );
+    fireEvent.click(screen.getByRole("button", { name: /cancel/i }));
+    expect(screen.queryByRole("dialog", { name: /discard unsaved changes/i })).toBeNull();
+    expect(onOpenChange).toHaveBeenCalledWith(false);
+  });
+
   it("closes silently when no fields have been edited", () => {
     const onOpenChange = vi.fn();
     render(
@@ -159,6 +184,36 @@ describe("Unsaved-changes guard — CredentialForm", () => {
 });
 
 describe("Unsaved-changes guard — ConnectionForm", () => {
+  it("closes silently when editing an existing connection without changes", async () => {
+    // Regression: the baseline used to be captured from the previous
+    // render's (empty) state, so opening Edit and pressing Cancel right
+    // away prompted to discard changes nobody had made.
+    const onOpenChange = vi.fn();
+    render(
+      <ConnectionForm
+        open
+        onOpenChange={onOpenChange}
+        credentials={[]}
+        onSubmit={vi.fn()}
+        connection={{
+          id: "c1",
+          name: "prod-web",
+          host: "10.0.0.5",
+          port: 2222,
+          type: "direct",
+          tags: ["prod"],
+          remote_path: "/srv",
+        }}
+      />,
+    );
+    await waitFor(() =>
+      expect(screen.getByLabelText(/connection name/i)).toHaveValue("prod-web"),
+    );
+    fireEvent.click(screen.getByRole("button", { name: /cancel/i }));
+    expect(screen.queryByRole("dialog", { name: /discard unsaved changes/i })).toBeNull();
+    expect(onOpenChange).toHaveBeenCalledWith(false);
+  });
+
   it("closes silently when no fields have been edited", () => {
     const onOpenChange = vi.fn();
     render(

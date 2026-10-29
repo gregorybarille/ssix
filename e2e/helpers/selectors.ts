@@ -35,6 +35,8 @@ export const sel = {
   connectionRowByName: (name: string) =>
     `[data-testid^="connection-row-"][data-name="${name}"]`,
   addConnectionButton: '[data-testid="add-connection-button"]',
+  connectionSearchInput: '[data-testid="connection-search-input"]',
+  connectionSearchClear: '[data-testid="connection-search-clear"]',
 
   // Connection form
   connectionForm: '[data-testid="connection-form"]',

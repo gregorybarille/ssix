@@ -61,6 +61,92 @@ const DEFAULT_FORM: ConnectionDraft = {
   color: undefined,
 };
 
+const EMPTY_INLINE = {
+  inlineUsername: "",
+  inlinePassword: "",
+  inlineKeyPath: "",
+  inlinePassphrase: "",
+  inlineCredentialName: "",
+  saveCredential: false,
+};
+
+type PortInputs = Record<"port" | "gateway_port" | "destination_port" | "local_port", string>;
+
+const DEFAULT_PORT_INPUTS: PortInputs = {
+  port: "22",
+  gateway_port: "22",
+  destination_port: "22",
+  local_port: "",
+};
+
+/**
+ * The form state for a freshly opened dialog: the defaults for a new
+ * connection, or the saved connection's values when editing / cloning.
+ * Pure, so the init effect and the unsaved-changes baseline share it.
+ */
+function initialFormState(
+  connection: Connection | null | undefined,
+  isClone: boolean,
+): {
+  form: ConnectionDraft;
+  portInputs: PortInputs;
+  connectionType: ConnectionType;
+  authMethod: AuthMethod;
+} {
+  if (!connection) {
+    return {
+      form: DEFAULT_FORM,
+      portInputs: DEFAULT_PORT_INPUTS,
+      connectionType: "direct",
+      authMethod: "credential",
+    };
+  }
+  // Gateway/destination fields only exist on port_forward and jump_shell
+  // variants; a narrowing switch keeps TS from poking DirectConnection.
+  const form: ConnectionDraft = {
+    name: isClone ? `${connection.name} (copy)` : connection.name,
+    host: connection.host,
+    port: connection.port,
+    credential_id: connection.credential_id,
+    type: connection.type,
+    verbosity: connection.verbosity ?? 0,
+    extra_args: connection.extra_args ?? "",
+    login_command: connection.login_command ?? "",
+    remote_path: connection.remote_path ?? "",
+    tags: connection.tags ?? [],
+    color: connection.color,
+    ...(connection.type === "port_forward"
+      ? {
+          gateway_host: connection.gateway_host,
+          gateway_port: connection.gateway_port,
+          gateway_credential_id: connection.gateway_credential_id,
+          local_port: connection.local_port,
+          destination_host: connection.destination_host,
+          destination_port: connection.destination_port,
+        }
+      : connection.type === "jump_shell"
+        ? {
+            gateway_host: connection.gateway_host,
+            gateway_port: connection.gateway_port,
+            gateway_credential_id: connection.gateway_credential_id,
+            destination_host: connection.destination_host,
+            destination_port: connection.destination_port,
+          }
+        : {}),
+  };
+  return {
+    form,
+    portInputs: {
+      port: String(connection.port ?? 22),
+      gateway_port: String(connection.type !== "direct" ? connection.gateway_port : 22),
+      destination_port: String(connection.type !== "direct" ? connection.destination_port : 22),
+      local_port: connection.type === "port_forward" ? String(connection.local_port) : "",
+    },
+    connectionType: connection.type,
+    authMethod: "credential",
+  };
+}
+
 /**
  * Stable serialization of every piece of form state we want to track
  * for unsaved-changes detection. Field order is fixed so the output is
@@ -133,13 +219,8 @@ export function ConnectionForm({
   // Port inputs are managed as raw strings so we can validate without
   // silently coercing invalid input back to 22. The keys mirror the
   // numeric port field names on `Connection`.
-  type PortKey = "port" | "gateway_port" | "destination_port" | "local_port";
-  const [portInputs, setPortInputs] = useState<Record<PortKey, string>>({
-    port: "22",
-    gateway_port: "22",
-    destination_port: "22",
-    local_port: "",
-  });
+  type PortKey = keyof PortInputs;
+  const [portInputs, setPortInputs] = useState<PortInputs>(DEFAULT_PORT_INPUTS);
   const [portErrors, setPortErrors] = useState<Partial<Record<PortKey, string>>>({});
 
   // Inline per-field errors for required text fields. Keyed by the field
@@ -171,99 +252,26 @@ export function ConnectionForm({
     });
   };
 
-  useEffect(() => {
-    if (connection) {
-      setForm({
-        name: isClone ? `${connection.name} (copy)` : connection.name,
-        host: connection.host,
-        port: connection.port,
-        credential_id: connection.credential_id,
-        type: connection.type,
-        verbosity: connection.verbosity ?? 0,
-        extra_args: connection.extra_args ?? "",
-        login_command: connection.login_command ?? "",
-        remote_path: connection.remote_path ?? "",
-        tags: connection.tags ?? [],
-        color: connection.color,
-        // Audit-4 Phase 4b: gateway/destination fields only exist on
-        // port_forward and jump_shell variants. Pull them out via a
-        // narrowing switch so TS knows we're not poking DirectConnection.
-        ...(connection.type === "port_forward"
-          ? {
-              gateway_host: connection.gateway_host,
-              gateway_port: connection.gateway_port,
-              gateway_credential_id: connection.gateway_credential_id,
-              local_port: connection.local_port,
-              destination_host: connection.destination_host,
-              destination_port: connection.destination_port,
-            }
-          : connection.type === "jump_shell"
-          ? {
-              gateway_host: connection.gateway_host,
-              gateway_port: connection.gateway_port,
-              gateway_credential_id: connection.gateway_credential_id,
-              destination_host: connection.destination_host,
-              destination_port: connection.destination_port,
-            }
-          : {}),
-      });
-      setPortInputs({
-        port: String(connection.port ?? 22),
-        gateway_port: String(
-          connection.type !== "direct" ? connection.gateway_port : 22,
-        ),
-        destination_port: String(
-          connection.type !== "direct"
-            ? connection.destination_port
-            : 22,
-        ),
-        local_port:
-          connection.type === "port_forward" ? String(connection.local_port) : "",
-      });
-      setConnectionType(connection.type);
-      setAuthMethod("credential");
-    } else {
-      setForm(DEFAULT_FORM);
-      setPortInputs({ port: "22", gateway_port: "22", destination_port: "22", local_port: "" });
-      setConnectionType("direct");
-      setAuthMethod("credential");
-    }
-    setPortErrors({});
-    setFieldErrors({});
-    setInlineUsername("");
-    setInlinePassword("");
-    setInlineKeyPath("");
-    setInlinePassphrase("");
-    setInlineCredentialName("");
-    setSaveCredential(false);
-  }, [connection, open, isClone]);
-
-  // Snapshot of the form state at "freshly opened" or "freshly reset"
-  // so we can detect whether the user has made any changes worth
-  // guarding on close. The snapshot is recomputed in the SAME effect
-  // that initializes the form so it always reflects the post-init
-  // values, never a stale render.
+  // Snapshot of the form state at "freshly opened" or "freshly reset" so
+  // we can detect whether the user has made any changes worth guarding on
+  // close. It is derived from the same values the effect below writes
+  // into state, so it can never be a stale snapshot of the previous render.
   const baselineRef = useRef<string>("");
   useEffect(() => {
-    // Defer to next tick so the setState calls above have flushed.
-    const id = setTimeout(() => {
-      baselineRef.current = serializeFormState({
-        form,
-        portInputs,
-        connectionType,
-        authMethod,
-        inlineUsername,
-        inlinePassword,
-        inlineKeyPath,
-        inlinePassphrase,
-        inlineCredentialName,
-        saveCredential,
-      });
-    }, 0);
-    return () => clearTimeout(id);
-    // We only want to re-baseline when the dialog opens or the
-    // backing connection changes — NOT on every keystroke.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    const init = initialFormState(connection, isClone);
+    setForm(init.form);
+    setPortInputs(init.portInputs);
+    setConnectionType(init.connectionType);
+    setAuthMethod(init.authMethod);
+    setPortErrors({});
+    setFieldErrors({});
+    setInlineUsername(EMPTY_INLINE.inlineUsername);
+    setInlinePassword(EMPTY_INLINE.inlinePassword);
+    setInlineKeyPath(EMPTY_INLINE.inlineKeyPath);
+    setInlinePassphrase(EMPTY_INLINE.inlinePassphrase);
+    setInlineCredentialName(EMPTY_INLINE.inlineCredentialName);
+    setSaveCredential(EMPTY_INLINE.saveCredential);
+    baselineRef.current = serializeFormState({ ...init, ...EMPTY_INLINE });
   }, [connection, open, isClone]);
 
   const currentSnapshot = serializeFormState({

@@ -12,13 +12,12 @@ interface ConnectionsState {
   updateConnection: (input: Connection) => Promise<void>;
   deleteConnection: (id: string) => Promise<void>;
   cloneConnection: (id: string, newName: string, overrides?: Partial<Connection>) => Promise<void>;
-  searchConnections: (query: string) => Promise<void>;
   getOrphanPrivateCredential: (connId: string) => Promise<string | null>;
 }
 
-// Audit-4 Phase 4: removed `searchQuery` slice and `setSearchQuery`
-// action — App.tsx owns its own search input state and never read the
-// store's copy. Keeping a duplicate source of truth invited drift.
+// The store always holds the full, unfiltered list. Search is a pure
+// client-side filter (`src/lib/search.ts`) over this list, so typing in
+// the search bar never touches the backend or replaces the array.
 export const useConnectionsStore = create<ConnectionsState>((set) => ({
   connections: [],
   isLoading: false,
@@ -62,17 +61,8 @@ export const useConnectionsStore = create<ConnectionsState>((set) => ({
       set((state) => ({ connections: [...state.connections, conn] }));
     }),
 
-  searchConnections: (query) =>
-    runAsync(set, async () => {
-      const connections = await invoke<Connection[]>("search_connections", { query });
-      set({ connections });
-    }).then(() => undefined),
-
-  getOrphanPrivateCredential: async (connId) => {
-    try {
-      return await invoke<string | null>("get_orphan_private_credential", { connId });
-    } catch {
-      return null;
-    }
-  },
+  // Errors propagate: silently answering "no orphan" would let a delete
+  // proceed and leave a private credential's secrets behind.
+  getOrphanPrivateCredential: (connId) =>
+    invoke<string | null>("get_orphan_private_credential", { connId }),
 }));

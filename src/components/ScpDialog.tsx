@@ -70,14 +70,15 @@ export function ScpDialog({ open, onOpenChange, connection }: ScpDialogProps) {
       }
     }, initialScpState);
 
+  // Reset on every open (and on close) so the remote path always comes
+  // from the connection the dialog was opened for, never from the one it
+  // last showed.
   useEffect(() => {
-    if (!open) {
-      setMode("upload");
-      setLocalPath("");
-      setRemotePath(connection?.remote_path ?? "");
-      setRecursive(false);
-      setSubmitted(false);
-    }
+    setMode("upload");
+    setLocalPath("");
+    setRemotePath(connection?.remote_path ?? "");
+    setRecursive(false);
+    setSubmitted(false);
   }, [open, connection]);
 
   // Reset the "submitted" flag whenever the user switches mode so the

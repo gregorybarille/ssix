@@ -369,33 +369,6 @@ fn normalize_remote_path(value: Option<String>) -> Option<String> {
     normalize_optional_text(value).map(|path| path.replace('\\', "/"))
 }
 
-#[tauri::command]
-pub fn search_connections(query: String) -> Result<Vec<Connection>, String> {
-    let data = load_data()?;
-    let terms: Vec<String> = query
-        .split_whitespace()
-        .map(|t| t.to_lowercase())
-        .collect();
-    if terms.is_empty() {
-        return Ok(data.connections);
-    }
-    let results = data
-        .connections
-        .into_iter()
-        .filter(|c| {
-            let name = c.name.to_lowercase();
-            let host = c.host.to_lowercase();
-            let tags: Vec<String> = c.tags.iter().map(|t| t.to_lowercase()).collect();
-            terms.iter().all(|term| {
-                name.contains(term)
-                    || host.contains(term)
-                    || tags.iter().any(|t| t.contains(term))
-            })
-        })
-        .collect();
-    Ok(results)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -413,61 +386,6 @@ mod tests {
         ];
         let out = normalize_tags(tags);
         assert_eq!(out, vec!["Prod".to_string(), "DB".to_string(), "us-east".to_string()]);
-    }
-
-    fn conn_with(name: &str, host: &str, tags: Vec<&str>) -> Connection {
-        let mut c = Connection::new(
-            name.to_string(),
-            host.to_string(),
-            22,
-            None,
-            ConnectionKind::Direct,
-        );
-        c.tags = tags.iter().map(|s| s.to_string()).collect();
-        c
-    }
-
-    #[test]
-    fn test_search_filter_matches_name_host_and_tag() {
-        let conns = vec![
-            conn_with("prod-db", "10.0.0.1", vec!["prod", "db"]),
-            conn_with("staging-web", "10.0.0.2", vec!["staging", "web"]),
-            conn_with("dev-api", "10.0.0.3", vec!["dev"]),
-        ];
-        // helper that mirrors search_connections's logic on a vec
-        fn search(conns: Vec<Connection>, query: &str) -> Vec<Connection> {
-            let terms: Vec<String> = query.split_whitespace().map(|t| t.to_lowercase()).collect();
-            if terms.is_empty() { return conns; }
-            conns.into_iter().filter(|c| {
-                let name = c.name.to_lowercase();
-                let host = c.host.to_lowercase();
-                let tags: Vec<String> = c.tags.iter().map(|t| t.to_lowercase()).collect();
-                terms.iter().all(|t| name.contains(t) || host.contains(t) || tags.iter().any(|tag| tag.contains(t)))
-            }).collect()
-        }
-
-        // single tag term matches
-        let r = search(conns.clone(), "db");
-        assert_eq!(r.len(), 1);
-        assert_eq!(r[0].name, "prod-db");
-
-        // host substring match
-        let r = search(conns.clone(), "10.0.0.2");
-        assert_eq!(r.len(), 1);
-        assert_eq!(r[0].name, "staging-web");
-
-        // AND across two terms (one matches name, the other matches tag)
-        let r = search(conns.clone(), "staging web");
-        assert_eq!(r.len(), 1);
-        assert_eq!(r[0].name, "staging-web");
-
-        // term that matches none
-        let r = search(conns.clone(), "absent");
-        assert_eq!(r.len(), 0);
-
-        // empty query returns all
-        let r = search(conns.clone(), "   ");
-        assert_eq!(r.len(), 3);
     }
 
     #[test]

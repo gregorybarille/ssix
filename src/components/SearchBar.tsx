@@ -7,7 +7,8 @@ import { cn } from "@/lib/utils";
 interface SearchBarProps {
   value: string;
   onChange: (value: string) => void;
-  onSearch: (query: string) => void;
+  /** Optional extra callback fired alongside `onChange` (same value). */
+  onSearch?: (query: string) => void;
   placeholder?: string;
   className?: string;
 }
@@ -22,12 +23,12 @@ export function SearchBar({
   const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const v = e.target.value;
     onChange(v);
-    onSearch(v);
+    onSearch?.(v);
   };
 
   const handleClear = () => {
     onChange("");
-    onSearch("");
+    onSearch?.("");
   };
 
   return (
@@ -43,6 +44,7 @@ export function SearchBar({
         value={value}
         onChange={handleChange}
         aria-label={placeholder}
+        data-testid="connection-search-input"
       />
       {value && (
         <Button
@@ -52,6 +54,7 @@ export function SearchBar({
           onClick={handleClear}
           title="Clear search"
           aria-label="Clear search"
+          data-testid="connection-search-clear"
         >
           <X className="h-3.5 w-3.5" aria-hidden="true" />
         </Button>

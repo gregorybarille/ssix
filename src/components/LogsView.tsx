@@ -96,22 +96,29 @@ export function LogsView() {
 
   useEffect(() => {
     refreshBackend();
+    // `listen` resolves asynchronously; if the view unmounts first the
+    // subscription must still be released, otherwise every visit leaks
+    // a listener that keeps appending to an unmounted component.
+    let cancelled = false;
     let unlisten: (() => void) | undefined;
     (async () => {
       try {
         const { listen } = await import("@tauri-apps/api/event");
-        unlisten = await listen<LogEntry>("app-log", (event) => {
+        const stop = await listen<LogEntry>("app-log", (event) => {
           setBackend((prev) => {
             const next = prev.length >= 1000 ? prev.slice(1) : prev.slice();
             next.push(event.payload);
             return next;
           });
         });
+        if (cancelled) stop();
+        else unlisten = stop;
       } catch {
         // event API not available in tests
       }
     })();
     return () => {
+      cancelled = true;
       unlisten?.();
     };
   }, []);
