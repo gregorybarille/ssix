@@ -21,13 +21,17 @@ import {
   SelectValue,
 } from "./ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "./ui/tabs";
-import { CredentialSelect, FieldError, PortField } from "./ConnectionFormFields";
+import {
+  CredentialSelect,
+  FieldError,
+  PortField,
+  SaveCredentialFields,
+} from "./ConnectionFormFields";
 import { useFieldErrors } from "@/hooks/useFieldErrors";
 import { credentialFieldErrors, type CredentialFieldKey } from "@/lib/credentialValidation";
 import { InstallKeyDialog } from "./InstallKeyDialog";
 import { TagInput } from "./ui/tag-input";
 import { RadioGroup, RadioGroupItem } from "./ui/radio-group";
-import { Checkbox } from "./ui/checkbox";
 import { COLOR_VALUES } from "@/lib/colors";
 import { parsePort } from "@/lib/port";
 import { isTextInput } from "@/lib/focus";
@@ -558,6 +562,35 @@ export function ConnectionForm({
     selectedCredential?.type === "ssh_key" && form.host.trim().length > 0;
   const [installOpen, setInstallOpen] = useState(false);
 
+  const saveCredentialFields = (
+    method: "password" | "ssh_key",
+    checkboxId: string,
+    nameId: string,
+    namePlaceholder: string,
+  ) => (
+    <SaveCredentialFields
+      checkboxId={checkboxId}
+      nameId={nameId}
+      namePlaceholder={namePlaceholder}
+      checked={saveCredential}
+      onCheckedChange={(checked) => {
+        setSaveCredential(checked);
+        clearFieldError("inline_name");
+        if (!checked) {
+          setInlineCredentialName("");
+        } else if (!inlineCredentialName) {
+          setInlineCredentialName(defaultCredentialName(method));
+        }
+      }}
+      name={inlineCredentialName}
+      onNameChange={(name) => {
+        setInlineCredentialName(name);
+        clearFieldError("inline_name");
+      }}
+      error={fieldErrors.inline_name}
+    />
+  );
+
   const credentialPicker = (
     <div className="space-y-2">
       <CredentialSelect
@@ -618,14 +651,9 @@ export function ConnectionForm({
               clearFieldError("gateway_host");
             }}
             data-testid="connection-form-gateway"
-            aria-invalid={fieldErrors.gateway_host ? true : undefined}
-            aria-describedby={fieldErrors.gateway_host ? "gateway_host-error" : undefined}
+            {...invalidProps("gateway_host", "gateway_host-error")}
           />
-          {fieldErrors.gateway_host && (
-            <p id="gateway_host-error" role="alert" className="text-xs text-destructive">
-              {fieldErrors.gateway_host}
-            </p>
-          )}
+          <FieldError id="gateway_host-error" message={fieldErrors.gateway_host} />
         </div>
         <PortField
           id="gateway_port"
@@ -675,16 +703,9 @@ export function ConnectionForm({
               clearFieldError("destination_host");
             }}
             data-testid="connection-form-dest-host"
-            aria-invalid={fieldErrors.destination_host ? true : undefined}
-            aria-describedby={
-              fieldErrors.destination_host ? "destination_host-error" : undefined
-            }
+            {...invalidProps("destination_host", "destination_host-error")}
           />
-          {fieldErrors.destination_host && (
-            <p id="destination_host-error" role="alert" className="text-xs text-destructive">
-              {fieldErrors.destination_host}
-            </p>
-          )}
+          <FieldError id="destination_host-error" message={fieldErrors.destination_host} />
         </div>
         <PortField
           id="destination_port"
@@ -771,14 +792,9 @@ export function ConnectionForm({
           }}
           required
           data-testid="connection-form-name"
-          aria-invalid={fieldErrors.name ? true : undefined}
-          aria-describedby={fieldErrors.name ? "name-error" : undefined}
+          {...invalidProps("name", "name-error")}
         />
-        {fieldErrors.name && (
-          <p id="name-error" role="alert" className="text-xs text-destructive">
-            {fieldErrors.name}
-          </p>
-        )}
+        <FieldError id="name-error" message={fieldErrors.name} />
       </div>
 
       {connectionType === "direct" && (
@@ -795,14 +811,9 @@ export function ConnectionForm({
               }}
               required
               data-testid="connection-form-host"
-              aria-invalid={fieldErrors.host ? true : undefined}
-              aria-describedby={fieldErrors.host ? "host-error" : undefined}
+              {...invalidProps("host", "host-error")}
             />
-            {fieldErrors.host && (
-              <p id="host-error" role="alert" className="text-xs text-destructive">
-                {fieldErrors.host}
-              </p>
-            )}
+            <FieldError id="host-error" message={fieldErrors.host} />
           </div>
           <PortField
             id="port"
@@ -832,7 +843,18 @@ export function ConnectionForm({
           </Label>
           <Tabs
             value={authMethod}
-            onValueChange={(v) => setAuthMethod(v as AuthMethod)}
+            onValueChange={(v) => {
+              setAuthMethod(v as AuthMethod);
+              // The previous tab's messages describe a submit made with
+              // another method; the next submit checks this one afresh.
+              setFieldErrors((errs) =>
+                Object.fromEntries(
+                  Object.entries(errs).filter(
+                    ([key]) => key !== "credential_id" && !key.startsWith("inline_"),
+                  ),
+                ),
+              );
+            }}
           >
             <TabsList className="w-full">
               <TabsTrigger value="credential" className="flex-1 text-xs">
@@ -881,45 +903,7 @@ export function ConnectionForm({
                 />
                 <FieldError id="inline-password-error" message={fieldErrors.inline_password} />
               </div>
-              <div className="flex items-center gap-2">
-                <Checkbox
-                  id="conn-save-credential-password"
-                  checked={saveCredential}
-                  onCheckedChange={(v) => {
-                    const checked = v === true;
-                    setSaveCredential(checked);
-                    clearFieldError("inline_name");
-                    if (!checked) {
-                      setInlineCredentialName("");
-                    } else if (!inlineCredentialName) {
-                      setInlineCredentialName(defaultCredentialName("password"));
-                    }
-                  }}
-                />
-                <Label
-                  htmlFor="conn-save-credential-password"
-                  className="text-xs text-muted-foreground font-normal cursor-pointer select-none"
-                >
-                  Save as a named credential (visible in the Credentials list)
-                </Label>
-              </div>
-              {saveCredential && (
-                <div className="space-y-2">
-                  <Label htmlFor="password-cred-name">Credential Name *</Label>
-                  <Input
-                    id="password-cred-name"
-                    placeholder="server-cred"
-                    value={inlineCredentialName}
-                    onChange={(e) => {
-                      setInlineCredentialName(e.target.value);
-                      clearFieldError("inline_name");
-                    }}
-                    aria-required="true"
-                    {...invalidProps("inline_name", "password-cred-name-error")}
-                  />
-                  <FieldError id="password-cred-name-error" message={fieldErrors.inline_name} />
-                </div>
-              )}
+              {saveCredentialFields("password", "conn-save-credential-password", "password-cred-name", "server-cred")}
             </TabsContent>
 
             <TabsContent value="ssh_key" className="space-y-3 mt-3">
@@ -962,45 +946,7 @@ export function ConnectionForm({
                   onChange={(e) => setInlinePassphrase(e.target.value)}
                 />
               </div>
-              <div className="flex items-center gap-2">
-                <Checkbox
-                  id="conn-save-credential-key"
-                  checked={saveCredential}
-                  onCheckedChange={(v) => {
-                    const checked = v === true;
-                    setSaveCredential(checked);
-                    clearFieldError("inline_name");
-                    if (!checked) {
-                      setInlineCredentialName("");
-                    } else if (!inlineCredentialName) {
-                      setInlineCredentialName(defaultCredentialName("ssh_key"));
-                    }
-                  }}
-                />
-                <Label
-                  htmlFor="conn-save-credential-key"
-                  className="text-xs text-muted-foreground font-normal cursor-pointer select-none"
-                >
-                  Save as a named credential (visible in the Credentials list)
-                </Label>
-              </div>
-              {saveCredential && (
-                <div className="space-y-2">
-                  <Label htmlFor="ssh-cred-name">Credential Name *</Label>
-                  <Input
-                    id="ssh-cred-name"
-                    placeholder="server-key"
-                    value={inlineCredentialName}
-                    onChange={(e) => {
-                      setInlineCredentialName(e.target.value);
-                      clearFieldError("inline_name");
-                    }}
-                    aria-required="true"
-                    {...invalidProps("inline_name", "ssh-cred-name-error")}
-                  />
-                  <FieldError id="ssh-cred-name-error" message={fieldErrors.inline_name} />
-                </div>
-              )}
+              {saveCredentialFields("ssh_key", "conn-save-credential-key", "ssh-cred-name", "server-key")}
             </TabsContent>
           </Tabs>
         </div>

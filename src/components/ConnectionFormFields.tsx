@@ -1,5 +1,6 @@
 import React from "react";
 import { Credential } from "@/types";
+import { Checkbox } from "./ui/checkbox";
 import { Input } from "./ui/input";
 import { Label } from "./ui/label";
 import {
@@ -136,5 +137,66 @@ export function CredentialSelect({
         ))}
       </SelectContent>
     </Select>
+  );
+}
+
+interface SaveCredentialFieldsProps {
+  /** Checkbox id; the credential name input uses `nameId`. */
+  checkboxId: string;
+  nameId: string;
+  namePlaceholder: string;
+  checked: boolean;
+  onCheckedChange: (checked: boolean) => void;
+  name: string;
+  onNameChange: (name: string) => void;
+  error?: string;
+}
+
+/**
+ * "Save as a named credential" toggle and, when ticked, the credential
+ * name, shared by the connection form's Password and SSH Key tabs.
+ */
+export function SaveCredentialFields({
+  checkboxId,
+  nameId,
+  namePlaceholder,
+  checked,
+  onCheckedChange,
+  name,
+  onNameChange,
+  error,
+}: SaveCredentialFieldsProps) {
+  const errorId = `${nameId}-error`;
+  return (
+    <>
+      <div className="flex items-center gap-2">
+        <Checkbox
+          id={checkboxId}
+          checked={checked}
+          onCheckedChange={(v) => onCheckedChange(v === true)}
+        />
+        <Label
+          htmlFor={checkboxId}
+          className="text-xs text-muted-foreground font-normal cursor-pointer select-none"
+        >
+          Save as a named credential (visible in the Credentials list)
+        </Label>
+      </div>
+      {checked && (
+        <div className="space-y-2">
+          <Label htmlFor={nameId}>Credential Name *</Label>
+          <Input
+            id={nameId}
+            placeholder={namePlaceholder}
+            value={name}
+            onChange={(e) => onNameChange(e.target.value)}
+            aria-required="true"
+            aria-invalid={error ? true : undefined}
+            aria-describedby={error ? errorId : undefined}
+          />
+          <FieldError id={errorId} message={error} />
+        </div>
+      )}
+    </>
   );
 }

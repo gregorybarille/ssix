@@ -191,4 +191,15 @@ describe("ConnectionForm credential validation", () => {
     });
     expect(onSubmit.mock.calls[0][0]).toMatchObject({ credential_id: "new-cred" });
   });
+
+  it("drops the previous auth tab's errors when the tab changes", async () => {
+    const user = userEvent.setup();
+    renderForm();
+    fillDirect();
+    submit();
+    await screen.findByText("Credential is required");
+    await user.click(screen.getByRole("tab", { name: "Password" }));
+    await user.click(screen.getByRole("tab", { name: "Saved Credential" }));
+    expect(screen.queryByText("Credential is required")).not.toBeInTheDocument();
+  });
 });
