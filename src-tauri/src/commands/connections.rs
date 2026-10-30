@@ -1,5 +1,5 @@
 use crate::commands::blocking;
-use crate::models::{Connection, ConnectionKind, Credential};
+use crate::models::{AppData, Connection, ConnectionKind, Credential, CredentialKind};
 use crate::storage::{load_data, with_data_mut};
 use serde::Deserialize;
 use uuid::Uuid;
@@ -44,13 +44,13 @@ pub struct UpdateConnectionInput {
     pub fields: ConnectionFields,
 }
 
+/// A clone is the clone form's whole connection, saved as a new one. `id`
+/// names the original only so a private credential it uses can be copied.
 #[derive(Debug, Deserialize)]
 pub struct CloneConnectionInput {
     pub id: String,
-    pub new_name: String,
-    pub host: Option<String>,
-    pub port: Option<u16>,
-    pub credential_id: Option<String>,
+    #[serde(flatten)]
+    pub fields: ConnectionFields,
 }
 
 #[tauri::command]
@@ -127,21 +127,25 @@ pub async fn add_connection(input: AddConnectionInput) -> Result<Connection, Str
 fn add_connection_sync(input: AddConnectionInput) -> Result<Connection, String> {
     let f = input.fields;
     validate_connection_fields(&f.name, &f.host, f.port)?;
-    with_data_mut(|data| {
-        if data.connections.iter().any(|c| c.name == f.name) {
-            return Err(format!("A connection named '{}' already exists", f.name));
-        }
-        validate_connection_credentials(&data.credentials, f.credential_id.as_deref(), &f.kind)?;
-        let mut connection = Connection::new(f.name, f.host, f.port, f.credential_id, f.kind);
-        connection.verbosity = f.verbosity;
-        connection.extra_args = f.extra_args;
-        connection.login_command = normalize_optional_text(f.login_command);
-        connection.remote_path = normalize_remote_path(f.remote_path);
-        connection.tags = normalize_tags(f.tags);
-        connection.color = f.color;
-        data.connections.push(connection.clone());
-        Ok(connection)
-    })
+    with_data_mut(|data| insert_new_connection(data, f))
+}
+
+/// Store `f` as a new connection: shared by add and clone, so a clone gets
+/// exactly the checks and normalization a new connection gets.
+fn insert_new_connection(data: &mut AppData, f: ConnectionFields) -> Result<Connection, String> {
+    if data.connections.iter().any(|c| c.name == f.name) {
+        return Err(format!("A connection named '{}' already exists", f.name));
+    }
+    validate_connection_credentials(&data.credentials, f.credential_id.as_deref(), &f.kind)?;
+    let mut connection = Connection::new(f.name, f.host, f.port, f.credential_id, f.kind);
+    connection.verbosity = f.verbosity;
+    connection.extra_args = f.extra_args;
+    connection.login_command = normalize_optional_text(f.login_command);
+    connection.remote_path = normalize_remote_path(f.remote_path);
+    connection.tags = normalize_tags(f.tags);
+    connection.color = f.color;
+    data.connections.push(connection.clone());
+    Ok(connection)
 }
 
 #[tauri::command]
@@ -258,22 +262,8 @@ pub async fn clone_connection(input: CloneConnectionInput) -> Result<Connection,
 }
 
 fn clone_connection_sync(input: CloneConnectionInput) -> Result<Connection, String> {
-    // Audit-4 H6: validate the new name (host/port are validated below once
-    // the original is loaded and we know the effective values).
-    if input.new_name.trim().is_empty() {
-        return Err("Connection name is required.".to_string());
-    }
-    if input.new_name.trim().chars().count() > 128 {
-        return Err("Connection name must be 128 characters or fewer.".to_string());
-    }
-    if matches!(input.port, Some(0)) {
-        return Err("Port must be between 1 and 65535.".to_string());
-    }
-    if let Some(ref h) = input.host {
-        if h.trim().is_empty() {
-            return Err("Host is required.".to_string());
-        }
-    }
+    let mut f = input.fields;
+    validate_connection_fields(&f.name, &f.host, f.port)?;
 
     // When the clone duplicates a private credential its secrets are
     // written inside the `with_data_mut` closure, but data.json is only
@@ -282,106 +272,49 @@ fn clone_connection_sync(input: CloneConnectionInput) -> Result<Connection, Stri
     let mut created_private_credential: Option<String> = None;
 
     let result = with_data_mut(|data| {
-        if data.connections.iter().any(|c| c.name == input.new_name) {
-            return Err(format!(
-                "A connection named '{}' already exists",
-                input.new_name
-            ));
+        if !data.connections.iter().any(|c| c.id == input.id) {
+            return Err("Connection not found".to_string());
         }
-        let original = data
-            .connections
-            .iter()
-            .find(|c| c.id == input.id)
-            .ok_or_else(|| "Connection not found".to_string())?
-            .clone();
-
-        // Resolve the credential_id for the clone.
-        let credential_id = match input.credential_id {
-            Some(ref cid) if cid.is_empty() => None,
-            Some(ref cid) => Some(cid.clone()),
-            None => {
-                // If the original connection's credential is private, duplicate it
-                // so each connection owns an independent copy instead of sharing one.
-                if let Some(ref orig_cred_id) = original.credential_id {
-                    let is_private = data
-                        .credentials
-                        .iter()
-                        .any(|c| c.id == *orig_cred_id && c.is_private);
-                    if is_private {
-                        if let Some(orig_cred) = data
-                            .credentials
-                            .iter()
-                            .find(|c| c.id == *orig_cred_id)
-                            .cloned()
-                        {
-                            let new_cred_id = Uuid::new_v4().to_string();
-                            // Copy every secret in one read and one write.
-                            let secrets = crate::keychain::snapshot_for_credential(orig_cred_id)?;
-                            if matches!(
-                                orig_cred.kind,
-                                crate::models::CredentialKind::Password { .. }
-                            ) && secrets.password.is_none()
-                            {
-                                return Err("Failed to read password from secrets store while duplicating private credential".to_string());
-                            }
-                            crate::keychain::replace_for_credential(&new_cred_id, &secrets)?;
-                            created_private_credential = Some(new_cred_id.clone());
-                            let new_kind = match &orig_cred.kind {
-                                crate::models::CredentialKind::Password { .. } => {
-                                    crate::models::CredentialKind::Password {
-                                        password: String::new(),
-                                    }
-                                }
-                                crate::models::CredentialKind::SshKey {
-                                    private_key_path, ..
-                                } => crate::models::CredentialKind::SshKey {
-                                    private_key_path: private_key_path.clone(),
-                                    private_key: None,
-                                    passphrase: None,
-                                },
-                            };
-                            let new_cred = crate::models::Credential {
-                                id: new_cred_id.clone(),
-                                name: orig_cred.name.clone(),
-                                username: orig_cred.username.clone(),
-                                kind: new_kind,
-                                is_private: true,
-                            };
-                            data.credentials.push(new_cred);
-                            Some(new_cred_id)
-                        } else {
-                            original.credential_id
-                        }
-                    } else {
-                        original.credential_id
-                    }
-                } else {
-                    original.credential_id
-                }
+        // A private credential belongs to one connection (it is created by
+        // the inline auth tabs and hidden from the list), so a clone that
+        // keeps it gets its own copy instead of sharing it.
+        let private = f.credential_id.as_deref().and_then(|cred_id| {
+            data.credentials
+                .iter()
+                .find(|c| c.id == cred_id && c.is_private)
+                .cloned()
+        });
+        if let Some(orig_cred) = private {
+            let new_cred_id = Uuid::new_v4().to_string();
+            // Copy every secret in one read and one write.
+            let secrets = crate::keychain::snapshot_for_credential(&orig_cred.id)?;
+            if matches!(orig_cred.kind, CredentialKind::Password { .. })
+                && secrets.password.is_none()
+            {
+                return Err("Failed to read password from secrets store while duplicating private credential".to_string());
             }
-        };
-
-        validate_connection_credentials(
-            &data.credentials,
-            credential_id.as_deref(),
-            &original.kind,
-        )?;
-        let cloned = Connection {
-            id: Uuid::new_v4().to_string(),
-            name: input.new_name,
-            host: input.host.unwrap_or(original.host),
-            port: input.port.unwrap_or(original.port),
-            credential_id,
-            kind: original.kind,
-            verbosity: original.verbosity,
-            extra_args: original.extra_args,
-            login_command: original.login_command,
-            remote_path: original.remote_path,
-            tags: original.tags,
-            color: original.color,
-        };
-        data.connections.push(cloned.clone());
-        Ok(cloned)
+            crate::keychain::replace_for_credential(&new_cred_id, &secrets)?;
+            created_private_credential = Some(new_cred_id.clone());
+            let kind = match &orig_cred.kind {
+                CredentialKind::Password { .. } => CredentialKind::Password {
+                    password: String::new(),
+                },
+                CredentialKind::SshKey {
+                    private_key_path, ..
+                } => CredentialKind::SshKey {
+                    private_key_path: private_key_path.clone(),
+                    private_key: None,
+                    passphrase: None,
+                },
+            };
+            data.credentials.push(Credential {
+                id: new_cred_id.clone(),
+                kind,
+                ..orig_cred
+            });
+            f.credential_id = Some(new_cred_id);
+        }
+        insert_new_connection(data, f)
     });
 
     // If with_data_mut failed (validation Err from the closure, or a
@@ -527,15 +460,19 @@ mod tests {
         );
     }
 
+    fn store_credential(cred: &Credential) {
+        with_data_mut(|data| {
+            data.credentials.push(cred.clone());
+            Ok(())
+        })
+        .unwrap();
+    }
+
     #[test]
     fn test_add_update_and_clone_enforce_credentials() {
         with_isolated_data_dir(|| {
             let cred = password_credential("a");
-            with_data_mut(|data| {
-                data.credentials.push(cred.clone());
-                Ok(())
-            })
-            .unwrap();
+            store_credential(&cred);
 
             let err = add_connection_sync(AddConnectionInput {
                 fields: direct_fields(None),
@@ -555,13 +492,11 @@ mod tests {
             .unwrap_err();
             assert_eq!(err, "The selected credential no longer exists");
 
-            // An empty override means "no credential" for a clone.
+            let mut clone_fields = direct_fields(None);
+            clone_fields.name = "web copy".to_string();
             let err = clone_connection_sync(CloneConnectionInput {
                 id: conn.id.clone(),
-                new_name: "web copy".to_string(),
-                host: None,
-                port: None,
-                credential_id: Some(String::new()),
+                fields: clone_fields,
             })
             .unwrap_err();
             assert_eq!(err, "Credential is required");
@@ -572,6 +507,101 @@ mod tests {
                 data.connections[0].credential_id.as_deref(),
                 Some(cred.id.as_str())
             );
+        });
+    }
+
+    #[test]
+    fn test_clone_saves_the_whole_form() {
+        with_isolated_data_dir(|| {
+            let gateway = password_credential("gateway");
+            let new_gateway = password_credential("new-gateway");
+            let dest = password_credential("dest");
+            for c in [&gateway, &new_gateway, &dest] {
+                store_credential(c);
+            }
+            let mut fields = direct_fields(Some(dest.id.clone()));
+            fields.kind = jump_kind(&gateway.id);
+            let original = add_connection_sync(AddConnectionInput { fields }).unwrap();
+
+            let mut fields = direct_fields(Some(dest.id.clone()));
+            fields.name = "web copy".to_string();
+            fields.kind = jump_kind(&new_gateway.id);
+            fields.tags = vec![" prod ".to_string()];
+            fields.verbosity = 2;
+            let clone = clone_connection_sync(CloneConnectionInput {
+                id: original.id.clone(),
+                fields,
+            })
+            .unwrap();
+
+            assert_ne!(clone.id, original.id);
+            assert_eq!(clone.tags, vec!["prod".to_string()]);
+            assert_eq!(clone.verbosity, 2);
+            match clone.kind {
+                ConnectionKind::JumpShell {
+                    gateway_credential_id,
+                    ..
+                } => assert_eq!(gateway_credential_id, new_gateway.id),
+                other => panic!("expected a jump shell, got {other:?}"),
+            }
+            // Shared named credentials stay shared.
+            assert_eq!(clone.credential_id.as_deref(), Some(dest.id.as_str()));
+        });
+    }
+
+    #[test]
+    fn test_clone_copies_a_private_credential() {
+        with_isolated_data_dir(|| {
+            let mut private = password_credential("inline-x");
+            private.is_private = true;
+            store_credential(&private);
+            crate::keychain::replace_for_credential(
+                &private.id,
+                &crate::models::CredentialSecrets {
+                    password: Some("s3cret".to_string()),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+            let original = add_connection_sync(AddConnectionInput {
+                fields: direct_fields(Some(private.id.clone())),
+            })
+            .unwrap();
+
+            let mut fields = direct_fields(Some(private.id.clone()));
+            fields.name = "web copy".to_string();
+            let clone = clone_connection_sync(CloneConnectionInput {
+                id: original.id,
+                fields,
+            })
+            .unwrap();
+
+            let copy_id = clone.credential_id.expect("clone keeps a credential");
+            assert_ne!(copy_id, private.id);
+            let data = load_data().unwrap();
+            let copy = data.credentials.iter().find(|c| c.id == copy_id).unwrap();
+            assert!(copy.is_private);
+            assert_eq!(
+                crate::keychain::snapshot_for_credential(&copy_id)
+                    .unwrap()
+                    .password
+                    .as_deref(),
+                Some("s3cret")
+            );
+        });
+    }
+
+    #[test]
+    fn test_clone_of_a_missing_connection_is_refused() {
+        with_isolated_data_dir(|| {
+            let cred = password_credential("a");
+            store_credential(&cred);
+            let err = clone_connection_sync(CloneConnectionInput {
+                id: "gone".to_string(),
+                fields: direct_fields(Some(cred.id.clone())),
+            })
+            .unwrap_err();
+            assert_eq!(err, "Connection not found");
         });
     }
 

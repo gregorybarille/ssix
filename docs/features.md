@@ -27,6 +27,11 @@ Supported credential modes:
 
 The connection form can create inline credentials and optionally save them as named credentials.
 
+**Clone** opens the connection form prefilled from a connection, and
+everything in it (kind, gateway, tags, colour, options) is saved as the
+new connection. A private inline credential is copied, so the clone and
+the original never share one.
+
 The credentials list only holds redacted credentials. Opening **Edit**
 fetches that one credential's saved secrets (`get_credential_secrets`)
 and prefills them; the secret fields and the **Update** button are

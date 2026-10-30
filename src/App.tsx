@@ -280,13 +280,11 @@ function App() {
     }
   };
 
+  // The clone form submits a whole new connection; every field it shows
+  // (kind, gateway, tags, …) is saved, not only name, host and port.
   const handleCloneSubmit = async (data: ConnectionInput | Connection) => {
     if (dialogs.cloningConn) {
-      await cloneConnection(dialogs.cloningConn.id, data.name, {
-        host: data.host,
-        port: data.port,
-        credential_id: data.credential_id,
-      });
+      await cloneConnection(dialogs.cloningConn.id, data);
     }
   };
 

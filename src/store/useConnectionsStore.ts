@@ -16,7 +16,8 @@ interface ConnectionsState {
   addConnection: (input: ConnectionInput) => Promise<void>;
   updateConnection: (input: Connection) => Promise<void>;
   deleteConnection: (id: string) => Promise<void>;
-  cloneConnection: (id: string, newName: string, overrides?: Partial<Connection>) => Promise<void>;
+  /** Save the clone form's connection as a new one; `id` is the original's. */
+  cloneConnection: (id: string, input: ConnectionInput) => Promise<void>;
   getOrphanPrivateCredential: (connId: string) => Promise<string | null>;
 }
 
@@ -59,10 +60,10 @@ export const useConnectionsStore = create<ConnectionsState>((set) => ({
       set((state) => ({ connections: state.connections.filter((c) => c.id !== id) }));
     }, { recordError: false }),
 
-  cloneConnection: (id, newName, overrides) =>
+  cloneConnection: (id, input) =>
     runAsyncRethrow(set, async () => {
       const conn = await invoke<Connection>("clone_connection", {
-        input: { id, new_name: newName, ...overrides },
+        input: { ...input, id },
       });
       set((state) => ({ connections: [...state.connections, conn] }));
     }, { recordError: false }),

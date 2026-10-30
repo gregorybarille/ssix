@@ -6,6 +6,7 @@
  * `add_connection` and `data.json`), then covers the credential rules:
  *   - a connection cannot be saved without a credential;
  *   - a refused save deletes the inline credential it created;
+ *   - a clone keeps every field of its form;
  */
 import { waitForAppReady } from "../helpers/app.js";
 import { TARGETS } from "../helpers/docker.js";
@@ -15,6 +16,7 @@ import {
   clickDialogFooterButton,
   createPasswordCredential,
   createDirectConnection,
+  ensureConnectionRowsLayout,
   fill,
   pickCredential,
   saveConnectionForm,
@@ -145,5 +147,26 @@ describe("Connections CRUD", () => {
       timeout: 10_000,
     });
     expect(await browser.$$(sel.credentialRowByName("cred-02-inline")).length).toBe(1);
+  });
+
+  it("saves every field of the clone form", async () => {
+    await ensureConnectionRowsLayout();
+    const row = await browser.$(sel.connectionRowByName("conn-a"));
+    await row.waitForExist({ timeout: 10_000 });
+    const cloneButton = await row.$(sel.connectionRowCloneButton);
+    await cloneButton.waitForClickable({ timeout: 10_000 });
+    await cloneButton.click();
+    await fill(sel.connectionFormName, "conn-a-clone");
+    // Tags used to be dropped: a clone only kept name, host, port and credential.
+    const tagsInput = await browser.$("#tags");
+    await tagsInput.waitForExist({ timeout: 10_000 });
+    await tagsInput.click();
+    await tagsInput.setValue("cloned");
+    await browser.keys(["Enter"]);
+    await saveConnectionForm();
+
+    const clone = await browser.$(sel.connectionRowByName("conn-a-clone"));
+    await clone.waitForExist({ timeout: 10_000 });
+    expect(await clone.getAttribute("aria-label")).toContain("tagged cloned");
   });
 });

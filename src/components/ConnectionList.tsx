@@ -153,6 +153,7 @@ function RowActions({ conn, onEdit, onDelete, onClone, onConnect, onScp }: RowAc
         className={ACTION_BUTTON}
         onClick={stop(onClone, conn)}
         aria-label={`Clone ${conn.name}`}
+        data-testid={`clone-connection-${conn.id}`}
       >
         <Copy className="h-3.5 w-3.5" aria-hidden="true" />
       </Button>
