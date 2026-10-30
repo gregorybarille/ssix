@@ -91,9 +91,9 @@ fn validate_connection_credentials(
     kind: &ConnectionKind,
 ) -> Result<(), String> {
     let check = |label: &str, id: Option<&str>| match id.filter(|id| !id.is_empty()) {
-        None => Err(format!("{label} is required.")),
+        None => Err(format!("{label} is required")),
         Some(id) if !credentials.iter().any(|c| c.id == id) => Err(format!(
-            "The selected {} no longer exists.",
+            "The selected {} no longer exists",
             label.to_lowercase()
         )),
         Some(_) => Ok(()),
@@ -111,8 +111,11 @@ fn validate_connection_credentials(
             gateway_credential_id,
             ..
         } => check("Gateway credential", Some(gateway_credential_id)),
-        // Migrated to JumpShell on load; never stored by these commands.
-        ConnectionKind::LegacyTunnel { .. } => Ok(()),
+        // Old files are migrated to JumpShell on load; the variant still
+        // deserializes, so a request carrying it must not be stored.
+        ConnectionKind::LegacyTunnel { .. } => {
+            Err("Legacy tunnel connections can no longer be saved".to_string())
+        }
     }
 }
 
@@ -486,19 +489,19 @@ mod tests {
         let required = |msg: &str| Err(msg.to_string());
         assert_eq!(
             validate_connection_credentials(&creds, None, &direct),
-            required("Credential is required.")
+            required("Credential is required")
         );
         assert_eq!(
             validate_connection_credentials(&creds, Some(""), &direct),
-            required("Credential is required.")
+            required("Credential is required")
         );
         assert_eq!(
             validate_connection_credentials(&creds, None, &jump_kind(id)),
-            required("Destination credential is required.")
+            required("Destination credential is required")
         );
         assert_eq!(
             validate_connection_credentials(&creds, Some(id), &jump_kind("")),
-            required("Gateway credential is required.")
+            required("Gateway credential is required")
         );
         assert!(validate_connection_credentials(&creds, Some(id), &direct).is_ok());
         assert!(validate_connection_credentials(&creds, Some(id), &jump_kind(id)).is_ok());
@@ -512,15 +515,15 @@ mod tests {
         let id = creds[0].id.as_str();
         assert_eq!(
             validate_connection_credentials(&creds, Some("gone"), &ConnectionKind::Direct),
-            Err("The selected credential no longer exists.".to_string())
+            Err("The selected credential no longer exists".to_string())
         );
         assert_eq!(
             validate_connection_credentials(&creds, Some("gone"), &jump_kind(id)),
-            Err("The selected destination credential no longer exists.".to_string())
+            Err("The selected destination credential no longer exists".to_string())
         );
         assert_eq!(
             validate_connection_credentials(&creds, None, &port_forward_kind("gone")),
-            Err("The selected gateway credential no longer exists.".to_string())
+            Err("The selected gateway credential no longer exists".to_string())
         );
     }
 
@@ -538,7 +541,7 @@ mod tests {
                 fields: direct_fields(None),
             })
             .unwrap_err();
-            assert_eq!(err, "Credential is required.");
+            assert_eq!(err, "Credential is required");
 
             let conn = add_connection_sync(AddConnectionInput {
                 fields: direct_fields(Some(cred.id.clone())),
@@ -550,7 +553,7 @@ mod tests {
                 fields: direct_fields(Some("gone".to_string())),
             })
             .unwrap_err();
-            assert_eq!(err, "The selected credential no longer exists.");
+            assert_eq!(err, "The selected credential no longer exists");
 
             // An empty override means "no credential" for a clone.
             let err = clone_connection_sync(CloneConnectionInput {
@@ -561,7 +564,7 @@ mod tests {
                 credential_id: Some(String::new()),
             })
             .unwrap_err();
-            assert_eq!(err, "Credential is required.");
+            assert_eq!(err, "Credential is required");
 
             let data = load_data().unwrap();
             assert_eq!(data.connections.len(), 1);
@@ -570,6 +573,22 @@ mod tests {
                 Some(cred.id.as_str())
             );
         });
+    }
+
+    #[test]
+    fn test_legacy_tunnel_kind_is_never_stored() {
+        let creds = vec![password_credential("a")];
+        let legacy = ConnectionKind::LegacyTunnel {
+            gateway_host: "gw".to_string(),
+            gateway_port: 22,
+            gateway_credential_id: None,
+            destination_host: "db".to_string(),
+            destination_port: 22,
+        };
+        assert_eq!(
+            validate_connection_credentials(&creds, Some(creds[0].id.as_str()), &legacy),
+            Err("Legacy tunnel connections can no longer be saved".to_string())
+        );
     }
 
     #[test]
