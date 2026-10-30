@@ -197,7 +197,18 @@ impl Connection {
     /// Every credential id this connection refers to: the destination
     /// credential and, for tunnels, the gateway credential.
     pub fn credential_ids(&self) -> impl Iterator<Item = &str> {
-        let gateway = match &self.kind {
+        self.credential_id
+            .as_deref()
+            .into_iter()
+            .chain(self.kind.gateway_credential_id())
+            .filter(|id| !id.is_empty())
+    }
+}
+
+impl ConnectionKind {
+    /// The gateway's credential id, for the kinds that go through one.
+    pub fn gateway_credential_id(&self) -> Option<&str> {
+        match self {
             ConnectionKind::PortForward {
                 gateway_credential_id,
                 ..
@@ -205,18 +216,28 @@ impl Connection {
             | ConnectionKind::JumpShell {
                 gateway_credential_id,
                 ..
-            } => Some(gateway_credential_id.as_str()),
+            } => Some(gateway_credential_id),
             ConnectionKind::LegacyTunnel {
                 gateway_credential_id,
                 ..
             } => gateway_credential_id.as_deref(),
             ConnectionKind::Direct => None,
-        };
-        self.credential_id
-            .as_deref()
-            .into_iter()
-            .chain(gateway)
-            .filter(|id| !id.is_empty())
+        }
+    }
+
+    /// Mutable gateway credential id of a current tunnel kind.
+    fn gateway_credential_id_mut(&mut self) -> Option<&mut String> {
+        match self {
+            ConnectionKind::PortForward {
+                gateway_credential_id,
+                ..
+            }
+            | ConnectionKind::JumpShell {
+                gateway_credential_id,
+                ..
+            } => Some(gateway_credential_id),
+            ConnectionKind::LegacyTunnel { .. } | ConnectionKind::Direct => None,
+        }
     }
 }
 
@@ -390,19 +411,9 @@ impl AppData {
                 conn.credential_id = None;
                 dropped = true;
             }
-            if let ConnectionKind::PortForward {
-                gateway_credential_id,
-                ..
-            }
-            | ConnectionKind::JumpShell {
-                gateway_credential_id,
-                ..
-            } = &mut conn.kind
-            {
-                if !gateway_credential_id.is_empty()
-                    && !known.contains(gateway_credential_id.as_str())
-                {
-                    gateway_credential_id.clear();
+            if let Some(gateway) = conn.kind.gateway_credential_id_mut() {
+                if !gateway.is_empty() && !known.contains(gateway.as_str()) {
+                    gateway.clear();
                     dropped = true;
                 }
             }

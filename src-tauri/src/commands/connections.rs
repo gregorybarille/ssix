@@ -207,7 +207,7 @@ fn update_connection_sync(input: UpdateConnectionInput) -> Result<Connection, St
                     let still_referenced = data
                         .connections
                         .iter()
-                        .any(|c| c.credential_id.as_deref() == Some(old_id.as_str()));
+                        .any(|c| c.credential_ids().any(|id| id == old_id));
                     if !still_referenced {
                         data.credentials.retain(|c| c.id != *old_id);
                         crate::keychain::delete_all_for_credential(old_id);
@@ -251,7 +251,7 @@ pub fn get_orphan_private_credential(conn_id: String) -> Result<Option<String>, 
             let other_refs = data
                 .connections
                 .iter()
-                .filter(|c| c.id != conn_id && c.credential_id.as_deref() == Some(cred_id))
+                .filter(|c| c.id != conn_id && c.credential_ids().any(|id| id == cred_id))
                 .count();
             if other_refs == 0 {
                 return Ok(Some(cred_id.clone()));
@@ -653,6 +653,30 @@ mod tests {
             assert_eq!(load_data().unwrap().credentials.len(), 1);
             let secrets = std::fs::read_to_string(crate::keychain::secrets_path()).unwrap();
             assert_eq!(secrets.matches("s3cret").count(), 1);
+        });
+    }
+
+    #[test]
+    fn test_orphan_check_counts_gateway_use() {
+        with_isolated_data_dir(|| {
+            let cred = private_credential("inline-shared");
+            let direct = add_connection_sync(AddConnectionInput {
+                fields: direct_fields(Some(cred.id.clone())),
+            })
+            .unwrap();
+            assert_eq!(
+                get_orphan_private_credential(direct.id.clone()).unwrap(),
+                Some(cred.id.clone())
+            );
+
+            let other = password_credential("dest");
+            store_credential(&other);
+            let mut fields = direct_fields(Some(other.id.clone()));
+            fields.name = "jump".to_string();
+            fields.kind = jump_kind(&cred.id);
+            add_connection_sync(AddConnectionInput { fields }).unwrap();
+            // Still the jump shell's gateway credential: not an orphan.
+            assert_eq!(get_orphan_private_credential(direct.id).unwrap(), None);
         });
     }
 
