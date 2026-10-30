@@ -254,8 +254,6 @@ export function ConnectionForm({
     | "credential_id"
     | `inline_${CredentialFieldKey}`;
   const { fieldErrors, setFieldErrors, clearFieldError } = useFieldErrors<FieldKey>();
-  // aria wiring for an input whose message renders in `<FieldError id={errorId}>`.
-  const invalidProps = (key: FieldKey, errorId: string) => invalidAria(fieldErrors[key], errorId);
 
   const updatePort = (key: PortKey, raw: string) => {
     setPortInputs((p) => ({ ...p, [key]: raw }));
@@ -680,7 +678,7 @@ export function ConnectionForm({
               clearFieldError("gateway_host");
             }}
             data-testid="connection-form-gateway"
-            {...invalidProps("gateway_host", "gateway_host-error")}
+            {...invalidAria(fieldErrors.gateway_host, "gateway_host-error")}
           />
           <FieldError id="gateway_host-error" message={fieldErrors.gateway_host} />
         </div>
@@ -732,7 +730,7 @@ export function ConnectionForm({
               clearFieldError("destination_host");
             }}
             data-testid="connection-form-dest-host"
-            {...invalidProps("destination_host", "destination_host-error")}
+            {...invalidAria(fieldErrors.destination_host, "destination_host-error")}
           />
           <FieldError id="destination_host-error" message={fieldErrors.destination_host} />
         </div>
@@ -821,7 +819,7 @@ export function ConnectionForm({
           }}
           required
           data-testid="connection-form-name"
-          {...invalidProps("name", "name-error")}
+          {...invalidAria(fieldErrors.name, "name-error")}
         />
         <FieldError id="name-error" message={fieldErrors.name} />
       </div>
@@ -840,7 +838,7 @@ export function ConnectionForm({
               }}
               required
               data-testid="connection-form-host"
-              {...invalidProps("host", "host-error")}
+              {...invalidAria(fieldErrors.host, "host-error")}
             />
             <FieldError id="host-error" message={fieldErrors.host} />
           </div>
@@ -918,7 +916,7 @@ export function ConnectionForm({
                     clearFieldError("inline_username");
                   }}
                   aria-required="true"
-                  {...invalidProps("inline_username", "inline-username-error")}
+                  {...invalidAria(fieldErrors.inline_username, "inline-username-error")}
                 />
                 <FieldError id="inline-username-error" message={fieldErrors.inline_username} />
               </div>
@@ -934,7 +932,7 @@ export function ConnectionForm({
                     clearFieldError("inline_password");
                   }}
                   aria-required="true"
-                  {...invalidProps("inline_password", "inline-password-error")}
+                  {...invalidAria(fieldErrors.inline_password, "inline-password-error")}
                 />
                 <FieldError id="inline-password-error" message={fieldErrors.inline_password} />
               </div>
@@ -953,7 +951,7 @@ export function ConnectionForm({
                     clearFieldError("inline_username");
                   }}
                   aria-required="true"
-                  {...invalidProps("inline_username", "key-username-error")}
+                  {...invalidAria(fieldErrors.inline_username, "key-username-error")}
                 />
                 <FieldError id="key-username-error" message={fieldErrors.inline_username} />
               </div>
@@ -968,7 +966,7 @@ export function ConnectionForm({
                     clearFieldError("inline_key_path");
                   }}
                   aria-required="true"
-                  {...invalidProps("inline_key_path", "key-path-error")}
+                  {...invalidAria(fieldErrors.inline_key_path, "key-path-error")}
                 />
                 <FieldError id="key-path-error" message={fieldErrors.inline_key_path} />
               </div>
