@@ -1,5 +1,5 @@
 use crate::commands::blocking;
-use crate::models::{Connection, ConnectionKind};
+use crate::models::{Connection, ConnectionKind, Credential};
 use crate::storage::{load_data, with_data_mut};
 use serde::Deserialize;
 use uuid::Uuid;
@@ -81,6 +81,41 @@ fn validate_connection_fields(name: &str, host: &str, port: u16) -> Result<(), S
     Ok(())
 }
 
+/// Every kind that opens a shell needs a credential for it, and each
+/// credential a connection names must still exist (`delete_credential`
+/// leaves references behind). Otherwise the connection saves fine and only
+/// fails once the user tries to connect.
+fn validate_connection_credentials(
+    credentials: &[Credential],
+    credential_id: Option<&str>,
+    kind: &ConnectionKind,
+) -> Result<(), String> {
+    let check = |label: &str, id: Option<&str>| match id.filter(|id| !id.is_empty()) {
+        None => Err(format!("{label} is required.")),
+        Some(id) if !credentials.iter().any(|c| c.id == id) => Err(format!(
+            "The selected {} no longer exists.",
+            label.to_lowercase()
+        )),
+        Some(_) => Ok(()),
+    };
+    match kind {
+        ConnectionKind::Direct => check("Credential", credential_id),
+        ConnectionKind::JumpShell {
+            gateway_credential_id,
+            ..
+        } => {
+            check("Gateway credential", Some(gateway_credential_id))?;
+            check("Destination credential", credential_id)
+        }
+        ConnectionKind::PortForward {
+            gateway_credential_id,
+            ..
+        } => check("Gateway credential", Some(gateway_credential_id)),
+        // Migrated to JumpShell on load; never stored by these commands.
+        ConnectionKind::LegacyTunnel { .. } => Ok(()),
+    }
+}
+
 #[tauri::command]
 pub async fn add_connection(input: AddConnectionInput) -> Result<Connection, String> {
     blocking(move || add_connection_sync(input)).await
@@ -93,6 +128,7 @@ fn add_connection_sync(input: AddConnectionInput) -> Result<Connection, String> 
         if data.connections.iter().any(|c| c.name == f.name) {
             return Err(format!("A connection named '{}' already exists", f.name));
         }
+        validate_connection_credentials(&data.credentials, f.credential_id.as_deref(), &f.kind)?;
         let mut connection = Connection::new(f.name, f.host, f.port, f.credential_id, f.kind);
         connection.verbosity = f.verbosity;
         connection.extra_args = f.extra_args;
@@ -122,6 +158,7 @@ fn update_connection_sync(input: UpdateConnectionInput) -> Result<Connection, St
         {
             return Err(format!("A connection named '{}' already exists", f.name));
         }
+        validate_connection_credentials(&data.credentials, f.credential_id.as_deref(), &f.kind)?;
         let idx = data
             .connections
             .iter()
@@ -321,6 +358,11 @@ fn clone_connection_sync(input: CloneConnectionInput) -> Result<Connection, Stri
             }
         };
 
+        validate_connection_credentials(
+            &data.credentials,
+            credential_id.as_deref(),
+            &original.kind,
+        )?;
         let cloned = Connection {
             id: Uuid::new_v4().to_string(),
             name: input.new_name,
@@ -386,7 +428,149 @@ fn normalize_remote_path(value: Option<String>) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::models::{Connection, ConnectionKind};
+    use crate::models::{Connection, ConnectionKind, Credential, CredentialKind};
+    use crate::storage::test_support::with_isolated_data_dir;
+
+    fn password_credential(name: &str) -> Credential {
+        Credential::new(
+            name.to_string(),
+            "root".to_string(),
+            CredentialKind::Password {
+                password: String::new(),
+            },
+        )
+    }
+
+    fn jump_kind(gateway_credential_id: &str) -> ConnectionKind {
+        ConnectionKind::JumpShell {
+            gateway_host: "gw".to_string(),
+            gateway_port: 22,
+            gateway_credential_id: gateway_credential_id.to_string(),
+            destination_host: "db".to_string(),
+            destination_port: 22,
+        }
+    }
+
+    fn port_forward_kind(gateway_credential_id: &str) -> ConnectionKind {
+        ConnectionKind::PortForward {
+            gateway_host: "gw".to_string(),
+            gateway_port: 22,
+            gateway_credential_id: gateway_credential_id.to_string(),
+            local_port: 15432,
+            destination_host: "db".to_string(),
+            destination_port: 5432,
+        }
+    }
+
+    fn direct_fields(credential_id: Option<String>) -> ConnectionFields {
+        ConnectionFields {
+            name: "web".to_string(),
+            host: "10.0.0.1".to_string(),
+            port: 22,
+            credential_id,
+            kind: ConnectionKind::Direct,
+            verbosity: 0,
+            extra_args: None,
+            login_command: None,
+            remote_path: None,
+            tags: Vec::new(),
+            color: None,
+        }
+    }
+
+    #[test]
+    fn test_validate_credentials_requires_one_for_shell_kinds() {
+        let creds = vec![password_credential("a")];
+        let id = creds[0].id.as_str();
+        let direct = ConnectionKind::Direct;
+        let required = |msg: &str| Err(msg.to_string());
+        assert_eq!(
+            validate_connection_credentials(&creds, None, &direct),
+            required("Credential is required.")
+        );
+        assert_eq!(
+            validate_connection_credentials(&creds, Some(""), &direct),
+            required("Credential is required.")
+        );
+        assert_eq!(
+            validate_connection_credentials(&creds, None, &jump_kind(id)),
+            required("Destination credential is required.")
+        );
+        assert_eq!(
+            validate_connection_credentials(&creds, Some(id), &jump_kind("")),
+            required("Gateway credential is required.")
+        );
+        assert!(validate_connection_credentials(&creds, Some(id), &direct).is_ok());
+        assert!(validate_connection_credentials(&creds, Some(id), &jump_kind(id)).is_ok());
+        // A port forward only authenticates to its gateway.
+        assert!(validate_connection_credentials(&creds, None, &port_forward_kind(id)).is_ok());
+    }
+
+    #[test]
+    fn test_validate_credentials_rejects_deleted_references() {
+        let creds = vec![password_credential("a")];
+        let id = creds[0].id.as_str();
+        assert_eq!(
+            validate_connection_credentials(&creds, Some("gone"), &ConnectionKind::Direct),
+            Err("The selected credential no longer exists.".to_string())
+        );
+        assert_eq!(
+            validate_connection_credentials(&creds, Some("gone"), &jump_kind(id)),
+            Err("The selected destination credential no longer exists.".to_string())
+        );
+        assert_eq!(
+            validate_connection_credentials(&creds, None, &port_forward_kind("gone")),
+            Err("The selected gateway credential no longer exists.".to_string())
+        );
+    }
+
+    #[test]
+    fn test_add_update_and_clone_enforce_credentials() {
+        with_isolated_data_dir(|| {
+            let cred = password_credential("a");
+            with_data_mut(|data| {
+                data.credentials.push(cred.clone());
+                Ok(())
+            })
+            .unwrap();
+
+            let err = add_connection_sync(AddConnectionInput {
+                fields: direct_fields(None),
+            })
+            .unwrap_err();
+            assert_eq!(err, "Credential is required.");
+
+            let conn = add_connection_sync(AddConnectionInput {
+                fields: direct_fields(Some(cred.id.clone())),
+            })
+            .unwrap();
+
+            let err = update_connection_sync(UpdateConnectionInput {
+                id: conn.id.clone(),
+                fields: direct_fields(Some("gone".to_string())),
+            })
+            .unwrap_err();
+            assert_eq!(err, "The selected credential no longer exists.");
+
+            // An empty override means "no credential" for a clone.
+            let err = clone_connection_sync(CloneConnectionInput {
+                id: conn.id.clone(),
+                new_name: "web copy".to_string(),
+                host: None,
+                port: None,
+                credential_id: Some(String::new()),
+            })
+            .unwrap_err();
+            assert_eq!(err, "Credential is required.");
+
+            let data = load_data().unwrap();
+            assert_eq!(data.connections.len(), 1);
+            assert_eq!(
+                data.connections[0].credential_id.as_deref(),
+                Some(cred.id.as_str())
+            );
+        });
+    }
 
     #[test]
     fn test_normalize_tags_dedupes_and_trims() {

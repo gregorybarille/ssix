@@ -247,6 +247,12 @@ The offending input gets `aria-invalid="true"` and an
 into the input clears the error immediately so the validation feels
 responsive instead of nagging.
 
+The backend enforces the credential rule too: `add_connection`,
+`update_connection` and `clone_connection` refuse a Direct or Jump Shell
+connection without a credential, a tunnel without a gateway credential,
+and any credential id that no longer exists (deleting a credential
+leaves the connections that used it pointing at nothing).
+
 A refused save keeps everything the user entered. The forms submit
 through `submitWithoutReset` (`src/lib/formSubmit.ts`) instead of
 `<form action>`, because React resets an action form after every
