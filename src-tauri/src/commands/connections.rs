@@ -45,7 +45,7 @@ pub struct UpdateConnectionInput {
 }
 
 /// A clone is the clone form's whole connection, saved as a new one. `id`
-/// names the original only so a private credential it uses can be copied.
+/// names the original, which must still exist.
 #[derive(Debug, Deserialize)]
 pub struct CloneConnectionInput {
     pub id: String,
@@ -295,22 +295,25 @@ fn clone_connection_sync(input: CloneConnectionInput) -> Result<Connection, Stri
     let mut created_private_credential: Option<String> = None;
 
     let result = with_data_mut(|data| {
-        let original = data
-            .connections
-            .iter()
-            .find(|c| c.id == input.id)
-            .ok_or_else(|| "Connection not found".to_string())?;
+        if !data.connections.iter().any(|c| c.id == input.id) {
+            return Err("Connection not found".to_string());
+        }
         // Refuse a bad clone before any secret is copied.
         check_new_connection(data, &f)?;
         // A private credential belongs to one connection (it is created by
         // the inline auth tabs and hidden from the list), so a clone that
-        // keeps the original's gets its own copy instead of sharing it. A
-        // private credential the clone form just created for its own inline
-        // auth is the clone's already and is used as is.
+        // names one another connection uses gets its own copy instead of
+        // sharing it. One no connection uses yet is the private credential
+        // the clone form just created for its own inline auth, and is used
+        // as is.
         let private = f
             .credential_id
             .as_deref()
-            .filter(|cred_id| original.credential_id.as_deref() == Some(*cred_id))
+            .filter(|cred_id| {
+                data.connections
+                    .iter()
+                    .any(|c| c.credential_ids().any(|id| id == *cred_id))
+            })
             .and_then(|cred_id| {
                 data.credentials
                     .iter()
@@ -611,6 +614,36 @@ mod tests {
                     .as_deref(),
                 Some("s3cret")
             );
+        });
+    }
+
+    /// Any connection's private credential is copied, not only the
+    /// original's: sharing it would tie two connections to one inline auth.
+    #[test]
+    fn test_clone_copies_another_connections_private_credential() {
+        with_isolated_data_dir(|| {
+            let named = password_credential("named");
+            store_credential(&named);
+            let original = add_connection_sync(AddConnectionInput {
+                fields: direct_fields(Some(named.id.clone())),
+            })
+            .unwrap();
+            let private = private_credential("inline-other");
+            let mut fields = direct_fields(Some(private.id.clone()));
+            fields.name = "other".to_string();
+            add_connection_sync(AddConnectionInput { fields }).unwrap();
+
+            let mut fields = direct_fields(Some(private.id.clone()));
+            fields.name = "web copy".to_string();
+            let clone = clone_connection_sync(CloneConnectionInput {
+                id: original.id,
+                fields,
+            })
+            .unwrap();
+
+            let copy_id = clone.credential_id.expect("clone keeps a credential");
+            assert_ne!(copy_id, private.id);
+            assert_eq!(load_data().unwrap().credentials.len(), 3);
         });
     }
 
