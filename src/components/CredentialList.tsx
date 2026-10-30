@@ -183,7 +183,7 @@ export function CredentialList({
                 {/* Listed credentials are redacted, so an ssh_key row
                     without a path is one whose key is stored inline. */}
                 {cred.type === "ssh_key" && (
-                  <span className="ml-2 opacity-70">
+                  <span className="ml-2 text-muted-foreground-soft">
                     · {cred.private_key_path ? cred.private_key_path : "inline"}
                   </span>
                 )}

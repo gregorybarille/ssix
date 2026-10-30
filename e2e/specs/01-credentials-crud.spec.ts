@@ -7,7 +7,12 @@
  * SSIX_DATA_DIR set in wdio.conf.ts onPrepare).
  */
 import { waitForAppReady } from "../helpers/app.js";
-import { navigateTo, createPasswordCredential, openCredentialEditor } from "../helpers/flows.js";
+import {
+  navigateTo,
+  createPasswordCredential,
+  openCredentialEditor,
+  textContentOf,
+} from "../helpers/flows.js";
 import { sel } from "../helpers/selectors.js";
 
 describe("Credentials CRUD", () => {
@@ -49,7 +54,10 @@ describe("Credentials CRUD", () => {
 
     const row = await browser.$(sel.credentialRowByName("cred-01-edit"));
     await row.waitForExist({ timeout: 10_000 });
-    expect(await row.getText()).toContain("usera-edited");
+    await browser.waitUntil(async () => (await textContentOf(row)).includes("usera-edited"), {
+      timeout: 10_000,
+      timeoutMsg: "credential row did not show the edited username",
+    });
 
     // Re-open: the secret survived the update and is fetched again on open.
     await openCredentialEditor("cred-01-edit");

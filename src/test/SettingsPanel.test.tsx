@@ -464,4 +464,27 @@ describe("SettingsPanel", () => {
     // present in the DOM.
     expect(status.querySelector("svg")).not.toBeNull();
   });
+
+  describe("external changes during the debounce window", () => {
+    beforeEach(() => {
+      vi.useFakeTimers();
+    });
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    it("saves the store's newer value for keys the panel did not touch", async () => {
+      const onSave = vi.fn().mockResolvedValue(undefined);
+      const { rerender } = render(<SettingsPanel settings={defaults} onSave={onSave} />);
+      fireEvent.click(screen.getByRole("switch", { name: /copy selection to clipboard/i }));
+      // A shortcut (or another writer) flips the theme while our save waits.
+      rerender(<SettingsPanel settings={{ ...defaults, theme: "light" }} onSave={onSave} />);
+      await tick(DEBOUNCE_MS + 10);
+      expect(onSave).toHaveBeenCalledTimes(1);
+      expect(onSave.mock.calls[0][0]).toMatchObject({
+        theme: "light",
+        auto_copy_selection: true,
+      });
+    });
+  });
 });

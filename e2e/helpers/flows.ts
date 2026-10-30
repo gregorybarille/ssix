@@ -75,6 +75,14 @@ export async function createPasswordCredential(input: PasswordCredentialInput): 
  * Open the editor for the credential named `name` and wait until its
  * secrets have been fetched (`get_credential_secrets`) and prefilled.
  */
+/**
+ * Full `textContent` of an element. WebKitGTK's WebDriver `getText` can
+ * return "" for a list row whose text sits in truncated children.
+ */
+export async function textContentOf(el: WebdriverIO.Element): Promise<string> {
+  return browser.execute((node: HTMLElement) => node.textContent ?? "", el as unknown as HTMLElement);
+}
+
 export async function openCredentialEditor(name: string): Promise<void> {
   await navigateTo("credentials");
   const row = await browser.$(sel.credentialRowByName(name));

@@ -23,6 +23,14 @@ export interface Credential {
 }
 
 /**
+ * Payload of `update_credential`. `keep_secrets` tells the backend to keep
+ * the stored password / inline key / passphrase and ignore those fields
+ * here; the edit form sets it whenever the user did not change them, so
+ * unchanged secrets never travel back over IPC.
+ */
+export type UpdateCredentialPayload = Credential & { keep_secrets?: boolean };
+
+/**
  * Secret material for one credential, fetched on demand with
  * `get_credential_secrets` when the edit form opens. List responses
  * (`get_credentials`, `add_credential`, `update_credential`) are redacted:

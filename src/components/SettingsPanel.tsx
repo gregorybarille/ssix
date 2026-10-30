@@ -38,6 +38,14 @@ export function SettingsPanel({ settings, onSave, onPreview }: SettingsPanelProp
   const latestSaveVersionRef = React.useRef(0);
   const pendingSaveRef = React.useRef<AppSettings | null>(null);
   const isSavingRef = React.useRef(false);
+  // Keys the user changed since the last successful save, and the latest
+  // settings seen from the store. A save sends the store's current values
+  // plus only our dirty keys, so a change made elsewhere during the
+  // debounce window (a shortcut toggling the theme) is never overwritten
+  // by our stale snapshot of the whole form.
+  const dirtyKeysRef = React.useRef<Set<keyof AppSettings>>(new Set());
+  const storeSettingsRef = React.useRef(settings);
+  storeSettingsRef.current = settings;
 
   // Adopt settings from the store only while nothing of ours is in
   // flight or waiting on the debounce timer: each saved value echoes
@@ -58,12 +66,17 @@ export function SettingsPanel({ settings, onSave, onPreview }: SettingsPanelProp
 
   const processSaveQueue = React.useCallback(async () => {
     while (pendingSaveRef.current) {
-      const toSave = pendingSaveRef.current;
+      const pending = pendingSaveRef.current;
       const saveVersion = latestSaveVersionRef.current;
       pendingSaveRef.current = null;
+      const toSave = { ...storeSettingsRef.current };
+      for (const key of dirtyKeysRef.current) {
+        (toSave as Record<string, unknown>)[key] = pending[key];
+      }
       try {
         await onSave(toSave);
         if (saveVersion === latestSaveVersionRef.current) {
+          dirtyKeysRef.current.clear();
           setSavedAt(Date.now());
         }
       } catch (error) {
@@ -115,6 +128,9 @@ export function SettingsPanel({ settings, onSave, onPreview }: SettingsPanelProp
 
   const queueSave = (next: AppSettings) => {
     latestSaveVersionRef.current += 1;
+    for (const key of Object.keys(next) as (keyof AppSettings)[]) {
+      if (next[key] !== storeSettingsRef.current[key]) dirtyKeysRef.current.add(key);
+    }
     pendingSaveRef.current = next;
     setSaveError(null);
     scheduleSave();

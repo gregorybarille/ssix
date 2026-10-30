@@ -36,13 +36,6 @@ describe("useCredentialsStore — fetch-on-edit secrets", () => {
     expect(snapshot).not.toContain("KEY");
   });
 
-  it("fetchCredentialSecrets normalises a null payload to an empty object", async () => {
-    vi.mocked(invoke).mockResolvedValueOnce(null);
-    await expect(
-      useCredentialsStore.getState().fetchCredentialSecrets("c1"),
-    ).resolves.toEqual({});
-  });
-
   it("fetchCredentialSecrets rejects with the backend error", async () => {
     vi.mocked(invoke).mockRejectedValueOnce("Credential not found");
     await expect(

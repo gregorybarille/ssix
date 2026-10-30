@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef } from "react";
 
 export interface DebouncedCallback<A extends unknown[]> {
   /** Schedule `fn(...args)` after the delay, replacing any pending call. */
@@ -39,7 +39,10 @@ export function useDebouncedCallback<A extends unknown[]>(
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const argsRef = useRef<A | null>(null);
 
-  useEffect(() => {
+  // Layout effect, not passive: it runs synchronously in the commit, so a
+  // flush() triggered by a blur/visibility event right after a render can
+  // never invoke the previous render's callback.
+  useLayoutEffect(() => {
     fnRef.current = fn;
     onUnmountRef.current = onUnmount;
   }, [fn, onUnmount]);

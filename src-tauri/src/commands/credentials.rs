@@ -21,6 +21,40 @@ pub struct UpdateCredentialInput {
     pub username: String,
     #[serde(flatten)]
     pub kind: CredentialKind,
+    /// Keep the stored secrets and ignore the secret fields of `kind`.
+    /// The edit form sets this whenever the user did not change them (or
+    /// could not load them), so unchanged secrets never travel back over
+    /// IPC and a failed fetch can never wipe them.
+    #[serde(default)]
+    pub keep_secrets: bool,
+}
+
+/// Rebuild `kind` with the secrets from `previous` so a `keep_secrets`
+/// update passes `split_secrets` and writes back exactly what is stored.
+fn merge_previous_secrets(kind: CredentialKind, previous: &CredentialSecrets) -> CredentialKind {
+    match kind {
+        CredentialKind::Password { .. } => CredentialKind::Password {
+            password: previous.password.clone().unwrap_or_default(),
+        },
+        CredentialKind::SshKey {
+            private_key_path, ..
+        } => {
+            let path = private_key_path
+                .as_deref()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(str::to_string);
+            CredentialKind::SshKey {
+                private_key: if path.is_some() {
+                    None
+                } else {
+                    previous.private_key.clone()
+                },
+                private_key_path: path,
+                passphrase: previous.passphrase.clone(),
+            }
+        }
+    }
 }
 
 /// Split a `CredentialKind` into the sanitised shape that goes into
@@ -212,45 +246,57 @@ pub async fn update_credential(input: UpdateCredentialInput) -> Result<Credentia
 }
 
 fn update_credential_sync(input: UpdateCredentialInput) -> Result<Credential, String> {
+    let UpdateCredentialInput {
+        id,
+        name,
+        username,
+        kind,
+        keep_secrets,
+    } = input;
     // The frontend never calls update on private credentials (they're
     // managed via update_connection); validate as if non-private.
-    validate_credential_fields(&input.name, &input.username, false)?;
-    let (kind_for_json, secrets) = split_secrets(&input.kind)?;
+    validate_credential_fields(&name, &username, false)?;
 
     // Snapshot the current secrets so a failed save can put them back:
     // otherwise data.json and secrets.json would disagree.
-    let previous = keychain::snapshot_for_credential(&input.id)?;
+    let previous = keychain::snapshot_for_credential(&id)?;
+    let kind = if keep_secrets {
+        merge_previous_secrets(kind, &previous)
+    } else {
+        kind
+    };
+    let (kind_for_json, secrets) = split_secrets(&kind)?;
     let mut secrets_written = false;
 
     let result = with_data_mut(|data| {
         if data
             .credentials
             .iter()
-            .any(|c| c.name == input.name && c.id != input.id)
+            .any(|c| c.name == name && c.id != id)
         {
-            return Err(format!(
-                "A credential named '{}' already exists",
-                input.name
-            ));
+            return Err(format!("A credential named '{}' already exists", name));
         }
         let idx = data
             .credentials
             .iter()
-            .position(|c| c.id == input.id)
+            .position(|c| c.id == id)
             .ok_or_else(|| "Credential not found".to_string())?;
 
-        // One atomic write replaces every secret for this credential.
-        keychain::replace_for_credential(&input.id, &secrets)?;
-        secrets_written = true;
+        // One atomic write replaces every secret for this credential;
+        // skipped when nothing changed (the usual `keep_secrets` case).
+        if secrets != previous {
+            keychain::replace_for_credential(&id, &secrets)?;
+            secrets_written = true;
+        }
 
-        data.credentials[idx].name = input.name;
-        data.credentials[idx].username = input.username;
+        data.credentials[idx].name = name;
+        data.credentials[idx].username = username;
         data.credentials[idx].kind = kind_for_json;
 
         Ok(redacted(data.credentials[idx].clone()))
     });
     if result.is_err() && secrets_written {
-        let _ = keychain::replace_for_credential(&input.id, &previous);
+        let _ = keychain::replace_for_credential(&id, &previous);
     }
     result
 }
@@ -461,6 +507,7 @@ mod tests {
                 kind: CredentialKind::Password {
                     password: "new".into(),
                 },
+                keep_secrets: false,
             })
             .unwrap();
             assert_redacted_password(&updated);
@@ -471,6 +518,70 @@ mod tests {
                     .as_deref(),
                 Some("new")
             );
+        });
+    }
+
+    #[test]
+    fn update_with_keep_secrets_preserves_the_stored_password() {
+        with_isolated_data_dir(|| {
+            let pw = add(
+                "pw",
+                CredentialKind::Password {
+                    password: "stored".into(),
+                },
+            );
+            // The form sends an empty password when the user left it alone.
+            let updated = super::update_credential_sync(UpdateCredentialInput {
+                id: pw.id.clone(),
+                name: "pw-renamed".into(),
+                username: "user2".into(),
+                kind: CredentialKind::Password {
+                    password: String::new(),
+                },
+                keep_secrets: true,
+            })
+            .unwrap();
+            assert_eq!(updated.name, "pw-renamed");
+            assert_eq!(updated.username, "user2");
+            assert_redacted_password(&updated);
+            assert_eq!(
+                super::get_credential_secrets_sync(&pw.id)
+                    .unwrap()
+                    .password
+                    .as_deref(),
+                Some("stored")
+            );
+        });
+    }
+
+    #[test]
+    fn update_with_keep_secrets_preserves_an_inline_key_and_passphrase() {
+        with_isolated_data_dir(|| {
+            let key = add(
+                "key",
+                CredentialKind::SshKey {
+                    private_key_path: None,
+                    private_key: Some("INLINE".into()),
+                    passphrase: Some("pp".into()),
+                },
+            );
+            // No inline key in the input would normally fail validation;
+            // with keep_secrets the stored one is used instead.
+            super::update_credential_sync(UpdateCredentialInput {
+                id: key.id.clone(),
+                name: "key".into(),
+                username: "deploy2".into(),
+                kind: CredentialKind::SshKey {
+                    private_key_path: None,
+                    private_key: None,
+                    passphrase: None,
+                },
+                keep_secrets: true,
+            })
+            .unwrap();
+            let secrets = super::get_credential_secrets_sync(&key.id).unwrap();
+            assert_eq!(secrets.private_key.as_deref(), Some("INLINE"));
+            assert_eq!(secrets.passphrase.as_deref(), Some("pp"));
         });
     }
 

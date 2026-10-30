@@ -122,19 +122,47 @@ describe("CredentialForm — fetch-on-edit secrets", () => {
     expect(screen.getByTestId("credential-form-passphrase")).toHaveValue("");
   });
 
-  it("shows a destructive error and keeps the form usable when the fetch fails", async () => {
+  it("locks the secret fields and keeps the stored secrets when the fetch fails", async () => {
+    const user = userEvent.setup();
+    const onSubmit = vi.fn().mockResolvedValue(undefined);
     vi.mocked(invoke).mockRejectedValueOnce("failed to read secrets file");
     render(
-      <CredentialForm open onOpenChange={vi.fn()} credential={passwordCred} onSubmit={vi.fn()} />,
+      <CredentialForm open onOpenChange={vi.fn()} credential={passwordCred} onSubmit={onSubmit} />,
     );
     await waitFor(() => expect(secretsState()).toBe("error"));
     const alert = screen.getByTestId("credential-form-secrets-error");
     expect(alert).toHaveAttribute("role", "alert");
     expect(alert).toHaveClass("text-destructive");
     expect(alert).toHaveTextContent(/failed to read secrets file/);
-    expect(screen.getByTestId("credential-form-password")).toBeEnabled();
-    expect(screen.getByTestId("credential-form-password")).toHaveValue("");
+    expect(alert).toHaveTextContent(/kept unchanged/i);
+    // The secret field cannot be edited, so a save can never wipe the
+    // stored password; the other fields remain editable and saveable.
+    expect(screen.getByTestId("credential-form-password")).toBeDisabled();
     expect(screen.getByTestId("credential-form-submit")).toBeEnabled();
+
+    await user.clear(screen.getByLabelText(/^username/i));
+    await user.type(screen.getByLabelText(/^username/i), "deploy");
+    await user.click(screen.getByRole("button", { name: /update/i }));
+    await waitFor(() => expect(onSubmit).toHaveBeenCalled());
+    expect(onSubmit.mock.calls[0][0]).toMatchObject({
+      id: "cred-pw",
+      username: "deploy",
+      keep_secrets: true,
+      password: "",
+    });
+  });
+
+  it("prefers the inline key when a legacy row holds both a path and an inline key", async () => {
+    vi.mocked(invoke).mockResolvedValueOnce({ private_key: "INLINE" });
+    render(
+      <CredentialForm open onOpenChange={vi.fn()} credential={pathKeyCred} onSubmit={vi.fn()} />,
+    );
+    await waitFor(() => expect(secretsState()).toBe("loaded"));
+    expect(screen.getByRole("tab", { name: /paste key/i })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+    expect(screen.getByTestId("credential-form-private-key")).toHaveValue("INLINE");
   });
 
   it("moves the unsaved-changes baseline to the fetched secrets", async () => {
@@ -159,7 +187,25 @@ describe("CredentialForm — fetch-on-edit secrets", () => {
     expect(onOpenChange).not.toHaveBeenCalled();
   });
 
-  it("submits the prefilled secret unchanged and marks the form saved", async () => {
+  it("sends the new secret when the user changed it", async () => {
+    const user = userEvent.setup();
+    const onSubmit = vi.fn().mockResolvedValue(undefined);
+    vi.mocked(invoke).mockResolvedValueOnce({ password: "hunter2" });
+    render(
+      <CredentialForm open onOpenChange={vi.fn()} credential={passwordCred} onSubmit={onSubmit} />,
+    );
+    await waitFor(() => expect(secretsState()).toBe("loaded"));
+    await user.type(screen.getByTestId("credential-form-password"), "x");
+    await user.click(screen.getByRole("button", { name: /update/i }));
+    await waitFor(() => expect(onSubmit).toHaveBeenCalled());
+    expect(onSubmit.mock.calls[0][0]).toMatchObject({
+      id: "cred-pw",
+      keep_secrets: false,
+      password: "hunter2x",
+    });
+  });
+
+  it("keeps an unchanged secret server-side instead of sending it back", async () => {
     const user = userEvent.setup();
     const onOpenChange = vi.fn();
     const onSubmit = vi.fn().mockResolvedValue(undefined);
@@ -182,7 +228,8 @@ describe("CredentialForm — fetch-on-edit secrets", () => {
       id: "cred-pw",
       username: "deploy",
       type: "password",
-      password: "hunter2",
+      keep_secrets: true,
+      password: "",
     });
     await waitFor(() => expect(onOpenChange).toHaveBeenCalledWith(false));
     expect(screen.queryByRole("dialog", { name: /discard unsaved changes/i })).toBeNull();

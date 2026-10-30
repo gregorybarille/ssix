@@ -209,24 +209,10 @@ mod tests {
         // Sibling of crate::storage::data_dir tests — secrets must
         // live alongside data.json in the override directory so E2E
         // runs are fully isolated from `~/.ssix`.
-        let _g = crate::storage::TEST_ENV_LOCK
-            .lock()
-            .unwrap_or_else(|e| e.into_inner());
-        let prev = std::env::var("SSIX_DATA_DIR").ok();
-        let custom = std::env::temp_dir().join(format!(
-            "ssix-secrets-path-test-{}-{}",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
-        std::env::set_var("SSIX_DATA_DIR", &custom);
-        assert_eq!(secrets_path(), custom.join("secrets.json"));
-        match prev {
-            Some(v) => std::env::set_var("SSIX_DATA_DIR", v),
-            None => std::env::remove_var("SSIX_DATA_DIR"),
-        }
+        crate::storage::test_support::with_isolated_data_dir(|| {
+            let dir = std::path::PathBuf::from(std::env::var("SSIX_DATA_DIR").unwrap());
+            assert_eq!(secrets_path(), dir.join("secrets.json"));
+        });
     }
 
     fn make_password_cred(id: &str, password: &str) -> Credential {

@@ -31,9 +31,11 @@ The credentials list only holds redacted credentials. Opening **Edit**
 fetches that one credential's saved secrets (`get_credential_secrets`)
 and prefills them; the secret fields and the **Update** button are
 disabled with a "Loading saved secrets…" status until the fetch
-settles. If the fetch fails the form stays usable, shows the error, and
-warns that saving will replace the stored secrets with the (empty)
-field values. Closing the editor without edits never prompts to discard
+settles. Saving sends the secret fields back only when the user changed
+one of them; otherwise the update carries `keep_secrets` and the backend
+leaves the stored secrets untouched. If the fetch fails the form shows
+the error, locks the secret fields, and still lets the user save the
+other fields with the stored secrets kept as they are. Closing the editor without edits never prompts to discard
 changes, because the unsaved-changes baseline follows the fetched values.
 
 ## Terminals

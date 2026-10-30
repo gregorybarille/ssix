@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import { Credential, CredentialSecrets } from "@/types";
+import { Credential, CredentialSecrets, UpdateCredentialPayload } from "@/types";
 import { invoke } from "@/lib/tauri";
 import { runAsync, runAsyncRethrow } from "@/lib/asyncAction";
 
@@ -17,7 +17,7 @@ interface CredentialsState {
   addCredential: (input: Omit<Credential, "id">) => Promise<Credential>;
   /** Creates a private (inline) credential without adding it to the visible store state. */
   addInlineCredential: (input: Omit<Credential, "id">) => Promise<Credential>;
-  updateCredential: (input: Credential) => Promise<void>;
+  updateCredential: (input: UpdateCredentialPayload) => Promise<void>;
   deleteCredential: (id: string) => Promise<void>;
 }
 
@@ -36,8 +36,7 @@ export const useCredentialsStore = create<CredentialsState>((set) => ({
       set({ credentials });
     }).then(() => undefined),
 
-  fetchCredentialSecrets: async (id) =>
-    (await invoke<CredentialSecrets | null>("get_credential_secrets", { id })) ?? {},
+  fetchCredentialSecrets: (id) => invoke<CredentialSecrets>("get_credential_secrets", { id }),
 
   addCredential: (input) =>
     runAsyncRethrow(set, async () => {

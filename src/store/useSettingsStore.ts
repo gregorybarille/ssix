@@ -27,7 +27,7 @@ const DEFAULT_SETTINGS: AppSettings = {
 };
 
 // Audit-4 Dup H1: same async-action pattern as the other stores.
-export const useSettingsStore = create<SettingsState>((set) => ({
+export const useSettingsStore = create<SettingsState>((set, get) => ({
   settings: DEFAULT_SETTINGS,
   isLoading: false,
   error: null,
@@ -38,9 +38,19 @@ export const useSettingsStore = create<SettingsState>((set) => ({
       set({ settings });
     }).then(() => undefined),
 
+  // Optimistic: the store reflects the new value at once, so a preview
+  // (theme, font) does not flash back to the old value while the save is
+  // in flight; a rejected save restores the previous settings.
   saveSettings: (settings) =>
     runAsyncRethrow(set, async () => {
-      const saved = await invoke<AppSettings>("save_settings", { settings });
-      set({ settings: saved });
+      const previous = get().settings;
+      set({ settings });
+      try {
+        const saved = await invoke<AppSettings>("save_settings", { settings });
+        set({ settings: saved });
+      } catch (err) {
+        set({ settings: previous });
+        throw err;
+      }
     }),
 }));

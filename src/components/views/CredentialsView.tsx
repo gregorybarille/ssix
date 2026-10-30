@@ -5,13 +5,13 @@ import { LayoutToggle } from "../ui/layout-toggle";
 import { Button } from "../ui/button";
 import { useShallow } from "zustand/react/shallow";
 import { useDialogsStore } from "@/store/useDialogsStore";
-import type { AppSettings, Credential, LayoutMode } from "@/types";
+import type { AppSettings, Credential, LayoutMode, UpdateCredentialPayload } from "@/types";
 
 interface CredentialsViewProps {
   credentials: Credential[];
   settings: AppSettings;
   onLayoutChange: (layout: LayoutMode) => void;
-  onSubmit: (data: Omit<Credential, "id"> | Credential) => Promise<void>;
+  onSubmit: (data: Omit<Credential, "id"> | UpdateCredentialPayload) => Promise<void>;
 }
 
 /** The Credentials tab: header, inline form when open, otherwise the list. */
