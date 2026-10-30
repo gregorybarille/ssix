@@ -35,6 +35,10 @@ export const sel = {
   connectionRowByName: (name: string) =>
     `[data-testid^="connection-row-"][data-name="${name}"]`,
   addConnectionButton: '[data-testid="add-connection-button"]',
+  // Scoped under a connection row (see connectionRowByName).
+  connectionRowCloneButton: '[data-testid^="clone-connection-"]',
+  connectionSearchInput: '[data-testid="connection-search-input"]',
+  connectionSearchClear: '[data-testid="connection-search-clear"]',
 
   // Connection form
   connectionForm: '[data-testid="connection-form"]',
@@ -42,6 +46,15 @@ export const sel = {
   connectionFormHost: '[data-testid="connection-form-host"]',
   connectionFormPort: '[data-testid="connection-form-port"]',
   connectionFormCredential: '[data-testid="connection-form-credential"]',
+  connectionFormCredentialError: '[data-testid="connection-form-credential-error"]',
+  // Inline Password authentication tab and its fields.
+  connectionFormAuthPassword: '[data-testid="connection-form-auth-password"]',
+  connectionFormInlineUsername: '[data-testid="connection-form-inline-username"]',
+  connectionFormInlinePassword: '[data-testid="connection-form-inline-password"]',
+  connectionFormSaveCredential: '[data-testid="connection-form-save-credential"]',
+  connectionFormSaveCredentialName: '[data-testid="connection-form-save-credential-name"]',
+  // Form-level error shown when a save is refused.
+  connectionFormError: '[data-testid="connection-form-error"]',
   connectionFormKindDirect: '[data-testid="connection-form-kind-direct"]',
   connectionFormKindJumpShell: '[data-testid="connection-form-kind-jumpshell"]',
   connectionFormKindPortForward: '[data-testid="connection-form-kind-portforward"]',
@@ -70,12 +83,28 @@ export const sel = {
   credentialFormKindSshKey: '[data-testid="credential-form-kind-sshkey"]',
   credentialFormPassword: '[data-testid="credential-form-password"]',
   credentialFormPrivateKeyPath: '[data-testid="credential-form-private-key-path"]',
+  credentialFormPrivateKey: '[data-testid="credential-form-private-key"]',
+  credentialFormPassphrase: '[data-testid="credential-form-passphrase"]',
   credentialFormSubmit: '[data-testid="credential-form-submit"]',
+  credentialFormCancel: '[data-testid="credential-form-cancel"]',
+  // Edit mode fetches the credential's secrets on open; the form carries
+  // `data-secrets-state` = none | loading | loaded | error.
+  credentialFormSecretsState: (state: "none" | "loading" | "loaded" | "error") =>
+    `[data-testid="credential-form"][data-secrets-state="${state}"]`,
+  // Scoped under a credential row (see credentialRowByName).
+  credentialRowEditButton: '[data-testid^="edit-credential-"]',
+  credentialRowDeleteButton: '[data-testid^="delete-credential-"]',
+  // Delete-credential confirm dialog; its error line shows a refusal.
+  confirmDeleteCredential: '[data-testid="confirm-delete-credential"]',
+  confirmDeleteCredentialConfirm: '[data-testid="confirm-delete-credential-confirm"]',
+  confirmDeleteCredentialError: '[data-testid="confirm-delete-credential-error"]',
 
   // Connect / terminal
   connectButton: (id: string) => `[data-testid="connect-button-${id}"]`,
   editConnection: (id: string) => `[data-testid="edit-connection-${id}"]`,
   terminalContainer: '[data-testid="terminal-container"]',
+  failedTerminal: '[data-testid="failed-terminal"]',
+  trustHostKeyButton: '[data-testid="trust-host-key-button"]',
   terminalTabClose: (id: string) => `[data-testid="close-tab-${id}"]`,
 
   // SCP dialog
@@ -118,6 +147,7 @@ export const sel = {
 
   // Settings panel
   settingsGitSyncRepoPath: '[data-testid="settings-git-sync-repo-path"]',
+  settingsSavedStatus: '[data-testid="settings-saved-status"]',
 
   // Layout toggle (list / tile / tags)
   layoutToggleList: '[data-testid="layout-toggle-list"]',
@@ -153,4 +183,12 @@ export const sel = {
   confirmTagAction: '[data-testid="confirm-tag-action"]',
   confirmTagActionConfirm: '[data-testid="confirm-tag-action-confirm"]',
   confirmTagActionCancel: '[data-testid="confirm-tag-action-cancel"]',
+
+  // Load-error banners (shown instead of an empty list when a load fails)
+  connectionsLoadError: '[data-testid="connections-load-error"]',
+  connectionsLoadErrorRetry: '[data-testid="connections-load-error-retry"]',
+  credentialsLoadError: '[data-testid="credentials-load-error"]',
+  credentialsLoadErrorRetry: '[data-testid="credentials-load-error-retry"]',
+  settingsLoadError: '[data-testid="settings-load-error"]',
+  settingsLoadErrorRetry: '[data-testid="settings-load-error-retry"]',
 } as const;

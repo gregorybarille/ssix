@@ -4,10 +4,13 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use base64::{engine::general_purpose::STANDARD, Engine};
 
 #[tauri::command]
-pub fn take_screenshot(image_data: String) -> Result<String, String> {
-    let desktop = dirs_next::desktop_dir()
-        .ok_or_else(|| "Could not locate Desktop directory".to_string())?;
-    take_screenshot_into_dir(&desktop, &image_data, SystemTime::now())
+pub async fn take_screenshot(image_data: String) -> Result<String, String> {
+    crate::commands::blocking(move || {
+        let desktop =
+            dirs::desktop_dir().ok_or_else(|| "Could not locate Desktop directory".to_string())?;
+        take_screenshot_into_dir(&desktop, &image_data, SystemTime::now())
+    })
+    .await
 }
 
 fn take_screenshot_into_dir(
@@ -70,10 +73,7 @@ fn format_timestamp(secs: u64) -> String {
     let month = (h2 / 153 + 2) % 12 + 1;
     let year = e / 1461 - 4716 + (14 - month) / 12;
 
-    format!(
-        "{:04}{:02}{:02}-{:02}{:02}{:02}",
-        year, month, day, h, m, s
-    )
+    format!("{:04}{:02}{:02}-{:02}{:02}{:02}", year, month, day, h, m, s)
 }
 
 #[cfg(test)]
@@ -135,7 +135,7 @@ mod tests {
 
         let path_str = tmp.join("test.png");
 
-        // Override dirs_next is not straightforward, so test the decode + write
+        // Override dirs is not straightforward, so test the decode + write
         // logic directly using a temp file rather than invoking the command.
         let decoded = STANDARD.decode(&b64).unwrap();
         fs::write(&path_str, &decoded).unwrap();

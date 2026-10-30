@@ -10,6 +10,7 @@ import {
 import { Input } from "./ui/input";
 import { cn } from "@/lib/utils";
 import { getColorHex } from "@/lib/colors";
+import { connectionMatches, tokenize } from "@/lib/search";
 
 interface ConnectPickerProps {
   open: boolean;
@@ -27,23 +28,6 @@ function endpointSubtitle(conn: Connection): string {
     return `${conn.destination_host}:${conn.destination_port} via ${conn.gateway_host}`;
   }
   return `${conn.host}:${conn.port}`;
-}
-
-function matches(conn: Connection, tokens: string[]): boolean {
-  if (tokens.length === 0) return true;
-  // Audit-4 Phase 4b: only port_forward/jump_shell carry destination/gateway
-  // hosts; for direct connections the relevant search fields are name/host.
-  const haystack = [
-    conn.name,
-    conn.host,
-    conn.type !== "direct" ? conn.destination_host : undefined,
-    conn.type !== "direct" ? conn.gateway_host : undefined,
-    ...(conn.tags ?? []),
-  ]
-    .filter(Boolean)
-    .join(" ")
-    .toLowerCase();
-  return tokens.every((t) => haystack.includes(t));
 }
 
 export function ConnectPicker({
@@ -84,18 +68,10 @@ export function ConnectPicker({
     return credentials.find((c) => c.id === credId)?.name ?? null;
   };
 
-  const tokens = useMemo(
-    () =>
-      query
-        .toLowerCase()
-        .split(/\s+/)
-        .map((t) => t.trim())
-        .filter(Boolean),
-    [query],
-  );
+  const tokens = useMemo(() => tokenize(query), [query]);
 
   const filtered = useMemo(
-    () => connections.filter((c) => matches(c, tokens)),
+    () => connections.filter((c) => connectionMatches(c, tokens)),
     [connections, tokens],
   );
 

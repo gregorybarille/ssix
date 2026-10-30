@@ -1,10 +1,29 @@
 # Troubleshooting
 
+## "SSIX is running outside its desktop app"
+
+Older builds showed this as `TypeError: ... window.__TAURI_INTERNALS__ is undefined`.
+
+- The frontend was opened in a regular browser, usually `npm run dev` at `http://localhost:1420`. Backend commands only exist inside the Tauri webview, so every view shows this message instead of data.
+- Start the app with `npm run tauri dev`. The browser dev server is still fine for layout work that needs no backend.
+
+## A View Shows "Could not load …"
+
+- The backend could not read `data.json` (`~/.ssix/`, or `SSIX_DATA_DIR` when set). The banner names the file and the parse error.
+- `data.json` is written atomically, so a corrupt file usually means a manual edit or a bad merge in a synced repository. Fix or restore the file, then click **Retry** in each view.
+- Settings show their defaults while their load error is displayed. Fix the file and retry before changing settings.
+
 ## Connection Fails Immediately
 
 - Verify host, port, username, and credential choice.
 - Check whether a jump-shell connection has both gateway and destination credentials.
 - Use a higher verbosity level in the connection settings to surface more SSH output.
+
+## Host Key Has Changed
+
+- SSIX refuses to connect when a server's host key differs from the one recorded on first use. The failure view shows the new SHA256 fingerprint.
+- Confirm out of band (hosting console, admin) that the server really was reinstalled or re-keyed, then click **Trust new host key**. If nobody changed the server, do not trust the key: the connection may be intercepted.
+- Recorded keys live in `~/.ssix/known_hosts` (OpenSSH format). `ssh-keygen -R <host> -f ~/.ssix/known_hosts` removes an entry by hand; for a non-default port use `-R '[host]:port'`.
 
 ## Port Forward Does Not Work
 

@@ -9,27 +9,16 @@
 import { connect } from "node:net";
 import { waitForAppReady } from "../helpers/app.js";
 import { TARGETS, waitForServers } from "../helpers/docker.js";
-import { createPasswordCredential, navigateTo } from "../helpers/flows.js";
+import {
+  click,
+  createPasswordCredential,
+  fill,
+  navigateTo,
+  pickCredential,
+} from "../helpers/flows.js";
 import { sel } from "../helpers/selectors.js";
 
 const LOCAL_PORT = 23456;
-
-async function fill(selector: string, value: string) {
-  const el = await browser.$(selector);
-  await el.waitForClickable({ timeout: 10_000 });
-  await el.setValue(value);
-}
-async function click(selector: string) {
-  const el = await browser.$(selector);
-  await el.waitForClickable({ timeout: 10_000 });
-  await el.click();
-}
-async function pickCredential(triggerSelector: string, name: string) {
-  await click(triggerSelector);
-  const opt = await browser.$(`[role="option"][data-name="${name}"]`);
-  await opt.waitForClickable({ timeout: 10_000 });
-  await opt.click();
-}
 
 function readBanner(host: string, port: number, timeoutMs = 5_000): Promise<string> {
   return new Promise((resolveP, rejectP) => {

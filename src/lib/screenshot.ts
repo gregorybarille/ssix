@@ -1,4 +1,3 @@
-import { toPng } from "html-to-image";
 import { invoke } from "@/lib/tauri";
 
 function getAppRoot(): HTMLElement {
@@ -47,6 +46,9 @@ export async function takeScreenshot(): Promise<string> {
 
   let dataUrl: string;
   try {
+    // Loaded on first use: the capture library is ~60 kB and only needed
+    // when the user actually takes a screenshot.
+    const { toPng } = await import("html-to-image");
     dataUrl = await toPng(root, {
       cacheBust: true,
       pixelRatio: window.devicePixelRatio || 1,

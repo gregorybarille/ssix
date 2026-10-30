@@ -250,3 +250,50 @@ describe("ScpDialog", () => {
     expect(hint?.textContent ?? "").toMatch(/base directory/i);
   });
 });
+
+describe("ScpDialog result scoping", () => {
+  it("does not show a previous connection's result when reopened for another", async () => {
+    const { invoke } = await import("@/lib/tauri");
+    vi.mocked(invoke).mockResolvedValueOnce({
+      bytes: 3,
+      entries: 1,
+      local_path: "/tmp/up.txt",
+      remote_path: "/srv/up.txt",
+    });
+    const connA = { id: "a", name: "alpha", host: "a", port: 22, type: "direct" } as const;
+    const connB = { id: "b", name: "beta", host: "b", port: 22, type: "direct" } as const;
+    const { rerender } = render(<ScpDialog open onOpenChange={vi.fn()} connection={connA} />);
+    fireEvent.change(screen.getByTestId("scp-local-path"), { target: { value: "/tmp/up.txt" } });
+    fireEvent.click(screen.getByTestId("scp-upload"));
+    await screen.findByTestId("scp-status");
+
+    // Close, then open for a different connection: the dialog stays mounted
+    // at the App root, so the old result must not leak through.
+    rerender(<ScpDialog open={false} onOpenChange={vi.fn()} connection={connA} />);
+    rerender(<ScpDialog open onOpenChange={vi.fn()} connection={connB} />);
+    await waitFor(() => expect(screen.queryByTestId("scp-status")).toBeNull());
+  });
+
+  it("hides the previous transfer's status once the mode changes", async () => {
+    const user = userEvent.setup();
+    const { invoke } = await import("@/lib/tauri");
+    vi.mocked(invoke).mockResolvedValueOnce({
+      bytes: 3,
+      entries: 1,
+      local_path: "/tmp/up.txt",
+      remote_path: "/srv/up.txt",
+    });
+    render(
+      <ScpDialog
+        open
+        onOpenChange={vi.fn()}
+        connection={{ id: "c1", name: "prod", host: "host", port: 22, type: "direct" }}
+      />,
+    );
+    fireEvent.change(screen.getByTestId("scp-local-path"), { target: { value: "/tmp/up.txt" } });
+    fireEvent.click(screen.getByTestId("scp-upload"));
+    await screen.findByTestId("scp-status");
+    await user.click(screen.getByTestId("scp-mode-download"));
+    await waitFor(() => expect(screen.queryByTestId("scp-status")).toBeNull());
+  });
+});

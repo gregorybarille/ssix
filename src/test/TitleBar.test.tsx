@@ -1,4 +1,3 @@
-import React from "react";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, waitFor, act } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -15,22 +14,14 @@ type WindowMocks = {
 
 const win = (globalThis as unknown as { __windowMocks: WindowMocks })
   .__windowMocks;
-let resizeListener: null | (() => void) = null;
-
 describe("TitleBar maximize subscription (non-macOS)", () => {
   beforeEach(() => {
-    resizeListener = null;
     win.isMaximized.mockReset();
     win.toggleMaximize.mockReset();
     win.onResized.mockReset();
     win.isMaximized.mockResolvedValue(false);
     win.toggleMaximize.mockResolvedValue(undefined);
-    win.onResized.mockImplementation(async (cb: () => void) => {
-      resizeListener = cb;
-      return () => {
-        resizeListener = null;
-      };
-    });
+    win.onResized.mockImplementation(async () => () => {});
     // Force Windows platform branch. jsdom's navigator.userAgent is a
     // getter, so vi.spyOn is the reliable way to override it.
     vi.spyOn(navigator, "userAgent", "get").mockReturnValue(

@@ -3,11 +3,67 @@ use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
+use std::time::SystemTime;
 
 static DATA_LOCK: Mutex<()> = Mutex::new(());
 
+/// Parsed copy of the last `data.json` read or written, keyed by the path
+/// and the file's mtime so a hand-edited or rotated file is noticed on the
+/// next load. Guarded by `DATA_LOCK` (never accessed without it).
+struct CachedData {
+    path: PathBuf,
+    /// (mtime, length): the length guards against an edit that lands in
+    /// the same mtime tick on a coarse-granularity filesystem.
+    stamp: Option<(SystemTime, u64)>,
+    data: AppData,
+}
+
+static DATA_CACHE: Mutex<Option<CachedData>> = Mutex::new(None);
+
+fn file_stamp(path: &Path) -> Option<(SystemTime, u64)> {
+    let meta = fs::metadata(path).ok()?;
+    Some((meta.modified().ok()?, meta.len()))
+}
+
 #[cfg(test)]
 pub(crate) static TEST_ENV_LOCK: Mutex<()> = Mutex::new(());
+
+#[cfg(test)]
+pub(crate) mod test_support {
+    use std::fs;
+    use std::path::PathBuf;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    static TMP_COUNTER: AtomicU64 = AtomicU64::new(0);
+
+    fn tmp_dir() -> PathBuf {
+        let n = TMP_COUNTER.fetch_add(1, Ordering::SeqCst);
+        let p =
+            std::env::temp_dir().join(format!("ssix-data-dir-test-{}-{}", std::process::id(), n));
+        let _ = fs::remove_dir_all(&p);
+        fs::create_dir_all(&p).unwrap();
+        p
+    }
+
+    /// Run `test` with `SSIX_DATA_DIR` pointed at a fresh temporary
+    /// directory so `data.json` and `secrets.json` never touch `~/.ssix`.
+    /// Serialised through `TEST_ENV_LOCK` because the variable is
+    /// process-global and cargo runs tests in parallel.
+    pub(crate) fn with_isolated_data_dir(test: impl FnOnce()) {
+        let _g = super::TEST_ENV_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let prev = std::env::var("SSIX_DATA_DIR").ok();
+        let dir = tmp_dir();
+        std::env::set_var("SSIX_DATA_DIR", &dir);
+        test();
+        match prev {
+            Some(v) => std::env::set_var("SSIX_DATA_DIR", v),
+            None => std::env::remove_var("SSIX_DATA_DIR"),
+        }
+        let _ = fs::remove_dir_all(&dir);
+    }
+}
 
 /// Returns the directory that holds SSIX state (`data.json`, `secrets.json`).
 ///
@@ -22,7 +78,7 @@ pub fn data_dir() -> PathBuf {
             return PathBuf::from(override_dir);
         }
     }
-    let home = dirs_next::home_dir().unwrap_or_else(|| PathBuf::from("."));
+    let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("."));
     home.join(".ssix")
 }
 
@@ -35,18 +91,63 @@ pub fn load_data() -> Result<AppData, String> {
     load_data_unlocked()
 }
 
+/// Load `data.json`, serving from the in-memory copy when the file on disk
+/// is unchanged since it was last read or written. Callers must hold
+/// `DATA_LOCK`.
 fn load_data_unlocked() -> Result<AppData, String> {
     let path = get_data_path();
     if !path.exists() {
         return Ok(AppData::default());
     }
-    let content = fs::read_to_string(&path).map_err(|e| e.to_string())?;
-    let mut data: AppData = serde_json::from_str(&content).map_err(|e| e.to_string())?;
-    // Audit-4 Phase 6b: walk the loaded `schema_version` up to the
-    // current one (also runs the LegacyTunnel → JumpShell rewrite for
-    // pre-stamp v0 files). Idempotent for files already at HEAD.
+    let stamp = file_stamp(&path);
+
+    let mut cache = DATA_CACHE.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some(cached) = cache.as_ref() {
+        if cached.path == path && cached.stamp.is_some() && cached.stamp == stamp {
+            return Ok(cached.data.clone());
+        }
+    }
+
+    let mut data = read_data_file(&path)?;
+    // Walk the loaded `schema_version` up to the current one (also runs the
+    // LegacyTunnel → JumpShell rewrite for pre-stamp v0 files). Idempotent
+    // for files already at HEAD. Reads only migrate in memory; the repair
+    // reaches disk through `persist_migrations` at startup or the next save.
     data.migrate_to_current();
+    *cache = Some(CachedData {
+        path,
+        stamp,
+        data: data.clone(),
+    });
     Ok(data)
+}
+
+/// Parse `data.json` as stored, without migrating it.
+fn read_data_file(path: &Path) -> Result<AppData, String> {
+    let content = fs::read_to_string(path)
+        .map_err(|e| format!("{} could not be read: {}", path.display(), e))?;
+    serde_json::from_str(&content)
+        .map_err(|e| format!("{} is not valid SSIX data: {}", path.display(), e))
+}
+
+/// Save the load-time migrations once, so a repaired file stops being
+/// repaired (and logged) on every launch. Run at startup on the blocking
+/// pool: plain reads never write. Returns whether the file was rewritten.
+///
+/// A file written by a newer build is left alone, so merely opening this
+/// build never rewrites it at an older schema and drops its newer fields.
+pub fn persist_migrations() -> Result<bool, String> {
+    let _guard = DATA_LOCK.lock().map_err(|e| e.to_string())?;
+    let path = get_data_path();
+    if !path.exists() {
+        return Ok(false);
+    }
+    let mut data = read_data_file(&path)?;
+    if data.schema_version > crate::models::CURRENT_SCHEMA_VERSION || !data.migrate_to_current() {
+        return Ok(false);
+    }
+    save_data_unlocked(&data)?;
+    Ok(true)
 }
 
 /// Atomically write `content` to `path`, durably, with optional Unix mode.
@@ -134,10 +235,12 @@ pub(crate) fn atomic_write(path: &Path, content: &[u8], mode: Option<u32>) -> Re
         #[cfg(not(unix))]
         let _ = mode;
 
-        f.write_all(content).map_err(|e| format!("write temp file: {}", e))?;
+        f.write_all(content)
+            .map_err(|e| format!("write temp file: {}", e))?;
         // Push data + metadata to disk before the rename — without this,
         // a crash after rename can still lose the data on some filesystems.
-        f.sync_all().map_err(|e| format!("fsync temp file: {}", e))?;
+        f.sync_all()
+            .map_err(|e| format!("fsync temp file: {}", e))?;
     }
 
     fs::rename(&tmp_path, path).map_err(|e| {
@@ -166,7 +269,14 @@ pub(crate) fn atomic_write(path: &Path, content: &[u8], mode: Option<u32>) -> Re
 fn save_data_unlocked(data: &AppData) -> Result<(), String> {
     let path = get_data_path();
     let content = serde_json::to_string_pretty(data).map_err(|e| e.to_string())?;
-    atomic_write(&path, content.as_bytes(), None)
+    atomic_write(&path, content.as_bytes(), None)?;
+    let mut cache = DATA_CACHE.lock().unwrap_or_else(|e| e.into_inner());
+    *cache = Some(CachedData {
+        stamp: file_stamp(&path),
+        path,
+        data: data.clone(),
+    });
+    Ok(())
 }
 
 /// Execute a read-modify-write transaction against AppData under one lock.
@@ -185,6 +295,91 @@ where
 mod tests {
     use super::*;
     use std::sync::atomic::{AtomicU64, Ordering};
+
+    fn write_raw(data: &AppData) {
+        let path = get_data_path();
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(&path, serde_json::to_string(data).unwrap()).unwrap();
+    }
+
+    fn with_dangling_reference(schema_version: u32) -> AppData {
+        let mut data = AppData {
+            schema_version,
+            ..AppData::default()
+        };
+        data.connections.push(crate::models::Connection::new(
+            "web".into(),
+            "h".into(),
+            22,
+            Some("deleted-credential".into()),
+            crate::models::ConnectionKind::Direct,
+        ));
+        data
+    }
+
+    /// Reads repair in memory only; `persist_migrations` writes the repair
+    /// once, after which there is nothing left to save.
+    #[test]
+    fn migrations_are_saved_by_persist_migrations_not_by_reads() {
+        test_support::with_isolated_data_dir(|| {
+            write_raw(&with_dangling_reference(
+                crate::models::CURRENT_SCHEMA_VERSION,
+            ));
+            let path = get_data_path();
+
+            assert_eq!(load_data().unwrap().connections[0].credential_id, None);
+            assert!(fs::read_to_string(&path)
+                .unwrap()
+                .contains("deleted-credential"));
+
+            assert!(persist_migrations().unwrap());
+            assert!(!fs::read_to_string(&path)
+                .unwrap()
+                .contains("deleted-credential"));
+            assert!(!persist_migrations().unwrap());
+        });
+    }
+
+    /// An unstamped (v0) file is stamped even when nothing else changed.
+    #[test]
+    fn persist_migrations_stamps_an_unversioned_file() {
+        test_support::with_isolated_data_dir(|| {
+            write_raw(&AppData {
+                schema_version: 0,
+                ..AppData::default()
+            });
+            assert!(persist_migrations().unwrap());
+            let stored: AppData =
+                serde_json::from_str(&fs::read_to_string(get_data_path()).unwrap()).unwrap();
+            assert_eq!(stored.schema_version, crate::models::CURRENT_SCHEMA_VERSION);
+        });
+    }
+
+    /// A file from a newer build is never rewritten by this one's startup.
+    #[test]
+    fn persist_migrations_leaves_a_newer_file_alone() {
+        test_support::with_isolated_data_dir(|| {
+            write_raw(&with_dangling_reference(
+                crate::models::CURRENT_SCHEMA_VERSION + 1,
+            ));
+            let before = fs::read_to_string(get_data_path()).unwrap();
+            assert!(!persist_migrations().unwrap());
+            assert_eq!(fs::read_to_string(get_data_path()).unwrap(), before);
+        });
+    }
+
+    /// A corrupt data file is an error that names the file, never an empty
+    /// catalogue: the frontend shows it in a load-error banner.
+    #[test]
+    fn corrupt_data_file_is_reported_with_its_path() {
+        test_support::with_isolated_data_dir(|| {
+            let path = get_data_path();
+            fs::write(&path, "{ not json").unwrap();
+            let err = load_data().unwrap_err();
+            assert!(err.contains("data.json"), "got: {}", err);
+            assert!(err.contains("is not valid SSIX data"), "got: {}", err);
+        });
+    }
 
     #[test]
     fn test_app_data_default() {
@@ -229,7 +424,11 @@ mod tests {
     fn atomic_write_overwrites_existing_target_in_full() {
         let dir = tmp_dir();
         let target = dir.join("data.json");
-        fs::write(&target, b"OLD-VERY-LONG-CONTENT-THAT-MUST-BE-FULLY-REPLACED").unwrap();
+        fs::write(
+            &target,
+            b"OLD-VERY-LONG-CONTENT-THAT-MUST-BE-FULLY-REPLACED",
+        )
+        .unwrap();
         atomic_write(&target, b"new", None).unwrap();
         assert_eq!(fs::read_to_string(&target).unwrap(), "new");
         let _ = fs::remove_dir_all(&dir);
@@ -329,8 +528,9 @@ mod tests {
 
         let dir = Arc::new(tmp_dir());
         let target = Arc::new(dir.join("data.json"));
-        let payloads: Vec<String> =
-            (0..8).map(|i| format!("payload-from-writer-{:02}", i)).collect();
+        let payloads: Vec<String> = (0..8)
+            .map(|i| format!("payload-from-writer-{:02}", i))
+            .collect();
 
         let handles: Vec<_> = payloads
             .iter()
@@ -353,6 +553,57 @@ mod tests {
             final_content
         );
         let _ = fs::remove_dir_all(&*dir);
+    }
+
+    /// The cache must serve repeat loads without touching the file, and
+    /// must notice when the file changes underneath it (hand edits, or a
+    /// different `SSIX_DATA_DIR`).
+    #[test]
+    fn load_data_is_cached_until_the_file_changes() {
+        let _g = TEST_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let prev = std::env::var("SSIX_DATA_DIR").ok();
+        let dir = tmp_dir();
+        std::env::set_var("SSIX_DATA_DIR", &dir);
+
+        with_data_mut(|data| {
+            data.settings.font_size = 21;
+            Ok(())
+        })
+        .unwrap();
+        assert_eq!(load_data().unwrap().settings.font_size, 21);
+
+        // Simulate an external edit with a distinct mtime.
+        let path = get_data_path();
+        let mut edited = load_data().unwrap();
+        edited.settings.font_size = 33;
+        let json = serde_json::to_string_pretty(&edited).unwrap();
+        fs::write(&path, json).unwrap();
+        let later = SystemTime::now() + std::time::Duration::from_secs(5);
+        fs::File::options()
+            .write(true)
+            .open(&path)
+            .unwrap()
+            .set_modified(later)
+            .unwrap();
+        assert_eq!(
+            load_data().unwrap().settings.font_size,
+            33,
+            "mtime change must bust the cache"
+        );
+
+        // A write through the storage layer refreshes the cache in place.
+        with_data_mut(|data| {
+            data.settings.font_size = 44;
+            Ok(())
+        })
+        .unwrap();
+        assert_eq!(load_data().unwrap().settings.font_size, 44);
+
+        match prev {
+            Some(v) => std::env::set_var("SSIX_DATA_DIR", v),
+            None => std::env::remove_var("SSIX_DATA_DIR"),
+        }
+        let _ = fs::remove_dir_all(&dir);
     }
 
     /// `data_dir()` and `secrets_path()` (via the same helper) MUST
@@ -382,7 +633,7 @@ mod tests {
         let prev = std::env::var("SSIX_DATA_DIR").ok();
         std::env::remove_var("SSIX_DATA_DIR");
         let resolved = data_dir();
-        let expected = dirs_next::home_dir()
+        let expected = dirs::home_dir()
             .unwrap_or_else(|| PathBuf::from("."))
             .join(".ssix");
         assert_eq!(resolved, expected);

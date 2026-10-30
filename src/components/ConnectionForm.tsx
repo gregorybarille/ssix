@@ -1,3 +1,5 @@
+import { errorMessage } from "@/lib/errors";
+import { log as appLog } from "@/lib/log";
 import React, { useActionState, useState, useEffect, useRef } from "react";
 import { Connection, ConnectionDraft, ConnectionInput, Credential, ConnectionType, OPEN_COLORS } from "@/types";
 import { Button } from "./ui/button";
@@ -20,14 +22,24 @@ import {
   SelectValue,
 } from "./ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "./ui/tabs";
+import {
+  CredentialSelect,
+  FieldError,
+  invalidAria,
+  PortField,
+  SaveCredentialFields,
+} from "./ConnectionFormFields";
+import { useFieldErrors } from "@/hooks/useFieldErrors";
+import { credentialFieldErrors, type CredentialFieldKey } from "@/lib/credentialValidation";
 import { InstallKeyDialog } from "./InstallKeyDialog";
 import { TagInput } from "./ui/tag-input";
 import { RadioGroup, RadioGroupItem } from "./ui/radio-group";
-import { Checkbox } from "./ui/checkbox";
 import { COLOR_VALUES } from "@/lib/colors";
 import { parsePort } from "@/lib/port";
+import { isTextInput } from "@/lib/focus";
 import { UploadCloud } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { submitWithoutReset } from "@/lib/formSubmit";
 import { useUnsavedChangesGuard } from "@/hooks/useUnsavedChangesGuard";
 import { ConfirmDialog } from "./ConfirmDialog";
 
@@ -43,6 +55,12 @@ interface ConnectionFormProps {
   // builds a flat `ConnectionDraft` and narrows on submit.
   onSubmit: (data: ConnectionInput | Connection) => Promise<void>;
   onCreateCredential?: (data: Omit<Credential, "id">) => Promise<Credential>;
+  /**
+   * Delete a credential the form created for inline auth when the
+   * connection save that needed it is refused, so retries never pile up
+   * unused credentials.
+   */
+  onDiscardCredential?: (id: string) => Promise<void>;
   isClone?: boolean;
   inline?: boolean;
 }
@@ -60,6 +78,92 @@ const DEFAULT_FORM: ConnectionDraft = {
   tags: [],
   color: undefined,
 };
+
+const EMPTY_INLINE = {
+  inlineUsername: "",
+  inlinePassword: "",
+  inlineKeyPath: "",
+  inlinePassphrase: "",
+  inlineCredentialName: "",
+  saveCredential: false,
+};
+
+type PortInputs = Record<"port" | "gateway_port" | "destination_port" | "local_port", string>;
+
+const DEFAULT_PORT_INPUTS: PortInputs = {
+  port: "22",
+  gateway_port: "22",
+  destination_port: "22",
+  local_port: "",
+};
+
+/**
+ * The form state for a freshly opened dialog: the defaults for a new
+ * connection, or the saved connection's values when editing / cloning.
+ * Pure, so the init effect and the unsaved-changes baseline share it.
+ */
+function initialFormState(
+  connection: Connection | null | undefined,
+  isClone: boolean,
+): {
+  form: ConnectionDraft;
+  portInputs: PortInputs;
+  connectionType: ConnectionType;
+  authMethod: AuthMethod;
+} {
+  if (!connection) {
+    return {
+      form: DEFAULT_FORM,
+      portInputs: DEFAULT_PORT_INPUTS,
+      connectionType: "direct",
+      authMethod: "credential",
+    };
+  }
+  // Gateway/destination fields only exist on port_forward and jump_shell
+  // variants; a narrowing switch keeps TS from poking DirectConnection.
+  const form: ConnectionDraft = {
+    name: isClone ? `${connection.name} (copy)` : connection.name,
+    host: connection.host,
+    port: connection.port,
+    credential_id: connection.credential_id,
+    type: connection.type,
+    verbosity: connection.verbosity ?? 0,
+    extra_args: connection.extra_args ?? "",
+    login_command: connection.login_command ?? "",
+    remote_path: connection.remote_path ?? "",
+    tags: connection.tags ?? [],
+    color: connection.color,
+    ...(connection.type === "port_forward"
+      ? {
+          gateway_host: connection.gateway_host,
+          gateway_port: connection.gateway_port,
+          gateway_credential_id: connection.gateway_credential_id,
+          local_port: connection.local_port,
+          destination_host: connection.destination_host,
+          destination_port: connection.destination_port,
+        }
+      : connection.type === "jump_shell"
+        ? {
+            gateway_host: connection.gateway_host,
+            gateway_port: connection.gateway_port,
+            gateway_credential_id: connection.gateway_credential_id,
+            destination_host: connection.destination_host,
+            destination_port: connection.destination_port,
+          }
+        : {}),
+  };
+  return {
+    form,
+    portInputs: {
+      port: String(connection.port ?? 22),
+      gateway_port: String(connection.type !== "direct" ? connection.gateway_port : 22),
+      destination_port: String(connection.type !== "direct" ? connection.destination_port : 22),
+      local_port: connection.type === "port_forward" ? String(connection.local_port) : "",
+    },
+    connectionType: connection.type,
+    authMethod: "credential",
+  };
+}
 
 /**
  * Stable serialization of every piece of form state we want to track
@@ -114,6 +218,7 @@ export function ConnectionForm({
   credentials,
   onSubmit,
   onCreateCredential,
+  onDiscardCredential,
   isClone = false,
   inline = false,
 }: ConnectionFormProps) {
@@ -133,32 +238,22 @@ export function ConnectionForm({
   // Port inputs are managed as raw strings so we can validate without
   // silently coercing invalid input back to 22. The keys mirror the
   // numeric port field names on `Connection`.
-  type PortKey = "port" | "gateway_port" | "destination_port" | "local_port";
-  const [portInputs, setPortInputs] = useState<Record<PortKey, string>>({
-    port: "22",
-    gateway_port: "22",
-    destination_port: "22",
-    local_port: "",
-  });
+  type PortKey = keyof PortInputs;
+  const [portInputs, setPortInputs] = useState<PortInputs>(DEFAULT_PORT_INPUTS);
   const [portErrors, setPortErrors] = useState<Partial<Record<PortKey, string>>>({});
 
-  // Inline per-field errors for required text fields. Keyed by the field
-  // name (`name`, `host`, `gateway_host`, `destination_host`,
-  // `gateway_credential_id`). Cleared as the user edits.
+  // Inline per-field errors for required fields, cleared as the user
+  // edits. The `inline_*` keys belong to the Password / SSH Key tabs and
+  // come from the same checks as the credential form.
   type FieldKey =
     | "name"
     | "host"
     | "gateway_host"
     | "destination_host"
-    | "gateway_credential_id";
-  const [fieldErrors, setFieldErrors] = useState<Partial<Record<FieldKey, string>>>({});
-  const clearFieldError = (key: FieldKey) =>
-    setFieldErrors((errs) => {
-      if (!errs[key]) return errs;
-      const next = { ...errs };
-      delete next[key];
-      return next;
-    });
+    | "gateway_credential_id"
+    | "credential_id"
+    | `inline_${CredentialFieldKey}`;
+  const { fieldErrors, setFieldErrors, clearFieldError } = useFieldErrors<FieldKey>();
 
   const updatePort = (key: PortKey, raw: string) => {
     setPortInputs((p) => ({ ...p, [key]: raw }));
@@ -171,99 +266,26 @@ export function ConnectionForm({
     });
   };
 
-  useEffect(() => {
-    if (connection) {
-      setForm({
-        name: isClone ? `${connection.name} (copy)` : connection.name,
-        host: connection.host,
-        port: connection.port,
-        credential_id: connection.credential_id,
-        type: connection.type,
-        verbosity: connection.verbosity ?? 0,
-        extra_args: connection.extra_args ?? "",
-        login_command: connection.login_command ?? "",
-        remote_path: connection.remote_path ?? "",
-        tags: connection.tags ?? [],
-        color: connection.color,
-        // Audit-4 Phase 4b: gateway/destination fields only exist on
-        // port_forward and jump_shell variants. Pull them out via a
-        // narrowing switch so TS knows we're not poking DirectConnection.
-        ...(connection.type === "port_forward"
-          ? {
-              gateway_host: connection.gateway_host,
-              gateway_port: connection.gateway_port,
-              gateway_credential_id: connection.gateway_credential_id,
-              local_port: connection.local_port,
-              destination_host: connection.destination_host,
-              destination_port: connection.destination_port,
-            }
-          : connection.type === "jump_shell"
-          ? {
-              gateway_host: connection.gateway_host,
-              gateway_port: connection.gateway_port,
-              gateway_credential_id: connection.gateway_credential_id,
-              destination_host: connection.destination_host,
-              destination_port: connection.destination_port,
-            }
-          : {}),
-      });
-      setPortInputs({
-        port: String(connection.port ?? 22),
-        gateway_port: String(
-          connection.type !== "direct" ? connection.gateway_port : 22,
-        ),
-        destination_port: String(
-          connection.type !== "direct"
-            ? connection.destination_port
-            : 22,
-        ),
-        local_port:
-          connection.type === "port_forward" ? String(connection.local_port) : "",
-      });
-      setConnectionType(connection.type);
-      setAuthMethod("credential");
-    } else {
-      setForm(DEFAULT_FORM);
-      setPortInputs({ port: "22", gateway_port: "22", destination_port: "22", local_port: "" });
-      setConnectionType("direct");
-      setAuthMethod("credential");
-    }
-    setPortErrors({});
-    setFieldErrors({});
-    setInlineUsername("");
-    setInlinePassword("");
-    setInlineKeyPath("");
-    setInlinePassphrase("");
-    setInlineCredentialName("");
-    setSaveCredential(false);
-  }, [connection, open, isClone]);
-
-  // Snapshot of the form state at "freshly opened" or "freshly reset"
-  // so we can detect whether the user has made any changes worth
-  // guarding on close. The snapshot is recomputed in the SAME effect
-  // that initializes the form so it always reflects the post-init
-  // values, never a stale render.
+  // Snapshot of the form state at "freshly opened" or "freshly reset" so
+  // we can detect whether the user has made any changes worth guarding on
+  // close. It is derived from the same values the effect below writes
+  // into state, so it can never be a stale snapshot of the previous render.
   const baselineRef = useRef<string>("");
   useEffect(() => {
-    // Defer to next tick so the setState calls above have flushed.
-    const id = setTimeout(() => {
-      baselineRef.current = serializeFormState({
-        form,
-        portInputs,
-        connectionType,
-        authMethod,
-        inlineUsername,
-        inlinePassword,
-        inlineKeyPath,
-        inlinePassphrase,
-        inlineCredentialName,
-        saveCredential,
-      });
-    }, 0);
-    return () => clearTimeout(id);
-    // We only want to re-baseline when the dialog opens or the
-    // backing connection changes — NOT on every keystroke.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    const init = initialFormState(connection, isClone);
+    setForm(init.form);
+    setPortInputs(init.portInputs);
+    setConnectionType(init.connectionType);
+    setAuthMethod(init.authMethod);
+    setPortErrors({});
+    setFieldErrors({});
+    setInlineUsername(EMPTY_INLINE.inlineUsername);
+    setInlinePassword(EMPTY_INLINE.inlinePassword);
+    setInlineKeyPath(EMPTY_INLINE.inlineKeyPath);
+    setInlinePassphrase(EMPTY_INLINE.inlinePassphrase);
+    setInlineCredentialName(EMPTY_INLINE.inlineCredentialName);
+    setSaveCredential(EMPTY_INLINE.saveCredential);
+    baselineRef.current = serializeFormState({ ...init, ...EMPTY_INLINE });
   }, [connection, open, isClone]);
 
   const currentSnapshot = serializeFormState({
@@ -299,6 +321,9 @@ export function ConnectionForm({
     if (!inline || !open) return;
     if (document.querySelector("[role='dialog']")) return;
     const id = window.requestAnimationFrame(() => {
+      // The frame can land after the user (or a test) has already moved
+      // into another field; never pull focus away from a text input.
+      if (isTextInput(document.activeElement)) return;
       firstFieldRef.current?.focus();
     });
     return () => window.cancelAnimationFrame(id);
@@ -312,20 +337,36 @@ export function ConnectionForm({
     return method === "ssh_key" ? `${base}-key` : `${base}-cred`;
   };
 
-  const validateNamedCredential = (method: AuthMethod) => {
-    if (!saveCredential) {
-      return;
+  /**
+   * Required-field errors for the destination authentication: a saved
+   * credential must be picked, and an inline one must pass the same checks
+   * as the credential form.
+   */
+  const authFieldErrors = (credentialId: string | undefined): Partial<Record<FieldKey, string>> => {
+    if (authMethod === "credential") {
+      if (credentialId) return {};
+      return {
+        credential_id:
+          connectionType === "jump_shell"
+            ? "Destination credential is required"
+            : "Credential is required",
+      };
     }
-    const name = inlineCredentialName.trim();
-    if (!name) {
-      throw new Error("Credential name is required when saving");
+    const inline = credentialFieldErrors(
+      {
+        name: saveCredential ? inlineCredentialName : null,
+        username: inlineUsername,
+        type: authMethod,
+        password: inlinePassword,
+        privateKeyPath: inlineKeyPath,
+      },
+      { requirePassword: true, takenNames: credentials.map((c) => c.name) },
+    );
+    const errors: Partial<Record<FieldKey, string>> = {};
+    for (const [key, message] of Object.entries(inline)) {
+      errors[`inline_${key as CredentialFieldKey}`] = message;
     }
-    if (credentials.some((c) => c.name === name)) {
-      throw new Error(`A credential named '${name}' already exists`);
-    }
-    if (method === "ssh_key" && !inlineKeyPath) {
-      throw new Error("Private key path is required");
-    }
+    return errors;
   };
 
   /*
@@ -385,52 +426,10 @@ export function ConnectionForm({
         // (We don't await the state update — the local copy is enough.)
         setForm(formWithPorts);
 
-        let credentialId = formWithPorts.credential_id;
-
-        // Auto-create credential for inline auth (only for kinds that need destination auth)
-        if (needsDestinationAuth) {
-          if (authMethod === "password" && onCreateCredential) {
-            if (!inlineUsername) throw new Error("Username is required");
-            if (!inlinePassword) throw new Error("Password is required");
-            validateNamedCredential(authMethod);
-            const isPrivate = !saveCredential;
-            const credName = saveCredential
-              ? inlineCredentialName.trim()
-              : `inline-${crypto.randomUUID()}`;
-            const cred = await onCreateCredential({
-              name: credName,
-              username: inlineUsername,
-              type: "password",
-              password: inlinePassword,
-              is_private: isPrivate,
-            });
-            credentialId = cred.id;
-          } else if (authMethod === "ssh_key" && onCreateCredential) {
-            if (!inlineUsername) throw new Error("Username is required");
-            if (!inlineKeyPath) throw new Error("Private key path is required");
-            validateNamedCredential(authMethod);
-            const isPrivate = !saveCredential;
-            const credName = saveCredential
-              ? inlineCredentialName.trim()
-              : `inline-${crypto.randomUUID()}`;
-            const cred = await onCreateCredential({
-              name: credName,
-              username: inlineUsername,
-              type: "ssh_key",
-              private_key_path: inlineKeyPath,
-              passphrase: inlinePassphrase || undefined,
-              is_private: isPrivate,
-            });
-            credentialId = cred.id;
-          }
-        } else {
-          // PortForward has no destination credential.
-          credentialId = undefined;
-        }
-
-        // Required text fields (name + host(s) + gateway credential).
-        // Collect all of them so the user sees every problem at once
-        // instead of one-at-a-time throw cycling.
+        // Every required field is checked before anything is saved, so the
+        // inline credential below is only created for a connection that
+        // passes the form's checks. All problems are collected so the user
+        // sees them at once instead of one-at-a-time throw cycling.
         const newFieldErrors: Partial<Record<FieldKey, string>> = {};
         if (!formWithPorts.name.trim()) {
           newFieldErrors.name = "Connection name is required";
@@ -449,18 +448,33 @@ export function ConnectionForm({
             newFieldErrors.destination_host = "Destination host is required";
           }
         }
+        if (needsDestinationAuth) {
+          Object.assign(newFieldErrors, authFieldErrors(formWithPorts.credential_id));
+        }
         if (Object.keys(newFieldErrors).length > 0) {
           setFieldErrors(newFieldErrors);
           throw new Error("Please fix the highlighted fields");
         }
 
-        // Validation per kind.
-        if (connectionType === "port_forward") {
-          if (!formWithPorts.local_port)
-            throw new Error("Local port is required for port forwarding");
-        }
-        if (connectionType === "jump_shell" && !credentialId) {
-          throw new Error("Destination credential is required for jump shell");
+        // PortForward has no destination credential.
+        let credentialId = needsDestinationAuth ? formWithPorts.credential_id : undefined;
+        let createdCredentialId: string | null = null;
+        if (needsDestinationAuth && authMethod !== "credential") {
+          if (!onCreateCredential) throw new Error("Inline credentials are not available here");
+          const cred = await onCreateCredential({
+            name: saveCredential ? inlineCredentialName.trim() : `inline-${crypto.randomUUID()}`,
+            username: inlineUsername,
+            is_private: !saveCredential,
+            ...(authMethod === "password"
+              ? { type: "password", password: inlinePassword }
+              : {
+                  type: "ssh_key",
+                  private_key_path: inlineKeyPath,
+                  passphrase: inlinePassphrase || undefined,
+                }),
+          });
+          credentialId = cred.id;
+          createdCredentialId = cred.id;
         }
 
         // Mirror destination_host/port into top-level host/port for tunnel kinds so
@@ -512,10 +526,28 @@ export function ConnectionForm({
                 destination_port: formWithPorts.destination_port ?? 22,
               };
 
-        if (connection && !isClone) {
-          await onSubmit({ ...data, id: connection.id } as Connection);
-        } else {
-          await onSubmit(data);
+        try {
+          if (connection && !isClone) {
+            await onSubmit({ ...data, id: connection.id } as Connection);
+          } else {
+            await onSubmit(data);
+          }
+        } catch (err) {
+          // The save failed, normally because the backend refused the
+          // connection (a taken name, say): drop the credential made for it.
+          // This can never remove a credential the connection ended up
+          // using: if the failure came after the connection was stored,
+          // `delete_credential` refuses a credential in use and the cleanup
+          // is only logged. The save's error is what the user sees.
+          if (createdCredentialId && onDiscardCredential) {
+            await onDiscardCredential(createdCredentialId).catch((cleanupErr: unknown) =>
+              appLog.warn(
+                "connections",
+                `Could not remove the unused inline credential: ${errorMessage(cleanupErr)}`,
+              ),
+            );
+          }
+          throw err;
         }
         // Suppress the unsaved-changes guard for the close that follows
         // a successful save.
@@ -523,7 +555,7 @@ export function ConnectionForm({
         onOpenChange(false);
         return { error: null };
       } catch (err) {
-        return { error: err instanceof Error ? err.message : String(err) };
+        return { error: errorMessage(err) };
       }
     },
     initialSubmitState,
@@ -556,29 +588,57 @@ export function ConnectionForm({
     selectedCredential?.type === "ssh_key" && form.host.trim().length > 0;
   const [installOpen, setInstallOpen] = useState(false);
 
+  const saveCredentialFields = (
+    method: "password" | "ssh_key",
+    checkboxId: string,
+    nameId: string,
+    namePlaceholder: string,
+  ) => (
+    <SaveCredentialFields
+      checkboxId={checkboxId}
+      nameId={nameId}
+      namePlaceholder={namePlaceholder}
+      checked={saveCredential}
+      onCheckedChange={(checked) => {
+        setSaveCredential(checked);
+        clearFieldError("inline_name");
+        if (!checked) {
+          setInlineCredentialName("");
+        } else if (!inlineCredentialName) {
+          setInlineCredentialName(defaultCredentialName(method));
+        }
+      }}
+      name={inlineCredentialName}
+      onNameChange={(name) => {
+        setInlineCredentialName(name);
+        clearFieldError("inline_name");
+      }}
+      error={fieldErrors.inline_name}
+      testId="connection-form-save-credential"
+    />
+  );
+
   const credentialPicker = (
     <div className="space-y-2">
-      <Select
-        value={form.credential_id ?? "none"}
-        onValueChange={(v) =>
-          setForm({
-            ...form,
-            credential_id: v === "none" ? undefined : v,
-          })
-        }
-      >
-        <SelectTrigger data-testid="connection-form-credential">
-          <SelectValue placeholder="Select credential..." />
-        </SelectTrigger>
-        <SelectContent>
-          <SelectItem value="none" data-name="None">None</SelectItem>
-          {credentials.map((cred) => (
-            <SelectItem key={cred.id} value={cred.id} data-name={cred.name}>
-              {cred.name} ({cred.username})
-            </SelectItem>
-          ))}
-        </SelectContent>
-      </Select>
+      <CredentialSelect
+        id="credential"
+        aria-label={connectionType === "jump_shell" ? "Destination credential" : "Credential"}
+        required
+        credentials={credentials}
+        value={form.credential_id}
+        onChange={(credential_id) => {
+          setForm({ ...form, credential_id });
+          clearFieldError("credential_id");
+        }}
+        testId="connection-form-credential"
+        error={fieldErrors.credential_id}
+        errorId="credential-error"
+      />
+      <FieldError
+        id="credential-error"
+        message={fieldErrors.credential_id}
+        testId="connection-form-credential-error"
+      />
       {canInstallKey && selectedCredential && (
         <>
           <Button
@@ -587,7 +647,7 @@ export function ConnectionForm({
             size="sm"
             onClick={() => setInstallOpen(true)}
           >
-            <UploadCloud className="h-3.5 w-3.5 mr-1.5" />
+            <UploadCloud className="h-3.5 w-3.5 mr-1.5" aria-hidden="true" />
             Install on remote
           </Button>
           <InstallKeyDialog
@@ -618,75 +678,35 @@ export function ConnectionForm({
               clearFieldError("gateway_host");
             }}
             data-testid="connection-form-gateway"
-            aria-invalid={fieldErrors.gateway_host ? true : undefined}
-            aria-describedby={fieldErrors.gateway_host ? "gateway_host-error" : undefined}
+            {...invalidAria(fieldErrors.gateway_host, "gateway_host-error")}
           />
-          {fieldErrors.gateway_host && (
-            <p id="gateway_host-error" role="alert" className="text-xs text-destructive">
-              {fieldErrors.gateway_host}
-            </p>
-          )}
+          <FieldError id="gateway_host-error" message={fieldErrors.gateway_host} />
         </div>
-        <div className="space-y-2">
-          <Label htmlFor="gateway_port">Gateway Port</Label>
-          <Input
-            id="gateway_port"
-            type="text"
-            inputMode="numeric"
-            placeholder="22"
-            value={portInputs.gateway_port}
-            onChange={(e) => updatePort("gateway_port", e.target.value)}
-            data-testid="connection-form-gateway-port"
-            aria-invalid={portErrors.gateway_port ? true : undefined}
-            aria-describedby={portErrors.gateway_port ? "gateway_port-error" : undefined}
-          />
-          {portErrors.gateway_port && (
-            <p
-              id="gateway_port-error"
-              role="alert"
-              className="text-xs text-destructive"
-            >
-              {portErrors.gateway_port}
-            </p>
-          )}
-        </div>
+        <PortField
+          id="gateway_port"
+          label="Gateway Port"
+          value={portInputs.gateway_port}
+          onChange={(raw) => updatePort("gateway_port", raw)}
+          error={portErrors.gateway_port}
+          testId="connection-form-gateway-port"
+        />
       </div>
       <div className="space-y-2">
         <Label htmlFor="gateway_credential">Gateway Credential *</Label>
-        <Select
-          value={form.gateway_credential_id ?? "none"}
-          onValueChange={(v) => {
-            setForm({
-              ...form,
-              gateway_credential_id: v === "none" ? undefined : v,
-            });
+        <CredentialSelect
+          id="gateway_credential"
+          credentials={credentials}
+          value={form.gateway_credential_id}
+          onChange={(gateway_credential_id) => {
+            setForm({ ...form, gateway_credential_id });
             clearFieldError("gateway_credential_id");
           }}
-        >
-          <SelectTrigger
-            id="gateway_credential"
-            data-testid="connection-form-gateway-credential"
-            aria-invalid={fieldErrors.gateway_credential_id ? true : undefined}
-            aria-describedby={
-              fieldErrors.gateway_credential_id ? "gateway_credential-error" : undefined
-            }
-          >
-            <SelectValue placeholder="Select credential..." />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="none" data-name="None">None</SelectItem>
-            {credentials.map((cred) => (
-              <SelectItem key={cred.id} value={cred.id} data-name={cred.name}>
-                {cred.name} ({cred.username})
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-        {fieldErrors.gateway_credential_id && (
-          <p id="gateway_credential-error" role="alert" className="text-xs text-destructive">
-            {fieldErrors.gateway_credential_id}
-          </p>
-        )}
+          required
+          testId="connection-form-gateway-credential"
+          error={fieldErrors.gateway_credential_id}
+          errorId="gateway_credential-error"
+        />
+        <FieldError id="gateway_credential-error" message={fieldErrors.gateway_credential_id} />
       </div>
     </div>
   );
@@ -710,71 +730,39 @@ export function ConnectionForm({
               clearFieldError("destination_host");
             }}
             data-testid="connection-form-dest-host"
-            aria-invalid={fieldErrors.destination_host ? true : undefined}
-            aria-describedby={
-              fieldErrors.destination_host ? "destination_host-error" : undefined
-            }
+            {...invalidAria(fieldErrors.destination_host, "destination_host-error")}
           />
-          {fieldErrors.destination_host && (
-            <p id="destination_host-error" role="alert" className="text-xs text-destructive">
-              {fieldErrors.destination_host}
-            </p>
-          )}
+          <FieldError id="destination_host-error" message={fieldErrors.destination_host} />
         </div>
-        <div className="space-y-2">
-          <Label htmlFor="destination_port">Destination Port</Label>
-          <Input
-            id="destination_port"
-            type="text"
-            inputMode="numeric"
-            placeholder={connectionType === "port_forward" ? "80" : "22"}
-            value={portInputs.destination_port}
-            onChange={(e) => updatePort("destination_port", e.target.value)}
-            data-testid="connection-form-dest-port"
-            aria-invalid={portErrors.destination_port ? true : undefined}
-            aria-describedby={portErrors.destination_port ? "destination_port-error" : undefined}
-          />
-          {portErrors.destination_port && (
-            <p
-              id="destination_port-error"
-              role="alert"
-              className="text-xs text-destructive"
-            >
-              {portErrors.destination_port}
-            </p>
-          )}
-        </div>
+        <PortField
+          id="destination_port"
+          label="Destination Port"
+          placeholder={connectionType === "port_forward" ? "80" : "22"}
+          value={portInputs.destination_port}
+          onChange={(raw) => updatePort("destination_port", raw)}
+          error={portErrors.destination_port}
+          testId="connection-form-dest-port"
+        />
       </div>
     </div>
   );
 
   const localPortBlock = (
-    <div className="space-y-2">
-      <Label htmlFor="local_port">Local Port *</Label>
-      <Input
-        id="local_port"
-        type="text"
-        inputMode="numeric"
-        placeholder="9000"
-        value={portInputs.local_port}
-        onChange={(e) => updatePort("local_port", e.target.value)}
-        data-testid="connection-form-local-port"
-        aria-invalid={portErrors.local_port ? true : undefined}
-        aria-describedby={
-          portErrors.local_port ? "local_port-error" : "local_port-help"
-        }
-      />
-      {portErrors.local_port ? (
-        <p id="local_port-error" role="alert" className="text-xs text-destructive">
-          {portErrors.local_port}
-        </p>
-      ) : (
-        <p id="local_port-help" className="text-xs text-muted-foreground">
+    <PortField
+      id="local_port"
+      label="Local Port *"
+      placeholder="9000"
+      value={portInputs.local_port}
+      onChange={(raw) => updatePort("local_port", raw)}
+      error={portErrors.local_port}
+      testId="connection-form-local-port"
+      help={
+        <>
           SSIX will listen on <code>127.0.0.1:&lt;local_port&gt;</code> and forward
           connections through the gateway to the destination.
-        </p>
-      )}
-    </div>
+        </>
+      }
+    />
   );
 
   const formDescription = connection
@@ -831,14 +819,9 @@ export function ConnectionForm({
           }}
           required
           data-testid="connection-form-name"
-          aria-invalid={fieldErrors.name ? true : undefined}
-          aria-describedby={fieldErrors.name ? "name-error" : undefined}
+          {...invalidAria(fieldErrors.name, "name-error")}
         />
-        {fieldErrors.name && (
-          <p id="name-error" role="alert" className="text-xs text-destructive">
-            {fieldErrors.name}
-          </p>
-        )}
+        <FieldError id="name-error" message={fieldErrors.name} />
       </div>
 
       {connectionType === "direct" && (
@@ -855,34 +838,18 @@ export function ConnectionForm({
               }}
               required
               data-testid="connection-form-host"
-              aria-invalid={fieldErrors.host ? true : undefined}
-              aria-describedby={fieldErrors.host ? "host-error" : undefined}
+              {...invalidAria(fieldErrors.host, "host-error")}
             />
-            {fieldErrors.host && (
-              <p id="host-error" role="alert" className="text-xs text-destructive">
-                {fieldErrors.host}
-              </p>
-            )}
+            <FieldError id="host-error" message={fieldErrors.host} />
           </div>
-          <div className="space-y-2">
-            <Label htmlFor="port">Port</Label>
-            <Input
-              id="port"
-              type="text"
-              inputMode="numeric"
-              placeholder="22"
-              value={portInputs.port}
-              onChange={(e) => updatePort("port", e.target.value)}
-              data-testid="connection-form-port"
-              aria-invalid={portErrors.port ? true : undefined}
-              aria-describedby={portErrors.port ? "port-error" : undefined}
-            />
-            {portErrors.port && (
-              <p id="port-error" role="alert" className="text-xs text-destructive">
-                {portErrors.port}
-              </p>
-            )}
-          </div>
+          <PortField
+            id="port"
+            label="Port"
+            value={portInputs.port}
+            onChange={(raw) => updatePort("port", raw)}
+            error={portErrors.port}
+            testId="connection-form-port"
+          />
         </div>
       )}
 
@@ -903,13 +870,28 @@ export function ConnectionForm({
           </Label>
           <Tabs
             value={authMethod}
-            onValueChange={(v) => setAuthMethod(v as AuthMethod)}
+            onValueChange={(v) => {
+              setAuthMethod(v as AuthMethod);
+              // The previous tab's messages describe a submit made with
+              // another method; the next submit checks this one afresh.
+              setFieldErrors((errs) =>
+                Object.fromEntries(
+                  Object.entries(errs).filter(
+                    ([key]) => key !== "credential_id" && !key.startsWith("inline_"),
+                  ),
+                ),
+              );
+            }}
           >
             <TabsList className="w-full">
               <TabsTrigger value="credential" className="flex-1 text-xs">
                 Saved Credential
               </TabsTrigger>
-              <TabsTrigger value="password" className="flex-1 text-xs">
+              <TabsTrigger
+                value="password"
+                className="flex-1 text-xs"
+                data-testid="connection-form-auth-password"
+              >
                 Password
               </TabsTrigger>
               <TabsTrigger value="ssh_key" className="flex-1 text-xs">
@@ -926,52 +908,35 @@ export function ConnectionForm({
                 <Label htmlFor="inline-username">Username *</Label>
                 <Input
                   id="inline-username"
+                  data-testid="connection-form-inline-username"
                   placeholder="root"
                   value={inlineUsername}
-                  onChange={(e) => setInlineUsername(e.target.value)}
+                  onChange={(e) => {
+                    setInlineUsername(e.target.value);
+                    clearFieldError("inline_username");
+                  }}
+                  aria-required="true"
+                  {...invalidAria(fieldErrors.inline_username, "inline-username-error")}
                 />
+                <FieldError id="inline-username-error" message={fieldErrors.inline_username} />
               </div>
               <div className="space-y-2">
                 <Label htmlFor="inline-password">Password *</Label>
                 <PasswordInput
                   id="inline-password"
+                  data-testid="connection-form-inline-password"
                   placeholder="••••••••"
                   value={inlinePassword}
-                  onChange={(e) => setInlinePassword(e.target.value)}
-                />
-              </div>
-              <div className="flex items-center gap-2">
-                <Checkbox
-                  id="conn-save-credential-password"
-                  checked={saveCredential}
-                  onCheckedChange={(v) => {
-                    const checked = v === true;
-                    setSaveCredential(checked);
-                    if (!checked) {
-                      setInlineCredentialName("");
-                    } else if (!inlineCredentialName) {
-                      setInlineCredentialName(defaultCredentialName("password"));
-                    }
+                  onChange={(e) => {
+                    setInlinePassword(e.target.value);
+                    clearFieldError("inline_password");
                   }}
+                  aria-required="true"
+                  {...invalidAria(fieldErrors.inline_password, "inline-password-error")}
                 />
-                <Label
-                  htmlFor="conn-save-credential-password"
-                  className="text-xs text-muted-foreground font-normal cursor-pointer select-none"
-                >
-                  Save as a named credential (visible in the Credentials list)
-                </Label>
+                <FieldError id="inline-password-error" message={fieldErrors.inline_password} />
               </div>
-              {saveCredential && (
-                <div className="space-y-2">
-                  <Label htmlFor="password-cred-name">Credential Name *</Label>
-                  <Input
-                    id="password-cred-name"
-                    placeholder="server-cred"
-                    value={inlineCredentialName}
-                    onChange={(e) => setInlineCredentialName(e.target.value)}
-                  />
-                </div>
-              )}
+              {saveCredentialFields("password", "conn-save-credential-password", "password-cred-name", "server-cred")}
             </TabsContent>
 
             <TabsContent value="ssh_key" className="space-y-3 mt-3">
@@ -981,8 +946,14 @@ export function ConnectionForm({
                   id="key-username"
                   placeholder="root"
                   value={inlineUsername}
-                  onChange={(e) => setInlineUsername(e.target.value)}
+                  onChange={(e) => {
+                    setInlineUsername(e.target.value);
+                    clearFieldError("inline_username");
+                  }}
+                  aria-required="true"
+                  {...invalidAria(fieldErrors.inline_username, "key-username-error")}
                 />
+                <FieldError id="key-username-error" message={fieldErrors.inline_username} />
               </div>
               <div className="space-y-2">
                 <Label htmlFor="key-path">Private Key Path *</Label>
@@ -990,8 +961,14 @@ export function ConnectionForm({
                   id="key-path"
                   placeholder="~/.ssh/id_rsa"
                   value={inlineKeyPath}
-                  onChange={(e) => setInlineKeyPath(e.target.value)}
+                  onChange={(e) => {
+                    setInlineKeyPath(e.target.value);
+                    clearFieldError("inline_key_path");
+                  }}
+                  aria-required="true"
+                  {...invalidAria(fieldErrors.inline_key_path, "key-path-error")}
                 />
+                <FieldError id="key-path-error" message={fieldErrors.inline_key_path} />
               </div>
               <div className="space-y-2">
                 <Label htmlFor="key-passphrase">Passphrase (optional)</Label>
@@ -1002,38 +979,7 @@ export function ConnectionForm({
                   onChange={(e) => setInlinePassphrase(e.target.value)}
                 />
               </div>
-              <div className="flex items-center gap-2">
-                <Checkbox
-                  id="conn-save-credential-key"
-                  checked={saveCredential}
-                  onCheckedChange={(v) => {
-                    const checked = v === true;
-                    setSaveCredential(checked);
-                    if (!checked) {
-                      setInlineCredentialName("");
-                    } else if (!inlineCredentialName) {
-                      setInlineCredentialName(defaultCredentialName("ssh_key"));
-                    }
-                  }}
-                />
-                <Label
-                  htmlFor="conn-save-credential-key"
-                  className="text-xs text-muted-foreground font-normal cursor-pointer select-none"
-                >
-                  Save as a named credential (visible in the Credentials list)
-                </Label>
-              </div>
-              {saveCredential && (
-                <div className="space-y-2">
-                  <Label htmlFor="ssh-cred-name">Credential Name *</Label>
-                  <Input
-                    id="ssh-cred-name"
-                    placeholder="server-key"
-                    value={inlineCredentialName}
-                    onChange={(e) => setInlineCredentialName(e.target.value)}
-                  />
-                </div>
-              )}
+              {saveCredentialFields("ssh_key", "conn-save-credential-key", "ssh-cred-name", "server-key")}
             </TabsContent>
           </Tabs>
         </div>
@@ -1142,7 +1088,7 @@ export function ConnectionForm({
         <Label htmlFor="verbosity">Verbosity Level</Label>
         <Select
           value={String(form.verbosity ?? 0)}
-          onValueChange={(v) => setForm({ ...form, verbosity: parseInt(v) })}
+          onValueChange={(v) => setForm({ ...form, verbosity: Number(v) })}
         >
           <SelectTrigger id="verbosity" aria-describedby="verbosity-hint">
             <SelectValue />
@@ -1166,6 +1112,7 @@ export function ConnectionForm({
           role="alert"
           aria-live="assertive"
           id="connection-form-error"
+          data-testid="connection-form-error"
           className="text-sm text-destructive bg-destructive/10 px-3 py-2 rounded-md"
         >
           {visibleError}
@@ -1225,7 +1172,7 @@ export function ConnectionForm({
         )}
       </DialogHeader>
       <form
-        action={submitAction}
+        onSubmit={submitWithoutReset(submitAction)}
         className="flex flex-col flex-1 min-h-0"
         data-testid="connection-form"
         aria-labelledby={inline ? inlineTitleId : undefined}

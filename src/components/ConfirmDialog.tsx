@@ -1,3 +1,4 @@
+import { errorMessage } from "@/lib/errors";
 import React from "react";
 import {
   Dialog,
@@ -36,6 +37,9 @@ export interface ConfirmDialogProps {
  *
  * Default focus lands on the cancel button — never on the destructive
  * action — so a careless Enter press cannot delete data.
+ *
+ * The buttons mirror the create/edit form footers: an outlined Cancel and
+ * a solid action button (red for destructive actions).
  */
 export function ConfirmDialog({
   open,
@@ -49,16 +53,25 @@ export function ConfirmDialog({
   testId,
 }: ConfirmDialogProps) {
   const [busy, setBusy] = React.useState(false);
+  const [error, setError] = React.useState<string | null>(null);
   // Focus-return on close is implemented in the shared <DialogContent>
-  // primitive (Audit-3 #2) so every dialog in the app benefits without
-  // per-call wiring.
+  // primitive so every dialog in the app benefits without per-call wiring.
 
+  React.useEffect(() => {
+    if (!open) setError(null);
+  }, [open]);
+
+  // A failing action keeps the dialog open and shows why, instead of
+  // closing on success only and leaving the rejection unhandled.
   const handleConfirm = async () => {
     if (busy) return;
     setBusy(true);
+    setError(null);
     try {
       await onConfirm();
       onOpenChange(false);
+    } catch (err) {
+      setError(errorMessage(err));
     } finally {
       setBusy(false);
     }
@@ -71,9 +84,18 @@ export function ConfirmDialog({
           <DialogTitle>{title}</DialogTitle>
           <DialogDescription>{description}</DialogDescription>
         </DialogHeader>
+        {error && (
+          <p
+            role="alert"
+            className="text-sm text-destructive break-words"
+            data-testid={testId ? `${testId}-error` : undefined}
+          >
+            {error}
+          </p>
+        )}
         <DialogFooter className="gap-2 sm:[&>button]:min-w-28">
           <Button
-            variant="ghost"
+            variant="outline"
             autoFocus
             onClick={() => onOpenChange(false)}
             disabled={busy}

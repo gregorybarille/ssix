@@ -2,6 +2,7 @@ import { describe, it, expect, vi } from "vitest";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { ConnectionForm } from "@/components/ConnectionForm";
 import type { Credential } from "@/types";
+import { chooseSelectValue } from "./radixSelect";
 
 const credentials: Credential[] = [
   { id: "c1", name: "default", username: "ubuntu", type: "password", password: "x" },
@@ -66,6 +67,7 @@ describe("ConnectionForm port validation", () => {
     fireEvent.change(screen.getByLabelText(/name/i), { target: { value: "x" } });
     fireEvent.change(screen.getByLabelText(/host \*/i), { target: { value: "1.1.1.1" } });
     fireEvent.change(screen.getByLabelText(/^port$/i), { target: { value: "2222" } });
+    chooseSelectValue(screen.getByRole("combobox", { name: "Credential" }), "c1");
     fireEvent.click(screen.getByRole("button", { name: /create/i }));
     await waitFor(() => {
       expect(onSubmit).toHaveBeenCalled();

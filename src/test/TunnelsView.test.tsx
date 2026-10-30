@@ -33,8 +33,6 @@ const defaultProps = {
   sessions: [] as TunnelSession[],
   connections: mockConnections,
   credentials: mockCredentials,
-  layout: "list" as const,
-  onLayoutChange: vi.fn(),
   onCloseSession: vi.fn(),
   onConnect: vi.fn(),
   onEdit: vi.fn(),

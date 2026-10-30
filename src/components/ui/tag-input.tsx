@@ -1,4 +1,4 @@
-import React, { useState, KeyboardEvent } from "react";
+import { useState, KeyboardEvent } from "react";
 import { Badge } from "./badge";
 import { X } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -83,7 +83,7 @@ export function TagInput({
                   onClick={() => removeAt(i)}
                   className="rounded-sm hover:bg-destructive/20 hover:text-destructive p-0.5"
                 >
-                  <X className="h-3 w-3" />
+                  <X className="h-3 w-3" aria-hidden="true" />
                 </button>
               </Badge>
             </li>

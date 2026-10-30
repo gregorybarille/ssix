@@ -233,6 +233,8 @@ export function TerminalTabs({
               }}
               role="tab"
               type="button"
+              id={`terminal-tab-${tab.id}`}
+              aria-controls={`terminal-panel-${tab.id}`}
               aria-selected={isActive}
               aria-label={`Terminal ${label}${splitSuffix}${failureSuffix}${closeHintSuffix}`}
               tabIndex={isActive ? 0 : -1}
@@ -336,6 +338,9 @@ export function TerminalTabs({
             return (
               <div
                 key={tab.id}
+                role="tabpanel"
+                id={`terminal-panel-${tab.id}`}
+                aria-labelledby={`terminal-tab-${tab.id}`}
                 className="absolute inset-0"
                 style={{ display: isActiveTab ? "block" : "none" }}
               >
@@ -356,6 +361,9 @@ export function TerminalTabs({
           return (
             <div
               key={tab.id}
+              role="tabpanel"
+              id={`terminal-panel-${tab.id}`}
+              aria-labelledby={`terminal-tab-${tab.id}`}
               className="absolute inset-0"
               style={{ display: isActiveTab ? "block" : "none" }}
             >

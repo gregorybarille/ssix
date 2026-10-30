@@ -26,7 +26,7 @@ describe("runAsync / runAsyncRethrow", () => {
     });
     expect(result).toBeUndefined();
     expect(set).toHaveBeenLastCalledWith({
-      error: "Error: boom",
+      error: "boom",
       isLoading: false,
     });
   });
@@ -39,9 +39,31 @@ describe("runAsync / runAsyncRethrow", () => {
       }),
     ).rejects.toThrow("nope");
     expect(set).toHaveBeenLastCalledWith({
-      error: "Error: nope",
+      error: "nope",
       isLoading: false,
     });
+  });
+
+  it("records a rejected string (how Tauri commands fail) verbatim", async () => {
+    const set = vi.fn();
+    await runAsync(set, () => Promise.reject("Connection not found"));
+    expect(set).toHaveBeenLastCalledWith({ error: "Connection not found", isLoading: false });
+  });
+
+  it("runAsyncRethrow with recordError: false rethrows but leaves error untouched", async () => {
+    const set = vi.fn();
+    await expect(
+      runAsyncRethrow(
+        set,
+        async () => {
+          throw new Error("duplicate name");
+        },
+        { recordError: false },
+      ),
+    ).rejects.toThrow("duplicate name");
+    expect(set).toHaveBeenNthCalledWith(1, { isLoading: true });
+    expect(set).toHaveBeenLastCalledWith({ isLoading: false });
+    for (const [patch] of set.mock.calls) expect(patch).not.toHaveProperty("error");
   });
 
   it("runAsyncRethrow returns the value on success", async () => {

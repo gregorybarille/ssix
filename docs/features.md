@@ -27,6 +27,27 @@ Supported credential modes:
 
 The connection form can create inline credentials and optionally save them as named credentials.
 
+**Clone** opens the connection form prefilled from a connection, and
+everything in it (kind, gateway, tags, colour, options) is saved as the
+new connection. The original's private inline credential is copied, so
+the clone and the original never share one; inline auth entered in the
+clone form makes a credential for the clone alone.
+
+A credential that connections use cannot be deleted. Confirming the
+delete is refused, and the confirmation then lists the connections that
+use it; give them another credential first.
+
+The credentials list only holds redacted credentials. Opening **Edit**
+fetches that one credential's saved secrets (`get_credential_secrets`)
+and prefills them; the secret fields and the **Update** button are
+disabled with a "Loading saved secrets…" status until the fetch
+settles. Saving sends the secret fields back only when the user changed
+one of them; otherwise the update carries `keep_secrets` and the backend
+leaves the stored secrets untouched. If the fetch fails the form shows
+the error, locks the secret fields, and still lets the user save the
+other fields with the stored secrets kept as they are. Closing the editor without edits never prompts to discard
+changes, because the unsaved-changes baseline follows the fetched values.
+
 ## Terminals
 
 - tabbed shell sessions
@@ -34,6 +55,16 @@ The connection form can create inline credentials and optionally save them as na
 - split down
 - retry failed sessions
 - edit source connection from failure UI
+- GPU-accelerated rendering (xterm WebGL addon) when the WebView supports it, 10 000 lines of scrollback
+- right-click pastes into the terminal under the cursor only
+
+### Host-key verification
+
+Every SSH connection — direct, gateway, the destination behind a gateway, SCP and the public-key installer — verifies the server's host key before a password or key is sent.
+
+- The first time a `host:port` is seen its key is recorded in `~/.ssix/known_hosts` (OpenSSH format, so `ssh-keygen -F`/`-R` work on it).
+- If the key later differs the connection is refused. The failure view names the host, shows the new SHA256 fingerprint and offers **Trust new host key**, which forgets the stale entry and reconnects. Use it only when you know the server was reinstalled or re-keyed.
+- Connections time out after 10 s (TCP) / 15 s (SSH setup) instead of hanging on a dead host.
 
 ### Terminal tab keyboard shortcuts
 
@@ -53,9 +84,9 @@ The terminal tab bar is a true WAI-ARIA tablist. With focus on a tab:
 
 ## Search, Tags, And Colors
 
-- search is backend-driven
-- query terms are AND-matched
-- matches run across connection name, host, and tags
+- search filters the loaded list in the frontend (`src/lib/search.ts`); no backend call per keystroke
+- query terms are AND-matched, case-insensitive
+- matches run across connection name, host, gateway/destination host, and tags; the same matcher powers the Connect Picker
 - color accents appear on connection cards and terminal tabs
 
 ## SCP File Transfer
@@ -102,8 +133,21 @@ See [Git Sync](git-sync.md) for details.
 
 ## Settings
 
+Every control auto-saves; there is no Save button. Writes are debounced
+(300 ms after the last edit, `SETTINGS_SAVE_DEBOUNCE_MS` in
+`SettingsPanel.tsx`) so toggling several switches or clicking through
+swatches produces a single `save_settings` call carrying the final
+state. The pending save is flushed immediately when the panel is
+closed, when the window loses focus or is hidden, and on page unload,
+so the persisted state always equals what the panel shows. A green
+"Settings saved!" confirmation appears once the write lands; backend
+validation errors (for example an invalid Git remote or branch name)
+are shown inline for the final state of the burst.
+
 - theme (light / dark; switching previews immediately and auto-saves on
-  change; both themes are calibrated to meet WCAG AA — body text and
+  change; terminal panes follow it too, swapping between the Tokyo Night
+  and Tokyo Night Day palettes live without reconnecting;
+  both themes are calibrated to meet WCAG AA — body text and
   tertiary metadata such as timestamps stay above the 4.5:1 contrast
   ratio on both themes)
 - font family
@@ -191,7 +235,21 @@ ports. On submit the form collects every problem at once and surfaces
 each one next to its input:
 
 - ConnectionForm: **Connection Name**, **Host** (direct), **Gateway
-  Host** + **Gateway Credential** + **Destination Host** (tunnels).
+  Host** + **Gateway Credential** + **Destination Host** (tunnels),
+  and the destination authentication for Direct and Jump Shell (a
+  Port Forward only authenticates to its gateway):
+  - **Saved Credential**: a credential must be picked; "None" shows
+    *"Credential is required"* (*"Destination credential is required"*
+    on a jump shell).
+  - **Password** / **SSH Key**: the inline fields get the same checks
+    as the credential form (`credentialFieldErrors` in
+    `src/lib/credentialValidation.ts`): **Username**, **Password** or
+    **Private Key Path**, and, when *Save as a named credential* is
+    ticked, a **Credential Name** that no saved credential already uses.
+  Everything is checked before the inline credential is created. If the
+  backend still refuses the connection (a name already taken, say), the
+  form deletes the credential it made for it, so retries never leave
+  unused credentials behind.
 - CredentialForm: **Credential Name**, **Username**, and either
   **Private Key Path** or **Private Key Contents** when the SSH Key
   tab is active.
@@ -200,6 +258,22 @@ The offending input gets `aria-invalid="true"` and an
 `aria-describedby` link to a sibling `role="alert"` message; typing
 into the input clears the error immediately so the validation feels
 responsive instead of nagging.
+
+The backend enforces the credential rule too: `add_connection`,
+`update_connection` and `clone_connection` refuse a Direct or Jump Shell
+connection without a credential, a tunnel without a gateway credential,
+and any credential id that no longer exists. A connection never points
+at a deleted credential: deleting a credential that connections still
+use is refused with their names, and references that older builds left
+behind are cleared when the data loads, so the form asks for a new
+credential inline.
+
+A refused save keeps everything the user entered. The forms submit
+through `submitWithoutReset` (`src/lib/formSubmit.ts`) instead of
+`<form action>`, because React resets an action form after every
+submission and Radix Select, Checkbox and RadioGroup answer that reset
+by returning to their initial value: a picked credential would silently
+go back to "None".
 
 ## Connection List Actions
 
@@ -226,10 +300,11 @@ tabindex pattern (via the shared `useRovingFocus` hook in
   next focusable element.
 - `↑` / `↓` move the focused row, wrapping at the ends. `Home` / `End`
   jump to the first/last row. In tile layout `←` / `→` work as well.
-- `↵` or `Space` activates the row. On a connection this calls the
-  same selection handler the click does (or falls back to **Connect**
-  if no selection handler is wired). On a credential it opens the
-  **Edit** form.
+- `↵`, `Space` or a click activates the row. On a connection this
+  calls the selection handler when one is wired, otherwise it
+  **connects** (the Connections tab wires no selection handler, so a
+  click on a row opens a shell). On a credential it opens the **Edit**
+  form.
 - Action buttons inside a row (Edit / Clone / Delete / Connect / etc.)
   keep their own focus and their own keyboard semantics — pressing
   `↵` while focused on **Delete** activates Delete, not row selection.
@@ -338,11 +413,15 @@ macOS and `Ctrl` everywhere else.
 | `Mod+W`        | Close the active terminal tab (with confirm if live)     |
 | `Mod+1`…`Mod+9`| Switch to terminal tab N                                 |
 
-Shortcuts are suppressed when focus is in an input, textarea,
-`contenteditable` element, or anywhere inside an `xterm` instance, so
-typing in the shell or filling forms is never intercepted. To avoid
-swallowing well-known terminal readline bindings, combos that mix
-`Ctrl` and `Cmd` simultaneously are ignored.
+On macOS the shortcuts work everywhere, including while a terminal
+has focus: `Cmd+K`, `Cmd+W` or `Cmd+1` are never consumed by the shell
+or by a text field, so a Mac user can jump between tabs or open the
+picker without clicking out of the terminal first. On Linux and
+Windows, `Ctrl` combos are suppressed when focus is in an input,
+textarea, `contenteditable` element, or anywhere inside an `xterm`
+instance, because `Ctrl+K`, `Ctrl+W` and friends are readline bindings
+inside the shell. To avoid swallowing those bindings, combos that mix
+`Ctrl` and `Cmd` simultaneously are ignored on every platform.
 
 The terminal tab strip itself also implements its own WAI-ARIA
 keyboard model (Arrow keys, Home/End, Delete) — see the Terminals

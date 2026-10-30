@@ -7,14 +7,13 @@
 //!   target host and idempotently appends a public key line to
 //!   `~/.ssh/authorized_keys` with the standard 700/600 permission setup.
 
-use crate::ssh::AuthMethod;
+use crate::commands::blocking;
+use crate::ssh::{open_authenticated_session, AuthMethod, Endpoint};
 use rand_core::OsRng;
 use serde::{Deserialize, Serialize};
 use ssh_key::{LineEnding, PrivateKey};
 use std::io::Read;
-use std::net::TcpStream;
-use std::path::PathBuf;
-use std::time::Duration;
+use std::path::{Path, PathBuf};
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "snake_case", tag = "storage")]
@@ -59,7 +58,13 @@ pub struct GeneratedKey {
 fn sanitise_name(input: &str) -> String {
     let cleaned: String = input
         .chars()
-        .map(|c| if c.is_ascii_alphanumeric() || c == '-' || c == '_' { c } else { '_' })
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '-' || c == '_' {
+                c
+            } else {
+                '_'
+            }
+        })
         .collect();
     let trimmed = cleaned.trim_matches('_').to_string();
     if trimmed.is_empty() {
@@ -72,7 +77,7 @@ fn sanitise_name(input: &str) -> String {
 /// Pick a non-existing path under `~/.ssh/id_ed25519_<name>`, suffixing with
 /// `_2`, `_3`, ... if the file already exists.
 fn default_key_path(name_hint: Option<&str>) -> Result<PathBuf, String> {
-    let home = dirs_next::home_dir().ok_or_else(|| "Could not resolve home directory".to_string())?;
+    let home = dirs::home_dir().ok_or_else(|| "Could not resolve home directory".to_string())?;
     let ssh_dir = home.join(".ssh");
     let base = match name_hint {
         Some(s) if !s.trim().is_empty() => format!("id_ed25519_{}", sanitise_name(s)),
@@ -90,11 +95,7 @@ fn default_key_path(name_hint: Option<&str>) -> Result<PathBuf, String> {
     Ok(candidate)
 }
 
-fn write_key_files(
-    path: &PathBuf,
-    private_pem: &str,
-    public_line: &str,
-) -> Result<(), String> {
+fn write_key_files(path: &Path, private_pem: &str, public_line: &str) -> Result<(), String> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).map_err(|e| format!("create dir: {}", e))?;
         #[cfg(unix)]
@@ -122,7 +123,11 @@ fn write_key_files(
 }
 
 #[tauri::command]
-pub fn generate_ssh_key(input: GenerateSshKeyInput) -> Result<GeneratedKey, String> {
+pub async fn generate_ssh_key(input: GenerateSshKeyInput) -> Result<GeneratedKey, String> {
+    blocking(move || generate_ssh_key_sync(input)).await
+}
+
+fn generate_ssh_key_sync(input: GenerateSshKeyInput) -> Result<GeneratedKey, String> {
     let mut private = PrivateKey::random(&mut OsRng, ssh_key::Algorithm::Ed25519)
         .map_err(|e| format!("Key generation failed: {}", e))?;
 
@@ -179,7 +184,9 @@ pub fn generate_ssh_key(input: GenerateSshKeyInput) -> Result<GeneratedKey, Stri
 }
 
 fn hostname() -> Option<String> {
-    std::env::var("HOSTNAME").ok().or_else(|| std::env::var("HOST").ok())
+    std::env::var("HOSTNAME")
+        .ok()
+        .or_else(|| std::env::var("HOST").ok())
 }
 
 // Audit-4 Phase 4: removed `InstallPublicKeyInput` and the
@@ -220,7 +227,7 @@ pub fn shell_single_quote(s: &str) -> String {
 pub fn build_install_script(public_key: &str) -> String {
     // Trim trailing newlines AND carriage returns so the literal we
     // append is exactly one line (and CRLF input matches LF entries).
-    let key_line = public_key.trim_end_matches(|c| c == '\n' || c == '\r');
+    let key_line = public_key.trim_end_matches(['\n', '\r']);
     let q = shell_single_quote(key_line);
     format!(
         "set -e; \
@@ -254,34 +261,13 @@ fn install_public_key_with_password(
         return Err("Public key is empty".to_string());
     }
 
-    let auth = AuthMethod::Password(password.to_string());
-    let addr = format!("{}:{}", host, port);
-    let socket_addr = addr
-        .to_socket_addrs()
-        .map_err(|e| format!("Resolve {}: {}", addr, e))?
-        .next()
-        .ok_or_else(|| format!("No address for {}", addr))?;
-    let tcp = TcpStream::connect_timeout(&socket_addr, Duration::from_secs(10))
-        .map_err(|e| format!("TCP connect to {} failed: {}", addr, e))?;
-    tcp.set_nonblocking(false).ok();
-
-    let mut session =
-        ssh2::Session::new().map_err(|e| format!("SSH session create failed: {}", e))?;
-    session.set_tcp_stream(tcp);
-    session
-        .handshake()
-        .map_err(|e| format!("SSH handshake failed: {}", e))?;
-
-    match &auth {
-        AuthMethod::Password(pw) => session
-            .userauth_password(username, pw)
-            .map_err(|e| format!("Password auth failed: {}", e))?,
-        _ => unreachable!(),
-    }
-
-    if !session.authenticated() {
-        return Err("Authentication failed".to_string());
-    }
+    let target = Endpoint {
+        host: host.to_string(),
+        port,
+        username: username.to_string(),
+        auth: AuthMethod::Password(password.to_string()),
+    };
+    let session = open_authenticated_session(&target, 0, None)?;
 
     let mut channel = session
         .channel_session()
@@ -324,17 +310,20 @@ pub struct InstallPublicKeyByCredentialInput {
 /// the remote host. Convenience wrapper used by the frontend so it doesn't
 /// need to pass the public key text around.
 #[tauri::command]
-pub fn ssh_install_public_key_by_credential(
+pub async fn ssh_install_public_key_by_credential(
     input: InstallPublicKeyByCredentialInput,
 ) -> Result<(), String> {
-    let public_key = derive_public_key_for_credential(&input.credential_id)?;
-    install_public_key_with_password(
-        &input.host,
-        input.port,
-        &input.username,
-        &input.password,
-        &public_key,
-    )
+    blocking(move || {
+        let public_key = derive_public_key_for_credential(&input.credential_id)?;
+        install_public_key_with_password(
+            &input.host,
+            input.port,
+            &input.username,
+            &input.password,
+            &public_key,
+        )
+    })
+    .await
 }
 
 /// Look up an ssh_key credential by id and produce the corresponding public
@@ -354,7 +343,7 @@ fn derive_public_key_for_credential(credential_id: &str) -> Result<String, Strin
         .iter_mut()
         .find(|c| c.id == credential_id)
         .ok_or_else(|| format!("Credential {} not found", credential_id))?;
-    crate::keychain::enrich_credential(cred);
+    crate::keychain::enrich_credential(cred)?;
     match &cred.kind {
         CredentialKind::Password { .. } => {
             Err("This credential is a password, not an SSH key".to_string())
@@ -408,8 +397,6 @@ fn public_key_from_private_text(
         .to_openssh()
         .map_err(|e| format!("Failed to serialise public key: {}", e))
 }
-
-use std::net::ToSocketAddrs;
 
 #[cfg(test)]
 mod tests {
@@ -512,7 +499,7 @@ mod tests {
 
     #[test]
     fn generate_ssh_key_inline_returns_parseable_keypair() {
-        let out = generate_ssh_key(GenerateSshKeyInput {
+        let out = generate_ssh_key_sync(GenerateSshKeyInput {
             storage: KeyStorage::Inline,
             name_hint: None,
             passphrase: None,
@@ -530,13 +517,10 @@ mod tests {
 
     #[test]
     fn generate_ssh_key_custom_path_writes_files_and_refuses_overwrite() {
-        let dir = std::env::temp_dir().join(format!(
-            "ssix-keygen-{}",
-            uuid::Uuid::new_v4()
-        ));
+        let dir = std::env::temp_dir().join(format!("ssix-keygen-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("id_test");
-        let out = generate_ssh_key(GenerateSshKeyInput {
+        let out = generate_ssh_key_sync(GenerateSshKeyInput {
             storage: KeyStorage::CustomPath {
                 path: path.to_string_lossy().to_string(),
             },
@@ -545,7 +529,10 @@ mod tests {
             comment: None,
         })
         .unwrap();
-        assert_eq!(out.private_key_path.as_deref(), Some(path.to_string_lossy().as_ref()));
+        assert_eq!(
+            out.private_key_path.as_deref(),
+            Some(path.to_string_lossy().as_ref())
+        );
         assert!(path.exists());
         assert!(path.with_extension("pub").exists());
         #[cfg(unix)]
@@ -567,7 +554,7 @@ mod tests {
             assert_eq!(pub_mode, 0o644);
         }
         // Refuse to overwrite.
-        let err = generate_ssh_key(GenerateSshKeyInput {
+        let err = generate_ssh_key_sync(GenerateSshKeyInput {
             storage: KeyStorage::CustomPath {
                 path: path.to_string_lossy().to_string(),
             },
@@ -582,7 +569,7 @@ mod tests {
 
     #[test]
     fn generate_ssh_key_with_passphrase_encrypts_key() {
-        let out = generate_ssh_key(GenerateSshKeyInput {
+        let out = generate_ssh_key_sync(GenerateSshKeyInput {
             storage: KeyStorage::Inline,
             name_hint: None,
             passphrase: Some("test-pass".into()),
@@ -597,7 +584,7 @@ mod tests {
 
     #[test]
     fn public_key_from_private_text_unencrypted_matches_generation() {
-        let out = generate_ssh_key(GenerateSshKeyInput {
+        let out = generate_ssh_key_sync(GenerateSshKeyInput {
             storage: KeyStorage::Inline,
             name_hint: None,
             passphrase: None,
@@ -610,7 +597,7 @@ mod tests {
 
     #[test]
     fn public_key_from_private_text_encrypted_requires_passphrase() {
-        let out = generate_ssh_key(GenerateSshKeyInput {
+        let out = generate_ssh_key_sync(GenerateSshKeyInput {
             storage: KeyStorage::Inline,
             name_hint: None,
             passphrase: Some("p4ss".into()),

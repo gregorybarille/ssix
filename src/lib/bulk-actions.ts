@@ -1,3 +1,4 @@
+import { errorMessage } from "./errors";
 import type { Connection, ScpResult } from "@/types";
 import { invoke } from "@/lib/tauri";
 import { useTerminalsStore } from "@/store/useTerminalsStore";
@@ -26,7 +27,7 @@ export function isBulkActionable(conn: Connection): boolean {
  *
  * Failures during the placeholder phase are swallowed and counted;
  * SSH errors that surface later show up on the affected pane via
-  * the existing `ssix:ssh:error:{id}` event flow, exactly the same
+ * the session's output channel (`error` notification), exactly the same
  * way single-connection failures do today.
  */
 export async function connectMany(
@@ -187,7 +188,7 @@ export async function runBulkScp(
       step.localPath = result.local_path;
     } catch (err) {
       step.status = "error";
-      step.error = err instanceof Error ? err.message : String(err);
+      step.error = errorMessage(err);
     }
     emit();
   }

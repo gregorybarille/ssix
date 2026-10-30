@@ -15,6 +15,15 @@ import { RadioGroup, RadioGroupItem } from "./ui/radio-group";
 import { cn } from "@/lib/utils";
 import { Check } from "lucide-react";
 import { COLOR_VALUES } from "@/lib/colors";
+import { useDebouncedCallback } from "@/hooks/useDebouncedCallback";
+
+/**
+ * How long the panel waits after the last edit before writing to disk.
+ * Rapid edits (toggling several switches, clicking through swatches,
+ * blurring a text field and picking a select) coalesce into a single
+ * `save_settings` call carrying the final form state.
+ */
+const SETTINGS_SAVE_DEBOUNCE_MS = 300;
 
 interface SettingsPanelProps {
   settings: AppSettings;
@@ -29,8 +38,21 @@ export function SettingsPanel({ settings, onSave, onPreview }: SettingsPanelProp
   const latestSaveVersionRef = React.useRef(0);
   const pendingSaveRef = React.useRef<AppSettings | null>(null);
   const isSavingRef = React.useRef(false);
+  // Keys the user changed since the last successful save, and the latest
+  // settings seen from the store. A save sends the store's current values
+  // plus only our dirty keys, so a change made elsewhere during the
+  // debounce window (a shortcut toggling the theme) is never overwritten
+  // by our stale snapshot of the whole form.
+  const dirtyKeysRef = React.useRef<Set<keyof AppSettings>>(new Set());
+  const storeSettingsRef = React.useRef(settings);
+  storeSettingsRef.current = settings;
 
+  // Adopt settings from the store only while nothing of ours is in
+  // flight or waiting on the debounce timer: each saved value echoes
+  // back through this prop, and taking it while a newer edit is queued
+  // would clobber what the user typed.
   useEffect(() => {
+    if (isSavingRef.current || pendingSaveRef.current) return;
     setForm(settings);
   }, [settings]);
 
@@ -44,12 +66,17 @@ export function SettingsPanel({ settings, onSave, onPreview }: SettingsPanelProp
 
   const processSaveQueue = React.useCallback(async () => {
     while (pendingSaveRef.current) {
-      const toSave = pendingSaveRef.current;
+      const pending = pendingSaveRef.current;
       const saveVersion = latestSaveVersionRef.current;
       pendingSaveRef.current = null;
+      const toSave = { ...storeSettingsRef.current };
+      for (const key of dirtyKeysRef.current) {
+        (toSave as Record<string, unknown>)[key] = pending[key];
+      }
       try {
         await onSave(toSave);
         if (saveVersion === latestSaveVersionRef.current) {
+          dirtyKeysRef.current.clear();
           setSavedAt(Date.now());
         }
       } catch (error) {
@@ -64,13 +91,49 @@ export function SettingsPanel({ settings, onSave, onPreview }: SettingsPanelProp
     isSavingRef.current = false;
   }, [onSave]);
 
-  const queueSave = (next: AppSettings) => {
-    latestSaveVersionRef.current += 1;
-    pendingSaveRef.current = next;
-    setSaveError(null);
-    if (isSavingRef.current) return;
+  // Kick the queue. While a save is in flight the loop in
+  // processSaveQueue picks up pendingSaveRef by itself, so this is a
+  // no-op; only the version check decides whose result is shown.
+  const startSave = React.useCallback(() => {
+    if (isSavingRef.current || !pendingSaveRef.current) return;
     isSavingRef.current = true;
     void processSaveQueue();
+  }, [processSaveQueue]);
+
+  // Debounced start. pendingSaveRef always holds the full, latest form
+  // state, so whichever edit ends the burst is what gets persisted —
+  // including a git remote/branch that fails backend validation, whose
+  // error then surfaces for that final state. Unmount (closing the
+  // panel) flushes synchronously so the last value is never lost.
+  const scheduleSave = useDebouncedCallback(startSave, SETTINGS_SAVE_DEBOUNCE_MS, {
+    onUnmount: "flush",
+  });
+
+  // Losing the window (another app, hide, quit) is a natural "I'm
+  // done editing" point and cheap to hook; flush rather than wait.
+  useEffect(() => {
+    const flush = () => scheduleSave.flush();
+    const onVisibility = () => {
+      if (document.visibilityState === "hidden") flush();
+    };
+    window.addEventListener("blur", flush);
+    window.addEventListener("pagehide", flush);
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => {
+      window.removeEventListener("blur", flush);
+      window.removeEventListener("pagehide", flush);
+      document.removeEventListener("visibilitychange", onVisibility);
+    };
+  }, [scheduleSave]);
+
+  const queueSave = (next: AppSettings) => {
+    latestSaveVersionRef.current += 1;
+    for (const key of Object.keys(next) as (keyof AppSettings)[]) {
+      if (next[key] !== storeSettingsRef.current[key]) dirtyKeysRef.current.add(key);
+    }
+    pendingSaveRef.current = next;
+    setSaveError(null);
+    scheduleSave();
   };
 
   const applySettings = (next: AppSettings) => {
@@ -128,7 +191,7 @@ export function SettingsPanel({ settings, onSave, onPreview }: SettingsPanelProp
           <Label htmlFor="font-size">Font Size</Label>
           <Select
             value={String(form.font_size)}
-            onValueChange={(v) => applySettings({ ...form, font_size: parseInt(v) })}
+            onValueChange={(v) => applySettings({ ...form, font_size: Number(v) })}
           >
             <SelectTrigger id="font-size">
               <SelectValue />
@@ -425,6 +488,7 @@ export function SettingsPanel({ settings, onSave, onPreview }: SettingsPanelProp
         role="status"
         aria-live="polite"
         className="text-sm text-green-600 dark:text-green-400 inline-flex items-center gap-1.5"
+        data-testid="settings-saved-status"
       >
         {savedVisible && (
           <>

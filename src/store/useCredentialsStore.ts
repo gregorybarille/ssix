@@ -1,17 +1,27 @@
 import { create } from "zustand";
-import { Credential } from "@/types";
+import { Credential, CredentialSecrets, UpdateCredentialPayload } from "@/types";
 import { invoke } from "@/lib/tauri";
 import { runAsync, runAsyncRethrow } from "@/lib/asyncAction";
 
 interface CredentialsState {
   credentials: Credential[];
   isLoading: boolean;
+  /**
+   * Why the last `fetchCredentials` failed, shown as a banner in the
+   * Credentials view. Mutations report to their caller and leave it alone.
+   */
   error: string | null;
   fetchCredentials: () => Promise<void>;
+  /**
+   * Read one credential's secrets. Called by the edit form when it opens
+   * and deliberately not kept in store state: the list holds redacted
+   * credentials only, so secrets never outlive the form.
+   */
+  fetchCredentialSecrets: (id: string) => Promise<CredentialSecrets>;
   addCredential: (input: Omit<Credential, "id">) => Promise<Credential>;
   /** Creates a private (inline) credential without adding it to the visible store state. */
   addInlineCredential: (input: Omit<Credential, "id">) => Promise<Credential>;
-  updateCredential: (input: Credential) => Promise<void>;
+  updateCredential: (input: UpdateCredentialPayload) => Promise<void>;
   deleteCredential: (id: string) => Promise<void>;
 }
 
@@ -21,18 +31,23 @@ export const useCredentialsStore = create<CredentialsState>((set) => ({
   isLoading: false,
   error: null,
 
+  // `get_credentials` returns redacted credentials (password "", no inline
+  // key / passphrase); only `private_key_path` survives because it is not
+  // a secret.
   fetchCredentials: () =>
     runAsync(set, async () => {
       const credentials = await invoke<Credential[]>("get_credentials");
       set({ credentials });
     }).then(() => undefined),
 
+  fetchCredentialSecrets: (id) => invoke<CredentialSecrets>("get_credential_secrets", { id }),
+
   addCredential: (input) =>
     runAsyncRethrow(set, async () => {
       const cred = await invoke<Credential>("add_credential", { input });
       set((state) => ({ credentials: [...state.credentials, cred] }));
       return cred;
-    }),
+    }, { recordError: false }),
 
   // Inline (private) credentials skip the store-level loading/error
   // tracking because they're an implementation detail of save_connection
@@ -45,11 +60,11 @@ export const useCredentialsStore = create<CredentialsState>((set) => ({
       set((state) => ({
         credentials: state.credentials.map((c) => (c.id === cred.id ? cred : c)),
       }));
-    }),
+    }, { recordError: false }),
 
   deleteCredential: (id) =>
     runAsyncRethrow(set, async () => {
       await invoke("delete_credential", { id });
       set((state) => ({ credentials: state.credentials.filter((c) => c.id !== id) }));
-    }),
+    }, { recordError: false }),
 }));

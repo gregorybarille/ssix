@@ -8,8 +8,8 @@ use std::collections::VecDeque;
 use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
+use std::sync::LazyLock;
 use tauri::{AppHandle, Emitter};
 
 pub const MAX_ENTRIES: usize = 1000;
@@ -25,8 +25,8 @@ pub struct LogEntry {
     pub message: String,
 }
 
-static BUFFER: Lazy<Mutex<VecDeque<LogEntry>>> =
-    Lazy::new(|| Mutex::new(VecDeque::with_capacity(MAX_ENTRIES)));
+static BUFFER: LazyLock<Mutex<VecDeque<LogEntry>>> =
+    LazyLock::new(|| Mutex::new(VecDeque::with_capacity(MAX_ENTRIES)));
 
 fn now_ms() -> u64 {
     SystemTime::now()
@@ -51,7 +51,6 @@ pub fn log(app: &AppHandle, level: &str, source: &str, message: impl Into<String
 
 /// Variant for code paths that don't have an `AppHandle` (e.g. helpers used
 /// before a session has been wired). Stored but no event emitted.
-#[allow(dead_code)]
 pub fn log_local(level: &str, source: &str, message: impl Into<String>) {
     push(LogEntry {
         ts: now_ms(),

@@ -26,6 +26,7 @@ import {
   clickDialogFooterButton,
   createPasswordCredential,
   createDirectConnection,
+  ensureConnectionRowsLayout,
   navigateTo,
 } from "../helpers/flows.js";
 import { sel } from "../helpers/selectors.js";
@@ -39,7 +40,8 @@ async function setTextInputValue(selector: string, value: string): Promise<void>
   const input = await browser.$(selector);
   await input.waitForExist({ timeout: 10_000 });
   await browser.execute(
-    (el: HTMLInputElement, nextValue: string) => {
+    (target: HTMLElement, nextValue: string) => {
+      const el = target as HTMLInputElement;
       const previousValue = el.value;
       const setter = Object.getOwnPropertyDescriptor(
         HTMLInputElement.prototype,
@@ -74,8 +76,14 @@ describe("Tag-group view + bulk actions", () => {
     upload = join(workDir, "tag-upload.txt");
     writeFileSync(upload, "ssix-tag-bulk-payload\n");
   });
-  after(() => {
+  after(async () => {
     rmSync(workDir, { recursive: true, force: true });
+    // Layout is persisted; leave the app in list mode for later specs.
+    try {
+      await ensureConnectionRowsLayout();
+    } catch {
+      // best effort
+    }
   });
 
   it("renders the tags layout with one tile per tag and gates bulk actions on confirm", async () => {

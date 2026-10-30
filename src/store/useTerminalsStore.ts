@@ -1,6 +1,8 @@
+import { errorMessage } from "@/lib/errors";
 import { create } from "zustand";
 import { invoke } from "@/lib/tauri";
 import { log as appLog } from "@/lib/log";
+import { createOutputChannel, disposeOutput, registerOutputSink } from "@/lib/terminalOutput";
 import type { Connection, OpenMode } from "@/types";
 import type {
   TerminalTab,
@@ -53,9 +55,6 @@ interface TerminalsState {
 
   /** Switch to terminals view and select the Nth (0-indexed) tab, if it exists. */
   selectTabByIndex: (index: number) => void;
-
-  /** Total live + failed panes across all tabs (for the sidebar badge). */
-  totalSessionCount: () => number;
 }
 
 export const useTerminalsStore = create<TerminalsState>((set, get) => {
@@ -145,14 +144,19 @@ export const useTerminalsStore = create<TerminalsState>((set, get) => {
       }
 
       try {
+        // The output channel must exist before the backend starts the
+        // session; its sink buffers bytes until the <Terminal> mounts.
+        const { channel, sink } = await createOutputChannel();
         const sessionId = await invoke<string>("ssh_connect", {
           connectionId: conn.id,
+          onOutput: channel,
         });
         if (cancelled.has(placeholderId)) {
           cancelled.delete(placeholderId);
           invoke("ssh_disconnect", { sessionId }).catch(() => {});
           return;
         }
+        registerOutputSink(sessionId, sink);
         // Replace placeholder identity in-place so the pane keeps its slot.
         set((state) => ({
           tabs: state.tabs.map((t) => ({
@@ -171,10 +175,10 @@ export const useTerminalsStore = create<TerminalsState>((set, get) => {
           return;
         }
         updateSessionEverywhere(placeholderId, {
-          error: String(err),
+          error: errorMessage(err),
           retrying: false,
         });
-        appLog.error("ssh", `Connect failed for ${conn.name}: ${String(err)}`);
+        appLog.error("ssh", `Connect failed for ${conn.name}: ${errorMessage(err)}`);
       }
     },
 
@@ -193,11 +197,7 @@ export const useTerminalsStore = create<TerminalsState>((set, get) => {
           break;
         }
       }
-      try {
-        await invoke("ssh_disconnect", { sessionId });
-      } catch {
-        // ignore
-      }
+      // Remove the pane immediately; the backend teardown runs after.
       set((state) => {
         const next = state.tabs
           .map((t) => {
@@ -221,6 +221,13 @@ export const useTerminalsStore = create<TerminalsState>((set, get) => {
         }
         return { tabs: next, activeTabId: nextActive };
       });
+      try {
+        await invoke("ssh_disconnect", { sessionId });
+      } catch {
+        // ignore
+      } finally {
+        disposeOutput(sessionId);
+      }
     },
 
     closeTab: async (tabId) => {
@@ -230,11 +237,6 @@ export const useTerminalsStore = create<TerminalsState>((set, get) => {
       for (const pane of tab.panes) {
         if (pane.retrying && !pane.error) {
           cancelled.add(pane.sessionId);
-        }
-        try {
-          await invoke("ssh_disconnect", { sessionId: pane.sessionId });
-        } catch {
-          // ignore
         }
       }
       set((state) => {
@@ -250,6 +252,15 @@ export const useTerminalsStore = create<TerminalsState>((set, get) => {
         }
         return { tabs: remaining, activeTabId: nextActive };
       });
+      for (const pane of tab.panes) {
+        try {
+          await invoke("ssh_disconnect", { sessionId: pane.sessionId });
+        } catch {
+          // ignore
+        } finally {
+          disposeOutput(pane.sessionId);
+        }
+      }
     },
 
     selectTabByIndex: (index) => {
@@ -258,8 +269,5 @@ export const useTerminalsStore = create<TerminalsState>((set, get) => {
       useViewStore.getState().setView("terminals");
       set({ activeTabId: tab.id });
     },
-
-    totalSessionCount: () =>
-      get().tabs.reduce((n, t) => n + t.panes.length, 0),
   };
 });

@@ -1,5 +1,5 @@
-import React, { useMemo, useState } from "react";
-import { Connection, Credential, LayoutMode } from "@/types";
+import { useMemo, useState } from "react";
+import { Connection, Credential } from "@/types";
 import { Button } from "./ui/button";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { Cable, ChevronDown, ChevronRight, Copy, Pencil, Play, Trash2, X } from "lucide-react";
@@ -20,8 +20,6 @@ interface TunnelsViewProps {
   sessions: TunnelSession[];
   connections: Connection[];
   credentials: Credential[];
-  layout: LayoutMode;
-  onLayoutChange: (next: LayoutMode) => void;
   onCloseSession: (sessionId: string) => void;
   onConnect: (conn: Connection) => void;
   onEdit: (conn: Connection) => void;
@@ -33,8 +31,6 @@ export function TunnelsView({
   sessions,
   connections,
   credentials,
-  layout: _layout,
-  onLayoutChange: _onLayoutChange,
   onCloseSession,
   onConnect,
   onEdit,

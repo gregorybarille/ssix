@@ -2,7 +2,7 @@
 
 ## Prerequisites
 
-- Node.js 22+ for frontend tooling and npm commands in this guide (`npm run tauri dev`, `npm run build`, and `npm test`)
+- Node.js 22.12+ (CI and the e2e Docker image use Node 24) for frontend tooling and npm commands in this guide (`npm run tauri dev`, `npm run build`, and `npm test`). Vitest 5 requires `^22.12 || ^24 || >=26`; concurrently 10, jest-dom 7 and WebdriverIO 10 require 22+.
 - Rust stable
 - Tauri CLI
 
@@ -26,6 +26,12 @@ npm run build
 npm test
 cd src-tauri && cargo test
 ```
+
+`npm run dev` serves the frontend alone at `http://localhost:1420`. Opened in a
+browser it has no backend: `src/lib/runtime.ts` detects the missing Tauri
+bridge and every backend call fails with "SSIX is running outside its desktop
+app". Use it for layout work only; anything that loads or saves data needs
+`npm run tauri dev`.
 
 ## Windows Releases
 
@@ -63,7 +69,7 @@ SmartScreen warnings until code signing is added.
 
 ## Repo Structure
 
-- `src/` frontend app (React 19 + Vite 8 + TypeScript)
+- `src/` frontend app (React 19 + Vite 8 + TypeScript 7). `tsc` is the native TypeScript 7 compiler (per-platform binary, no JS compiler API); `npm run build` runs `tsc && vite build`
 - `src-tauri/` backend app
 - `docs/` product and engineering documentation
 - `docker/` local SSH test environment
@@ -80,13 +86,21 @@ SmartScreen warnings until code signing is added.
 
 Frontend:
 
-- Vitest
+- Vitest 5 (jest-dom matchers registered via the `@testing-library/jest-dom/vitest` entry in `src/test/setup.ts`)
 - Testing Library
 - Tauri APIs mocked centrally in `src/test/setup.ts`
 
 Backend:
 
 - Rust unit tests inside the relevant modules
+
+Continuous integration (`.github/workflows/test.yml`, required on PRs):
+
+- Frontend: `npm audit --omit=dev --audit-level=high`, `npm test`, `npm run build`
+- Backend: `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`, `cargo test`, and a
+  `git diff --exit-code src/types/generated/` check so regenerated ts-rs
+  bindings are always committed
+- `cargo audit` via `rustsec/audit-check` for advisories in `src-tauri/Cargo.lock`. `src-tauri/.cargo/audit.toml` ignores advisories for optional crates that are in the lockfile but never compiled, with the reason for each
 
 End-to-end:
 
@@ -104,6 +118,9 @@ End-to-end:
   ```bash
   npm run e2e            # build image, run full suite
   npm run e2e:shell      # interactive shell inside the runner
+  # one spec only (the runner forwards extra args to the container):
+  docker compose --profile e2e -f docker/docker-compose.yml run --rm --build \
+    e2e-runner npx wdio run e2e/wdio.conf.ts --spec /workspace/e2e/specs/10-host-key.spec.ts
   npm run e2e:teardown   # stop containers, drop named volumes
   ```
 

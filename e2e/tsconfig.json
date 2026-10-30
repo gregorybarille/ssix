@@ -11,8 +11,7 @@
     "resolveJsonModule": true,
     "skipLibCheck": true,
     "noEmit": true,
-    "rootDir": ".",
-    "baseUrl": "."
+    "rootDir": "."
   },
   "include": ["**/*.ts"],
   "exclude": ["node_modules", ".artifacts", ".tmp"]

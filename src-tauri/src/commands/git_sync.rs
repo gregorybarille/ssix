@@ -1,3 +1,4 @@
+use crate::commands::blocking;
 use crate::keychain;
 use crate::models::{AppData, AppSettings, CredentialKind};
 use crate::storage;
@@ -54,8 +55,58 @@ pub struct GitSyncCommitInput {
     pub message: String,
 }
 
+/// Reject a remote git could read as an option. A remote may be a name
+/// (`origin`), a URL (`git@host:me/cfg.git`, `https://...`) or a local path
+/// (which may contain spaces: it is passed as one argv element, never
+/// through a shell), so only the option-injection shape and control
+/// characters are refused.
+pub(crate) fn validate_git_remote(value: &str) -> Result<(), String> {
+    let v = value.trim();
+    if v.is_empty() {
+        return Err("Git remote is required.".to_string());
+    }
+    if v.starts_with('-') {
+        return Err("Git remote must not start with '-'.".to_string());
+    }
+    if v.chars().any(char::is_control) {
+        return Err("Git remote must not contain control characters.".to_string());
+    }
+    Ok(())
+}
+
+/// Reject a branch that is not a valid ref component or that git could
+/// read as an option.
+pub(crate) fn validate_git_branch(value: &str) -> Result<(), String> {
+    let v = value.trim();
+    if v.is_empty() {
+        return Err("Git branch is required.".to_string());
+    }
+    if v.starts_with('-') {
+        return Err("Git branch must not start with '-'.".to_string());
+    }
+    if v.contains("..") || v.ends_with(".lock") || v.ends_with('/') || v.ends_with('.') {
+        return Err("Git branch is not a valid git ref name.".to_string());
+    }
+    if v.chars().any(|c| {
+        c.is_control() || c.is_whitespace() || matches!(c, '~' | '^' | ':' | '?' | '*' | '[' | '\\')
+    }) {
+        return Err("Git branch contains characters git does not allow.".to_string());
+    }
+    Ok(())
+}
+
+fn configured_remote(settings: &AppSettings) -> Result<String, String> {
+    let remote = settings.git_sync_remote.trim();
+    validate_git_remote(remote)?;
+    Ok(remote.to_string())
+}
+
 #[tauri::command]
-pub fn git_sync_status() -> Result<GitSyncStatus, String> {
+pub async fn git_sync_status() -> Result<GitSyncStatus, String> {
+    blocking(git_sync_status_sync).await
+}
+
+fn git_sync_status_sync() -> Result<GitSyncStatus, String> {
     let data = storage::load_data()?;
     let Some(repo_path) = configured_repo_path(&data.settings) else {
         return Ok(GitSyncStatus {
@@ -73,7 +124,7 @@ pub fn git_sync_status() -> Result<GitSyncStatus, String> {
 
     ensure_repo_exists(&repo_path)?;
     let branch = current_branch(&repo_path)?;
-    let remote = data.settings.git_sync_remote.trim().to_string();
+    let remote = configured_remote(&data.settings)?;
     let porcelain = git(&repo_path, &["status", "--short", EXPORT_DIR])?;
     let changed_files = porcelain
         .stdout
@@ -97,7 +148,11 @@ pub fn git_sync_status() -> Result<GitSyncStatus, String> {
 }
 
 #[tauri::command]
-pub fn git_sync_export_snapshot() -> Result<GitSyncSnapshot, String> {
+pub async fn git_sync_export_snapshot() -> Result<GitSyncSnapshot, String> {
+    blocking(git_sync_export_snapshot_sync).await
+}
+
+fn git_sync_export_snapshot_sync() -> Result<GitSyncSnapshot, String> {
     let (data, repo_path) = require_configured_repo()?;
     export_snapshot(&repo_path, &data)?;
 
@@ -111,7 +166,11 @@ pub fn git_sync_export_snapshot() -> Result<GitSyncSnapshot, String> {
 }
 
 #[tauri::command]
-pub fn git_sync_diff() -> Result<GitSyncDiff, String> {
+pub async fn git_sync_diff() -> Result<GitSyncDiff, String> {
+    blocking(git_sync_diff_sync).await
+}
+
+fn git_sync_diff_sync() -> Result<GitSyncDiff, String> {
     let (data, repo_path) = require_configured_repo()?;
     export_snapshot(&repo_path, &data)?;
 
@@ -121,34 +180,47 @@ pub fn git_sync_diff() -> Result<GitSyncDiff, String> {
 }
 
 #[tauri::command]
-pub fn git_sync_fetch() -> Result<GitSyncActionResult, String> {
-    let (data, repo_path) = require_configured_repo()?;
-    let remote = data.settings.git_sync_remote.trim();
-    let result = git(&repo_path, &["fetch", remote])?;
-    Ok(to_action_result(result))
+pub async fn git_sync_fetch() -> Result<GitSyncActionResult, String> {
+    blocking(|| {
+        let (data, repo_path) = require_configured_repo()?;
+        let remote = configured_remote(&data.settings)?;
+        let result = git(&repo_path, &["fetch", &remote])?;
+        Ok(to_action_result(result))
+    })
+    .await
 }
 
 #[tauri::command]
-pub fn git_sync_pull() -> Result<GitSyncActionResult, String> {
-    let (data, repo_path) = require_configured_repo()?;
-    let remote = data.settings.git_sync_remote.trim();
-    let branch = branch_name(&repo_path, &data.settings)?;
-    let result = git(&repo_path, &["pull", "--ff-only", remote, &branch])?;
-    Ok(to_action_result(result))
+pub async fn git_sync_pull() -> Result<GitSyncActionResult, String> {
+    blocking(|| {
+        let (data, repo_path) = require_configured_repo()?;
+        let remote = configured_remote(&data.settings)?;
+        let branch = branch_name(&repo_path, &data.settings)?;
+        let result = git(&repo_path, &["pull", "--ff-only", &remote, &branch])?;
+        Ok(to_action_result(result))
+    })
+    .await
 }
 
 #[tauri::command]
-pub fn git_sync_push() -> Result<GitSyncActionResult, String> {
-    let (data, repo_path) = require_configured_repo()?;
-    export_snapshot(&repo_path, &data)?;
-    let remote = data.settings.git_sync_remote.trim();
-    let branch = branch_name(&repo_path, &data.settings)?;
-    let result = git(&repo_path, &["push", remote, &format!("HEAD:{}", branch)])?;
-    Ok(to_action_result(result))
+pub async fn git_sync_push() -> Result<GitSyncActionResult, String> {
+    blocking(|| {
+        let (data, repo_path) = require_configured_repo()?;
+        export_snapshot(&repo_path, &data)?;
+        let remote = configured_remote(&data.settings)?;
+        let branch = branch_name(&repo_path, &data.settings)?;
+        let result = git(&repo_path, &["push", &remote, &format!("HEAD:{}", branch)])?;
+        Ok(to_action_result(result))
+    })
+    .await
 }
 
 #[tauri::command]
-pub fn git_sync_commit(input: GitSyncCommitInput) -> Result<GitSyncActionResult, String> {
+pub async fn git_sync_commit(input: GitSyncCommitInput) -> Result<GitSyncActionResult, String> {
+    blocking(move || git_sync_commit_sync(input)).await
+}
+
+fn git_sync_commit_sync(input: GitSyncCommitInput) -> Result<GitSyncActionResult, String> {
     let (data, repo_path) = require_configured_repo()?;
     export_snapshot(&repo_path, &data)?;
 
@@ -172,10 +244,14 @@ pub fn git_sync_commit(input: GitSyncCommitInput) -> Result<GitSyncActionResult,
 }
 
 #[tauri::command]
-pub fn git_sync_run() -> Result<GitSyncRunResult, String> {
+pub async fn git_sync_run() -> Result<GitSyncRunResult, String> {
+    blocking(git_sync_run_sync).await
+}
+
+fn git_sync_run_sync() -> Result<GitSyncRunResult, String> {
     let (data, repo_path) = require_configured_repo()?;
 
-    let remote = data.settings.git_sync_remote.trim().to_string();
+    let remote = configured_remote(&data.settings)?;
     let branch = branch_name(&repo_path, &data.settings)?;
     let mut steps = Vec::new();
     let mut combined_output = String::new();
@@ -191,7 +267,10 @@ pub fn git_sync_run() -> Result<GitSyncRunResult, String> {
     if behind_before_pull > 0 {
         let pull = git(&repo_path, &["pull", "--ff-only", &remote, &branch])?;
         append_output(&mut combined_output, &pull);
-        steps.push(format!("Pulled {} commit(s) from {}/{}", behind_before_pull, remote, branch));
+        steps.push(format!(
+            "Pulled {} commit(s) from {}/{}",
+            behind_before_pull, remote, branch
+        ));
     }
 
     let status = git(&repo_path, &["status", "--short", EXPORT_DIR])?;
@@ -213,7 +292,10 @@ pub fn git_sync_run() -> Result<GitSyncRunResult, String> {
     if ahead_after_commit > 0 {
         let push = git(&repo_path, &["push", &remote, &format!("HEAD:{}", branch)])?;
         append_output(&mut combined_output, &push);
-        steps.push(format!("Pushed {} commit(s) to {}/{}", ahead_after_commit, remote, branch));
+        steps.push(format!(
+            "Pushed {} commit(s) to {}/{}",
+            ahead_after_commit, remote, branch
+        ));
     } else {
         steps.push("Nothing to push".to_string());
     }
@@ -258,10 +340,16 @@ fn require_configured_repo() -> Result<(crate::models::AppData, PathBuf), String
 
 fn ensure_repo_exists(repo_path: &Path) -> Result<(), String> {
     if !repo_path.exists() {
-        return Err(format!("Git sync repository does not exist: {}", repo_path.display()));
+        return Err(format!(
+            "Git sync repository does not exist: {}",
+            repo_path.display()
+        ));
     }
     if !repo_path.join(".git").exists() {
-        return Err(format!("Directory is not a git repository: {}", repo_path.display()));
+        return Err(format!(
+            "Directory is not a git repository: {}",
+            repo_path.display()
+        ));
     }
     Ok(())
 }
@@ -273,6 +361,7 @@ fn branch_name(repo_path: &Path, settings: &AppSettings) -> Result<String, Strin
         .map(str::trim)
         .filter(|branch| !branch.is_empty())
     {
+        validate_git_branch(branch)?;
         return Ok(branch.to_string());
     }
     current_branch(repo_path)?.ok_or_else(|| "Could not determine current git branch".to_string())
@@ -288,12 +377,24 @@ fn current_branch(repo_path: &Path) -> Result<Option<String>, String> {
     }
 }
 
-fn ahead_behind(repo_path: &Path, remote: &str, branch: Option<&str>) -> Result<(u32, u32), String> {
+fn ahead_behind(
+    repo_path: &Path,
+    remote: &str,
+    branch: Option<&str>,
+) -> Result<(u32, u32), String> {
     let Some(branch) = branch else {
         return Ok((0, 0));
     };
     let remote_ref = format!("{}/{}", remote, branch);
-    let result = git(repo_path, &["rev-list", "--left-right", "--count", &format!("HEAD...{}", remote_ref)])?;
+    let result = git(
+        repo_path,
+        &[
+            "rev-list",
+            "--left-right",
+            "--count",
+            &format!("HEAD...{}", remote_ref),
+        ],
+    )?;
     let mut parts = result.stdout.split_whitespace();
     let ahead = parts.next().and_then(|n| n.parse().ok()).unwrap_or(0);
     let behind = parts.next().and_then(|n| n.parse().ok()).unwrap_or(0);
@@ -304,7 +405,7 @@ fn export_snapshot(repo_path: &Path, data: &AppData) -> Result<(), String> {
     let export_dir = repo_path.join(EXPORT_DIR);
     fs::create_dir_all(&export_dir).map_err(|e| e.to_string())?;
 
-    let sanitized = sanitize_app_data(data);
+    let sanitized = sanitize_app_data(data)?;
     let data_json = serde_json::to_string_pretty(&sanitized).map_err(|e| e.to_string())?;
     // Audit-4 L1: route both writes through atomic_write so a crash
     // during the export can't leave a half-written data.json or
@@ -321,7 +422,7 @@ fn export_snapshot(repo_path: &Path, data: &AppData) -> Result<(), String> {
     Ok(())
 }
 
-fn sanitize_app_data(data: &AppData) -> AppData {
+fn sanitize_app_data(data: &AppData) -> Result<AppData, String> {
     let mut sanitized = data.clone();
     for cred in &mut sanitized.credentials {
         match &cred.kind {
@@ -338,12 +439,14 @@ fn sanitize_app_data(data: &AppData) -> AppData {
                 cred.kind = CredentialKind::SshKey {
                     private_key_path: private_key_path.clone(),
                     private_key: None,
-                    passphrase: keychain::get_passphrase(&cred.id).map(|_| String::from("[redacted]")),
+                    passphrase: keychain::snapshot_for_credential(&cred.id)?
+                        .passphrase
+                        .map(|_| String::from("[redacted]")),
                 };
             }
         }
     }
-    sanitized
+    Ok(sanitized)
 }
 
 fn render_summary(data: &AppData) -> String {
@@ -372,7 +475,11 @@ fn git(repo_path: &Path, args: &[&str]) -> Result<GitOutput, String> {
     let stderr = String::from_utf8_lossy(&output.stderr).to_string();
     let status = output.status.code().unwrap_or(-1);
     if output.status.success() {
-        Ok(GitOutput { stdout, stderr, status })
+        Ok(GitOutput {
+            stdout,
+            stderr,
+            status,
+        })
     } else {
         Err(format!("git {} failed: {}", args.join(" "), stderr.trim()))
     }
@@ -413,7 +520,7 @@ fn append_output(target: &mut String, result: &GitOutput) {
         return;
     }
     if !target.is_empty() {
-        target.push_str("\n");
+        target.push('\n');
     }
     target.push_str(&next);
 }
@@ -447,7 +554,7 @@ mod tests {
             is_private: false,
         });
 
-        let sanitized = sanitize_app_data(&data);
+        let sanitized = sanitize_app_data(&data).unwrap();
         match &sanitized.credentials[0].kind {
             CredentialKind::Password { password } => assert_eq!(password, "[redacted]"),
             _ => panic!("expected password credential"),
@@ -460,13 +567,22 @@ mod tests {
 
     #[test]
     fn test_parse_status_path_extracts_relative_path() {
-        assert_eq!(parse_status_path(" M .ssix-sync/data.json"), Some(".ssix-sync/data.json".into()));
+        assert_eq!(
+            parse_status_path(" M .ssix-sync/data.json"),
+            Some(".ssix-sync/data.json".into())
+        );
     }
 
     #[test]
     fn test_render_summary_mentions_counts() {
         let mut data = AppData::default();
-        data.connections.push(Connection::new("prod".into(), "host".into(), 22, None, ConnectionKind::Direct));
+        data.connections.push(Connection::new(
+            "prod".into(),
+            "host".into(),
+            22,
+            None,
+            ConnectionKind::Direct,
+        ));
         let summary = render_summary(&data);
         assert!(summary.contains("Connections: 1"));
     }
@@ -477,7 +593,10 @@ mod tests {
             git_sync_repo_path: Some(" /tmp/repo ".into()),
             ..AppSettings::default()
         };
-        assert_eq!(configured_repo_path(&settings), Some(PathBuf::from("/tmp/repo")));
+        assert_eq!(
+            configured_repo_path(&settings),
+            Some(PathBuf::from("/tmp/repo"))
+        );
     }
 
     #[test]
@@ -492,5 +611,68 @@ mod tests {
             },
         );
         assert_eq!(output, "ok\nwarn");
+    }
+
+    #[test]
+    fn validate_git_remote_accepts_names_and_urls() {
+        for ok in [
+            "origin",
+            "upstream",
+            "git@github.com:me/cfg.git",
+            "https://github.com/me/cfg.git",
+            "ssh://git@host:2222/me/cfg.git",
+            "/srv/git/cfg.git",
+            "/Users/Greg B/sync.git",
+        ] {
+            assert!(validate_git_remote(ok).is_ok(), "{} should be valid", ok);
+        }
+    }
+
+    #[test]
+    fn validate_git_remote_rejects_options_and_control_characters() {
+        for bad in [
+            "",
+            "   ",
+            "-f",
+            "--upload-pack=evil",
+            "tab\there",
+            "nl\nhere",
+        ] {
+            assert!(
+                validate_git_remote(bad).is_err(),
+                "{:?} should be rejected",
+                bad
+            );
+        }
+    }
+
+    #[test]
+    fn validate_git_branch_accepts_ordinary_names() {
+        for ok in ["main", "feature/x-1", "release-2.0", "user@host"] {
+            assert!(validate_git_branch(ok).is_ok(), "{} should be valid", ok);
+        }
+    }
+
+    #[test]
+    fn validate_git_branch_rejects_options_and_bad_refs() {
+        for bad in [
+            "",
+            "   ",
+            "-f",
+            "--upload-pack=evil",
+            "a b",
+            "a..b",
+            "x.lock",
+            "trailing/",
+            "has:colon",
+            "star*",
+            "tab\there",
+        ] {
+            assert!(
+                validate_git_branch(bad).is_err(),
+                "{:?} should be rejected",
+                bad
+            );
+        }
     }
 }

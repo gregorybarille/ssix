@@ -1,4 +1,3 @@
-import React from "react";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import {
   render,
@@ -10,12 +9,50 @@ import {
 import userEvent from "@testing-library/user-event";
 import { CredentialForm } from "@/components/CredentialForm";
 import { ConnectionForm } from "@/components/ConnectionForm";
+import { invoke } from "@/lib/tauri";
+
+vi.mock("@/lib/tauri", () => ({
+  invoke: vi.fn(),
+}));
 
 beforeEach(() => {
   cleanup();
+  vi.clearAllMocks();
 });
 
 describe("Unsaved-changes guard — CredentialForm", () => {
+  it("closes silently when editing an existing credential without changes", async () => {
+    // Edit mode fetches the redacted credential's secrets on open; the
+    // guard baseline must follow the prefilled values.
+    vi.mocked(invoke).mockResolvedValueOnce({ passphrase: "pp" });
+    const onOpenChange = vi.fn();
+    render(
+      <CredentialForm
+        open
+        onOpenChange={onOpenChange}
+        onSubmit={vi.fn()}
+        credential={{
+          id: "k1",
+          name: "deploy",
+          username: "deploy",
+          type: "ssh_key",
+          private_key_path: "/home/u/.ssh/id_ed25519",
+        }}
+      />,
+    );
+    await waitFor(() =>
+      expect(screen.getByTestId("credential-form")).toHaveAttribute(
+        "data-secrets-state",
+        "loaded",
+      ),
+    );
+    expect(screen.getByLabelText(/credential name/i)).toHaveValue("deploy");
+    expect(screen.getByLabelText(/passphrase/i)).toHaveValue("pp");
+    fireEvent.click(screen.getByRole("button", { name: /cancel/i }));
+    expect(screen.queryByRole("dialog", { name: /discard unsaved changes/i })).toBeNull();
+    expect(onOpenChange).toHaveBeenCalledWith(false);
+  });
+
   it("closes silently when no fields have been edited", () => {
     const onOpenChange = vi.fn();
     render(
@@ -159,6 +196,36 @@ describe("Unsaved-changes guard — CredentialForm", () => {
 });
 
 describe("Unsaved-changes guard — ConnectionForm", () => {
+  it("closes silently when editing an existing connection without changes", async () => {
+    // Regression: the baseline used to be captured from the previous
+    // render's (empty) state, so opening Edit and pressing Cancel right
+    // away prompted to discard changes nobody had made.
+    const onOpenChange = vi.fn();
+    render(
+      <ConnectionForm
+        open
+        onOpenChange={onOpenChange}
+        credentials={[]}
+        onSubmit={vi.fn()}
+        connection={{
+          id: "c1",
+          name: "prod-web",
+          host: "10.0.0.5",
+          port: 2222,
+          type: "direct",
+          tags: ["prod"],
+          remote_path: "/srv",
+        }}
+      />,
+    );
+    await waitFor(() =>
+      expect(screen.getByLabelText(/connection name/i)).toHaveValue("prod-web"),
+    );
+    fireEvent.click(screen.getByRole("button", { name: /cancel/i }));
+    expect(screen.queryByRole("dialog", { name: /discard unsaved changes/i })).toBeNull();
+    expect(onOpenChange).toHaveBeenCalledWith(false);
+  });
+
   it("closes silently when no fields have been edited", () => {
     const onOpenChange = vi.fn();
     render(
@@ -212,5 +279,21 @@ describe("Unsaved-changes guard — ConnectionForm", () => {
     fireEvent.keyDown(window, { key: "Escape" });
     await screen.findByRole("dialog", { name: /discard unsaved changes/i });
     expect(onOpenChange).not.toHaveBeenCalled();
+  });
+});
+
+describe("Inline form autofocus", () => {
+  it("does not steal focus from a field the user already moved into", async () => {
+    const raf = vi
+      .spyOn(window, "requestAnimationFrame")
+      .mockImplementation((cb) => window.setTimeout(() => cb(0), 20));
+    render(
+      <CredentialForm inline open onOpenChange={vi.fn()} onSubmit={vi.fn()} />,
+    );
+    const username = screen.getByLabelText(/username/i);
+    username.focus();
+    await new Promise((r) => setTimeout(r, 40));
+    expect(document.activeElement).toBe(username);
+    raf.mockRestore();
   });
 });

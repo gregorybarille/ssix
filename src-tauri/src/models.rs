@@ -67,6 +67,24 @@ impl Credential {
     }
 }
 
+/// Secret material belonging to one credential.
+///
+/// Lives in `secrets.json`, never in `data.json`. The frontend only sees it
+/// through `get_credential_secrets`, which the credential edit form calls
+/// when it opens; `get_credentials`, `add_credential` and
+/// `update_credential` all return redacted credentials.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
+pub struct CredentialSecrets {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub password: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub passphrase: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub private_key: Option<String>,
+}
+
 /// Tunnel connection kinds.
 ///
 /// `PortForward` opens a local TCP listener on `127.0.0.1:local_port` and forwards
@@ -153,7 +171,13 @@ pub struct Connection {
 }
 
 impl Connection {
-    pub fn new(name: String, host: String, port: u16, credential_id: Option<String>, kind: ConnectionKind) -> Self {
+    pub fn new(
+        name: String,
+        host: String,
+        port: u16,
+        credential_id: Option<String>,
+        kind: ConnectionKind,
+    ) -> Self {
         Self {
             id: Uuid::new_v4().to_string(),
             name,
@@ -167,6 +191,54 @@ impl Connection {
             remote_path: None,
             tags: Vec::new(),
             color: None,
+        }
+    }
+
+    /// Every credential id this connection refers to: the destination
+    /// credential and, for tunnels, the gateway credential.
+    pub fn credential_ids(&self) -> impl Iterator<Item = &str> {
+        self.credential_id
+            .as_deref()
+            .into_iter()
+            .chain(self.kind.gateway_credential_id())
+            .filter(|id| !id.is_empty())
+    }
+}
+
+impl ConnectionKind {
+    /// The gateway's credential id, for the kinds that go through one.
+    /// This match and `gateway_credential_id_mut`'s are exhaustive on
+    /// purpose: a new kind must say whether it has a gateway credential.
+    fn gateway_credential_id(&self) -> Option<&str> {
+        match self {
+            ConnectionKind::PortForward {
+                gateway_credential_id,
+                ..
+            }
+            | ConnectionKind::JumpShell {
+                gateway_credential_id,
+                ..
+            } => Some(gateway_credential_id),
+            ConnectionKind::LegacyTunnel {
+                gateway_credential_id,
+                ..
+            } => gateway_credential_id.as_deref(),
+            ConnectionKind::Direct => None,
+        }
+    }
+
+    /// Mutable gateway credential id of a current tunnel kind.
+    fn gateway_credential_id_mut(&mut self) -> Option<&mut String> {
+        match self {
+            ConnectionKind::PortForward {
+                gateway_credential_id,
+                ..
+            }
+            | ConnectionKind::JumpShell {
+                gateway_credential_id,
+                ..
+            } => Some(gateway_credential_id),
+            ConnectionKind::LegacyTunnel { .. } | ConnectionKind::Direct => None,
         }
     }
 }
@@ -212,13 +284,27 @@ pub struct AppSettings {
     pub git_sync_branch: Option<String>,
 }
 
-fn default_font_size() -> u8 { 14 }
-fn default_font_family() -> String { "JetBrains Mono".to_string() }
-fn default_color_scheme() -> String { "blue".to_string() }
-fn default_theme() -> String { "dark".to_string() }
-fn default_layout() -> String { "list".to_string() }
-fn default_open_mode() -> String { "tab".to_string() }
-fn default_git_remote() -> String { "origin".to_string() }
+fn default_font_size() -> u8 {
+    14
+}
+fn default_font_family() -> String {
+    "JetBrains Mono".to_string()
+}
+fn default_color_scheme() -> String {
+    "blue".to_string()
+}
+fn default_theme() -> String {
+    "dark".to_string()
+}
+fn default_layout() -> String {
+    "list".to_string()
+}
+fn default_open_mode() -> String {
+    "tab".to_string()
+}
+fn default_git_remote() -> String {
+    "origin".to_string()
+}
 
 impl Default for AppSettings {
     fn default() -> Self {
@@ -260,13 +346,13 @@ pub struct AppData {
 /// Current `AppData.schema_version` written by this build.
 ///
 /// Version history:
-///  - 0 — implicit; pre-Phase-6b files with no `schema_version` field.
-///        Treated identically to v1 in-memory; `migrate_legacy_kinds`
-///        already covered the LegacyTunnel → JumpShell rewrite that
-///        was the only on-disk shape change to date.
-///  - 1 — first explicit stamp. No data shape change vs v0; the
-///        version is recorded so future migrations can branch on
-///        "before/after this point" without ambiguity.
+/// - 0 — implicit; pre-Phase-6b files with no `schema_version` field.
+///   Treated identically to v1 in-memory; `migrate_legacy_kinds`
+///   already covered the LegacyTunnel → JumpShell rewrite that
+///   was the only on-disk shape change to date.
+/// - 1 — first explicit stamp. No data shape change vs v0; the
+///   version is recorded so future migrations can branch on
+///   "before/after this point" without ambiguity.
 pub const CURRENT_SCHEMA_VERSION: u32 = 1;
 
 impl Default for AppData {
@@ -288,9 +374,16 @@ impl AppData {
     /// Migration order matters: `migrate_legacy_kinds` runs first
     /// regardless of stamp because pre-stamp files (v0) may carry the
     /// LegacyTunnel variant that v1+ readers must not see.
-    pub fn migrate_to_current(&mut self) {
+    ///
+    /// Returns whether anything changed, the version stamp included, so
+    /// `storage::persist_migrations` knows the file needs saving. A future
+    /// `if self.schema_version < N` branch needs no extra bookkeeping: the
+    /// stamp moving is itself a change.
+    pub fn migrate_to_current(&mut self) -> bool {
+        let loaded_version = self.schema_version;
         // Step 1: legacy variants are dropped on every load (cheap, idempotent).
-        self.migrate_legacy_kinds();
+        let migrated = self.migrate_legacy_kinds();
+        let dropped = self.drop_dangling_credential_refs();
 
         // Step 2: future-proofing scaffold. Add branches here as the
         // schema evolves:
@@ -301,13 +394,56 @@ impl AppData {
         //   if self.schema_version < 3 { … }
 
         self.schema_version = CURRENT_SCHEMA_VERSION;
+        migrated || dropped || loaded_version != CURRENT_SCHEMA_VERSION
+    }
+
+    /// Clear credential references whose credential no longer exists.
+    /// Builds before `delete_credential` refused credentials in use left
+    /// them behind; cleared, the connection form flags the empty picker
+    /// inline instead of the save failing on an id the user cannot see.
+    /// Returns whether any reference was cleared.
+    pub fn drop_dangling_credential_refs(&mut self) -> bool {
+        let mut any = false;
+        let known: std::collections::HashSet<&str> =
+            self.credentials.iter().map(|c| c.id.as_str()).collect();
+        for conn in &mut self.connections {
+            let mut dropped = false;
+            if conn
+                .credential_id
+                .as_deref()
+                .is_some_and(|id| !known.contains(id))
+            {
+                conn.credential_id = None;
+                dropped = true;
+            }
+            if let Some(gateway) = conn.kind.gateway_credential_id_mut() {
+                if !gateway.is_empty() && !known.contains(gateway.as_str()) {
+                    gateway.clear();
+                    dropped = true;
+                }
+            }
+            any |= dropped;
+            if dropped {
+                crate::logs::log_local(
+                    "warn",
+                    "migration",
+                    format!(
+                        "Connection {} referred to a deleted credential; it needs a new one",
+                        conn.id
+                    ),
+                );
+            }
+        }
+        any
     }
 
     /// Migrate legacy `ConnectionKind::LegacyTunnel` entries to `JumpShell`.
     /// `LegacyTunnel.gateway_credential_id` was optional; if absent, we drop the
     /// connection's tunnel-ness and convert it to `Direct` (with a warning logged)
     /// since `JumpShell` requires a gateway credential.
-    pub fn migrate_legacy_kinds(&mut self) {
+    /// Returns whether any connection was migrated.
+    pub fn migrate_legacy_kinds(&mut self) -> bool {
+        let mut any = false;
         for conn in &mut self.connections {
             if let ConnectionKind::LegacyTunnel {
                 gateway_host,
@@ -317,6 +453,7 @@ impl AppData {
                 destination_port,
             } = &conn.kind
             {
+                any = true;
                 conn.kind = match gateway_credential_id {
                     Some(cred_id) => ConnectionKind::JumpShell {
                         gateway_host: gateway_host.clone(),
@@ -326,16 +463,20 @@ impl AppData {
                         destination_port: *destination_port,
                     },
                     None => {
-                        eprintln!(
-                            "[migration] Connection {} had legacy tunnel without gateway \
-                             credential; converting to Direct",
-                            conn.id
+                        crate::logs::log_local(
+                            "warn",
+                            "migration",
+                            format!(
+                                "Connection {} had legacy tunnel without gateway credential; converting to Direct",
+                                conn.id
+                            ),
                         );
                         ConnectionKind::Direct
                     }
                 };
             }
         }
+        any
     }
 }
 
@@ -396,6 +537,56 @@ mod tests {
         }"#;
         let parsed: ConnectionKind = serde_json::from_str(json).unwrap();
         assert!(matches!(parsed, ConnectionKind::LegacyTunnel { .. }));
+    }
+
+    #[test]
+    fn test_dangling_credential_refs_are_cleared_on_load() {
+        let kept = Credential::new(
+            "kept".into(),
+            "root".into(),
+            CredentialKind::Password {
+                password: String::new(),
+            },
+        );
+        let jump = ConnectionKind::JumpShell {
+            gateway_host: "gw".into(),
+            gateway_port: 22,
+            gateway_credential_id: "deleted-gateway".into(),
+            destination_host: "db".into(),
+            destination_port: 22,
+        };
+        let mut data = AppData {
+            credentials: vec![kept.clone()],
+            connections: vec![
+                Connection::new(
+                    "a".into(),
+                    "h".into(),
+                    22,
+                    Some("deleted".into()),
+                    ConnectionKind::Direct,
+                ),
+                Connection::new("b".into(), "db".into(), 22, Some(kept.id.clone()), jump),
+            ],
+            ..AppData::default()
+        };
+        data.migrate_to_current();
+
+        assert_eq!(data.connections[0].credential_id, None);
+        assert_eq!(
+            data.connections[1].credential_id.as_deref(),
+            Some(kept.id.as_str())
+        );
+        match &data.connections[1].kind {
+            ConnectionKind::JumpShell {
+                gateway_credential_id,
+                ..
+            } => assert_eq!(gateway_credential_id, ""),
+            other => panic!("expected a jump shell, got {other:?}"),
+        }
+        assert_eq!(
+            data.connections[1].credential_ids().collect::<Vec<_>>(),
+            vec![kept.id.as_str()]
+        );
     }
 
     #[test]
@@ -551,7 +742,8 @@ mod tests {
     #[test]
     fn test_ssh_key_legacy_path_only_deserializes() {
         // Legacy JSON: SshKey with private_key_path as required string and no private_key field.
-        let json = r#"{"type":"ssh_key","private_key_path":"/home/u/.ssh/id_rsa","passphrase":null}"#;
+        let json =
+            r#"{"type":"ssh_key","private_key_path":"/home/u/.ssh/id_rsa","passphrase":null}"#;
         let kind: CredentialKind = serde_json::from_str(json).unwrap();
         match kind {
             CredentialKind::SshKey {
@@ -605,9 +797,7 @@ mod tests {
 
     #[test]
     fn test_connection_with_tags_and_color_roundtrip() {
-        let mut c = Connection::new(
-            "prod".into(), "h".into(), 22, None, ConnectionKind::Direct,
-        );
+        let mut c = Connection::new("prod".into(), "h".into(), 22, None, ConnectionKind::Direct);
         c.tags = vec!["prod".into(), "us-east".into()];
         c.color = Some("violet".into());
         let json = serde_json::to_string(&c).unwrap();
@@ -620,9 +810,7 @@ mod tests {
 
     #[test]
     fn test_connection_color_omitted_when_none() {
-        let c = Connection::new(
-            "prod".into(), "h".into(), 22, None, ConnectionKind::Direct,
-        );
+        let c = Connection::new("prod".into(), "h".into(), 22, None, ConnectionKind::Direct);
         let json = serde_json::to_string(&c).unwrap();
         assert!(!json.contains("color"));
     }
@@ -638,20 +826,27 @@ mod tests {
         assert_eq!(s.default_open_mode, "tab");
         assert_eq!(s.git_sync_remote, "origin");
         assert!(s.git_sync_repo_path.is_none());
-        assert!(!s.auto_copy_selection, "legacy data must default to opt-in auto-copy=false");
+        assert!(
+            !s.auto_copy_selection,
+            "legacy data must default to opt-in auto-copy=false"
+        );
     }
 
     #[test]
     fn test_app_settings_default_auto_copy_selection_is_false() {
         let s = AppSettings::default();
-        assert!(!s.auto_copy_selection,
-            "default must be off — selecting text MUST NOT silently overwrite the clipboard");
+        assert!(
+            !s.auto_copy_selection,
+            "default must be off — selecting text MUST NOT silently overwrite the clipboard"
+        );
     }
 
     #[test]
     fn test_app_settings_auto_copy_selection_roundtrip() {
-        let mut s = AppSettings::default();
-        s.auto_copy_selection = true;
+        let s = AppSettings {
+            auto_copy_selection: true,
+            ..AppSettings::default()
+        };
         let json = serde_json::to_string(&s).unwrap();
         assert!(json.contains(r#""auto_copy_selection":true"#));
         let back: AppSettings = serde_json::from_str(&json).unwrap();
@@ -739,10 +934,7 @@ mod tests {
     fn test_app_data_roundtrip_preserves_schema_version() {
         let data = AppData::default();
         let json = serde_json::to_string(&data).unwrap();
-        assert!(json.contains(&format!(
-            r#""schema_version":{}"#,
-            CURRENT_SCHEMA_VERSION
-        )));
+        assert!(json.contains(&format!(r#""schema_version":{}"#, CURRENT_SCHEMA_VERSION)));
         let back: AppData = serde_json::from_str(&json).unwrap();
         assert_eq!(back.schema_version, CURRENT_SCHEMA_VERSION);
     }

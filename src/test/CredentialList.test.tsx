@@ -43,6 +43,21 @@ describe("CredentialList", () => {
     expect(screen.getByText("SSH Key")).toBeInTheDocument();
   });
 
+  it("marks a redacted ssh_key row without a path as inline, and shows the path otherwise", () => {
+    render(
+      <CredentialList
+        credentials={[
+          mockCredentials[0],
+          { id: "3", name: "pasted-key", username: "deploy", type: "ssh_key" },
+        ]}
+        onEdit={vi.fn()}
+        onDelete={vi.fn()}
+      />
+    );
+    expect(screen.getByText(/\/home\/user\/\.ssh\/id_rsa/)).toBeInTheDocument();
+    expect(screen.getByText(/· inline/)).toBeInTheDocument();
+  });
+
   it("shows Password badge for password credentials", () => {
     render(
       <CredentialList

@@ -1,3 +1,5 @@
+use crate::commands::blocking;
+use crate::commands::git_sync::{validate_git_branch, validate_git_remote};
 use crate::models::AppSettings;
 use crate::storage::{load_data, with_data_mut};
 
@@ -8,7 +10,17 @@ pub fn get_settings() -> Result<AppSettings, String> {
 }
 
 #[tauri::command]
-pub fn save_settings(settings: AppSettings) -> Result<AppSettings, String> {
+pub async fn save_settings(settings: AppSettings) -> Result<AppSettings, String> {
+    blocking(move || save_settings_sync(settings)).await
+}
+
+fn save_settings_sync(settings: AppSettings) -> Result<AppSettings, String> {
+    validate_git_remote(&settings.git_sync_remote)?;
+    if let Some(branch) = settings.git_sync_branch.as_deref() {
+        if !branch.trim().is_empty() {
+            validate_git_branch(branch)?;
+        }
+    }
     with_data_mut(|data| {
         data.settings = settings.clone();
         Ok(())
@@ -18,7 +30,7 @@ pub fn save_settings(settings: AppSettings) -> Result<AppSettings, String> {
 
 #[cfg(test)]
 mod tests {
-    use crate::models::AppSettings;
+    use super::*;
 
     #[test]
     fn test_default_settings() {
@@ -34,5 +46,36 @@ mod tests {
         let json = serde_json::to_string(&settings).unwrap();
         assert!(json.contains("font_size"));
         assert!(json.contains("color_scheme"));
+    }
+
+    /// A remote or branch that git would parse as an option must never be
+    /// persisted: it would be passed to `git fetch`/`push` verbatim.
+    #[test]
+    fn save_settings_rejects_option_like_git_names() {
+        let s = AppSettings {
+            git_sync_remote: "--upload-pack=touch /tmp/pwned".into(),
+            ..AppSettings::default()
+        };
+        let err = save_settings_sync(s).unwrap_err();
+        assert!(err.contains("Git remote"), "got: {}", err);
+
+        let s = AppSettings {
+            git_sync_branch: Some("-feature".into()),
+            ..AppSettings::default()
+        };
+        let err = save_settings_sync(s).unwrap_err();
+        assert!(err.contains("Git branch"), "got: {}", err);
+    }
+
+    /// URL remotes are valid `git fetch` arguments and must keep working.
+    #[test]
+    fn save_settings_accepts_url_remotes() {
+        for remote in ["git@github.com:me/cfg.git", "https://github.com/me/cfg.git"] {
+            assert!(
+                validate_git_remote(remote).is_ok(),
+                "{} should be accepted",
+                remote
+            );
+        }
     }
 }

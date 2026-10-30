@@ -1,5 +1,6 @@
 import { useActionState, useState, useEffect, useRef, useId } from "react";
-import { Credential } from "@/types";
+import { Credential, CredentialSecrets, UpdateCredentialPayload } from "@/types";
+import { useCredentialsStore } from "@/store/useCredentialsStore";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
 import { PasswordInput } from "./ui/password-input";
@@ -17,20 +18,24 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "./ui/tabs";
 import { GenerateKeyDialog, GeneratedKey, KeyStorageMode } from "./GenerateKeyDialog";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { useUnsavedChangesGuard } from "@/hooks/useUnsavedChangesGuard";
+import { useFieldErrors } from "@/hooks/useFieldErrors";
 import { pickFile } from "@/lib/dialog";
+import { isTextInput } from "@/lib/focus";
+import { credentialFieldErrors, type CredentialFieldKey } from "@/lib/credentialValidation";
+import { submitWithoutReset } from "@/lib/formSubmit";
 import { FolderOpen } from "lucide-react";
 
 interface CredentialFormProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   credential?: Credential | null;
-  onSubmit: (data: Omit<Credential, "id"> | Credential) => Promise<void>;
+  onSubmit: (data: Omit<Credential, "id"> | UpdateCredentialPayload) => Promise<void>;
   inline?: boolean;
 }
 
 type KeySource = "path" | "inline";
 
-function serializeCredentialState(s: {
+type CredentialFormState = {
   name: string;
   username: string;
   credType: "password" | "ssh_key";
@@ -39,7 +44,57 @@ function serializeCredentialState(s: {
   privateKeyPath: string;
   privateKey: string;
   passphrase: string;
-}): string {
+};
+
+/**
+ * Whether the saved secrets of the credential being edited are available.
+ * Listed credentials are redacted, so the form fetches them on open.
+ */
+type SecretsState = "none" | "loading" | "loaded" | "error";
+
+/**
+ * Form values for a freshly opened dialog: defaults, or the saved credential
+ * plus its secrets once `get_credential_secrets` has returned them (`null`
+ * while they are still loading, so the secret fields start empty).
+ */
+function initialCredentialState(
+  credential: Credential | null | undefined,
+  secrets: CredentialSecrets | null,
+): CredentialFormState {
+  if (!credential) {
+    return {
+      name: "",
+      username: "",
+      credType: "password",
+      password: "",
+      keySource: "path",
+      privateKeyPath: "",
+      privateKey: "",
+      passphrase: "",
+    };
+  }
+  return {
+    name: credential.name,
+    username: credential.username,
+    credType: credential.type,
+    password: secrets?.password ?? "",
+    // Inline wins when a key was fetched (legacy rows may hold both a path
+    // and an inline key); otherwise an ssh_key row without a path is inline.
+    keySource:
+      credential.type === "ssh_key" && (secrets?.private_key || !credential.private_key_path)
+        ? "inline"
+        : "path",
+    privateKeyPath: credential.private_key_path ?? "",
+    privateKey: secrets?.private_key ?? "",
+    passphrase: secrets?.passphrase ?? "",
+  };
+}
+
+function serializeSecrets(s: Pick<CredentialFormState, "password" | "keySource" | "privateKey" | "passphrase">): string {
+  return JSON.stringify([s.password, s.keySource, s.privateKey, s.passphrase]);
+}
+
+function serializeCredentialState(s: CredentialFormState): string {
   return JSON.stringify([
     s.name,
     s.username,
@@ -69,64 +124,74 @@ export function CredentialForm({
   const [passphrase, setPassphrase] = useState("");
   const [generatedPublicKey, setGeneratedPublicKey] = useState<string | null>(null);
   const [generateOpen, setGenerateOpen] = useState(false);
+  const fetchCredentialSecrets = useCredentialsStore((s) => s.fetchCredentialSecrets);
+  const [secretsState, setSecretsState] = useState<SecretsState>("none");
+  const [secretsError, setSecretsError] = useState<string | null>(null);
+  const secretsLoading = secretsState === "loading";
+  // Secret fields are locked while loading and after a failed fetch: in
+  // both cases the stored secrets are kept untouched on save.
+  const secretsLocked = secretsLoading || secretsState === "error";
+  // Snapshot of the secret fields as fetched; unchanged secrets are not
+  // sent back (`keep_secrets`), so they never travel over IPC needlessly.
+  const secretsBaselineRef = useRef<string>("");
   const inlineTitleId = useId();
   const inlineDescriptionId = useId();
   const firstFieldRef = useRef<HTMLInputElement | null>(null);
 
   // Inline per-field errors. Keys mirror the input identifiers.
-  type FieldKey = "name" | "username" | "key_path" | "key_inline";
-  const [fieldErrors, setFieldErrors] = useState<Partial<Record<FieldKey, string>>>({});
-  const clearFieldError = (key: FieldKey) =>
-    setFieldErrors((errs) => {
-      if (!errs[key]) return errs;
-      const next = { ...errs };
-      delete next[key];
-      return next;
-    });
+  const { fieldErrors, setFieldErrors, clearFieldError } = useFieldErrors<CredentialFieldKey>();
 
-  useEffect(() => {
-    if (credential) {
-      setName(credential.name);
-      setUsername(credential.username);
-      setCredType(credential.type);
-      setPassword(credential.password ?? "");
-      setPrivateKeyPath(credential.private_key_path ?? "");
-      setPrivateKey(credential.private_key ?? "");
-      setKeySource(credential.private_key ? "inline" : "path");
-      setPassphrase(credential.passphrase ?? "");
-    } else {
-      setName("");
-      setUsername("");
-      setCredType("password");
-      setPassword("");
-      setPrivateKeyPath("");
-      setPrivateKey("");
-      setKeySource("path");
-      setPassphrase("");
-    }
-    setGeneratedPublicKey(null);
-    setFieldErrors({});
-  }, [credential, open]);
-
-  // Snapshot baseline state for unsaved-changes detection. Recomputed
-  // whenever the dialog opens or the backing credential changes.
+  // Baseline for unsaved-changes detection, derived from the same values
+  // the effect writes into state so it never lags a render behind.
   const baselineRef = useRef<string>("");
   useEffect(() => {
-    const id = setTimeout(() => {
-      baselineRef.current = serializeCredentialState({
-        name,
-        username,
-        credType,
-        password,
-        keySource,
-        privateKeyPath,
-        privateKey,
-        passphrase,
-      });
-    }, 0);
-    return () => clearTimeout(id);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [credential, open]);
+    const init = initialCredentialState(credential, null);
+    setName(init.name);
+    setUsername(init.username);
+    setCredType(init.credType);
+    setPassword(init.password);
+    setPrivateKeyPath(init.privateKeyPath);
+    setPrivateKey(init.privateKey);
+    setKeySource(init.keySource);
+    setPassphrase(init.passphrase);
+    setGeneratedPublicKey(null);
+    setFieldErrors({});
+    setSecretsError(null);
+    baselineRef.current = serializeCredentialState(init);
+
+    if (!open || !credential) {
+      setSecretsState("none");
+      return;
+    }
+    // Edit mode: the listed credential is redacted, so fetch its secrets
+    // now and move the guard baseline to the prefilled values, so opening
+    // and closing without edits never asks to discard changes. The secret
+    // fields are disabled until this settles, so the user cannot type
+    // something the response would overwrite.
+    let cancelled = false;
+    setSecretsState("loading");
+    fetchCredentialSecrets(credential.id).then(
+      (secrets) => {
+        if (cancelled) return;
+        const loaded = initialCredentialState(credential, secrets);
+        setPassword(loaded.password);
+        setPrivateKey(loaded.privateKey);
+        setPassphrase(loaded.passphrase);
+        setKeySource(loaded.keySource);
+        baselineRef.current = serializeCredentialState(loaded);
+        secretsBaselineRef.current = serializeSecrets(loaded);
+        setSecretsState("loaded");
+      },
+      (err: unknown) => {
+        if (cancelled) return;
+        setSecretsError(String(err));
+        setSecretsState("error");
+      },
+    );
+    return () => {
+      cancelled = true;
+    };
+  }, [credential, open, fetchCredentialSecrets]);
 
   const currentSnapshot = serializeCredentialState({
     name,
@@ -140,6 +205,14 @@ export function CredentialForm({
   });
   const dirty =
     open && currentSnapshot !== baselineRef.current && baselineRef.current !== "";
+  // Edit mode keeps the stored secrets unless the user changed one of the
+  // secret fields after they loaded (a failed load always keeps them).
+  const keepSecrets =
+    !!credential &&
+    (secretsState === "error" ||
+      (secretsState === "loaded" &&
+        serializeSecrets({ password, keySource, privateKey, passphrase }) ===
+          secretsBaselineRef.current));
 
   const guard = useUnsavedChangesGuard(dirty);
   const requestCloseDialog = () => guard.requestClose(() => onOpenChange(false));
@@ -160,6 +233,9 @@ export function CredentialForm({
     if (!inline || !open) return;
     if (document.querySelector("[role='dialog']")) return;
     const id = window.requestAnimationFrame(() => {
+      // The frame can land after the user (or a test) has already moved
+      // into another field; never pull focus away from a text input.
+      if (isTextInput(document.activeElement)) return;
       firstFieldRef.current?.focus();
     });
     return () => window.cancelAnimationFrame(id);
@@ -187,39 +263,38 @@ export function CredentialForm({
   const initialSubmitState: SubmitState = { error: null };
   const [{ error }, submitAction, isSubmitting] = useActionState<SubmitState>(
     async () => {
+      // The submit button is disabled while the saved secrets load; this
+      // guards the implicit (Enter key) submission path as well.
+      if (secretsLoading) return { error: null };
+
       // Required-field preflight: collect all problems at once so the
       // user sees every issue inline instead of one-at-a-time.
-      const newFieldErrors: Partial<Record<FieldKey, string>> = {};
-      if (!name.trim()) newFieldErrors.name = "Credential name is required";
-      if (!username.trim()) newFieldErrors.username = "Username is required";
-      if (credType === "ssh_key") {
-        if (keySource === "path" && !privateKeyPath.trim()) {
-          newFieldErrors.key_path = "Private key path is required";
-        } else if (keySource === "inline" && !privateKey.trim()) {
-          newFieldErrors.key_inline = "Private key contents are required";
-        }
-      }
+      const newFieldErrors = credentialFieldErrors(
+        { name, username, type: credType, keySource, privateKeyPath, privateKey },
+        { keepSecrets },
+      );
       if (Object.keys(newFieldErrors).length > 0) {
         setFieldErrors(newFieldErrors);
         return { error: "Please fix the highlighted fields" };
       }
 
       try {
+        // With keepSecrets the backend ignores the secret fields, so only
+        // the non-secret shape is sent (the password key must exist for
+        // the tagged enum to deserialize).
         let kindFields: Partial<Credential>;
         if (credType === "password") {
-          kindFields = { password };
+          kindFields = { password: keepSecrets ? "" : password };
+        } else if (keySource === "path") {
+          kindFields = {
+            private_key_path: privateKeyPath,
+            passphrase: keepSecrets ? undefined : passphrase || undefined,
+          };
         } else {
-          if (keySource === "path") {
-            kindFields = {
-              private_key_path: privateKeyPath,
-              passphrase: passphrase || undefined,
-            };
-          } else {
-            kindFields = {
-              private_key: privateKey,
-              passphrase: passphrase || undefined,
-            };
-          }
+          kindFields = {
+            private_key: keepSecrets ? undefined : privateKey,
+            passphrase: keepSecrets ? undefined : passphrase || undefined,
+          };
         }
         const data: Omit<Credential, "id"> = {
           name,
@@ -228,7 +303,7 @@ export function CredentialForm({
           ...kindFields,
         };
         if (credential) {
-          await onSubmit({ ...data, id: credential.id });
+          await onSubmit({ ...data, id: credential.id, keep_secrets: keepSecrets });
         } else {
           await onSubmit(data);
         }
@@ -285,9 +360,10 @@ export function CredentialForm({
         )}
       </DialogHeader>
       <form
-        action={submitAction}
+        onSubmit={submitWithoutReset(submitAction)}
         className="flex flex-col flex-1 min-h-0"
         data-testid="credential-form"
+        data-secrets-state={secretsState}
         aria-labelledby={inline ? inlineTitleId : undefined}
         aria-describedby={inline ? inlineDescriptionId : undefined}
       >
@@ -336,6 +412,23 @@ export function CredentialForm({
             )}
           </div>
 
+          {secretsLoading && (
+            <p role="status" className="text-xs text-muted-foreground-soft">
+              Loading saved secrets…
+            </p>
+          )}
+          {secretsState === "error" && (
+            <p
+              role="alert"
+              id="credential-form-secrets-error"
+              className="text-xs text-destructive"
+              data-testid="credential-form-secrets-error"
+            >
+              Could not load the saved secrets: {secretsError}. They are kept
+              unchanged when you save; close and reopen the editor to change them.
+            </p>
+          )}
+
           <Tabs
             value={credType}
             onValueChange={(v) => setCredType(v as "password" | "ssh_key")}
@@ -357,45 +450,40 @@ export function CredentialForm({
                   autoComplete="new-password"
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
+                  disabled={secretsLocked}
+                  aria-busy={secretsLoading || undefined}
                   data-testid="credential-form-password"
                 />
               </div>
             </TabsContent>
             <TabsContent value="ssh_key" className="space-y-4 mt-4">
               <div className="flex items-center justify-between">
-                <div role="tablist" aria-label="Key source" className="inline-flex rounded-md border border-input p-0.5 bg-background">
-                  <button
-                    type="button"
-                    role="tab"
-                    aria-selected={keySource === "path"}
-                    onClick={() => setKeySource("path")}
-                    className={`px-3 py-1 text-xs rounded ${
-                      keySource === "path"
-                        ? "bg-accent text-accent-foreground"
-                        : "text-muted-foreground"
-                    }`}
-                  >
-                    Path
-                  </button>
-                  <button
-                    type="button"
-                    role="tab"
-                    aria-selected={keySource === "inline"}
-                    onClick={() => setKeySource("inline")}
-                    className={`px-3 py-1 text-xs rounded border-l ${
-                      keySource === "inline"
-                        ? "bg-accent text-accent-foreground border-l-transparent"
-                        : "text-muted-foreground border-border/60"
-                    } ${keySource === "path" ? "border-l-transparent" : ""}`}
-                  >
-                    Paste key
-                  </button>
-                </div>
+                <Tabs value={keySource} onValueChange={(v) => setKeySource(v as KeySource)}>
+                  <TabsList aria-label="Key source" className="h-8">
+                    <TabsTrigger
+                      value="path"
+                      className="text-xs px-3"
+                      disabled={secretsLocked}
+                      data-testid="credential-form-key-source-path"
+                    >
+                      Path
+                    </TabsTrigger>
+                    <TabsTrigger
+                      value="inline"
+                      className="text-xs px-3"
+                      disabled={secretsLocked}
+                      data-testid="credential-form-key-source-inline"
+                    >
+                      Paste key
+                    </TabsTrigger>
+                  </TabsList>
+                </Tabs>
                 <Button
                   type="button"
                   variant="outline"
                   size="sm"
                   onClick={() => setGenerateOpen(true)}
+                  disabled={secretsLocked}
                   data-testid="generate-key-open"
                 >
                   Generate key…
@@ -456,6 +544,9 @@ export function CredentialForm({
                       setPrivateKey(e.target.value);
                       clearFieldError("key_inline");
                     }}
+                    disabled={secretsLocked}
+                    aria-busy={secretsLoading || undefined}
+                    data-testid="credential-form-private-key"
                     aria-invalid={fieldErrors.key_inline ? true : undefined}
                     aria-describedby={[
                       fieldErrors.key_inline ? "cred-key-inline-error" : null,
@@ -484,6 +575,9 @@ export function CredentialForm({
                   autoComplete="new-password"
                   value={passphrase}
                   onChange={(e) => setPassphrase(e.target.value)}
+                  disabled={secretsLocked}
+                  aria-busy={secretsLoading || undefined}
+                  data-testid="credential-form-passphrase"
                 />
               </div>
               {generatedPublicKey && (
@@ -530,13 +624,14 @@ export function CredentialForm({
             variant="outline"
             onClick={requestCloseDialog}
             disabled={isSubmitting}
+            data-testid="credential-form-cancel"
           >
             Cancel
           </Button>
           <Button
             type="submit"
-            disabled={isSubmitting}
-            aria-busy={isSubmitting}
+            disabled={isSubmitting || secretsLoading}
+            aria-busy={isSubmitting || secretsLoading}
             data-testid="credential-form-submit"
             aria-describedby={visibleError ? "credential-form-error" : undefined}
           >

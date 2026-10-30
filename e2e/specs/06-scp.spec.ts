@@ -12,7 +12,7 @@ import { TARGETS, waitForServers } from "../helpers/docker.js";
 import {
   createPasswordCredential,
   createDirectConnection,
-  navigateTo,
+  ensureConnectionRowsLayout,
 } from "../helpers/flows.js";
 import { sel } from "../helpers/selectors.js";
 
@@ -47,7 +47,7 @@ describe("SCP upload + download", () => {
       credentialName: "cred-06-a",
     });
 
-    await navigateTo("connections");
+    await ensureConnectionRowsLayout();
     const row = await browser.$(sel.connectionRowByName("conn-06-a"));
     await row.waitForExist({ timeout: 10_000 });
     // SCP button lives in the row's `opacity-0 group-hover` action
@@ -69,7 +69,7 @@ describe("SCP upload + download", () => {
     await (await browser.$(sel.scpLocalPath)).setValue(upload);
     await (await browser.$(sel.scpRemotePath)).setValue("/tmp/");
     await (await browser.$(sel.scpUploadButton)).click();
-    await waitForScpStatusOrFail("upload");
+    await waitForScpStatusOrFail("upload", upload);
 
     // Download phase. The remote file is at /tmp/upload.txt (SSIX
     // appended the source file name during upload). For download,
@@ -79,7 +79,7 @@ describe("SCP upload + download", () => {
     await (await browser.$(sel.scpLocalPath)).setValue(download);
     await (await browser.$(sel.scpRemotePath)).setValue("/tmp/upload.txt");
     await (await browser.$(sel.scpDownloadButton)).click();
-    await waitForScpStatusOrFail("download");
+    await waitForScpStatusOrFail("download", download);
 
     expect(readFileSync(download, "utf8")).toBe(PAYLOAD);
   });
@@ -93,16 +93,22 @@ describe("SCP upload + download", () => {
  * "SCP upload did not complete. status: 'Permission denied (publickey)'"
  * (immediately actionable).
  */
-async function waitForScpStatusOrFail(phase: "upload" | "download"): Promise<void> {
+async function waitForScpStatusOrFail(
+  phase: "upload" | "download",
+  localPath: string,
+): Promise<void> {
   try {
     await browser.waitUntil(
       async () => {
         // The action returns { error, result }; on success result is set
         // and `scp-status` mounts; on failure error is set and `scp-error`
         // mounts. Either condition resolves the wait — error path is
-        // diagnosed in the catch block.
+        // diagnosed in the catch block. The status names the local path,
+        // which tells this transfer's result apart from the previous one.
         const status = await (await browser.$(sel.scpStatus)).getText().catch(() => "");
-        if (/transferred|done|success|complete/i.test(status)) return true;
+        if (/transferred|done|success|complete/i.test(status) && status.includes(localPath)) {
+          return true;
+        }
         const errorEl = await browser.$('[data-testid="scp-error"]');
         if (await errorEl.isExisting()) return true;
         return false;

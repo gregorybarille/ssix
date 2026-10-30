@@ -17,30 +17,16 @@
 import { waitForAppReady } from "../helpers/app.js";
 import { TARGETS, waitForServers } from "../helpers/docker.js";
 import {
+  click,
   connectToConnection,
   createPasswordCredential,
+  fill,
   navigateTo,
+  pickCredential,
   typeIntoTerminal,
   waitForTerminalContains,
 } from "../helpers/flows.js";
 import { sel } from "../helpers/selectors.js";
-
-async function fill(selector: string, value: string) {
-  const el = await browser.$(selector);
-  await el.waitForClickable({ timeout: 10_000 });
-  await el.setValue(value);
-}
-async function click(selector: string) {
-  const el = await browser.$(selector);
-  await el.waitForClickable({ timeout: 10_000 });
-  await el.click();
-}
-async function pickCredential(triggerSelector: string, name: string) {
-  await click(triggerSelector);
-  const opt = await browser.$(`[role="option"][data-name="${name}"]`);
-  await opt.waitForClickable({ timeout: 10_000 });
-  await opt.click();
-}
 
 describe("JumpShell session (server-a → server-c)", () => {
   before(async () => {

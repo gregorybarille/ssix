@@ -22,6 +22,27 @@ export interface Credential {
   is_private?: boolean;
 }
 
+/**
+ * Payload of `update_credential`. `keep_secrets` tells the backend to keep
+ * the stored password / inline key / passphrase and ignore those fields
+ * here; the edit form sets it whenever the user did not change them, so
+ * unchanged secrets never travel back over IPC.
+ */
+export type UpdateCredentialPayload = Credential & { keep_secrets?: boolean };
+
+/**
+ * Secret material for one credential, fetched on demand with
+ * `get_credential_secrets` when the edit form opens. List responses
+ * (`get_credentials`, `add_credential`, `update_credential`) are redacted:
+ * `password` is `""`, `private_key` / `passphrase` are absent, and only
+ * `private_key_path` (not a secret) is kept.
+ */
+export interface CredentialSecrets {
+  password?: string;
+  passphrase?: string;
+  private_key?: string;
+}
+
 export type ConnectionKind =
   | { type: "direct" }
   | {
@@ -123,16 +144,6 @@ export type DistributiveOmit<T, K extends keyof T> = T extends unknown
   : never;
 
 export type ConnectionInput = DistributiveOmit<Connection, "id">;
-
-/**
- * Type guard for the (rare) case where you have a Connection but want
- * the gateway-related fields without a switch.
- */
-export function hasGateway(
-  conn: Connection,
-): conn is PortForwardConnection | JumpShellConnection {
-  return conn.type === "port_forward" || conn.type === "jump_shell";
-}
 
 /**
  * Audit-4 Phase 4b: form-only "every-field-optional" view of a

@@ -1,4 +1,8 @@
-import "@testing-library/jest-dom";
+// The `/vitest` entry registers the matchers on vitest's `expect` and
+// augments vitest's `Assertion` types. Vitest 5 inlined the `expect`
+// package, so the generic jest-dom entry (which augments Jest's
+// `Matchers`) no longer types the DOM matchers.
+import "@testing-library/jest-dom/vitest";
 
 // Audit-3 P2#7: jsdom does not implement ResizeObserver, but several
 // Radix primitives (Checkbox via useSize, Select, etc.) construct one
@@ -13,8 +17,20 @@ if (typeof globalThis.ResizeObserver === "undefined") {
   } as unknown as typeof ResizeObserver;
 }
 
+// Tests run as if inside the desktop webview, which injects this bridge
+// object; `src/lib/runtime.ts` checks for it before any backend call.
+// `src/test/runtime.test.ts` removes it to cover the plain-browser path.
+(window as unknown as Record<string, unknown>).__TAURI_INTERNALS__ = {};
+
 vi.mock("@tauri-apps/api/core", () => ({
   invoke: vi.fn(),
+  Channel: class {
+    id = 0;
+    onmessage: (payload: unknown) => void;
+    constructor(onmessage?: (payload: unknown) => void) {
+      this.onmessage = onmessage ?? (() => {});
+    }
+  },
 }));
 
 vi.mock("@tauri-apps/api/event", () => ({

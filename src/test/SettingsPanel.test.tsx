@@ -1,7 +1,20 @@
-import { describe, it, expect, vi } from "vitest";
-import { render, screen, fireEvent, waitFor, within } from "@testing-library/react";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { act, render, screen, fireEvent, waitFor, within } from "@testing-library/react";
 import { SettingsPanel } from "@/components/SettingsPanel";
 import type { AppSettings } from "@/types";
+
+/** Must match SETTINGS_SAVE_DEBOUNCE_MS in SettingsPanel.tsx. */
+const DEBOUNCE_MS = 300;
+
+/**
+ * Advance fake timers inside act() so the debounce fires, the save
+ * promise settles and the resulting state updates are committed.
+ */
+async function tick(ms: number) {
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(ms);
+  });
+}
 
 const defaults: AppSettings = {
   font_size: 14,
@@ -74,33 +87,204 @@ describe("SettingsPanel", () => {
     await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent("disk full"));
   });
 
-  it("ignores stale save completions when a newer save fails", async () => {
-    let resolveFirst: (() => void) | undefined;
-    let rejectSecond: ((error: Error) => void) | undefined;
-    const first = new Promise<void>((resolve) => {
-      resolveFirst = resolve;
-    });
-    const second = new Promise<void>((_, reject) => {
-      rejectSecond = reject;
-    });
-    const onSave = vi
-      .fn()
-      .mockImplementationOnce(() => first)
-      .mockImplementationOnce(() => second);
+  it("flips the auto-copy switch and persists the new value", async () => {
+    const onSave = vi.fn().mockResolvedValue(undefined);
     render(<SettingsPanel settings={defaults} onSave={onSave} />);
-
-    fireEvent.click(screen.getByRole("radio", { name: /light/i }));
-    fireEvent.click(screen.getByRole("radio", { name: /dark/i }));
+    const toggle = screen.getByRole("switch", {
+      name: /copy selection to clipboard/i,
+    });
+    fireEvent.click(toggle);
+    expect(toggle).toHaveAttribute("aria-checked", "true");
     await waitFor(() => expect(onSave).toHaveBeenCalledTimes(1));
+    expect(onSave.mock.calls[0][0].auto_copy_selection).toBe(true);
+  });
 
-    resolveFirst?.();
-    await waitFor(() => expect(onSave).toHaveBeenCalledTimes(2));
-    rejectSecond?.(new Error("latest write failed"));
+  /*
+   * Saves are debounced and serialised: at most one is in flight, a
+   * newer edit waits behind it, and only the newest edit's outcome is
+   * reported. These tests drive the timer explicitly so the ordering
+   * is deterministic rather than a race against real time.
+   */
+  describe("debounced persistence", () => {
+    beforeEach(() => {
+      vi.useFakeTimers();
+    });
+    afterEach(() => {
+      vi.useRealTimers();
+    });
 
-    await waitFor(() =>
-      expect(screen.getByRole("alert")).toHaveTextContent("latest write failed"),
-    );
-    expect(screen.getByRole("status")).not.toHaveTextContent(/settings saved/i);
+    it("does not save before the debounce window elapses", async () => {
+      const onSave = vi.fn().mockResolvedValue(undefined);
+      render(<SettingsPanel settings={defaults} onSave={onSave} />);
+
+      fireEvent.click(screen.getByRole("radio", { name: /light/i }));
+      await tick(DEBOUNCE_MS - 1);
+      expect(onSave).not.toHaveBeenCalled();
+
+      await tick(1);
+      expect(onSave).toHaveBeenCalledTimes(1);
+      expect(screen.getByRole("status")).toHaveTextContent(/settings saved/i);
+    });
+
+    it("coalesces rapid edits into one save carrying the final state", async () => {
+      const onSave = vi.fn().mockResolvedValue(undefined);
+      render(<SettingsPanel settings={defaults} onSave={onSave} />);
+
+      fireEvent.click(screen.getByRole("radio", { name: /light/i }));
+      await tick(100);
+      fireEvent.click(
+        screen.getByRole("switch", { name: /copy selection to clipboard/i }),
+      );
+      await tick(100);
+      const swatches = within(
+        screen.getByRole("radiogroup", { name: /color scheme/i }),
+      ).getAllByRole("radio");
+      const swatch = swatches.find(
+        (r) => r.getAttribute("aria-label") !== defaults.color_scheme,
+      )!;
+      fireEvent.click(swatch);
+      await tick(100);
+      // 300 ms of wall time have passed but each edit restarted the timer.
+      expect(onSave).not.toHaveBeenCalled();
+
+      await tick(DEBOUNCE_MS);
+      expect(onSave).toHaveBeenCalledTimes(1);
+      expect(onSave).toHaveBeenCalledWith(
+        expect.objectContaining({
+          theme: "light",
+          auto_copy_selection: true,
+          color_scheme: swatch.getAttribute("aria-label"),
+        }),
+      );
+      expect(screen.getByRole("status")).toHaveTextContent(/settings saved/i);
+    });
+
+    it("flushes the pending save when the panel unmounts", async () => {
+      const onSave = vi.fn().mockResolvedValue(undefined);
+      const { unmount } = render(<SettingsPanel settings={defaults} onSave={onSave} />);
+
+      fireEvent.click(screen.getByRole("radio", { name: /light/i }));
+      expect(onSave).not.toHaveBeenCalled();
+      unmount();
+      expect(onSave).toHaveBeenCalledTimes(1);
+      expect(onSave).toHaveBeenCalledWith(expect.objectContaining({ theme: "light" }));
+
+      // Nothing else fires later.
+      await tick(DEBOUNCE_MS * 2);
+      expect(onSave).toHaveBeenCalledTimes(1);
+    });
+
+    it("flushes the pending save when the window loses focus", async () => {
+      const onSave = vi.fn().mockResolvedValue(undefined);
+      render(<SettingsPanel settings={defaults} onSave={onSave} />);
+
+      fireEvent.click(screen.getByRole("radio", { name: /light/i }));
+      expect(onSave).not.toHaveBeenCalled();
+      await act(async () => {
+        fireEvent.blur(window);
+      });
+      expect(onSave).toHaveBeenCalledTimes(1);
+      expect(onSave).toHaveBeenCalledWith(expect.objectContaining({ theme: "light" }));
+    });
+
+    it("flushes the pending save when the document becomes hidden", async () => {
+      const onSave = vi.fn().mockResolvedValue(undefined);
+      render(<SettingsPanel settings={defaults} onSave={onSave} />);
+
+      fireEvent.click(screen.getByRole("radio", { name: /light/i }));
+      expect(onSave).not.toHaveBeenCalled();
+
+      const original = Object.getOwnPropertyDescriptor(Document.prototype, "visibilityState");
+      Object.defineProperty(document, "visibilityState", {
+        value: "hidden",
+        configurable: true,
+      });
+      try {
+        await act(async () => {
+          fireEvent(document, new Event("visibilitychange"));
+        });
+      } finally {
+        delete (document as { visibilityState?: unknown }).visibilityState;
+        if (original) Object.defineProperty(Document.prototype, "visibilityState", original);
+      }
+      expect(onSave).toHaveBeenCalledTimes(1);
+      expect(onSave).toHaveBeenCalledWith(expect.objectContaining({ theme: "light" }));
+    });
+
+    it("does not adopt echoed store settings while a save is pending", async () => {
+      const onSave = vi.fn().mockResolvedValue(undefined);
+      const { rerender } = render(<SettingsPanel settings={defaults} onSave={onSave} />);
+
+      fireEvent.click(screen.getByRole("radio", { name: /light/i }));
+      // The store re-emits the (still dark) settings during the window,
+      // e.g. because fetchSettings resolved or another field was saved.
+      rerender(<SettingsPanel settings={{ ...defaults }} onSave={onSave} />);
+      expect(screen.getByRole("radio", { name: /light/i })).toHaveAttribute(
+        "aria-checked",
+        "true",
+      );
+
+      await tick(DEBOUNCE_MS);
+      expect(onSave).toHaveBeenCalledTimes(1);
+      expect(onSave).toHaveBeenCalledWith(expect.objectContaining({ theme: "light" }));
+    });
+
+    it("reports a validation error for the final state even when an earlier edit was superseded", async () => {
+      const onSave = vi.fn().mockRejectedValue(new Error("Git remote is invalid"));
+      render(<SettingsPanel settings={defaults} onSave={onSave} />);
+
+      const remote = screen.getByLabelText(/remote name/i);
+      fireEvent.change(remote, { target: { value: "--bad" } });
+      fireEvent.blur(remote);
+      // A later edit inside the window must not swallow the failure:
+      // the coalesced save still carries the bad remote.
+      fireEvent.click(screen.getByRole("radio", { name: /light/i }));
+
+      await tick(DEBOUNCE_MS);
+      expect(onSave).toHaveBeenCalledTimes(1);
+      expect(onSave).toHaveBeenCalledWith(
+        expect.objectContaining({ git_sync_remote: "--bad", theme: "light" }),
+      );
+      expect(screen.getByRole("alert")).toHaveTextContent("Git remote is invalid");
+      expect(screen.getByRole("status")).not.toHaveTextContent(/settings saved/i);
+    });
+
+    it("ignores stale save completions when a newer save fails", async () => {
+      let resolveFirst: (() => void) | undefined;
+      let rejectSecond: ((error: Error) => void) | undefined;
+      const first = new Promise<void>((resolve) => {
+        resolveFirst = resolve;
+      });
+      const second = new Promise<void>((_, reject) => {
+        rejectSecond = reject;
+      });
+      const onSave = vi
+        .fn()
+        .mockImplementationOnce(() => first)
+        .mockImplementationOnce(() => second);
+      render(<SettingsPanel settings={defaults} onSave={onSave} />);
+
+      fireEvent.click(screen.getByRole("radio", { name: /light/i }));
+      await tick(DEBOUNCE_MS);
+      expect(onSave).toHaveBeenCalledTimes(1);
+
+      // Edit while the first save is still in flight: it queues behind
+      // it rather than starting a second concurrent save.
+      fireEvent.click(screen.getByRole("radio", { name: /dark/i }));
+      await tick(DEBOUNCE_MS);
+      expect(onSave).toHaveBeenCalledTimes(1);
+
+      resolveFirst?.();
+      await tick(0);
+      expect(onSave).toHaveBeenCalledTimes(2);
+      // The stale first result must not flash "saved" for an outdated state.
+      expect(screen.getByRole("status")).not.toHaveTextContent(/settings saved/i);
+
+      rejectSecond?.(new Error("latest write failed"));
+      await tick(0);
+      expect(screen.getByRole("alert")).toHaveTextContent("latest write failed");
+      expect(screen.getByRole("status")).not.toHaveTextContent(/settings saved/i);
+    });
   });
 
   /*
@@ -121,18 +305,6 @@ describe("SettingsPanel", () => {
     expect(describedBy).toBeTruthy();
     const description = document.getElementById(describedBy!);
     expect(description?.textContent).toMatch(/cmd\/ctrl\+c still copies/i);
-  });
-
-  it("flips the auto-copy switch and saves the new value immediately", async () => {
-    const onSave = vi.fn().mockResolvedValue(undefined);
-    render(<SettingsPanel settings={defaults} onSave={onSave} />);
-    const toggle = screen.getByRole("switch", {
-      name: /copy selection to clipboard/i,
-    });
-    fireEvent.click(toggle);
-    expect(toggle).toHaveAttribute("aria-checked", "true");
-    await waitFor(() => expect(onSave).toHaveBeenCalledTimes(1));
-    expect(onSave.mock.calls[0][0].auto_copy_selection).toBe(true);
   });
 
   /*
@@ -169,7 +341,7 @@ describe("SettingsPanel", () => {
     expect(light).toHaveAttribute("aria-checked", "false");
   });
 
-  it("previews theme changes immediately and saves them immediately", async () => {
+  it("previews theme changes immediately and persists them after the debounce", async () => {
     const onPreview = vi.fn();
     const onSave = vi.fn().mockResolvedValue(undefined);
     render(
@@ -282,11 +454,37 @@ describe("SettingsPanel", () => {
     fireEvent.click(screen.getByRole("radio", { name: /light/i }));
     await waitFor(() => expect(onSave).toHaveBeenCalled());
 
-    const status = await screen.findByRole("status");
-    expect(status).toHaveTextContent(/settings saved/i);
+    // The role=status region is always mounted; its text appears once
+    // the save resolves and the 2s auto-hide timer starts, so wait for
+    // the text rather than asserting right after the first render.
+    const status = screen.getByRole("status");
+    await waitFor(() => expect(status).toHaveTextContent(/settings saved/i));
     // The status row should contain a decorative SVG (the lucide
     // Check glyph). svg elements are not exposed to AT but are
     // present in the DOM.
     expect(status.querySelector("svg")).not.toBeNull();
+  });
+
+  describe("external changes during the debounce window", () => {
+    beforeEach(() => {
+      vi.useFakeTimers();
+    });
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    it("saves the store's newer value for keys the panel did not touch", async () => {
+      const onSave = vi.fn().mockResolvedValue(undefined);
+      const { rerender } = render(<SettingsPanel settings={defaults} onSave={onSave} />);
+      fireEvent.click(screen.getByRole("switch", { name: /copy selection to clipboard/i }));
+      // A shortcut (or another writer) flips the theme while our save waits.
+      rerender(<SettingsPanel settings={{ ...defaults, theme: "light" }} onSave={onSave} />);
+      await tick(DEBOUNCE_MS + 10);
+      expect(onSave).toHaveBeenCalledTimes(1);
+      expect(onSave.mock.calls[0][0]).toMatchObject({
+        theme: "light",
+        auto_copy_selection: true,
+      });
+    });
   });
 });

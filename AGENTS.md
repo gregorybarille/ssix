@@ -13,7 +13,7 @@
 | Command | Purpose |
 |---|---|
 | `npm install` | Install frontend deps |
-| `npm run tauri dev` | Dev mode (Node 20+, Rust stable, Tauri CLI required) |
+| `npm run tauri dev` | Dev mode (Node 22.12+, Rust stable, Tauri CLI required) |
 | `npm test` | Vitest frontend suite (excludes `e2e/**`) |
 | `npm test -- --run src/test/utils.test.ts` | Single test file |
 | `cd src-tauri && cargo test` | Rust backend tests |
@@ -22,9 +22,9 @@
 ## Architecture
 
 - **Tauri v2** desktop app: React/Vite frontend (`src/`) + Rust backend (`src-tauri/`)
-- **Frontend state**: Zustand stores in `src/store/` call Tauri via `src/lib/tauri.ts` (lazy-loaded for test mocking)
+- **Frontend state**: Zustand stores in `src/store/` call Tauri via `src/lib/tauri.ts` (lazy-loaded for test mocking; rejects with a readable message outside the desktop runtime, see `src/lib/runtime.ts`). A store's `error` is its last load failure, rendered with `<ErrorBanner>`; form-driven mutations pass `{ recordError: false }` and show their own errors
 - **Backend commands**: `src-tauri/src/commands/` → registered in `lib.rs` `invoke_handler![]`
-- **SSH sessions**: `ssh2` crate, one thread per session, `mpsc` channels, events `ssix:ssh:{output|error|closed}:{id}` and `ssix:tunnel:status:{id}` (use helpers in `src-tauri/src/ssh.rs` + `src/lib/events.ts`)
+- **SSH sessions**: `ssh2` crate, one thread per session; the command layer talks to a worker through `SessionHandle` (mpsc + wake pipe). Shell output streams as raw bytes over a Tauri `Channel` (`src/lib/terminalOutput.ts` → `ssh_connect { onOutput }`), with `error`/`closed` notifications as JSON `OutputEvent`s on the same channel; tunnels emit `ssix:tunnel:status:{id}` (use helpers in `src-tauri/src/ssh.rs` + `src/lib/events.ts`). Every handshake goes through `open_authenticated_session_over_stream` (timeouts + host-key verification in `known_hosts.rs`) — never call `Session::handshake` elsewhere
 - **Terminal**: xterm.js, stays mounted when hidden; tunnels live in `TunnelsView`, not the terminal tab bar
 - **Persistence**: File-based at `~/.ssix/data.json`. All writes MUST use `atomic_write()` — never `fs::write` directly
 - **Models**: `src/types/index.ts` ↔ `src-tauri/src/models.rs` must stay in sync (snake_case throughout). `cargo test` regenerates ts-rs bindings into `src/types/generated/`; `src/test/typesParity.test.ts` fails when a generated field is missing from the hand-written index.ts. CI: run `cargo test && git diff --exit-code src/types/generated/`.
@@ -63,13 +63,13 @@
 
 ## Key Conventions
 
-- **UI primitives**: Always use shared components (`<Input>`, `<Button>`, `<Checkbox>`, `<PasswordInput>`, `<RadioGroup>`, `<ConfirmDialog>`, `<ContextMenu>`) — never hand-roll
+- **UI primitives**: Always use shared components (`<Input>`, `<Button>`, `<Checkbox>`, `<PasswordInput>`, `<RadioGroup>`, `<ConfirmDialog>`, `<ContextMenu>`, `<ErrorBanner>`) — never hand-roll
 - **Accessibility**: Every icon-only button needs `aria-label`; decorative icons need `aria-hidden="true"`; every dialog needs `<DialogDescription>`; required fields need `aria-required="true"`
 - **Styling**: Use `text-muted-foreground-soft` for tertiary metadata (not `/70` opacity blends); use `text-destructive` for error text (never `--destructive` or hex)
-- **Forms**: Mount `<ConnectionForm>` / `<CredentialForm>` at App root (not per-view); use `useUnsavedChangesGuard`; call `guard.markSaved()` before closing on success
+- **Forms**: Mount `<ConnectionForm>` / `<CredentialForm>` at App root (not per-view); use `useUnsavedChangesGuard`; call `guard.markSaved()` before closing on success; submit `useActionState` actions with `onSubmit={submitWithoutReset(action)}` (`src/lib/formSubmit.ts`), never `<form action>` (its automatic reset puts Radix Select/Checkbox/RadioGroup back to their initial value after a refused save); keep inline field errors in `useFieldErrors`
 - **Destructive actions**: Always go through `<ConfirmDialog>`; never hand-roll overlays
 - **Dialogs**: Opened from React state (no `<DialogTrigger>`); `<DialogContent>` handles focus-restore automatically
-- **Mutex hygiene**: Use `lock_recover(&m)` in worker threads; `lock().map_err(...)?` on the managed-state path
+- **Mutex hygiene**: Prefer atomics, channels and `DashMap` over a shared `Mutex` in worker threads; where a `Mutex` is unavoidable recover from poisoning with `lock().unwrap_or_else(|e| e.into_inner())`, and use `lock().map_err(...)?` on the managed-state path
 - **Port inputs**: Use `parsePort` from `src/lib/port.ts` — never `parseInt(input) || 22`
 - **Keyboard shortcuts**: Register via `useGlobalShortcuts`; document new ones in `docs/features.md`
 - **Context menus**: Always use `<ContextMenu>` + `useContextMenu()`; wire `onKeyDown` on every trigger

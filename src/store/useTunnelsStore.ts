@@ -1,6 +1,8 @@
+import { errorMessage } from "@/lib/errors";
 import { create } from "zustand";
 import { invoke } from "@/lib/tauri";
 import { log as appLog } from "@/lib/log";
+import { createOutputChannel } from "@/lib/terminalOutput";
 import type { Connection } from "@/types";
 import type { TunnelSession } from "@/components/TunnelsView";
 import { useViewStore } from "./useViewStore";
@@ -65,8 +67,12 @@ export const useTunnelsStore = create<TunnelsState>((set, get) => ({
     }));
     useViewStore.getState().setView("tunnels");
     try {
+      // Tunnels produce no terminal output, but ssh_connect takes the
+      // channel unconditionally; nothing is ever sent on this one.
+      const { channel } = await createOutputChannel();
       const sessionId = await invoke<string>("ssh_connect", {
         connectionId: conn.id,
+        onOutput: channel,
       });
       if (cancelled.has(placeholderId)) {
         cancelled.delete(placeholderId);
@@ -89,11 +95,11 @@ export const useTunnelsStore = create<TunnelsState>((set, get) => ({
       set((state) => ({
         sessions: state.sessions.map((s) =>
           s.sessionId === placeholderId
-            ? { ...s, error: String(err), retrying: false }
+            ? { ...s, error: errorMessage(err), retrying: false }
             : s,
         ),
       }));
-      appLog.error("tunnel", `Failed to start ${conn.name}: ${String(err)}`);
+      appLog.error("tunnel", `Failed to start ${conn.name}: ${errorMessage(err)}`);
     }
   },
 

@@ -14,6 +14,7 @@ import {
 } from "./ui/dialog";
 import { parsePort } from "@/lib/port";
 import { cn } from "@/lib/utils";
+import { submitWithoutReset } from "@/lib/formSubmit";
 
 interface InstallKeyDialogProps {
   open: boolean;
@@ -167,7 +168,7 @@ export function InstallKeyDialog({
             not saved.
           </DialogDescription>
         </DialogHeader>
-        <form action={installAction} className="space-y-4">
+        <form onSubmit={submitWithoutReset(installAction)} className="space-y-4">
           <div className="grid grid-cols-3 gap-2">
             <div className="col-span-2 space-y-2">
               <Label htmlFor="install-host">Host *</Label>

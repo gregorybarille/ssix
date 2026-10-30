@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import { useState } from "react";
 import { Credential, LayoutMode } from "@/types";
 import { Button } from "./ui/button";
 import { Badge } from "./ui/badge";
@@ -41,11 +41,11 @@ export function CredentialList({
     );
   }
 
-  // Audit-4 consistency fix: include focus-within:opacity-100 so keyboard
-  // users can reveal the action buttons by tabbing into them, matching
-  // the behaviour in ConnectionList. (Previously hover-only.)
+  // The action strip is hover-only for pointer users; it is also revealed
+  // while the row (roving tabindex) or any of its buttons has focus, so
+  // keyboard users and automation can reach Edit / Delete.
   const renderActions = (cred: Credential) => (
-    <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity">
+    <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 transition-opacity">
       {cred.type === "ssh_key" && (
         <Button
           variant="ghost"
@@ -63,6 +63,7 @@ export function CredentialList({
         size="icon"
         className="h-7 w-7"
         onClick={() => onEdit(cred)}
+        data-testid={`edit-credential-${cred.id}`}
         aria-label={`Edit credential ${cred.name}`}
       >
         <Edit className="h-3.5 w-3.5" aria-hidden="true" />
@@ -72,6 +73,7 @@ export function CredentialList({
         size="icon"
         className="h-7 w-7 text-destructive hover:text-destructive"
         onClick={() => onDelete(cred.id)}
+        data-testid={`delete-credential-${cred.id}`}
         aria-label={`Delete credential ${cred.name}`}
       >
         <Trash2 className="h-3.5 w-3.5" aria-hidden="true" />
@@ -117,9 +119,9 @@ export function CredentialList({
                 <div className="flex items-start justify-between gap-2">
                   <div className="flex items-center gap-2 min-w-0">
                     {cred.type === "ssh_key" ? (
-                      <Key className="h-5 w-5 text-muted-foreground" />
+                      <Key className="h-5 w-5 text-muted-foreground" aria-hidden="true" />
                     ) : (
-                      <Lock className="h-5 w-5 text-muted-foreground" />
+                      <Lock className="h-5 w-5 text-muted-foreground" aria-hidden="true" />
                     )}
                     <span className="font-medium text-sm truncate">{cred.name}</span>
                   </div>
@@ -165,9 +167,9 @@ export function CredentialList({
           >
             <div className="flex-shrink-0">
               {cred.type === "ssh_key" ? (
-                <Key className="h-5 w-5 text-muted-foreground" />
+                <Key className="h-5 w-5 text-muted-foreground" aria-hidden="true" />
               ) : (
-                <Lock className="h-5 w-5 text-muted-foreground" />
+                <Lock className="h-5 w-5 text-muted-foreground" aria-hidden="true" />
               )}
             </div>
             <div className="flex-1 min-w-0">
@@ -179,11 +181,12 @@ export function CredentialList({
               </div>
               <p className="text-xs text-muted-foreground truncate">
                 {cred.username}
-                {cred.type === "ssh_key" && cred.private_key_path && (
-                  <span className="ml-2 opacity-70">· {cred.private_key_path}</span>
-                )}
-                {cred.type === "ssh_key" && cred.private_key && !cred.private_key_path && (
-                  <span className="ml-2 opacity-70">· inline</span>
+                {/* Listed credentials are redacted, so an ssh_key row
+                    without a path is one whose key is stored inline. */}
+                {cred.type === "ssh_key" && (
+                  <span className="ml-2 text-muted-foreground-soft">
+                    · {cred.private_key_path ? cred.private_key_path : "inline"}
+                  </span>
                 )}
               </p>
             </div>
