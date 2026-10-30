@@ -453,6 +453,7 @@ function App() {
                   onSubmit={handleConnSubmit}
                   onCloneSubmit={handleCloneSubmit}
                   onCreateCredential={handleCreateCredential}
+                  onDiscardCredential={deleteCredential}
                   onDelete={handleDeleteConnection}
                   onConnect={(c) => void connect(c)}
                   onConnectAllInTag={handleConnectAllInTag}

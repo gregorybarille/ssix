@@ -236,8 +236,10 @@ each one next to its input:
     `src/lib/credentialValidation.ts`): **Username**, **Password** or
     **Private Key Path**, and, when *Save as a named credential* is
     ticked, a **Credential Name** that no saved credential already uses.
-  Everything is checked before the inline credential is created, so a
-  refused save never leaves a stray credential behind.
+  Everything is checked before the inline credential is created. If the
+  backend still refuses the connection (a name already taken, say), the
+  form deletes the credential it made for it, so retries never leave
+  unused credentials behind.
 - CredentialForm: **Credential Name**, **Username**, and either
   **Private Key Path** or **Private Key Contents** when the SSH Key
   tab is active.

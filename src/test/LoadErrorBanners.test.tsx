@@ -43,6 +43,7 @@ function renderConnectionsView() {
       onLayoutChange={vi.fn()}
       onSubmit={vi.fn()}
       onCloneSubmit={vi.fn()}
+      onDiscardCredential={vi.fn()}
       onCreateCredential={vi.fn()}
       onDelete={vi.fn()}
       onConnect={vi.fn()}

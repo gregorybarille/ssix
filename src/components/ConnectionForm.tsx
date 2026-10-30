@@ -1,4 +1,5 @@
 import { errorMessage } from "@/lib/errors";
+import { log as appLog } from "@/lib/log";
 import React, { useActionState, useState, useEffect, useRef } from "react";
 import { Connection, ConnectionDraft, ConnectionInput, Credential, ConnectionType, OPEN_COLORS } from "@/types";
 import { Button } from "./ui/button";
@@ -53,6 +54,12 @@ interface ConnectionFormProps {
   // builds a flat `ConnectionDraft` and narrows on submit.
   onSubmit: (data: ConnectionInput | Connection) => Promise<void>;
   onCreateCredential?: (data: Omit<Credential, "id">) => Promise<Credential>;
+  /**
+   * Delete a credential the form created for inline auth when the
+   * connection save that needed it is refused, so retries never pile up
+   * unused credentials.
+   */
+  onDiscardCredential?: (id: string) => Promise<void>;
   isClone?: boolean;
   inline?: boolean;
 }
@@ -210,6 +217,7 @@ export function ConnectionForm({
   credentials,
   onSubmit,
   onCreateCredential,
+  onDiscardCredential,
   isClone = false,
   inline = false,
 }: ConnectionFormProps) {
@@ -452,6 +460,7 @@ export function ConnectionForm({
 
         // PortForward has no destination credential.
         let credentialId = needsDestinationAuth ? formWithPorts.credential_id : undefined;
+        let createdCredentialId: string | null = null;
         if (needsDestinationAuth && authMethod !== "credential") {
           if (!onCreateCredential) throw new Error("Inline credentials are not available here");
           const cred = await onCreateCredential({
@@ -467,6 +476,7 @@ export function ConnectionForm({
                 }),
           });
           credentialId = cred.id;
+          createdCredentialId = cred.id;
         }
 
         // Mirror destination_host/port into top-level host/port for tunnel kinds so
@@ -518,10 +528,25 @@ export function ConnectionForm({
                 destination_port: formWithPorts.destination_port ?? 22,
               };
 
-        if (connection && !isClone) {
-          await onSubmit({ ...data, id: connection.id } as Connection);
-        } else {
-          await onSubmit(data);
+        try {
+          if (connection && !isClone) {
+            await onSubmit({ ...data, id: connection.id } as Connection);
+          } else {
+            await onSubmit(data);
+          }
+        } catch (err) {
+          // The backend refused the connection (a taken name, say): drop the
+          // credential made for it. The refusal is what the user needs to
+          // see, so a failed cleanup is only logged.
+          if (createdCredentialId && onDiscardCredential) {
+            await onDiscardCredential(createdCredentialId).catch((cleanupErr: unknown) =>
+              appLog.warn(
+                "connections",
+                `Could not remove the unused inline credential: ${errorMessage(cleanupErr)}`,
+              ),
+            );
+          }
+          throw err;
         }
         // Suppress the unsaved-changes guard for the close that follows
         // a successful save.
@@ -588,6 +613,7 @@ export function ConnectionForm({
         clearFieldError("inline_name");
       }}
       error={fieldErrors.inline_name}
+      testId="connection-form-save-credential"
     />
   );
 
@@ -860,7 +886,11 @@ export function ConnectionForm({
               <TabsTrigger value="credential" className="flex-1 text-xs">
                 Saved Credential
               </TabsTrigger>
-              <TabsTrigger value="password" className="flex-1 text-xs">
+              <TabsTrigger
+                value="password"
+                className="flex-1 text-xs"
+                data-testid="connection-form-auth-password"
+              >
                 Password
               </TabsTrigger>
               <TabsTrigger value="ssh_key" className="flex-1 text-xs">
@@ -877,6 +907,7 @@ export function ConnectionForm({
                 <Label htmlFor="inline-username">Username *</Label>
                 <Input
                   id="inline-username"
+                  data-testid="connection-form-inline-username"
                   placeholder="root"
                   value={inlineUsername}
                   onChange={(e) => {
@@ -892,6 +923,7 @@ export function ConnectionForm({
                 <Label htmlFor="inline-password">Password *</Label>
                 <PasswordInput
                   id="inline-password"
+                  data-testid="connection-form-inline-password"
                   placeholder="••••••••"
                   value={inlinePassword}
                   onChange={(e) => {

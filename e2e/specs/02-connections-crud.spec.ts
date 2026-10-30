@@ -3,8 +3,9 @@
  *
  * Creates a credential, then a Direct connection that references it.
  * Asserts the connection appears in the list (round-tripped through
- * `add_connection` and `data.json`), and that the form refuses to save a
- * connection without a credential.
+ * `add_connection` and `data.json`), then covers the credential rules:
+ *   - a connection cannot be saved without a credential;
+ *   - a refused save deletes the inline credential it created;
  */
 import { waitForAppReady } from "../helpers/app.js";
 import { TARGETS } from "../helpers/docker.js";
@@ -107,5 +108,42 @@ describe("Connections CRUD", () => {
     await (await browser.$(sel.connectionRowByName("conn-a-checked"))).waitForExist({
       timeout: 10_000,
     });
+  });
+
+  it("deletes the credential it made when the connection save is refused", async () => {
+    await navigateTo("connections");
+    await click(sel.addConnectionButton);
+    // "conn-a" is taken, so the backend refuses this connection after the
+    // form has already created its inline credential.
+    await fill(sel.connectionFormName, "conn-a");
+    await click(sel.connectionFormKindDirect);
+    await fill(sel.connectionFormHost, TARGETS.a.host);
+    await fill(sel.connectionFormPort, String(TARGETS.a.sshPort));
+    await click(sel.connectionFormAuthPassword);
+    await fill(sel.connectionFormInlineUsername, TARGETS.a.user);
+    await fill(sel.connectionFormInlinePassword, TARGETS.a.password);
+    await click(sel.connectionFormSaveCredential);
+    await fill(sel.connectionFormSaveCredentialName, "cred-02-inline");
+    await clickDialogFooterButton(sel.connectionFormSubmit);
+    // Re-query each poll: the error line only appears once the save is refused.
+    await browser.waitUntil(
+      async () => {
+        const formError = await browser.$(sel.connectionFormError);
+        return (
+          (await formError.isExisting()) &&
+          (await textContentOf(formError)).includes("connection named 'conn-a'")
+        );
+      },
+      { timeout: 10_000, timeoutMsg: "the taken name should refuse the save" },
+    );
+
+    // The credential was deleted again, so its name is free for the retry.
+    await fill(sel.connectionFormName, "conn-a-inline");
+    await saveConnectionForm();
+    await navigateTo("credentials");
+    await (await browser.$(sel.credentialRowByName("cred-02-inline"))).waitForExist({
+      timeout: 10_000,
+    });
+    expect(await browser.$$(sel.credentialRowByName("cred-02-inline")).length).toBe(1);
   });
 });

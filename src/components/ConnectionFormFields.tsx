@@ -150,6 +150,8 @@ interface SaveCredentialFieldsProps {
   name: string;
   onNameChange: (name: string) => void;
   error?: string;
+  /** Checkbox testid; the name input gets `${testId}-name`. */
+  testId?: string;
 }
 
 /**
@@ -165,6 +167,7 @@ export function SaveCredentialFields({
   name,
   onNameChange,
   error,
+  testId,
 }: SaveCredentialFieldsProps) {
   const errorId = `${nameId}-error`;
   return (
@@ -172,6 +175,7 @@ export function SaveCredentialFields({
       <div className="flex items-center gap-2">
         <Checkbox
           id={checkboxId}
+          data-testid={testId}
           checked={checked}
           onCheckedChange={(v) => onCheckedChange(v === true)}
         />
@@ -187,6 +191,7 @@ export function SaveCredentialFields({
           <Label htmlFor={nameId}>Credential Name *</Label>
           <Input
             id={nameId}
+            data-testid={testId ? `${testId}-name` : undefined}
             placeholder={namePlaceholder}
             value={name}
             onChange={(e) => onNameChange(e.target.value)}

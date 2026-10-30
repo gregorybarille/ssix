@@ -16,6 +16,7 @@ function renderForm(props: Partial<Parameters<typeof ConnectionForm>[0]> = {}) {
     ...data,
     id: "new-cred",
   }));
+  const onDiscardCredential = vi.fn().mockResolvedValue(undefined);
   render(
     <ConnectionForm
       open
@@ -23,10 +24,11 @@ function renderForm(props: Partial<Parameters<typeof ConnectionForm>[0]> = {}) {
       credentials={credentials}
       onSubmit={onSubmit}
       onCreateCredential={onCreateCredential}
+      onDiscardCredential={onDiscardCredential}
       {...props}
     />,
   );
-  return { onSubmit, onCreateCredential };
+  return { onSubmit, onCreateCredential, onDiscardCredential };
 }
 
 const submit = () =>
@@ -190,6 +192,32 @@ describe("ConnectionForm credential validation", () => {
       is_private: true,
     });
     expect(onSubmit.mock.calls[0][0]).toMatchObject({ credential_id: "new-cred" });
+  });
+
+  it("deletes the inline credential when the connection save is refused", async () => {
+    const user = userEvent.setup();
+    const onSubmit = vi.fn().mockRejectedValue("A connection named 'web' already exists");
+    const { onCreateCredential, onDiscardCredential } = renderForm({ onSubmit });
+    fillDirect();
+    await user.click(screen.getByRole("tab", { name: "Password" }));
+    fireEvent.change(screen.getByLabelText(/username \*/i), { target: { value: "root" } });
+    fireEvent.change(screen.getByLabelText(/^password \*/i), { target: { value: "s3cret" } });
+    submit();
+    expect(
+      await screen.findByText("A connection named 'web' already exists"),
+    ).toBeInTheDocument();
+    expect(onCreateCredential).toHaveBeenCalledTimes(1);
+    expect(onDiscardCredential).toHaveBeenCalledWith("new-cred");
+  });
+
+  it("keeps a picked saved credential when the connection save is refused", async () => {
+    const onSubmit = vi.fn().mockRejectedValue("A connection named 'web' already exists");
+    const { onDiscardCredential } = renderForm({ onSubmit });
+    fillDirect();
+    chooseSelectValue(screen.getByRole("combobox", { name: "Credential" }), "c1");
+    submit();
+    await screen.findByText("A connection named 'web' already exists");
+    expect(onDiscardCredential).not.toHaveBeenCalled();
   });
 
   it("drops the previous auth tab's errors when the tab changes", async () => {

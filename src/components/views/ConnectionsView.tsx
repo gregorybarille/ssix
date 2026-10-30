@@ -26,6 +26,7 @@ interface ConnectionsViewProps {
   onSubmit: (data: ConnectionInput | Connection) => Promise<void>;
   onCloneSubmit: (data: ConnectionInput | Connection) => Promise<void>;
   onCreateCredential: (data: Omit<Credential, "id">) => Promise<Credential>;
+  onDiscardCredential: (id: string) => Promise<void>;
   onDelete: (id: string) => void;
   onConnect: (conn: Connection) => void;
   onConnectAllInTag: (group: TagGroup) => void;
@@ -45,6 +46,7 @@ export function ConnectionsView({
   onSubmit,
   onCloneSubmit,
   onCreateCredential,
+  onDiscardCredential,
   onDelete,
   onConnect,
   onConnectAllInTag,
@@ -100,6 +102,7 @@ export function ConnectionsView({
           credentials={credentials}
           onSubmit={dialogs.cloningConn ? onCloneSubmit : onSubmit}
           onCreateCredential={onCreateCredential}
+          onDiscardCredential={onDiscardCredential}
           isClone={!!dialogs.cloningConn}
         />
       ) : (

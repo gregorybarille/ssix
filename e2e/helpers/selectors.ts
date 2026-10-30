@@ -45,6 +45,12 @@ export const sel = {
   connectionFormPort: '[data-testid="connection-form-port"]',
   connectionFormCredential: '[data-testid="connection-form-credential"]',
   connectionFormCredentialError: '[data-testid="connection-form-credential-error"]',
+  // Inline Password authentication tab and its fields.
+  connectionFormAuthPassword: '[data-testid="connection-form-auth-password"]',
+  connectionFormInlineUsername: '[data-testid="connection-form-inline-username"]',
+  connectionFormInlinePassword: '[data-testid="connection-form-inline-password"]',
+  connectionFormSaveCredential: '[data-testid="connection-form-save-credential"]',
+  connectionFormSaveCredentialName: '[data-testid="connection-form-save-credential-name"]',
   // Form-level error shown when a save is refused.
   connectionFormError: '[data-testid="connection-form-error"]',
   connectionFormKindDirect: '[data-testid="connection-form-kind-direct"]',
