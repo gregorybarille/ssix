@@ -225,7 +225,19 @@ ports. On submit the form collects every problem at once and surfaces
 each one next to its input:
 
 - ConnectionForm: **Connection Name**, **Host** (direct), **Gateway
-  Host** + **Gateway Credential** + **Destination Host** (tunnels).
+  Host** + **Gateway Credential** + **Destination Host** (tunnels),
+  and the destination authentication for Direct and Jump Shell (a
+  Port Forward only authenticates to its gateway):
+  - **Saved Credential**: a credential must be picked; "None" shows
+    *"Credential is required"* (*"Destination credential is required"*
+    on a jump shell).
+  - **Password** / **SSH Key**: the inline fields get the same checks
+    as the credential form (`credentialFieldErrors` in
+    `src/lib/credentialValidation.ts`): **Username**, **Password** or
+    **Private Key Path**, and, when *Save as a named credential* is
+    ticked, a **Credential Name** that no saved credential already uses.
+  Everything is checked before the inline credential is created, so a
+  refused save never leaves a stray credential behind.
 - CredentialForm: **Credential Name**, **Username**, and either
   **Private Key Path** or **Private Key Contents** when the SSH Key
   tab is active.

@@ -18,8 +18,10 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "./ui/tabs";
 import { GenerateKeyDialog, GeneratedKey, KeyStorageMode } from "./GenerateKeyDialog";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { useUnsavedChangesGuard } from "@/hooks/useUnsavedChangesGuard";
+import { useFieldErrors } from "@/hooks/useFieldErrors";
 import { pickFile } from "@/lib/dialog";
 import { isTextInput } from "@/lib/focus";
+import { credentialFieldErrors, type CredentialFieldKey } from "@/lib/credentialValidation";
 import { submitWithoutReset } from "@/lib/formSubmit";
 import { FolderOpen } from "lucide-react";
 
@@ -137,15 +139,7 @@ export function CredentialForm({
   const firstFieldRef = useRef<HTMLInputElement | null>(null);
 
   // Inline per-field errors. Keys mirror the input identifiers.
-  type FieldKey = "name" | "username" | "key_path" | "key_inline";
-  const [fieldErrors, setFieldErrors] = useState<Partial<Record<FieldKey, string>>>({});
-  const clearFieldError = (key: FieldKey) =>
-    setFieldErrors((errs) => {
-      if (!errs[key]) return errs;
-      const next = { ...errs };
-      delete next[key];
-      return next;
-    });
+  const { fieldErrors, setFieldErrors, clearFieldError } = useFieldErrors<CredentialFieldKey>();
 
   // Baseline for unsaved-changes detection, derived from the same values
   // the effect writes into state so it never lags a render behind.
@@ -275,16 +269,10 @@ export function CredentialForm({
 
       // Required-field preflight: collect all problems at once so the
       // user sees every issue inline instead of one-at-a-time.
-      const newFieldErrors: Partial<Record<FieldKey, string>> = {};
-      if (!name.trim()) newFieldErrors.name = "Credential name is required";
-      if (!username.trim()) newFieldErrors.username = "Username is required";
-      if (credType === "ssh_key") {
-        if (keySource === "path" && !privateKeyPath.trim()) {
-          newFieldErrors.key_path = "Private key path is required";
-        } else if (keySource === "inline" && !privateKey.trim() && !keepSecrets) {
-          newFieldErrors.key_inline = "Private key contents are required";
-        }
-      }
+      const newFieldErrors = credentialFieldErrors(
+        { name, username, type: credType, keySource, privateKeyPath, privateKey },
+        { keepSecrets },
+      );
       if (Object.keys(newFieldErrors).length > 0) {
         setFieldErrors(newFieldErrors);
         return { error: "Please fix the highlighted fields" };

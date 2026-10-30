@@ -44,6 +44,9 @@ export const sel = {
   connectionFormHost: '[data-testid="connection-form-host"]',
   connectionFormPort: '[data-testid="connection-form-port"]',
   connectionFormCredential: '[data-testid="connection-form-credential"]',
+  connectionFormCredentialError: '[data-testid="connection-form-credential-error"]',
+  // Form-level error shown when a save is refused.
+  connectionFormError: '[data-testid="connection-form-error"]',
   connectionFormKindDirect: '[data-testid="connection-form-kind-direct"]',
   connectionFormKindJumpShell: '[data-testid="connection-form-kind-jumpshell"]',
   connectionFormKindPortForward: '[data-testid="connection-form-kind-portforward"]',

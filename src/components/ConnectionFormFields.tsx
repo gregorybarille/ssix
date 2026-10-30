@@ -11,10 +11,18 @@ import {
 } from "./ui/select";
 
 /** Inline error line used by every field in the connection form. */
-export function FieldError({ id, message }: { id: string; message?: string }) {
+export function FieldError({
+  id,
+  message,
+  testId,
+}: {
+  id: string;
+  message?: string;
+  testId?: string;
+}) {
   if (!message) return null;
   return (
-    <p id={id} role="alert" className="text-xs text-destructive">
+    <p id={id} role="alert" className="text-xs text-destructive" data-testid={testId}>
       {message}
     </p>
   );
@@ -80,6 +88,10 @@ interface CredentialSelectProps {
   value: string | undefined;
   onChange: (credentialId: string | undefined) => void;
   id?: string;
+  /** Accessible name, for a picker that has no `<Label htmlFor>` of its own. */
+  "aria-label"?: string;
+  /** Marks the picker required for assistive tech; the caller rejects "None" on submit. */
+  required?: boolean;
   testId?: string;
   error?: string;
   /** Id of the element describing an error, when the caller renders one. */
@@ -92,6 +104,8 @@ export function CredentialSelect({
   value,
   onChange,
   id,
+  "aria-label": ariaLabel,
+  required,
   testId,
   error,
   errorId,
@@ -104,6 +118,8 @@ export function CredentialSelect({
       <SelectTrigger
         id={id}
         data-testid={testId}
+        aria-label={ariaLabel}
+        aria-required={required ? true : undefined}
         aria-invalid={error ? true : undefined}
         aria-describedby={error ? errorId : undefined}
       >

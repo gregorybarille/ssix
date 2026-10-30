@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from "vitest";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { ConnectionForm } from "@/components/ConnectionForm";
+import { chooseSelectValue } from "./radixSelect";
 
 describe("ConnectionForm error a11y", () => {
   it("renders submit error inside a role=alert region with aria-live", async () => {
@@ -27,6 +28,7 @@ describe("ConnectionForm error a11y", () => {
     fireEvent.change(screen.getByLabelText(/host/i), {
       target: { value: "1.2.3.4" },
     });
+    chooseSelectValue(screen.getByRole("combobox", { name: "Credential" }), "c1");
     fireEvent.click(screen.getByRole("button", { name: /create/i }));
     const alert = await waitFor(() => screen.getByRole("alert"));
     expect(alert).toHaveTextContent("Backend exploded");

@@ -22,6 +22,8 @@ import {
 } from "./ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "./ui/tabs";
 import { CredentialSelect, FieldError, PortField } from "./ConnectionFormFields";
+import { useFieldErrors } from "@/hooks/useFieldErrors";
+import { credentialFieldErrors, type CredentialFieldKey } from "@/lib/credentialValidation";
 import { InstallKeyDialog } from "./InstallKeyDialog";
 import { TagInput } from "./ui/tag-input";
 import { RadioGroup, RadioGroupItem } from "./ui/radio-group";
@@ -227,23 +229,21 @@ export function ConnectionForm({
   const [portInputs, setPortInputs] = useState<PortInputs>(DEFAULT_PORT_INPUTS);
   const [portErrors, setPortErrors] = useState<Partial<Record<PortKey, string>>>({});
 
-  // Inline per-field errors for required text fields. Keyed by the field
-  // name (`name`, `host`, `gateway_host`, `destination_host`,
-  // `gateway_credential_id`). Cleared as the user edits.
+  // Inline per-field errors for required fields, cleared as the user
+  // edits. The `inline_*` keys belong to the Password / SSH Key tabs and
+  // come from the same checks as the credential form.
   type FieldKey =
     | "name"
     | "host"
     | "gateway_host"
     | "destination_host"
-    | "gateway_credential_id";
-  const [fieldErrors, setFieldErrors] = useState<Partial<Record<FieldKey, string>>>({});
-  const clearFieldError = (key: FieldKey) =>
-    setFieldErrors((errs) => {
-      if (!errs[key]) return errs;
-      const next = { ...errs };
-      delete next[key];
-      return next;
-    });
+    | "gateway_credential_id"
+    | "credential_id"
+    | `inline_${CredentialFieldKey}`;
+  const { fieldErrors, setFieldErrors, clearFieldError } = useFieldErrors<FieldKey>();
+  // aria wiring for an input whose message renders in `<FieldError id={errorId}>`.
+  const invalidProps = (key: FieldKey, errorId: string) =>
+    fieldErrors[key] ? { "aria-invalid": true, "aria-describedby": errorId } : {};
 
   const updatePort = (key: PortKey, raw: string) => {
     setPortInputs((p) => ({ ...p, [key]: raw }));
@@ -327,20 +327,36 @@ export function ConnectionForm({
     return method === "ssh_key" ? `${base}-key` : `${base}-cred`;
   };
 
-  const validateNamedCredential = (method: AuthMethod) => {
-    if (!saveCredential) {
-      return;
+  /**
+   * Required-field errors for the destination authentication: a saved
+   * credential must be picked, and an inline one must pass the same checks
+   * as the credential form.
+   */
+  const authFieldErrors = (credentialId: string | undefined): Partial<Record<FieldKey, string>> => {
+    if (authMethod === "credential") {
+      if (credentialId) return {};
+      return {
+        credential_id:
+          connectionType === "jump_shell"
+            ? "Destination credential is required"
+            : "Credential is required",
+      };
     }
-    const name = inlineCredentialName.trim();
-    if (!name) {
-      throw new Error("Credential name is required when saving");
+    const inline = credentialFieldErrors(
+      {
+        name: saveCredential ? inlineCredentialName : null,
+        username: inlineUsername,
+        type: authMethod,
+        password: inlinePassword,
+        privateKeyPath: inlineKeyPath,
+      },
+      { requirePassword: true, takenNames: credentials.map((c) => c.name) },
+    );
+    const errors: Partial<Record<FieldKey, string>> = {};
+    for (const [key, message] of Object.entries(inline)) {
+      errors[`inline_${key as CredentialFieldKey}`] = message;
     }
-    if (credentials.some((c) => c.name === name)) {
-      throw new Error(`A credential named '${name}' already exists`);
-    }
-    if (method === "ssh_key" && !inlineKeyPath) {
-      throw new Error("Private key path is required");
-    }
+    return errors;
   };
 
   /*
@@ -400,52 +416,10 @@ export function ConnectionForm({
         // (We don't await the state update — the local copy is enough.)
         setForm(formWithPorts);
 
-        let credentialId = formWithPorts.credential_id;
-
-        // Auto-create credential for inline auth (only for kinds that need destination auth)
-        if (needsDestinationAuth) {
-          if (authMethod === "password" && onCreateCredential) {
-            if (!inlineUsername) throw new Error("Username is required");
-            if (!inlinePassword) throw new Error("Password is required");
-            validateNamedCredential(authMethod);
-            const isPrivate = !saveCredential;
-            const credName = saveCredential
-              ? inlineCredentialName.trim()
-              : `inline-${crypto.randomUUID()}`;
-            const cred = await onCreateCredential({
-              name: credName,
-              username: inlineUsername,
-              type: "password",
-              password: inlinePassword,
-              is_private: isPrivate,
-            });
-            credentialId = cred.id;
-          } else if (authMethod === "ssh_key" && onCreateCredential) {
-            if (!inlineUsername) throw new Error("Username is required");
-            if (!inlineKeyPath) throw new Error("Private key path is required");
-            validateNamedCredential(authMethod);
-            const isPrivate = !saveCredential;
-            const credName = saveCredential
-              ? inlineCredentialName.trim()
-              : `inline-${crypto.randomUUID()}`;
-            const cred = await onCreateCredential({
-              name: credName,
-              username: inlineUsername,
-              type: "ssh_key",
-              private_key_path: inlineKeyPath,
-              passphrase: inlinePassphrase || undefined,
-              is_private: isPrivate,
-            });
-            credentialId = cred.id;
-          }
-        } else {
-          // PortForward has no destination credential.
-          credentialId = undefined;
-        }
-
-        // Required text fields (name + host(s) + gateway credential).
-        // Collect all of them so the user sees every problem at once
-        // instead of one-at-a-time throw cycling.
+        // Every required field is checked before anything is saved: an
+        // inline credential is created first, so a failure after it would
+        // leave that credential behind. All problems are collected so the
+        // user sees them at once instead of one-at-a-time throw cycling.
         const newFieldErrors: Partial<Record<FieldKey, string>> = {};
         if (!formWithPorts.name.trim()) {
           newFieldErrors.name = "Connection name is required";
@@ -464,18 +438,31 @@ export function ConnectionForm({
             newFieldErrors.destination_host = "Destination host is required";
           }
         }
+        if (needsDestinationAuth) {
+          Object.assign(newFieldErrors, authFieldErrors(formWithPorts.credential_id));
+        }
         if (Object.keys(newFieldErrors).length > 0) {
           setFieldErrors(newFieldErrors);
           throw new Error("Please fix the highlighted fields");
         }
 
-        // Validation per kind.
-        if (connectionType === "port_forward") {
-          if (!formWithPorts.local_port)
-            throw new Error("Local port is required for port forwarding");
-        }
-        if (connectionType === "jump_shell" && !credentialId) {
-          throw new Error("Destination credential is required for jump shell");
+        // PortForward has no destination credential.
+        let credentialId = needsDestinationAuth ? formWithPorts.credential_id : undefined;
+        if (needsDestinationAuth && authMethod !== "credential") {
+          if (!onCreateCredential) throw new Error("Inline credentials are not available here");
+          const cred = await onCreateCredential({
+            name: saveCredential ? inlineCredentialName.trim() : `inline-${crypto.randomUUID()}`,
+            username: inlineUsername,
+            is_private: !saveCredential,
+            ...(authMethod === "password"
+              ? { type: "password", password: inlinePassword }
+              : {
+                  type: "ssh_key",
+                  private_key_path: inlineKeyPath,
+                  passphrase: inlinePassphrase || undefined,
+                }),
+          });
+          credentialId = cred.id;
         }
 
         // Mirror destination_host/port into top-level host/port for tunnel kinds so
@@ -574,10 +561,23 @@ export function ConnectionForm({
   const credentialPicker = (
     <div className="space-y-2">
       <CredentialSelect
+        id="credential"
+        aria-label={connectionType === "jump_shell" ? "Destination credential" : "Credential"}
+        required
         credentials={credentials}
         value={form.credential_id}
-        onChange={(credential_id) => setForm({ ...form, credential_id })}
+        onChange={(credential_id) => {
+          setForm({ ...form, credential_id });
+          clearFieldError("credential_id");
+        }}
         testId="connection-form-credential"
+        error={fieldErrors.credential_id}
+        errorId="credential-error"
+      />
+      <FieldError
+        id="credential-error"
+        message={fieldErrors.credential_id}
+        testId="connection-form-credential-error"
       />
       {canInstallKey && selectedCredential && (
         <>
@@ -646,6 +646,7 @@ export function ConnectionForm({
             setForm({ ...form, gateway_credential_id });
             clearFieldError("gateway_credential_id");
           }}
+          required
           testId="connection-form-gateway-credential"
           error={fieldErrors.gateway_credential_id}
           errorId="gateway_credential-error"
@@ -856,8 +857,14 @@ export function ConnectionForm({
                   id="inline-username"
                   placeholder="root"
                   value={inlineUsername}
-                  onChange={(e) => setInlineUsername(e.target.value)}
+                  onChange={(e) => {
+                    setInlineUsername(e.target.value);
+                    clearFieldError("inline_username");
+                  }}
+                  aria-required="true"
+                  {...invalidProps("inline_username", "inline-username-error")}
                 />
+                <FieldError id="inline-username-error" message={fieldErrors.inline_username} />
               </div>
               <div className="space-y-2">
                 <Label htmlFor="inline-password">Password *</Label>
@@ -865,8 +872,14 @@ export function ConnectionForm({
                   id="inline-password"
                   placeholder="••••••••"
                   value={inlinePassword}
-                  onChange={(e) => setInlinePassword(e.target.value)}
+                  onChange={(e) => {
+                    setInlinePassword(e.target.value);
+                    clearFieldError("inline_password");
+                  }}
+                  aria-required="true"
+                  {...invalidProps("inline_password", "inline-password-error")}
                 />
+                <FieldError id="inline-password-error" message={fieldErrors.inline_password} />
               </div>
               <div className="flex items-center gap-2">
                 <Checkbox
@@ -875,6 +888,7 @@ export function ConnectionForm({
                   onCheckedChange={(v) => {
                     const checked = v === true;
                     setSaveCredential(checked);
+                    clearFieldError("inline_name");
                     if (!checked) {
                       setInlineCredentialName("");
                     } else if (!inlineCredentialName) {
@@ -896,8 +910,14 @@ export function ConnectionForm({
                     id="password-cred-name"
                     placeholder="server-cred"
                     value={inlineCredentialName}
-                    onChange={(e) => setInlineCredentialName(e.target.value)}
+                    onChange={(e) => {
+                      setInlineCredentialName(e.target.value);
+                      clearFieldError("inline_name");
+                    }}
+                    aria-required="true"
+                    {...invalidProps("inline_name", "password-cred-name-error")}
                   />
+                  <FieldError id="password-cred-name-error" message={fieldErrors.inline_name} />
                 </div>
               )}
             </TabsContent>
@@ -909,8 +929,14 @@ export function ConnectionForm({
                   id="key-username"
                   placeholder="root"
                   value={inlineUsername}
-                  onChange={(e) => setInlineUsername(e.target.value)}
+                  onChange={(e) => {
+                    setInlineUsername(e.target.value);
+                    clearFieldError("inline_username");
+                  }}
+                  aria-required="true"
+                  {...invalidProps("inline_username", "key-username-error")}
                 />
+                <FieldError id="key-username-error" message={fieldErrors.inline_username} />
               </div>
               <div className="space-y-2">
                 <Label htmlFor="key-path">Private Key Path *</Label>
@@ -918,8 +944,14 @@ export function ConnectionForm({
                   id="key-path"
                   placeholder="~/.ssh/id_rsa"
                   value={inlineKeyPath}
-                  onChange={(e) => setInlineKeyPath(e.target.value)}
+                  onChange={(e) => {
+                    setInlineKeyPath(e.target.value);
+                    clearFieldError("inline_key_path");
+                  }}
+                  aria-required="true"
+                  {...invalidProps("inline_key_path", "key-path-error")}
                 />
+                <FieldError id="key-path-error" message={fieldErrors.inline_key_path} />
               </div>
               <div className="space-y-2">
                 <Label htmlFor="key-passphrase">Passphrase (optional)</Label>
@@ -937,6 +969,7 @@ export function ConnectionForm({
                   onCheckedChange={(v) => {
                     const checked = v === true;
                     setSaveCredential(checked);
+                    clearFieldError("inline_name");
                     if (!checked) {
                       setInlineCredentialName("");
                     } else if (!inlineCredentialName) {
@@ -958,8 +991,14 @@ export function ConnectionForm({
                     id="ssh-cred-name"
                     placeholder="server-key"
                     value={inlineCredentialName}
-                    onChange={(e) => setInlineCredentialName(e.target.value)}
+                    onChange={(e) => {
+                      setInlineCredentialName(e.target.value);
+                      clearFieldError("inline_name");
+                    }}
+                    aria-required="true"
+                    {...invalidProps("inline_name", "ssh-cred-name-error")}
                   />
+                  <FieldError id="ssh-cred-name-error" message={fieldErrors.inline_name} />
                 </div>
               )}
             </TabsContent>
@@ -1094,6 +1133,7 @@ export function ConnectionForm({
           role="alert"
           aria-live="assertive"
           id="connection-form-error"
+          data-testid="connection-form-error"
           className="text-sm text-destructive bg-destructive/10 px-3 py-2 rounded-md"
         >
           {visibleError}
