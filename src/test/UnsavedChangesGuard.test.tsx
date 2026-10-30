@@ -95,13 +95,12 @@ describe("Unsaved-changes guard — CredentialForm", () => {
     expect(onOpenChange).not.toHaveBeenCalled();
   });
 
-  it("shows the discard prompt on Escape in inline mode after edits (CredentialForm)", async () => {
+  it("shows the discard prompt on Escape after edits (CredentialForm)", async () => {
     const user = userEvent.setup();
     const onOpenChange = vi.fn();
     render(
       <CredentialForm
         open
-        inline
         onOpenChange={onOpenChange}
         credential={null}
         onSubmit={vi.fn()}
@@ -111,7 +110,7 @@ describe("Unsaved-changes guard — CredentialForm", () => {
       expect(screen.getByLabelText(/credential name/i)).toBeInTheDocument(),
     );
     await user.type(screen.getByLabelText(/credential name/i), "prod");
-    fireEvent.keyDown(window, { key: "Escape" });
+    fireEvent.keyDown(screen.getByLabelText(/credential name/i), { key: "Escape" });
     await screen.findByRole("dialog", { name: /discard unsaved changes/i });
     expect(onOpenChange).not.toHaveBeenCalled();
   });
@@ -260,13 +259,12 @@ describe("Unsaved-changes guard — ConnectionForm", () => {
     expect(onOpenChange).not.toHaveBeenCalled();
   });
 
-  it("shows the discard prompt on Escape in inline mode after edits (ConnectionForm)", async () => {
+  it("shows the discard prompt on Escape after edits (ConnectionForm)", async () => {
     const user = userEvent.setup();
     const onOpenChange = vi.fn();
     render(
       <ConnectionForm
         open
-        inline
         onOpenChange={onOpenChange}
         credentials={[]}
         onSubmit={vi.fn()}
@@ -276,24 +274,8 @@ describe("Unsaved-changes guard — ConnectionForm", () => {
       expect(screen.getByLabelText(/connection name/i)).toBeInTheDocument(),
     );
     await user.type(screen.getByLabelText(/connection name/i), "web");
-    fireEvent.keyDown(window, { key: "Escape" });
+    fireEvent.keyDown(screen.getByLabelText(/connection name/i), { key: "Escape" });
     await screen.findByRole("dialog", { name: /discard unsaved changes/i });
     expect(onOpenChange).not.toHaveBeenCalled();
-  });
-});
-
-describe("Inline form autofocus", () => {
-  it("does not steal focus from a field the user already moved into", async () => {
-    const raf = vi
-      .spyOn(window, "requestAnimationFrame")
-      .mockImplementation((cb) => window.setTimeout(() => cb(0), 20));
-    render(
-      <CredentialForm inline open onOpenChange={vi.fn()} onSubmit={vi.fn()} />,
-    );
-    const username = screen.getByLabelText(/username/i);
-    username.focus();
-    await new Promise((r) => setTimeout(r, 40));
-    expect(document.activeElement).toBe(username);
-    raf.mockRestore();
   });
 });

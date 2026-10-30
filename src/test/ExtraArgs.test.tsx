@@ -2,6 +2,7 @@ import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { ConnectionForm } from "@/components/ConnectionForm";
 import { Connection, Credential } from "@/types";
+import { renderInPanel } from "./panel";
 
 const noop = async () => {};
 const defaultProps = {
@@ -21,21 +22,28 @@ describe("ConnectionForm extra_args", () => {
     expect(screen.getByLabelText(/additional ssh arguments/i)).toBeInTheDocument();
   });
 
-  it("renders the inline connection panel body outside dialog context", () => {
-    render(<ConnectionForm {...defaultProps} inline />);
-    expect(screen.getByRole("heading", { name: /new connection/i })).toBeInTheDocument();
-    expect(screen.getByLabelText(/host/i)).toBeInTheDocument();
-    expect(screen.getByRole("region", { name: /new connection/i })).toBeInTheDocument();
-    expect(screen.getByTestId("connection-form")).toHaveAttribute("aria-labelledby");
+  it("opens in the side panel, beside the view", () => {
+    const { slot } = renderInPanel(<ConnectionForm {...defaultProps} />);
+    const panel = screen.getByRole("dialog", { name: /new connection/i });
+    expect(slot()).toContainElement(panel);
+    expect(screen.getByTestId("view")).not.toContainElement(panel);
   });
 
-  it("focuses the first field and closes on Escape in inline mode", async () => {
+  it("stays open while the user works in the view beside it", () => {
     const onOpenChange = vi.fn();
-    render(<ConnectionForm {...defaultProps} inline onOpenChange={onOpenChange} />);
+    renderInPanel(<ConnectionForm {...defaultProps} onOpenChange={onOpenChange} />);
+    fireEvent.pointerDown(screen.getByTestId("view"));
+    fireEvent.focusIn(screen.getByTestId("view"));
+    expect(onOpenChange).not.toHaveBeenCalled();
+  });
+
+  it("focuses the first field and closes on Escape", async () => {
+    const onOpenChange = vi.fn();
+    renderInPanel(<ConnectionForm {...defaultProps} onOpenChange={onOpenChange} />);
 
     await waitFor(() => expect(screen.getByLabelText(/connection name/i)).toHaveFocus());
 
-    fireEvent.keyDown(window, { key: "Escape" });
+    fireEvent.keyDown(screen.getByLabelText(/connection name/i), { key: "Escape" });
     expect(onOpenChange).toHaveBeenCalledWith(false);
   });
 

@@ -1,4 +1,4 @@
-import { useActionState, useState, useEffect, useRef, useId } from "react";
+import { useActionState, useState, useEffect, useRef } from "react";
 import { Credential, CredentialSecrets, UpdateCredentialPayload } from "@/types";
 import { useCredentialsStore } from "@/store/useCredentialsStore";
 import { Button } from "./ui/button";
@@ -18,9 +18,9 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "./ui/tabs";
 import { GenerateKeyDialog, GeneratedKey, KeyStorageMode } from "./GenerateKeyDialog";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { useUnsavedChangesGuard } from "@/hooks/useUnsavedChangesGuard";
+import { useDialogsStore } from "@/store/useDialogsStore";
 import { useFieldErrors } from "@/hooks/useFieldErrors";
 import { pickFile } from "@/lib/dialog";
-import { isTextInput } from "@/lib/focus";
 import { credentialFieldErrors, type CredentialFieldKey } from "@/lib/credentialValidation";
 import { submitWithoutReset } from "@/lib/formSubmit";
 import { FolderOpen } from "lucide-react";
@@ -30,7 +30,6 @@ interface CredentialFormProps {
   onOpenChange: (open: boolean) => void;
   credential?: Credential | null;
   onSubmit: (data: Omit<Credential, "id"> | UpdateCredentialPayload) => Promise<void>;
-  inline?: boolean;
 }
 
 type KeySource = "path" | "inline";
@@ -112,7 +111,6 @@ export function CredentialForm({
   onOpenChange,
   credential,
   onSubmit,
-  inline = false,
 }: CredentialFormProps) {
   const [name, setName] = useState("");
   const [username, setUsername] = useState("");
@@ -134,8 +132,6 @@ export function CredentialForm({
   // Snapshot of the secret fields as fetched; unchanged secrets are not
   // sent back (`keep_secrets`), so they never travel over IPC needlessly.
   const secretsBaselineRef = useRef<string>("");
-  const inlineTitleId = useId();
-  const inlineDescriptionId = useId();
   const firstFieldRef = useRef<HTMLInputElement | null>(null);
 
   // Inline per-field errors. Keys mirror the input identifiers.
@@ -217,29 +213,15 @@ export function CredentialForm({
   const guard = useUnsavedChangesGuard(dirty);
   const requestCloseDialog = () => guard.requestClose(() => onOpenChange(false));
 
+  // The list stays visible beside this panel; opening another editor from
+  // it asks before replacing unsaved changes.
+  const setCredFormGuard = useDialogsStore((s) => s.setCredFormGuard);
+  const { requestClose } = guard;
   useEffect(() => {
-    if (!inline || !open) return;
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key !== "Escape" || event.defaultPrevented) return;
-      if (document.querySelector("[role='dialog']")) return;
-      event.preventDefault();
-      requestCloseDialog();
-    };
-    window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [inline, open, requestCloseDialog]);
-
-  useEffect(() => {
-    if (!inline || !open) return;
-    if (document.querySelector("[role='dialog']")) return;
-    const id = window.requestAnimationFrame(() => {
-      // The frame can land after the user (or a test) has already moved
-      // into another field; never pull focus away from a text input.
-      if (isTextInput(document.activeElement)) return;
-      firstFieldRef.current?.focus();
-    });
-    return () => window.cancelAnimationFrame(id);
-  }, [inline, open, credential?.id]);
+    if (!open) return;
+    setCredFormGuard((proceed) => requestClose(proceed));
+    return () => setCredFormGuard(null);
+  }, [open, requestClose, setCredFormGuard]);
 
   const handleGenerated = (key: GeneratedKey, mode: KeyStorageMode) => {
     setGeneratedPublicKey(key.public_key);
@@ -341,31 +323,16 @@ export function CredentialForm({
   const renderedForm = (
     <>
       <DialogHeader className="px-6 pt-6 pb-3 shrink-0 border-b">
-        {inline ? (
-          <>
-            <h2 id={inlineTitleId} className="text-lg leading-none font-semibold">
-              {title}
-            </h2>
-            <p id={inlineDescriptionId} className="sr-only">
-              {description}
-            </p>
-          </>
-        ) : (
-          <>
-            <DialogTitle>{title}</DialogTitle>
-            <DialogDescription className="sr-only">
-              {description}
-            </DialogDescription>
-          </>
-        )}
+        <DialogTitle>{title}</DialogTitle>
+        <DialogDescription className="sr-only">
+          {description}
+        </DialogDescription>
       </DialogHeader>
       <form
         onSubmit={submitWithoutReset(submitAction)}
         className="flex flex-col flex-1 min-h-0"
         data-testid="credential-form"
         data-secrets-state={secretsState}
-        aria-labelledby={inline ? inlineTitleId : undefined}
-        aria-describedby={inline ? inlineDescriptionId : undefined}
       >
         <div className="flex-1 min-h-0 overflow-y-auto px-6 py-4 space-y-4">
           <div className="space-y-2">
@@ -650,35 +617,26 @@ export function CredentialForm({
 
   return (
     <>
-      {inline ? (
-        open ? (
-          <section
-            className="flex-1 overflow-y-auto px-4 py-4"
-            role="region"
-            aria-labelledby={inlineTitleId}
-            aria-describedby={inlineDescriptionId}
-          >
-            <div className="mx-auto flex min-h-full max-w-3xl flex-col overflow-hidden rounded-xl border border-border/80 bg-card shadow-lg">
-              {renderedForm}
-            </div>
-          </section>
-        ) : null
-      ) : (
-        <Dialog
-          open={open}
-          onOpenChange={(o) => {
-            if (o) {
-              onOpenChange(true);
-              return;
-            }
-            requestCloseDialog();
+      <Dialog
+        open={open}
+        onOpenChange={(o) => {
+          if (o) {
+            onOpenChange(true);
+            return;
+          }
+          requestCloseDialog();
+        }}
+      >
+        <DialogContent
+          className="p-0 gap-0 overflow-hidden"
+          onOpenAutoFocus={(event) => {
+            event.preventDefault();
+            firstFieldRef.current?.focus();
           }}
         >
-          <DialogContent className="sm:max-w-[460px] max-h-[90vh] flex flex-col p-0 gap-0">
-            {renderedForm}
-          </DialogContent>
-        </Dialog>
-      )}
+          {renderedForm}
+        </DialogContent>
+      </Dialog>
       <ConfirmDialog
         open={guard.confirmOpen}
         onOpenChange={(o) => {

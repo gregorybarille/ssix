@@ -1,6 +1,6 @@
 import { errorMessage } from "@/lib/errors";
 import { log as appLog } from "@/lib/log";
-import React, { useActionState, useState, useEffect, useRef } from "react";
+import { useActionState, useState, useEffect, useRef } from "react";
 import { Connection, ConnectionDraft, ConnectionInput, Credential, ConnectionType, OPEN_COLORS } from "@/types";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
@@ -38,11 +38,11 @@ import { RadioGroup, RadioGroupItem } from "./ui/radio-group";
 import { COLOR_VALUES } from "@/lib/colors";
 import { parsePort } from "@/lib/port";
 import { detectPlatform, WSL_PROXY_COMMAND } from "@/lib/platform";
-import { isTextInput } from "@/lib/focus";
 import { UploadCloud } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { submitWithoutReset } from "@/lib/formSubmit";
 import { useUnsavedChangesGuard } from "@/hooks/useUnsavedChangesGuard";
+import { useDialogsStore } from "@/store/useDialogsStore";
 import { ConfirmDialog } from "./ConfirmDialog";
 
 type AuthMethod = "password" | "ssh_key" | "credential";
@@ -64,7 +64,6 @@ interface ConnectionFormProps {
    */
   onDiscardCredential?: (id: string) => Promise<void>;
   isClone?: boolean;
-  inline?: boolean;
 }
 
 const DEFAULT_FORM: ConnectionDraft = {
@@ -234,7 +233,6 @@ export function ConnectionForm({
   onCreateCredential,
   onDiscardCredential,
   isClone = false,
-  inline = false,
 }: ConnectionFormProps) {
   const [form, setForm] = useState<ConnectionDraft>(DEFAULT_FORM);
   const [connectionType, setConnectionType] = useState<ConnectionType>("direct");
@@ -245,8 +243,6 @@ export function ConnectionForm({
   const [inlinePassphrase, setInlinePassphrase] = useState("");
   const [inlineCredentialName, setInlineCredentialName] = useState("");
   const [saveCredential, setSaveCredential] = useState(false);
-  const inlineTitleId = React.useId();
-  const inlineDescriptionId = React.useId();
   const firstFieldRef = useRef<HTMLInputElement | null>(null);
 
   // Port inputs are managed as raw strings so we can validate without
@@ -319,29 +315,15 @@ export function ConnectionForm({
   const guard = useUnsavedChangesGuard(dirty);
   const requestCloseDialog = () => guard.requestClose(() => onOpenChange(false));
 
+  // The list stays visible beside this panel; opening another editor from
+  // it asks before replacing unsaved changes.
+  const setConnFormGuard = useDialogsStore((s) => s.setConnFormGuard);
+  const { requestClose } = guard;
   useEffect(() => {
-    if (!inline || !open) return;
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key !== "Escape" || event.defaultPrevented) return;
-      if (document.querySelector("[role='dialog']")) return;
-      event.preventDefault();
-      requestCloseDialog();
-    };
-    window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [inline, open, requestCloseDialog]);
-
-  useEffect(() => {
-    if (!inline || !open) return;
-    if (document.querySelector("[role='dialog']")) return;
-    const id = window.requestAnimationFrame(() => {
-      // The frame can land after the user (or a test) has already moved
-      // into another field; never pull focus away from a text input.
-      if (isTextInput(document.activeElement)) return;
-      firstFieldRef.current?.focus();
-    });
-    return () => window.cancelAnimationFrame(id);
-  }, [inline, open, connection?.id, isClone]);
+    if (!open) return;
+    setConnFormGuard((proceed) => requestClose(proceed));
+    return () => setConnFormGuard(null);
+  }, [open, requestClose, setConnFormGuard]);
 
   const isTwoHop = connectionType !== "direct";
   const isWindows = detectPlatform() === "windows";
@@ -1223,30 +1205,15 @@ export function ConnectionForm({
   const renderedForm = (
     <>
       <DialogHeader className="px-6 pt-6 pb-3 shrink-0 border-b">
-        {inline ? (
-          <>
-            <h2 id={inlineTitleId} className="text-lg leading-none font-semibold">
-              {title}
-            </h2>
-            <p id={inlineDescriptionId} className="sr-only">
-              {formDescription}
-            </p>
-          </>
-        ) : (
-          <>
-            <DialogTitle>{title}</DialogTitle>
-            <DialogDescription className="sr-only">
-              {formDescription}
-            </DialogDescription>
-          </>
-        )}
+        <DialogTitle>{title}</DialogTitle>
+        <DialogDescription className="sr-only">
+          {formDescription}
+        </DialogDescription>
       </DialogHeader>
       <form
         onSubmit={submitWithoutReset(submitAction)}
         className="flex flex-col flex-1 min-h-0"
         data-testid="connection-form"
-        aria-labelledby={inline ? inlineTitleId : undefined}
-        aria-describedby={inline ? inlineDescriptionId : undefined}
       >
         <div className="flex-1 min-h-0 overflow-y-auto px-6 py-4 space-y-4">
           {formFields}
@@ -1258,35 +1225,26 @@ export function ConnectionForm({
 
   return (
     <>
-      {inline ? (
-        open ? (
-          <section
-            className="flex-1 overflow-y-auto px-4 py-4"
-            role="region"
-            aria-labelledby={inlineTitleId}
-            aria-describedby={inlineDescriptionId}
-          >
-            <div className="mx-auto flex min-h-full max-w-3xl flex-col overflow-hidden rounded-xl border border-border/80 bg-card shadow-lg">
-              {renderedForm}
-            </div>
-          </section>
-        ) : null
-      ) : (
-        <Dialog
-          open={open}
-          onOpenChange={(o) => {
-            if (o) {
-              onOpenChange(true);
-              return;
-            }
-            requestCloseDialog();
+      <Dialog
+        open={open}
+        onOpenChange={(o) => {
+          if (o) {
+            onOpenChange(true);
+            return;
+          }
+          requestCloseDialog();
+        }}
+      >
+        <DialogContent
+          className="p-0 gap-0 overflow-hidden"
+          onOpenAutoFocus={(event) => {
+            event.preventDefault();
+            firstFieldRef.current?.focus();
           }}
         >
-          <DialogContent className="sm:max-w-[560px] max-h-[90vh] flex flex-col p-0 gap-0">
-            {renderedForm}
-          </DialogContent>
-        </Dialog>
-      )}
+          {renderedForm}
+        </DialogContent>
+      </Dialog>
       <ConfirmDialog
         open={guard.confirmOpen}
         onOpenChange={(o) => {

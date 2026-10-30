@@ -28,6 +28,9 @@ export const sel = {
   navGitSync: '[data-testid="nav-git-sync"]',
   navLogs: '[data-testid="nav-logs"]',
 
+  // The right-hand column every editor, SCP panel and confirmation opens in.
+  appPanelSlot: '[data-testid="app-panel-slot"]',
+
   // Logs view: one row per entry, with `data-level` (info, warn, debug…).
   logEntry: '[data-testid="log-entry"]',
 

@@ -153,7 +153,7 @@ export function InstallKeyDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-[420px]" data-testid="install-key-dialog">
+      <DialogContent data-testid="install-key-dialog">
         <DialogHeader>
           <DialogTitle>Install Public Key on Remote</DialogTitle>
           {/*

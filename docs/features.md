@@ -248,9 +248,31 @@ and (on Windows / Linux) the minimize / maximize / close window controls.
   title bar, after OS-level shortcuts (Win+Up, F11, Super+Up), and after
   window-snapping behaviour that bypasses our toggleMaximize handler.
 
+## Side Panel
+
+Nothing in SSIX opens a floating window. Editors (connection and
+credential forms), SCP and bulk SCP, key generation and key install open
+in a panel column on the right of the app, beside the current view, so
+the list you came from stays visible and usable. Confirmations appear as
+a compact card at the top of that column, above the panel they are about.
+The column only takes room while something is open in it.
+
+- A panel stays open while you click or tab around the view beside it;
+  Escape, **Cancel** or its close button close it.
+- Opening another editor from the list (Edit on another row, **New
+  Connection**) replaces the open one at once if it is unchanged, and
+  asks first if it has unsaved changes (see
+  [Unsaved-changes guard](#unsaved-changes-guard)).
+- The quick-connect picker (Cmd/Ctrl+K) is the exception: it stays a
+  centred palette.
+
+`<DialogContent>` portals into the column (`src/components/ui/panel-slot.tsx`,
+mounted by `App`), and its `kind` prop picks `panel`, `confirm` or
+`palette`.
+
 ## Destructive-Action Confirmations
 
-SSIX shows an in-app confirmation panel before any destructive action:
+SSIX shows an in-app confirmation before any destructive action:
 
 - deleting a connection
 - deleting a credential
@@ -262,9 +284,8 @@ accidental Enter press never destroys data. Failed/never-opened
 sessions can be dismissed without confirmation since there is nothing
 to lose.
 
-When a panel closes — whether through Cancel, Confirm, the Escape
-key, or clicking outside — focus returns to the control that opened
-it. This holds even when the panel is opened from React state rather
+When a panel closes — whether through Cancel, Confirm or the Escape
+key — focus returns to the control that opened it. This holds even when the panel is opened from React state rather
 than via `<DialogTrigger>` (the pattern used everywhere in SSIX), which
 the stock Radix focus-restore can't always handle on its own. The
 shared `<DialogContent>` primitive in `src/components/ui/dialog.tsx`
@@ -280,9 +301,9 @@ readers announce the error as soon as it appears. The submit button is
 wired to that error via `aria-describedby`, giving keyboard users
 context as they re-focus the action.
 
-The Connection and Credential editors open inline inside their
-respective views instead of in floating dialogs. Both use a sticky
-footer layout: the form body scrolls inside the in-app panel while the
+The Connection and Credential editors open in the side panel next to
+their lists. Both use a sticky footer layout: the form body scrolls
+inside the panel while the
 **Cancel** / **Save** action row stays pinned to the bottom and never
 disappears, regardless of viewport height or expanded panels (Advanced
 options, inline credentials, etc.).
@@ -454,16 +475,20 @@ return (
 `ConnectionForm` and `CredentialForm` snapshot their initial state when
 the app panel opens and watch for changes via the `useUnsavedChangesGuard`
 hook (`src/hooks/useUnsavedChangesGuard.ts`). When the user attempts to
-close the panel (Cancel button, `Esc`, or click-outside) and the form
-state differs from the baseline, a destructive `<ConfirmDialog>`
-prompts:
+close the panel (Cancel button or `Esc`) or to open another editor from
+the list beside it, and the form state differs from the baseline, a
+destructive `<ConfirmDialog>` prompts:
 
 > **Discard unsaved changes?** You have unsaved changes to this
 > connection/credential. Discard them and close the form?
 > [ Keep editing ]   [ Discard ]
 
 Choosing **Keep editing** dismisses the prompt and returns focus to the
-form; **Discard** confirms and closes the panel.
+form; **Discard** confirms and closes the panel (or opens the editor
+that was asked for). The open form registers this check in
+`useDialogsStore` (`connFormGuard` / `credFormGuard`), which runs it
+before `openEditConnection`, `openNewConnection`, `openCloneConnection`
+and their credential counterparts swap the form.
 
 The guard self-disables for the close that immediately follows a
 successful save: submit handlers call `guard.markSaved()` before

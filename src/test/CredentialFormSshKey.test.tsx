@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, waitFor, fireEvent } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { CredentialForm } from "../components/CredentialForm";
+import { renderInPanel } from "./panel";
 
 describe("CredentialForm SSH key source toggle", () => {
   beforeEach(() => {
@@ -98,41 +99,26 @@ describe("CredentialForm SSH key source toggle", () => {
     );
   });
 
-  it("renders inline mode inside the app surface without a dialog wrapper", () => {
-    render(
-      <CredentialForm
-        open={true}
-        inline
-        onOpenChange={() => {}}
-        credential={null}
-        onSubmit={vi.fn()}
-      />
+  it("opens in the side panel, beside the view", () => {
+    const { slot } = renderInPanel(
+      <CredentialForm open onOpenChange={() => {}} credential={null} onSubmit={vi.fn()} />,
     );
-
-    expect(screen.getByRole("heading", { name: /new credential/i })).toBeInTheDocument();
-    expect(screen.getByLabelText(/Credential Name/i)).toBeInTheDocument();
-    expect(screen.queryByRole("dialog")).toBeNull();
-    expect(screen.getByRole("region", { name: /new credential/i })).toBeInTheDocument();
-    expect(screen.getByTestId("credential-form")).toHaveAttribute("aria-labelledby");
+    const panel = screen.getByRole("dialog", { name: /new credential/i });
+    expect(slot()).toContainElement(panel);
+    expect(screen.getByTestId("view")).not.toContainElement(panel);
   });
 
-  it("focuses the first field and closes on Escape in inline mode", async () => {
+  it("focuses the first field and closes on Escape", async () => {
     const onOpenChange = vi.fn();
-    render(
-      <CredentialForm
-        open={true}
-        inline
-        onOpenChange={onOpenChange}
-        credential={null}
-        onSubmit={vi.fn()}
-      />
+    renderInPanel(
+      <CredentialForm open onOpenChange={onOpenChange} credential={null} onSubmit={vi.fn()} />,
     );
 
     await waitFor(() =>
       expect(screen.getByLabelText(/Credential Name/i)).toHaveFocus(),
     );
 
-    fireEvent.keyDown(window, { key: "Escape" });
+    fireEvent.keyDown(screen.getByLabelText(/Credential Name/i), { key: "Escape" });
     expect(onOpenChange).toHaveBeenCalledWith(false);
   });
 });

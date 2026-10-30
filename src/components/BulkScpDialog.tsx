@@ -129,14 +129,12 @@ export function BulkScpDialog({
   return (
     <Dialog
       open={open}
-      modal
       onOpenChange={(next) => {
         if (running) return;
         onOpenChange(next);
       }}
     >
       <DialogContent
-        className="sm:max-w-[640px]"
         data-testid="bulk-scp-dialog"
       >
         <DialogHeader>

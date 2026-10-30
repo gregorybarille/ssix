@@ -25,9 +25,24 @@ export type ClosePaneTarget =
  * in App.tsx where they can compose connection + credential +
  * port forward stores together.
  */
+/**
+ * Called before an open editor is swapped for another one; runs `proceed`
+ * at once when the form is clean, or after the user agrees to discard.
+ */
+export type FormSwitchGuard = (proceed: () => void) => void;
+
 interface DialogsState {
   // Connection form
   connFormOpen: boolean;
+  /**
+   * Registered by the open connection form. The list stays visible beside
+   * the form panel, so "Edit" on another row must not silently replace
+   * unsaved changes.
+   */
+  connFormGuard: FormSwitchGuard | null;
+  credFormGuard: FormSwitchGuard | null;
+  setConnFormGuard: (guard: FormSwitchGuard | null) => void;
+  setCredFormGuard: (guard: FormSwitchGuard | null) => void;
   editingConn: Connection | null;
   cloningConn: Connection | null;
 
@@ -115,7 +130,17 @@ interface DialogsState {
   ) => void;
 }
 
-export const useDialogsStore = create<DialogsState>((set) => ({
+/** Run `proceed` through the open form's guard, if a form is open. */
+function guarded(open: boolean, guard: FormSwitchGuard | null, proceed: () => void) {
+  if (open && guard) guard(proceed);
+  else proceed();
+}
+
+export const useDialogsStore = create<DialogsState>((set, get) => ({
+  connFormGuard: null,
+  credFormGuard: null,
+  setConnFormGuard: (guard) => set({ connFormGuard: guard }),
+  setCredFormGuard: (guard) => set({ credFormGuard: guard }),
   connFormOpen: false,
   editingConn: null,
   cloningConn: null,
@@ -137,11 +162,17 @@ export const useDialogsStore = create<DialogsState>((set) => ({
   confirmTagAction: null,
 
   openNewConnection: () =>
-    set({ editingConn: null, cloningConn: null, connFormOpen: true }),
+    guarded(get().connFormOpen, get().connFormGuard, () =>
+      set({ editingConn: null, cloningConn: null, connFormOpen: true }),
+    ),
   openEditConnection: (conn) =>
-    set({ editingConn: conn, cloningConn: null, connFormOpen: true }),
+    guarded(get().connFormOpen, get().connFormGuard, () =>
+      set({ editingConn: conn, cloningConn: null, connFormOpen: true }),
+    ),
   openCloneConnection: (conn) =>
-    set({ cloningConn: conn, editingConn: null, connFormOpen: true }),
+    guarded(get().connFormOpen, get().connFormGuard, () =>
+      set({ cloningConn: conn, editingConn: null, connFormOpen: true }),
+    ),
   setConnFormOpen: (open) =>
     set(
       open
@@ -149,9 +180,14 @@ export const useDialogsStore = create<DialogsState>((set) => ({
         : { connFormOpen: false, editingConn: null, cloningConn: null },
     ),
 
-  openNewCredential: () => set({ editingCred: null, credFormOpen: true }),
+  openNewCredential: () =>
+    guarded(get().credFormOpen, get().credFormGuard, () =>
+      set({ editingCred: null, credFormOpen: true }),
+    ),
   openEditCredential: (cred) =>
-    set({ editingCred: cred, credFormOpen: true }),
+    guarded(get().credFormOpen, get().credFormGuard, () =>
+      set({ editingCred: cred, credFormOpen: true }),
+    ),
   setCredFormOpen: (open) =>
     set(open ? { credFormOpen: true } : { credFormOpen: false, editingCred: null }),
 

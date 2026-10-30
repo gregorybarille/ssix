@@ -53,35 +53,31 @@ export function CredentialsView({
           </Button>
         </div>
       </div>
-      {dialogs.credFormOpen ? (
-        <CredentialForm
-          inline
-          open={dialogs.credFormOpen}
-          onOpenChange={dialogs.setCredFormOpen}
-          credential={dialogs.editingCred}
-          onSubmit={onSubmit}
-        />
-      ) : (
-        <div className="flex-1 overflow-y-auto px-4 py-2">
-          {loadError && (
-            <ErrorBanner
-              className="mx-2 mb-2"
-              message={`Could not load credentials: ${loadError}`}
-              onRetry={() => void retryLoad()}
-              testId="credentials-load-error"
-            />
-          )}
-          <CredentialList
-            credentials={credentials}
-            layout={settings.credential_layout}
-            onEdit={(cred) => dialogs.openEditCredential(cred)}
-            onDelete={(id) => {
-              const cred = credentials.find((c) => c.id === id);
-              if (cred) dialogs.setConfirmDeleteCred(cred);
-            }}
+      <div className="flex-1 overflow-y-auto px-4 py-2">
+        {loadError && (
+          <ErrorBanner
+            className="mx-2 mb-2"
+            message={`Could not load credentials: ${loadError}`}
+            onRetry={() => void retryLoad()}
+            testId="credentials-load-error"
           />
-        </div>
-      )}
+        )}
+        <CredentialList
+          credentials={credentials}
+          layout={settings.credential_layout}
+          onEdit={(cred) => dialogs.openEditCredential(cred)}
+          onDelete={(id) => {
+            const cred = credentials.find((c) => c.id === id);
+            if (cred) dialogs.setConfirmDeleteCred(cred);
+          }}
+        />
+      </div>
+      <CredentialForm
+        open={dialogs.credFormOpen}
+        onOpenChange={dialogs.setCredFormOpen}
+        credential={dialogs.editingCred}
+        onSubmit={onSubmit}
+      />
     </>
   );
 }

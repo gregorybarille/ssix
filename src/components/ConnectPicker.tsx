@@ -144,7 +144,7 @@ export function ConnectPicker({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-[480px] p-0 gap-0">
+      <DialogContent kind="palette" className="sm:max-w-[480px] p-0 gap-0">
         <DialogHeader className="sr-only">
           <DialogTitle>Open Connection</DialogTitle>
         </DialogHeader>
