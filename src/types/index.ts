@@ -176,7 +176,7 @@ export type ConnectionDraft = {
 };
 
 /**
- * Display mode for the connection / credential / tunnel lists.
+ * Display mode for the connection / credential / port forward lists.
  *
  * - `"list"`: a vertical stack of full-width rows.
  * - `"tile"`: a CSS grid of fixed-width cards, one per item.

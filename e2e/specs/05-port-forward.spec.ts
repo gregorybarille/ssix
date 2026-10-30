@@ -1,10 +1,10 @@
 /**
  * Spec 05: Port forward — local → server-a → server-c:22.
  *
- * Starts a tunnel via SSIX, then opens a raw TCP socket from the
+ * Starts a local forward via SSIX, then opens a raw TCP socket from the
  * test runner to the local forwarded port and asserts the SSH
  * banner from server-c is received. Validates `start_port_forward`
- * and the `ssix:tunnel:status` event stream.
+ * and the `ssix:forward:status` event stream.
  */
 import { connect } from "node:net";
 import { waitForAppReady } from "../helpers/app.js";
@@ -40,7 +40,7 @@ function readBanner(host: string, port: number, timeoutMs = 5_000): Promise<stri
 }
 
 /**
- * Poll-and-retry wrapper: the active tunnel row appears in the UI as
+ * Poll-and-retry wrapper: the active forward row appears in the UI as
  * soon as the placeholder is set, BEFORE `ssh_connect` resolves and
  * the local listener is bound. Block until the local port actually
  * accepts a TCP connection (or give up after `totalTimeoutMs`).
@@ -80,33 +80,33 @@ describe("Port forward (server-a → server-c:22)", () => {
 
     await navigateTo("connections");
     await click(sel.addConnectionButton);
-    await fill(sel.connectionFormName, "tunnel-05-c");
-    await click(sel.connectionFormKindPortForward);
-    // port_forward = tunnel: uses gateway/dest fields, not the
+    await fill(sel.connectionFormName, "forward-05-c");
+    await click(sel.connectionFormKindLocalForward);
+    // port_forward = local forward: uses SSH server/remote fields, not the
     // top-level direct host/port. Auth section is hidden (port_forward
-    // has no destination shell, so only the gateway needs creds).
-    await fill(sel.connectionFormGateway, TARGETS.a.host);
-    await fill(sel.connectionFormGatewayPort, String(TARGETS.a.sshPort));
-    await pickCredential(sel.connectionFormGatewayCredential, "cred-05-a");
-    await fill(sel.connectionFormDestHost, "server-c");
-    await fill(sel.connectionFormDestPort, "22");
+    // has no remote shell, so only the SSH server needs creds).
+    await fill(sel.connectionFormHopHost, TARGETS.a.host);
+    await fill(sel.connectionFormHopPort, String(TARGETS.a.sshPort));
+    await pickCredential(sel.connectionFormHopCredential, "cred-05-a");
+    await fill(sel.connectionFormTargetHost, "server-c");
+    await fill(sel.connectionFormTargetPort, "22");
     await fill(sel.connectionFormLocalPort, String(LOCAL_PORT));
     await click(sel.connectionFormSubmit);
 
-    await navigateTo("tunnels");
-    // The tunnels view now renders one row per port-forward definition
+    await navigateTo("forwards");
+    // The port forwards view renders one row per local forward
     // and updates that row in place as the session comes up.
-    const tunnelRow = await browser.$(sel.tunnelRowByName("tunnel-05-c"));
-    await tunnelRow.waitForExist({ timeout: 10_000 });
-    const startBtn = await tunnelRow.$('[data-testid^="connect-button-"]');
+    const forwardRow = await browser.$(sel.forwardRowByName("forward-05-c"));
+    await forwardRow.waitForExist({ timeout: 10_000 });
+    const startBtn = await forwardRow.$('[data-testid^="connect-button-"]');
     await startBtn.waitForClickable({ timeout: 10_000 });
     await startBtn.click();
 
     await browser.waitUntil(
-      async () => (await tunnelRow.getAttribute("data-status")) !== "disconnected",
+      async () => (await forwardRow.getAttribute("data-status")) !== "disconnected",
       {
         timeout: 10_000,
-        timeoutMsg: "Tunnel row never left the disconnected state after starting",
+        timeoutMsg: "Forward row never left the disconnected state after starting",
       },
     );
 

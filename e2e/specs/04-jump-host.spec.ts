@@ -1,18 +1,18 @@
 /**
- * Spec 04: JumpShell connection — server-a → server-c.
+ * Spec 04: jump host connection (`ssh -J`) — server-a → server-c.
  *
  * server-c is only on `private_a`, unreachable from the host. SSIX
- * must connect through server-a as a gateway. Validates the two-hop
+ * must connect through server-a as a jump host. Validates the two-hop
  * worker in `src-tauri/src/ssh.rs` (`start_jump_shell`).
  *
  * Form selector cheat-sheet for `jump_shell` mode:
- *   • `connection-form-gateway`            — gateway host
- *   • `connection-form-gateway-port`       — gateway port
- *   • `connection-form-gateway-credential` — gateway credential picker
- *   • `connection-form-dest-host`          — destination host
- *   • `connection-form-dest-port`          — destination port
- *   • `connection-form-credential`         — destination credential
- *     (the auth-section credential picker; reused as the dest cred)
+ *   • `connection-form-hop-host`       — jump host
+ *   • `connection-form-hop-port`       — jump host port
+ *   • `connection-form-hop-credential` — jump host credential picker
+ *   • `connection-form-target-host`    — target host
+ *   • `connection-form-target-port`    — target port
+ *   • `connection-form-credential`     — target credential
+ *     (the auth-section credential picker)
  */
 import { waitForAppReady } from "../helpers/app.js";
 import { TARGETS, waitForServers } from "../helpers/docker.js";
@@ -28,12 +28,12 @@ import {
 } from "../helpers/flows.js";
 import { sel } from "../helpers/selectors.js";
 
-describe("JumpShell session (server-a → server-c)", () => {
+describe("Jump host session (server-a → server-c)", () => {
   before(async () => {
     await waitForServers(["a"]);
   });
 
-  it("opens a shell on server-c via the server-a gateway", async () => {
+  it("opens a shell on server-c via the server-a jump host", async () => {
     await waitForAppReady();
     await createPasswordCredential({
       name: "cred-04-a",
@@ -49,18 +49,18 @@ describe("JumpShell session (server-a → server-c)", () => {
     await navigateTo("connections");
     await click(sel.addConnectionButton);
     await fill(sel.connectionFormName, "jump-04-c");
-    await click(sel.connectionFormKindJumpShell);
-    // Gateway = server-a (with cred-04-a).
-    await fill(sel.connectionFormGateway, TARGETS.a.host);
-    await fill(sel.connectionFormGatewayPort, String(TARGETS.a.sshPort));
-    await pickCredential(sel.connectionFormGatewayCredential, "cred-04-a");
-    // Destination = server-c (with cred-04-c). server-c sshd is on
+    await click(sel.connectionFormKindJumpHost);
+    // Jump host = server-a (with cred-04-a).
+    await fill(sel.connectionFormHopHost, TARGETS.a.host);
+    await fill(sel.connectionFormHopPort, String(TARGETS.a.sshPort));
+    await pickCredential(sel.connectionFormHopCredential, "cred-04-a");
+    // Target = server-c (with cred-04-c). server-c sshd is on
     // port 22 inside the docker network; the SSH command runs from
     // INSIDE server-a, so we always use port 22 here regardless of
     // whether the test runner is dockerized.
-    await fill(sel.connectionFormDestHost, "server-c");
-    await fill(sel.connectionFormDestPort, "22");
-    await pickCredential(sel.connectionFormDestCredential, "cred-04-c");
+    await fill(sel.connectionFormTargetHost, "server-c");
+    await fill(sel.connectionFormTargetPort, "22");
+    await pickCredential(sel.connectionFormTargetCredential, "cred-04-c");
     await click(sel.connectionFormSubmit);
 
     await connectToConnection("jump-04-c");

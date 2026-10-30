@@ -48,7 +48,7 @@ interface BulkScpDialogProps {
  *    don't collide.
  *  - Recursive transfers are honoured; for downloads the suffix
  *    applies to the top-level directory name only.
- *  - Port-forward members are listed but greyed out — they can't
+ *  - Local forward members are listed but greyed out — they can't
  *    do SCP and the SCP commands reject them server-side anyway.
  *  - Transfers run sequentially with a live per-host progress
  *    list. The dialog never closes itself; the user dismisses it

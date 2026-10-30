@@ -151,7 +151,7 @@ pub async fn ssh_connect(
             let dest_cred_id = conn
                 .credential_id
                 .as_deref()
-                .ok_or("Jump-shell connection requires a destination credential")?;
+                .ok_or("Jump host connection requires a target credential")?;
             let gateway = resolve_endpoint(
                 &data.credentials,
                 gateway_host,

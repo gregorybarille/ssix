@@ -16,14 +16,14 @@ export type ClosePaneTarget =
  * confirm dialogs, the orphan-credential dialog, the context menu
  * and the screenshot toast) used to be a separate `useState`
  * hook on the App component. Co-locating them in a single store
- * lets terminal/tunnel actions reach across — e.g. "Edit from a
+ * lets terminal/port forward actions reach across — e.g. "Edit from a
  * failed terminal pane" can flip view to connections AND open
  * the form in one call without prop-drilling setters.
  *
  * This store deliberately holds only UI-presentation state: no
  * IPC, no persistence, no async work. Submit handlers still live
  * in App.tsx where they can compose connection + credential +
- * tunnel stores together.
+ * port forward stores together.
  */
 interface DialogsState {
   // Connection form

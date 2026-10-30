@@ -10,7 +10,7 @@ interface LayoutToggleProps {
    * Whether to render the third "Tags" button. Only the Connections
    * view supports tag grouping today (each tile aggregates a tag
    * group and offers Connect-all / SCP-all), so the Credential and
-   * Tunnel toggles omit it. Defaults to false to keep callers
+   * Port forward toggles omit it. Defaults to false to keep callers
    * conservative.
    */
   showTags?: boolean;

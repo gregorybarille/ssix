@@ -6,13 +6,13 @@ import type { Connection, Credential } from "@/types";
  * The shape mirrors what the `ssh2` backend dials:
  *
  * - `direct`: `ssh [-i KEY] [-p PORT] user@host`
- * - `jump_shell`: `ssh -J jumpUser@gateway[:port] [-i KEY] [-p PORT] user@host`
- * - `port_forward`: `ssh -L LOCAL:DEST:DEST_PORT [-i KEY] jumpUser@gateway[:port]`
- *   (this matches how OpenSSH would tunnel the same destination — the
- *   gateway is the host you actually connect to, not the destination.)
+ * - `jump_shell` (jump host): `ssh -J jumpUser@jumphost[:port] [-i KEY] [-p PORT] user@target`
+ * - `port_forward` (local forward): `ssh -L LOCAL:REMOTE:REMOTE_PORT [-i KEY] user@server[:port]`
+ *   (the SSH server is the host you actually connect to; it reaches the
+ *   remote host on your behalf.)
  *
- * The username is resolved from the destination credential when present, and
- * falls back to the gateway credential for `port_forward`. If no credential
+ * The username is resolved from the target credential when present, and
+ * falls back to the SSH server's credential for `port_forward`. If no credential
  * matches (e.g. inline auth that hasn't been saved yet), the user portion is
  * omitted and the user is expected to fill it in.
  *

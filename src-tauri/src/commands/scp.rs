@@ -8,14 +8,14 @@
 //! `src/store/useFileTransferStore.ts` continue to work unmodified.
 //!
 //! The shared helpers `find_connection` and `resolve_endpoint` live in
-//! `commands/ssh.rs`; gateway bridging is `crate::ssh::bridge_via_gateway`,
-//! the same code path the jump-shell terminal uses.
+//! `commands/ssh.rs`; jump host bridging is `crate::ssh::bridge_via_jump_host`,
+//! the same code path the jump host terminal uses.
 
 use crate::commands::blocking;
 use crate::commands::ssh::{find_connection, resolve_endpoint};
 use crate::models::{Connection, ConnectionKind};
 use crate::ssh::{
-    bridge_via_gateway, open_authenticated_session, open_authenticated_session_over_stream,
+    bridge_via_jump_host, open_authenticated_session, open_authenticated_session_over_stream,
 };
 use serde::{Deserialize, Serialize};
 use std::fs;
@@ -184,9 +184,10 @@ fn connect_file_transfer_session(
             destination_host,
             destination_port,
         } => {
-            let dest_cred_id = conn.credential_id.as_ref().ok_or_else(|| {
-                "Jump-shell connection requires a destination credential".to_string()
-            })?;
+            let dest_cred_id = conn
+                .credential_id
+                .as_ref()
+                .ok_or_else(|| "Jump host connection requires a target credential".to_string())?;
             let gateway = resolve_endpoint(
                 &data.credentials,
                 gateway_host,
@@ -199,7 +200,7 @@ fn connect_file_transfer_session(
                 *destination_port,
                 dest_cred_id,
             )?;
-            let stream = bridge_via_gateway(&gateway, &destination.host, destination.port)?;
+            let stream = bridge_via_jump_host(&gateway, &destination.host, destination.port)?;
             let session = open_authenticated_session_over_stream(
                 stream,
                 &destination,
@@ -217,7 +218,7 @@ fn connect_file_transfer_session(
             })
         }
         ConnectionKind::PortForward { .. } | ConnectionKind::LegacyTunnel { .. } => {
-            Err("SCP is only available for direct and jump-shell connections".to_string())
+            Err("SCP is only available for direct and jump host connections".to_string())
         }
     }
 }

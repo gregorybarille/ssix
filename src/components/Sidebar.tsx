@@ -5,7 +5,7 @@ import { cn } from "@/lib/utils";
 export type NavItem =
   | "connections"
   | "credentials"
-  | "tunnels"
+  | "forwards"
   | "logs"
   | "git_sync"
   | "settings"
@@ -15,13 +15,13 @@ interface SidebarProps {
   active: NavItem;
   onNavigate: (item: NavItem) => void;
   terminalCount?: number;
-  tunnelCount?: number;
+  forwardCount?: number;
   gitPending?: boolean;
 }
 
 const navItems: { id: NavItem; label: string; icon: React.ReactNode }[] = [
   { id: "connections", label: "Connections", icon: <Server className="h-5 w-5" /> },
-  { id: "tunnels", label: "Tunnels", icon: <Cable className="h-5 w-5" /> },
+  { id: "forwards", label: "Port forwards", icon: <Cable className="h-5 w-5" /> },
   { id: "credentials", label: "Credentials", icon: <Key className="h-5 w-5" /> },
   { id: "logs", label: "Logs", icon: <ScrollText className="h-5 w-5" /> },
 ];
@@ -104,7 +104,7 @@ export function Sidebar({
   active,
   onNavigate,
   terminalCount = 0,
-  tunnelCount = 0,
+  forwardCount = 0,
   gitPending = false,
 }: SidebarProps) {
   return (
@@ -129,7 +129,7 @@ export function Sidebar({
             label={label}
             onClick={() => onNavigate(id)}
             icon={icon}
-            badge={id === "tunnels" ? tunnelCount : undefined}
+            badge={id === "forwards" ? forwardCount : undefined}
             testId={`nav-${id.replace("_", "-")}`}
           />
         ))}

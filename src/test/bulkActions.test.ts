@@ -36,21 +36,21 @@ const portfwd = (id: string, name: string): Connection =>
   }) as Connection;
 
 describe("isBulkActionable", () => {
-  it("rejects port-forward connections", () => {
+  it("rejects local forwards", () => {
     expect(isBulkActionable(portfwd("1", "tun"))).toBe(false);
     expect(isBulkActionable(direct("2", "a"))).toBe(true);
   });
 });
 
 describe("planBulkUpload", () => {
-  it("marks port-forward rows as skipped with explanatory error", () => {
+  it("marks local forward rows as skipped with explanatory error", () => {
     const plan = planBulkUpload(
       [direct("1", "a"), portfwd("2", "tun")],
       { localPath: "/tmp/x", remotePath: "/srv/x", recursive: false },
     );
     expect(plan[0].status).toBe("pending");
     expect(plan[1].status).toBe("skipped");
-    expect(plan[1].error).toMatch(/port-forward/i);
+    expect(plan[1].error).toMatch(/local forward/i);
   });
 
   it("falls back to conn.remote_path when remotePath is unset", () => {
@@ -133,7 +133,7 @@ describe("runBulkScp", () => {
     expect(vi.mocked(invoke).mock.calls[0][0]).toBe("scp_download");
   });
 
-  it("skips port-forward steps without invoking the backend", async () => {
+  it("skips local forward steps without invoking the backend", async () => {
     vi.mocked(invoke).mockResolvedValue({
       local_path: "",
       remote_path: "",

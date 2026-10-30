@@ -92,27 +92,35 @@ fn validate_connection_credentials(
     credential_id: Option<&str>,
     kind: &ConnectionKind,
 ) -> Result<(), String> {
+    // `label` starts mid-sentence; the "is required" message capitalizes it.
     let check = |label: &str, id: Option<&str>| match id.filter(|id| !id.is_empty()) {
-        None => Err(format!("{label} is required")),
-        Some(id) if !credentials.iter().any(|c| c.id == id) => Err(format!(
-            "The selected {} no longer exists",
-            label.to_lowercase()
-        )),
+        None => {
+            let mut chars = label.chars();
+            let first = chars.next().map(|c| c.to_uppercase().collect::<String>());
+            Err(format!(
+                "{}{} is required",
+                first.unwrap_or_default(),
+                chars.as_str()
+            ))
+        }
+        Some(id) if !credentials.iter().any(|c| c.id == id) => {
+            Err(format!("The selected {label} no longer exists"))
+        }
         Some(_) => Ok(()),
     };
     match kind {
-        ConnectionKind::Direct => check("Credential", credential_id),
+        ConnectionKind::Direct => check("credential", credential_id),
         ConnectionKind::JumpShell {
             gateway_credential_id,
             ..
         } => {
-            check("Gateway credential", Some(gateway_credential_id))?;
-            check("Destination credential", credential_id)
+            check("jump host credential", Some(gateway_credential_id))?;
+            check("target credential", credential_id)
         }
         ConnectionKind::PortForward {
             gateway_credential_id,
             ..
-        } => check("Gateway credential", Some(gateway_credential_id)),
+        } => check("SSH server credential", Some(gateway_credential_id)),
         // Old files are migrated to JumpShell on load; the variant still
         // deserializes, so a request carrying it must not be stored.
         ConnectionKind::LegacyTunnel { .. } => {
@@ -461,11 +469,11 @@ mod tests {
         );
         assert_eq!(
             validate_connection_credentials(&creds, None, &jump_kind(id)),
-            required("Destination credential is required")
+            required("Target credential is required")
         );
         assert_eq!(
             validate_connection_credentials(&creds, Some(id), &jump_kind("")),
-            required("Gateway credential is required")
+            required("Jump host credential is required")
         );
         assert!(validate_connection_credentials(&creds, Some(id), &direct).is_ok());
         assert!(validate_connection_credentials(&creds, Some(id), &jump_kind(id)).is_ok());
@@ -483,11 +491,11 @@ mod tests {
         );
         assert_eq!(
             validate_connection_credentials(&creds, Some("gone"), &jump_kind(id)),
-            Err("The selected destination credential no longer exists".to_string())
+            Err("The selected target credential no longer exists".to_string())
         );
         assert_eq!(
             validate_connection_credentials(&creds, None, &port_forward_kind("gone")),
-            Err("The selected gateway credential no longer exists".to_string())
+            Err("The selected SSH server credential no longer exists".to_string())
         );
     }
 

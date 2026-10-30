@@ -5,8 +5,8 @@
  *   HOST_KEY_MISMATCH host=<host> port=<port> fingerprint=<fp>
  *   <human-readable explanation>
  *
- * The marker may be wrapped by an outer error ("Gateway x: ...", or
- * "Destination connect via gateway failed: ..."), so it is searched for
+ * The marker may be wrapped by an outer error ("Jump host x: ...", or
+ * "Target connect via jump host failed: ..."), so it is searched for
  * anywhere in the message.
  */
 export interface HostKeyMismatch {

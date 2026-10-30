@@ -2,11 +2,20 @@
 
 ## Connections
 
-SSIX supports three connection types:
+SSIX supports three connection types, named after the OpenSSH options they
+correspond to:
 
-- `direct`
-- `port_forward`
-- `jump_shell`
+| Kind | `ssh` equivalent | Hosts |
+|---|---|---|
+| Direct (`direct`) | `ssh user@host` | the host |
+| Local forward (`port_forward`) | `ssh -L local:remote:port user@server` | the **SSH server**, which forwards a local port to the **remote host** |
+| Jump host (`jump_shell`) | `ssh -J user@jumphost user@target` | the **jump host**, which relays the session to the **target** |
+
+The names in backticks are the stored values in `data.json`; they predate
+the OpenSSH wording and are kept so existing data loads unchanged. The
+`gateway_*` fields hold the SSH server or jump host, and the
+`destination_*` fields hold the remote host or target. `src/lib/sshTerms.ts`
+maps each kind to the words the UI shows.
 
 Each shell-capable connection can also define:
 
@@ -28,7 +37,7 @@ Supported credential modes:
 The connection form can create inline credentials and optionally save them as named credentials.
 
 **Clone** opens the connection form prefilled from a connection, and
-everything in it (kind, gateway, tags, colour, options) is saved as the
+everything in it (kind, jump host or SSH server, tags, colour, options) is saved as the
 new connection. The original's private inline credential is copied, so
 the clone and the original never share one; inline auth entered in the
 clone form makes a credential for the clone alone.
@@ -60,7 +69,7 @@ changes, because the unsaved-changes baseline follows the fetched values.
 
 ### Host-key verification
 
-Every SSH connection — direct, gateway, the destination behind a gateway, SCP and the public-key installer — verifies the server's host key before a password or key is sent.
+Every SSH connection — direct, the jump host, the target behind it, a local forward's SSH server, SCP and the public-key installer — verifies the server's host key before a password or key is sent.
 
 - The first time a `host:port` is seen its key is recorded in `~/.ssix/known_hosts` (OpenSSH format, so `ssh-keygen -F`/`-R` work on it).
 - If the key later differs the connection is refused. The failure view names the host, shows the new SHA256 fingerprint and offers **Trust new host key**, which forgets the stale entry and reconnects. Use it only when you know the server was reinstalled or re-keyed.
@@ -75,18 +84,19 @@ The terminal tab bar is a true WAI-ARIA tablist. With focus on a tab:
 - **Delete** or **Cmd/Ctrl+W** — close the focused tab
 - The "x" affordance on tabs is mouse-only.
 
-## Tunnels
+## Port Forwards
 
-- local port forwarding through a gateway
-- one row per tunnel definition with status indicator:
+- local forwards (`ssh -L`): SSIX listens on `127.0.0.1:<local port>` and
+  forwards each connection through the SSH server to the remote host
+- one row per local forward with status indicator:
   grey for not connected/connecting, green for connected, red for connection errors
-- expandable inline detail panes beneath each tunnel connection; multiple rows can stay expanded
+- expandable inline detail panes beneath each forward; multiple rows can stay expanded
 
 ## Search, Tags, And Colors
 
 - search filters the loaded list in the frontend (`src/lib/search.ts`); no backend call per keystroke
 - query terms are AND-matched, case-insensitive
-- matches run across connection name, host, gateway/destination host, and tags; the same matcher powers the Connect Picker
+- matches run across connection name, host, jump host / SSH server, target / remote host, and tags; the same matcher powers the Connect Picker
 - color accents appear on connection cards and terminal tabs
 
 ## SCP File Transfer
@@ -95,8 +105,8 @@ The terminal tab bar is a true WAI-ARIA tablist. With focus on a tab:
 - download files
 - upload directories recursively
 - download directories recursively
-- direct and jump-shell connections supported
-- port-forward definitions are not SCP targets
+- direct and jump host connections supported
+- local forwards are not SCP targets
 
 See [File Transfer](file-transfer.md) for behavior and limitations.
 
@@ -214,7 +224,7 @@ options, inline credentials, etc.).
 
 ### Port validation
 
-Port inputs (direct port, gateway port, destination port, local port)
+Port inputs (direct port, jump host / SSH server port, target / remote port, local port)
 parse strictly via the `parsePort` helper in `src/lib/port.ts`:
 
 - Empty input is treated as "missing" so callers can decide whether the
@@ -234,13 +244,14 @@ Required text fields use the same per-field inline-error pattern as
 ports. On submit the form collects every problem at once and surfaces
 each one next to its input:
 
-- ConnectionForm: **Connection Name**, **Host** (direct), **Gateway
-  Host** + **Gateway Credential** + **Destination Host** (tunnels),
-  and the destination authentication for Direct and Jump Shell (a
-  Port Forward only authenticates to its gateway):
+- ConnectionForm: **Connection Name**, **Host** (direct), **Jump Host**
+  + **Jump Host Credential** + **Target Host** (jump host), **SSH Server
+  Host** + **SSH Server Credential** + **Remote Host** (local forward),
+  and the target authentication for Direct and Jump host (a local
+  forward only authenticates to its SSH server):
   - **Saved Credential**: a credential must be picked; "None" shows
-    *"Credential is required"* (*"Destination credential is required"*
-    on a jump shell).
+    *"Credential is required"* (*"Target credential is required"*
+    on a jump host connection).
   - **Password** / **SSH Key**: the inline fields get the same checks
     as the credential form (`credentialFieldErrors` in
     `src/lib/credentialValidation.ts`): **Username**, **Password** or
@@ -260,8 +271,9 @@ into the input clears the error immediately so the validation feels
 responsive instead of nagging.
 
 The backend enforces the credential rule too: `add_connection`,
-`update_connection` and `clone_connection` refuse a Direct or Jump Shell
-connection without a credential, a tunnel without a gateway credential,
+`update_connection` and `clone_connection` refuse a Direct or Jump host
+connection without a credential, a jump host or local forward without a
+credential for its jump host or SSH server,
 and any credential id that no longer exists. A connection never points
 at a deleted credential: deleting a credential that connections still
 use is refused with their names, and references that older builds left
@@ -284,7 +296,7 @@ discoverable on the very first visit. Secondary actions (Transfer
 files, Clone, Edit, Delete) are likewise rendered in their resting
 state at all times: the v2 redesign deliberately removed the
 hover-reveal pattern so users know up-front exactly what is available
-on each row without any discovery cost. Port-forward connections
+on each row without any discovery cost. Local forwards
 render the Transfer-files (SCP) icon in a disabled state with an
 explanatory `title` tooltip rather than hiding it, so the affordance
 remains predictable across connection kinds.
@@ -342,7 +354,7 @@ primitive is keyboard-navigable end-to-end:
 Wired surfaces today:
 
 - **Connection rows / tiles** — Connect, Edit, Clone, Transfer files
-  (hidden for tunnels), separator, Copy SSH command, separator, Delete
+  (hidden for local forwards), separator, Copy SSH command, separator, Delete
   (destructive). "Copy SSH command" builds a portable `ssh` invocation
   from the connection + selected credential via `buildSshCommand` in
   `src/lib/ssh-command.ts` and writes it to the clipboard.
@@ -473,7 +485,7 @@ hosts that carry no tags) and offers two bulk actions:
   - Connections that have multiple tags appear under each of their
     tags so bulk actions on `prod` really do hit every prod host
     even when some are also in `db`.
-  - Port-forward entries are listed but greyed out — they can't
+  - Local forwards are listed but greyed out — they can't
     do SCP and the SCP commands reject them server-side.
 - The search bar in tag-groups mode filters tag labels only
   (case-insensitive substring), since the whole point of this view

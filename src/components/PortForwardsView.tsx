@@ -5,19 +5,19 @@ import { ConfirmDialog } from "./ConfirmDialog";
 import { Cable, ChevronDown, ChevronRight, Copy, Pencil, Play, Trash2, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 
-export interface TunnelSession {
+export interface ForwardSession {
   sessionId: string;
   connectionName: string;
-  // Audit-4 Phase 4b: a tunnel session is, by construction, only ever
-  // started for a port_forward connection. Narrow at the source so
-  // <TunnelTab>'s prop type doesn't need a runtime guard.
+  // Audit-4 Phase 4b: a forward session is, by construction, only ever
+  // started for a port_forward connection. Narrow at the source so the
+  // row's prop type doesn't need a runtime guard.
   connection: Extract<Connection, { type: "port_forward" }>;
   error?: string;
   retrying?: boolean;
 }
 
-interface TunnelsViewProps {
-  sessions: TunnelSession[];
+interface PortForwardsViewProps {
+  sessions: ForwardSession[];
   connections: Connection[];
   credentials: Credential[];
   onCloseSession: (sessionId: string) => void;
@@ -27,7 +27,7 @@ interface TunnelsViewProps {
   onClone: (conn: Connection) => void;
 }
 
-export function TunnelsView({
+export function PortForwardsView({
   sessions,
   connections,
   credentials,
@@ -36,11 +36,11 @@ export function TunnelsView({
   onEdit,
   onDelete,
   onClone,
-}: TunnelsViewProps) {
-  const tunnelDefs = connections.filter((c) => c.type === "port_forward");
+}: PortForwardsViewProps) {
+  const forwardDefs = connections.filter((c) => c.type === "port_forward");
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   /*
-   * Audit-2 #2: closing a live tunnel is destructive — every TCP
+   * Audit-2 #2: stopping a live forward is destructive — every TCP
    * connection going through the forwarded port is dropped. AGENTS.md
    * requires destructive actions to go through <ConfirmDialog>; the
    * same standard that gates "close live terminal pane" applies here.
@@ -54,8 +54,8 @@ export function TunnelsView({
     id ? credentials.find((c) => c.id === id)?.name ?? "Unknown credential" : "No credential";
 
   const latestSessionByConnectionId = useMemo(() => {
-    const map = new Map<string, TunnelSession>();
-    // `sessions` is append-ordered in the tunnels store, so the last entry
+    const map = new Map<string, ForwardSession>();
+    // `sessions` is append-ordered in the port forwards store, so the last entry
     // seen for each connection id is the same "latest session" previously
     // returned by `filter(...).at(-1)`, but with O(1) lookup during render.
     for (const session of sessions) {
@@ -67,7 +67,7 @@ export function TunnelsView({
   const getLatestSession = (conn: Extract<Connection, { type: "port_forward" }>) =>
     latestSessionByConnectionId.get(conn.id) ?? null;
 
-  const getStatus = (session: TunnelSession | null) => {
+  const getStatus = (session: ForwardSession | null) => {
     if (!session) return "disconnected";
     if (session.error) return "error";
     if (session.retrying) return "connecting";
@@ -88,21 +88,22 @@ export function TunnelsView({
       <div className="flex items-center justify-between px-6 py-4 border-b border-border">
         <h1 className="text-lg font-semibold flex items-center gap-2">
           <Cable aria-hidden="true" className="h-5 w-5" />
-          Tunnels
+          Port forwards
+          <span className="font-mono text-xs font-normal text-muted-foreground-soft">ssh -L</span>
         </h1>
         <span className="text-xs text-muted-foreground">
-          {tunnelDefs.length} configured
+          {forwardDefs.length} configured
         </span>
       </div>
 
       <div className="flex-1 overflow-y-auto px-6 py-4">
-        {tunnelDefs.length === 0 ? (
+        {forwardDefs.length === 0 ? (
           <p className="text-sm text-muted-foreground italic">
-            No tunnel connections configured yet.
+            No local forwards configured yet.
           </p>
         ) : (
           <div className="space-y-3">
-            {tunnelDefs.map((conn) => {
+            {forwardDefs.map((conn) => {
               const session = getLatestSession(conn);
               const status = getStatus(session);
               const isExpanded = expanded.has(conn.id);
@@ -117,7 +118,7 @@ export function TunnelsView({
               return (
                 <section
                   key={conn.id}
-                  data-testid={`tunnel-row-${conn.id}`}
+                  data-testid={`forward-row-${conn.id}`}
                   data-name={conn.name}
                   data-status={status}
                   data-session-id={session?.sessionId}
@@ -129,7 +130,7 @@ export function TunnelsView({
                       className="flex min-w-0 flex-1 items-center gap-3 text-left"
                       onClick={() => toggleExpanded(conn.id)}
                       aria-expanded={isExpanded}
-                      aria-controls={`tunnel-details-${conn.id}`}
+                      aria-controls={`forward-details-${conn.id}`}
                     >
                       {isExpanded ? (
                         <ChevronDown className="h-4 w-4 text-muted-foreground" aria-hidden="true" />
@@ -137,7 +138,7 @@ export function TunnelsView({
                         <ChevronRight className="h-4 w-4 text-muted-foreground" aria-hidden="true" />
                       )}
                       <span
-                        data-testid={`tunnel-status-${conn.id}`}
+                        data-testid={`forward-status-${conn.id}`}
                         className={cn(
                           "h-2.5 w-2.5 rounded-full border",
                           status === "connected" && "bg-green-500 border-green-400",
@@ -167,8 +168,8 @@ export function TunnelsView({
                             name: conn.name,
                           })
                         }
-                        data-testid={`tunnel-stop-${conn.id}`}
-                        aria-label={`Disconnect tunnel ${conn.name}`}
+                        data-testid={`forward-stop-${conn.id}`}
+                        aria-label={`Stop forward ${conn.name}`}
                       >
                         <X className="h-4 w-4" aria-hidden="true" />
                       </Button>
@@ -187,17 +188,17 @@ export function TunnelsView({
                   </div>
                   {isExpanded && (
                     <div
-                      id={`tunnel-details-${conn.id}`}
+                      id={`forward-details-${conn.id}`}
                       className="border-t bg-background/40 px-4 py-3 text-sm"
                     >
                       <dl className="grid gap-x-4 gap-y-2 sm:grid-cols-[max-content_1fr]">
                         <dt className="text-muted-foreground">Status</dt>
                         <dd>{statusLabel}</dd>
-                        <dt className="text-muted-foreground">Gateway</dt>
+                        <dt className="text-muted-foreground">SSH server</dt>
                         <dd>{conn.gateway_host}:{conn.gateway_port}</dd>
                         <dt className="text-muted-foreground">Credential</dt>
                         <dd>{getCredentialName(conn.gateway_credential_id)}</dd>
-                        <dt className="text-muted-foreground">Destination</dt>
+                        <dt className="text-muted-foreground">Remote</dt>
                         <dd>{conn.destination_host}:{conn.destination_port}</dd>
                         <dt className="text-muted-foreground">Local port</dt>
                         <dd>{conn.local_port}</dd>
@@ -236,13 +237,13 @@ export function TunnelsView({
         onOpenChange={(open) => {
           if (!open) setPendingClose(null);
         }}
-        title="Disconnect tunnel?"
+        title="Stop forwarding?"
         description={
           pendingClose
-            ? `Disconnecting "${pendingClose.name}" will drop every TCP connection currently using the forwarded port.`
+            ? `Stopping "${pendingClose.name}" closes its local port and drops every connection using it.`
             : ""
         }
-        confirmLabel="Disconnect"
+        confirmLabel="Stop"
         variant="destructive"
         onConfirm={() => {
           if (pendingClose) {

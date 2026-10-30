@@ -4,7 +4,7 @@ import type { NavItem } from "@/components/Sidebar";
 /**
  * Audit-4 Phase 5d: view state was a single `useState` in App.tsx that
  * every store-bound action had to mutate via callbacks. Promoting it
- * to its own tiny store lets terminal/tunnel/dialog stores switch
+ * to its own tiny store lets terminal/port forward/dialog stores switch
  * views directly without prop-drilling setters or wiring custom
  * events back to App.
  */

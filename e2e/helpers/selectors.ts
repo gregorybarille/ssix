@@ -23,7 +23,7 @@ export const sel = {
   sidebar: '[data-testid="sidebar"]',
   navConnections: '[data-testid="nav-connections"]',
   navCredentials: '[data-testid="nav-credentials"]',
-  navTunnels: '[data-testid="nav-tunnels"]',
+  navForwards: '[data-testid="nav-forwards"]',
   navSettings: '[data-testid="nav-settings"]',
   navGitSync: '[data-testid="nav-git-sync"]',
   navLogs: '[data-testid="nav-logs"]',
@@ -56,17 +56,17 @@ export const sel = {
   // Form-level error shown when a save is refused.
   connectionFormError: '[data-testid="connection-form-error"]',
   connectionFormKindDirect: '[data-testid="connection-form-kind-direct"]',
-  connectionFormKindJumpShell: '[data-testid="connection-form-kind-jumpshell"]',
-  connectionFormKindPortForward: '[data-testid="connection-form-kind-portforward"]',
-  connectionFormGateway: '[data-testid="connection-form-gateway"]',
-  connectionFormGatewayPort: '[data-testid="connection-form-gateway-port"]',
-  connectionFormGatewayCredential: '[data-testid="connection-form-gateway-credential"]',
-  connectionFormDestHost: '[data-testid="connection-form-dest-host"]',
-  connectionFormDestPort: '[data-testid="connection-form-dest-port"]',
+  connectionFormKindJumpHost: '[data-testid="connection-form-kind-jumphost"]',
+  connectionFormKindLocalForward: '[data-testid="connection-form-kind-localforward"]',
+  connectionFormHopHost: '[data-testid="connection-form-hop-host"]',
+  connectionFormHopPort: '[data-testid="connection-form-hop-port"]',
+  connectionFormHopCredential: '[data-testid="connection-form-hop-credential"]',
+  connectionFormTargetHost: '[data-testid="connection-form-target-host"]',
+  connectionFormTargetPort: '[data-testid="connection-form-target-port"]',
   // The auth-section credential picker. In Direct mode it's *the*
-  // credential. In JumpShell mode it represents the destination
-  // credential (the gateway has its own picker, see GatewayCredential).
-  connectionFormDestCredential: '[data-testid="connection-form-credential"]',
+  // credential. In jump host mode it is the target's credential (the
+  // jump host has its own picker, see HopCredential).
+  connectionFormTargetCredential: '[data-testid="connection-form-credential"]',
   connectionFormLocalPort: '[data-testid="connection-form-local-port"]',
   connectionFormSubmit: '[data-testid="connection-form-submit"]',
   connectionFormCancel: '[data-testid="connection-form-cancel"]',
@@ -118,14 +118,14 @@ export const sel = {
   scpDownloadButton: '[data-testid="scp-download"]',
   scpStatus: '[data-testid="scp-status"]',
 
-  // Tunnels
-  // "Start" a tunnel = clicking Connect on its port-forward connection
+  // Port forwards
+  // "Start" a forward = clicking Connect on its local forward connection
   // row, so the button is the same as the generic connect button.
-  tunnelRowByName: (name: string) =>
-    `[data-testid^="tunnel-row-"][data-name="${name}"]`,
-  tunnelStartButton: (id: string) => `[data-testid="connect-button-${id}"]`,
-  tunnelStopButton: (id: string) => `[data-testid="tunnel-stop-${id}"]`,
-  tunnelStatus: (id: string) => `[data-testid="tunnel-status-${id}"]`,
+  forwardRowByName: (name: string) =>
+    `[data-testid^="forward-row-"][data-name="${name}"]`,
+  forwardStartButton: (id: string) => `[data-testid="connect-button-${id}"]`,
+  forwardStopButton: (id: string) => `[data-testid="forward-stop-${id}"]`,
+  forwardStatus: (id: string) => `[data-testid="forward-status-${id}"]`,
 
   // Git sync
   gitSyncRepoPath: '[data-testid="git-sync-repo-path"]',

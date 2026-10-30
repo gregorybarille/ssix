@@ -63,7 +63,7 @@ describe("ConnectionList", () => {
     expect(screen.getByText("api-tunnel")).toBeInTheDocument();
   });
 
-  it("shows badges for tunnel kinds", () => {
+  it("shows badges for the two-hop kinds", () => {
     render(
       <ConnectionList
         connections={mockConnections}
@@ -73,8 +73,8 @@ describe("ConnectionList", () => {
         onClone={vi.fn()}
       />
     );
-    expect(screen.getByText("port-forward")).toBeInTheDocument();
-    expect(screen.getByText("jump-shell")).toBeInTheDocument();
+    expect(screen.getByText("local forward")).toBeInTheDocument();
+    expect(screen.getByText("jump host")).toBeInTheDocument();
   });
 
   it("renders connect buttons for every connection kind when onConnect is provided", () => {

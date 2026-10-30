@@ -16,7 +16,7 @@ Older builds showed this as `TypeError: ... window.__TAURI_INTERNALS__ is undefi
 ## Connection Fails Immediately
 
 - Verify host, port, username, and credential choice.
-- Check whether a jump-shell connection has both gateway and destination credentials.
+- Check whether a jump host connection has credentials for both the jump host and the target.
 - Use a higher verbosity level in the connection settings to surface more SSH output.
 
 ## Host Key Has Changed
@@ -25,15 +25,15 @@ Older builds showed this as `TypeError: ... window.__TAURI_INTERNALS__ is undefi
 - Confirm out of band (hosting console, admin) that the server really was reinstalled or re-keyed, then click **Trust new host key**. If nobody changed the server, do not trust the key: the connection may be intercepted.
 - Recorded keys live in `~/.ssix/known_hosts` (OpenSSH format). `ssh-keygen -R <host> -f ~/.ssix/known_hosts` removes an entry by hand; for a non-default port use `-R '[host]:port'`.
 
-## Port Forward Does Not Work
+## Local Forward Does Not Work
 
 - Confirm the local port is free.
-- Confirm the destination service is reachable from the gateway.
-- Check the Tunnels view for status updates or errors.
+- Confirm the remote service is reachable from the SSH server.
+- Check the Port forwards view for status updates or errors.
 
 ## SCP Transfer Fails
 
-- Make sure the connection type is `direct` or `jump_shell`.
+- Make sure the connection is a Direct or Jump host connection.
 - Use recursive mode when the source or target is a directory.
 - Check whether the remote path exists or whether the remote user has permission to write there.
 

@@ -4,7 +4,7 @@ import React, { Suspense, useEffect, lazy } from "react";
 import { Sidebar } from "./components/Sidebar";
 import { TitleBar } from "./components/TitleBar";
 import { TerminalTabs } from "./components/TerminalTabs";
-import { TunnelsView } from "./components/TunnelsView";
+import { PortForwardsView } from "./components/PortForwardsView";
 import { ConnectionsView } from "./components/views/ConnectionsView";
 import { CredentialsView } from "./components/views/CredentialsView";
 import { ConnectPicker } from "./components/ConnectPicker";
@@ -28,7 +28,7 @@ import { useGitSyncStore } from "./store/useGitSyncStore";
 import { useViewStore } from "./store/useViewStore";
 import { useDialogsStore } from "./store/useDialogsStore";
 import { useTerminalsStore } from "./store/useTerminalsStore";
-import { useTunnelsStore } from "./store/useTunnelsStore";
+import { usePortForwardsStore } from "./store/usePortForwardsStore";
 import { useApplySettings } from "./hooks/useApplySettings";
 import { useGlobalShortcuts } from "./hooks/useGlobalShortcuts";
 import { useScreenshotToast } from "./hooks/useScreenshotToast";
@@ -61,7 +61,7 @@ const BulkScpDialog = lazy(() =>
 );
 
 /**
- * App is the composition layer. Terminal pane lifecycle, tunnel session
+ * App is the composition layer. Terminal pane lifecycle, port forward session
  * lifecycle, dialog UI state and the current view live in dedicated
  * Zustand stores; the Connections and Credentials tabs are their own
  * components under `components/views/`. App owns only:
@@ -136,7 +136,7 @@ function App() {
   );
   const captureScreenshot = useScreenshotToast();
 
-  // Terminal & tunnel session state
+  // Terminal & port forward session state
   const tabs = useTerminalsStore((s) => s.tabs);
   const activeTabId = useTerminalsStore((s) => s.activeTabId);
   const setActiveTabId = useTerminalsStore((s) => s.setActiveTabId);
@@ -144,8 +144,8 @@ function App() {
   const closePane = useTerminalsStore((s) => s.closePane);
   const closeTab = useTerminalsStore((s) => s.closeTab);
   const selectTabByIndex = useTerminalsStore((s) => s.selectTabByIndex);
-  const tunnelSessions = useTunnelsStore((s) => s.sessions);
-  const closeTunnel = useTunnelsStore((s) => s.closeTunnel);
+  const forwardSessions = usePortForwardsStore((s) => s.sessions);
+  const stopForward = usePortForwardsStore((s) => s.stopForward);
 
   useApplySettings(previewSettings ?? settings);
 
@@ -281,7 +281,7 @@ function App() {
   };
 
   // The clone form submits a whole new connection; every field it shows
-  // (kind, gateway, tags, …) is saved, not only name, host and port.
+  // (kind, jump host, tags, …) is saved, not only name, host and port.
   const handleCloneSubmit = async (data: ConnectionInput | Connection) => {
     if (dialogs.cloningConn) {
       await cloneConnection(dialogs.cloningConn.id, data);
@@ -423,7 +423,7 @@ function App() {
           active={view}
           onNavigate={(v) => setView(v)}
           terminalCount={totalShellSessions}
-          tunnelCount={tunnelSessions.length}
+          forwardCount={forwardSessions.length}
           gitPending={gitPending}
         />
 
@@ -468,12 +468,12 @@ function App() {
                 />
               )}
 
-              {view === "tunnels" && (
-                <TunnelsView
-                  sessions={tunnelSessions}
+              {view === "forwards" && (
+                <PortForwardsView
+                  sessions={forwardSessions}
                   connections={connections}
                   credentials={credentials}
-                  onCloseSession={closeTunnel}
+                  onCloseSession={stopForward}
                   onConnect={(c) => void connect(c)}
                   onEdit={(conn) => {
                     dialogs.openEditConnection(conn);
@@ -663,7 +663,7 @@ function App() {
                   {dialogs.confirmTagAction.connections.length === 1 ? "" : "s"}{" "}
                   tagged{" "}
                   <strong>{dialogs.confirmTagAction.label}</strong>?
-                  Port-forward connections will be skipped.
+                  Local forwards will be skipped.
                 </>
               )}
             </>

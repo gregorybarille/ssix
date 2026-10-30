@@ -1,5 +1,5 @@
 //! SSH sessions on top of `ssh2`: interactive shells, local port forwards and
-//! jump-shell bridging.
+//! jump host bridging.
 //!
 //! Every live session is one OS thread. The command layer talks to it through
 //! a [`SessionHandle`] — an mpsc queue plus a wake-up pipe — so a keystroke
@@ -8,7 +8,8 @@
 //! costs nothing. Terminal output goes to the webview over a Tauri
 //! [`Channel`] as raw bytes: no JSON on the hot path.
 //!
-//! All sessions (direct, gateway, destination behind a gateway) go through
+//! All sessions (direct, jump host, target behind a jump host, SSH server of a
+//! forward) go through
 //! [`open_authenticated_session_over_stream`], which enforces a connect
 //! timeout, a libssh2 setup timeout and host-key verification.
 
@@ -120,10 +121,10 @@ impl SessionContext {
         self.send_event(OutputEvent::Error { message });
     }
 
-    fn emit_tunnel_status(&self, status: TunnelStatus) {
+    fn emit_forward_status(&self, status: ForwardStatus) {
         let _ = self
             .app
-            .emit(&tunnel_status_event(&self.session_id), status);
+            .emit(&forward_status_event(&self.session_id), status);
     }
 
     /// Put the session in the registry before its worker starts, so a
@@ -315,9 +316,9 @@ impl SshState {
     }
 }
 
-/// Status payload emitted on `ssix:tunnel:status:{id}`.
+/// Status payload a local forward emits on `ssix:forward:status:{id}`.
 #[derive(Serialize, Clone)]
-pub struct TunnelStatus {
+pub struct ForwardStatus {
     pub state: &'static str, // "listening" | "client_connected" | "client_closed" | "error"
     pub local_port: u16,
     pub destination: String,
@@ -327,8 +328,8 @@ pub struct TunnelStatus {
 
 /// Event names are namespaced under `ssix:` and mirrored in
 /// `src/lib/events.ts`; both sides MUST go through these helpers.
-pub(crate) fn tunnel_status_event(session_id: &str) -> String {
-    format!("ssix:tunnel:status:{}", session_id)
+pub(crate) fn forward_status_event(session_id: &str) -> String {
+    format!("ssix:forward:status:{}", session_id)
 }
 
 pub(crate) fn build_startup_command(
@@ -732,12 +733,13 @@ fn run_io_loop(
 }
 
 // ---------------------------------------------------------------------------
-// Gateways: port forwarding and jump-shell bridging
+// Hops: local forwards (ssh -L) and jump hosts (ssh -J)
 // ---------------------------------------------------------------------------
 
-pub(crate) fn open_gateway_session(gateway: &Endpoint) -> Result<Session, String> {
-    open_authenticated_session(gateway, 0, None)
-        .map_err(|e| format!("Gateway {}: {}", gateway.addr(), e))
+/// Open the session to the first hop: the SSH server of a local forward or
+/// the jump host of a jump connection. `role` names it in errors.
+pub(crate) fn open_hop_session(hop: &Endpoint, role: &str) -> Result<Session, String> {
+    open_authenticated_session(hop, 0, None).map_err(|e| format!("{} {}: {}", role, hop.addr(), e))
 }
 
 /// Open a `direct-tcpip` channel on a non-blocking session, waiting for the
@@ -775,7 +777,7 @@ fn open_direct_tcpip(
 /// Forward bytes between a local TCP socket and an SSH `direct-tcpip`
 /// channel. Both ends are non-blocking; the thread sleeps in `poll(2)` on
 /// both sockets while idle, so neither direction can stall the other and an
-/// idle tunnel costs no CPU.
+/// idle forward costs no CPU.
 /// `clients` counts the forwarders sharing `session`. With more than one,
 /// a sibling's read can pull this channel's packet into libssh2's buffer
 /// without the socket ever becoming readable for us, so the idle wait is
@@ -854,10 +856,10 @@ pub(crate) fn forward_bidi(
 }
 
 /// Bridge a loopback TCP stream to `destination_host:destination_port`
-/// through `gateway`. Returns the local end once the `direct-tcpip` channel
-/// is open, so an SSH handshake on it cannot race the bridge. The gateway
+/// through the jump host `gateway`. Returns the local end once the `direct-tcpip` channel
+/// is open, so an SSH handshake on it cannot race the bridge. The jump host
 /// session lives as long as the forwarder thread.
-pub(crate) fn bridge_via_gateway(
+pub(crate) fn bridge_via_jump_host(
     gateway: &Endpoint,
     destination_host: &str,
     destination_port: u16,
@@ -868,7 +870,7 @@ pub(crate) fn bridge_via_gateway(
         .local_addr()
         .map_err(|e| format!("local_addr() failed: {}", e))?
         .port();
-    let gateway_session = open_gateway_session(gateway)?;
+    let gateway_session = open_hop_session(gateway, "Jump host")?;
 
     let (ready_tx, ready_rx) = mpsc::channel::<Result<(), String>>();
     {
@@ -914,22 +916,23 @@ pub(crate) fn bridge_via_gateway(
     let budget = CONNECT_TIMEOUT + Duration::from_millis(SESSION_TIMEOUT_MS as u64);
     match ready_rx.recv_timeout(budget) {
         Ok(Ok(())) => Ok(stream),
-        Ok(Err(e)) => Err(format!("Destination connect via gateway failed: {}", e)),
+        Ok(Err(e)) => Err(format!("Target connect via jump host failed: {}", e)),
         Err(RecvTimeoutError::Timeout) => Err(format!(
-            "Destination connect via gateway timed out after {}s",
+            "Target connect via jump host timed out after {}s",
             budget.as_secs()
         )),
         Err(RecvTimeoutError::Disconnected) => {
-            Err("Destination connect via gateway failed: forwarder exited".to_string())
+            Err("Target connect via jump host failed: forwarder exited".to_string())
         }
     }
 }
 
 /// Listen on `127.0.0.1:local_port` and forward every accepted connection
-/// through `gateway` to `destination_host:destination_port`.
+/// through the SSH server `gateway` to `destination_host:destination_port`
+/// (`ssh -L`).
 ///
 /// Only `SessionMsg::Disconnect` is meaningful for a port forward; `Write`
-/// and `Resize` are ignored. Bind and gateway errors are returned
+/// and `Resize` are ignored. Bind and SSH server errors are returned
 /// synchronously.
 pub fn start_port_forward(
     gateway: Endpoint,
@@ -942,7 +945,7 @@ pub fn start_port_forward(
     let listener = TcpListener::bind(bind_addr)
         .map_err(|e| format!("Failed to bind 127.0.0.1:{}: {}", local_port, e))?;
 
-    let session = open_gateway_session(&gateway)?;
+    let session = open_hop_session(&gateway, "SSH server")?;
     // Non-blocking so one slow client can never stall the others: libssh2
     // serialises every call made on a session.
     session.set_blocking(false);
@@ -959,7 +962,7 @@ pub fn start_port_forward(
         let destination = destination.clone();
         let active = Arc::clone(&active);
         move |state: &'static str, message: Option<String>| {
-            ctx.emit_tunnel_status(TunnelStatus {
+            ctx.emit_forward_status(ForwardStatus {
                 state,
                 local_port,
                 destination: destination.clone(),
@@ -994,7 +997,7 @@ pub fn start_port_forward(
                 Err(e) => {
                     ctx.log(
                         "error",
-                        "tunnel",
+                        "forward",
                         format!("session {}: accept failed: {}", ctx.session_id, e),
                     );
                     status("error", Some(format!("accept failed: {}", e)));
@@ -1032,21 +1035,22 @@ pub fn start_port_forward(
     Ok(handle)
 }
 
-/// Open an interactive shell on `destination`, reached through `gateway`.
+/// Open an interactive shell on `destination`, reached through the jump host
+/// `gateway` (`ssh -J`).
 pub fn start_jump_shell(
     gateway: Endpoint,
     destination: Endpoint,
     opts: ShellOptions,
     ctx: SessionContext,
 ) -> Result<SessionHandle, String> {
-    let stream = bridge_via_gateway(&gateway, &destination.host, destination.port)?;
+    let stream = bridge_via_jump_host(&gateway, &destination.host, destination.port)?;
     let (session, channel) = open_shell_over_stream(stream, &destination, &opts)
-        .map_err(|e| format!("Destination connect via gateway failed: {}", e))?;
+        .map_err(|e| format!("Target connect via jump host failed: {}", e))?;
     let (handle, control) = control_channel()?;
     ctx.register(handle.clone())?;
     ctx.log(
         "info",
-        "jump_shell",
+        "jump_host",
         format!(
             "session {} opened: {}@{} via {}",
             ctx.session_id,
@@ -1057,7 +1061,7 @@ pub fn start_jump_shell(
     );
     let banner = if opts.verbosity >= 1 {
         format!(
-            "\x1b[2m[SSIX] Connected to {} via gateway {} as {}\x1b[0m\r\n",
+            "\x1b[2m[SSIX] Connected to {} via jump host {} as {}\x1b[0m\r\n",
             destination.addr(),
             gateway.addr(),
             destination.username
@@ -1065,7 +1069,7 @@ pub fn start_jump_shell(
     } else {
         String::new()
     };
-    spawn_shell_worker(session, channel, ctx, control, banner, "jump_shell");
+    spawn_shell_worker(session, channel, ctx, control, banner, "jump_host");
     Ok(handle)
 }
 

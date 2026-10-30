@@ -20,7 +20,7 @@ pub struct LogEntry {
     pub ts: u64,
     /// "info", "warn", "error", or "debug".
     pub level: String,
-    /// Logical source (e.g. "ssh", "tunnel", "system").
+    /// Logical source (e.g. "ssh", "forward", "system").
     pub source: String,
     pub message: String,
 }

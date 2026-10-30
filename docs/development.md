@@ -162,7 +162,7 @@ End-to-end:
   artifact in CI.
 
   The first iteration covers credentials/connections CRUD, direct
-  SSH, jump-shell, port forwarding, SCP round-trip, key generation +
+  SSH, jump host, local forwarding, SCP round-trip, key generation +
   install, and git-sync export. Selectors are centralised in
   `e2e/helpers/selectors.ts`; some `data-testid` attributes are still
   to be added as the suite is brought green for the first time
@@ -182,8 +182,8 @@ End-to-end:
 
 - Direct shell with password auth
 - Direct shell with SSH key auth
-- Jump-shell through gateway
-- Port forward and local client access
+- Jump host connection
+- Local forward and local client access
 - SCP file transfer
 - Recursive SCP directory transfer
 - Git Sync export, diff, one-click sync

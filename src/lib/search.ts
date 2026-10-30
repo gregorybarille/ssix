@@ -3,11 +3,11 @@ import type { Connection } from "@/types";
 /**
  * Client-side connection search shared by the Connections view and the
  * Connect Picker. Terms are whitespace-separated, case-insensitive and
- * AND-matched across name, host, gateway/destination host and tags.
+ * AND-matched across name, host, jump host / SSH server, target / remote host and tags.
  *
  * Filtering happens on the already-loaded list: there is no backend
  * round trip per keystroke, and the store keeps the full, unfiltered
- * list so other views (tag groups, tunnels) always see every host.
+ * list so other views (tag groups, port forwards) always see every host.
  */
 export function tokenize(query: string): string[] {
   return query.toLowerCase().split(/\s+/).filter(Boolean);

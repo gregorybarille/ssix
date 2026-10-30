@@ -313,7 +313,7 @@ export function SettingsPanel({ settings, onSave, onPreview }: SettingsPanelProp
         {([
           ["connection_layout", "Connections"],
           ["credential_layout", "Credentials"],
-          ["tunnel_layout", "Tunnels"],
+          ["tunnel_layout", "Port forwards"],
         ] as const).map(([key, label]) => (
           <div className="space-y-2" key={key}>
             <Label htmlFor={key}>{label}</Label>
@@ -330,7 +330,7 @@ export function SettingsPanel({ settings, onSave, onPreview }: SettingsPanelProp
                 {/*
                  * "Tag groups" is a connections-only mode — tag
                  * grouping doesn't make sense for credentials or
-                 * tunnels. Hiding it elsewhere keeps the user from
+                 * port forwards. Hiding it elsewhere keeps the user from
                  * picking a setting that would silently fall back
                  * to "tile" at render time.
                  */}

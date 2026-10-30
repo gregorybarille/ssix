@@ -176,7 +176,7 @@ export function TagGroupGrid({
 
             {skipped > 0 && (
               <p className="text-[11px] text-muted-foreground-soft">
-                {skipped} port-forward connection
+                {skipped} local forward
                 {skipped === 1 ? "" : "s"} will be skipped.
               </p>
             )}

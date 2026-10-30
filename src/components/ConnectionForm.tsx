@@ -31,6 +31,7 @@ import {
 } from "./ConnectionFormFields";
 import { useFieldErrors } from "@/hooks/useFieldErrors";
 import { credentialFieldErrors, type CredentialFieldKey } from "@/lib/credentialValidation";
+import { KIND_FLAGS, KIND_LABELS, hopTerms, titleCase } from "@/lib/sshTerms";
 import { InstallKeyDialog } from "./InstallKeyDialog";
 import { TagInput } from "./ui/tag-input";
 import { RadioGroup, RadioGroupItem } from "./ui/radio-group";
@@ -329,8 +330,10 @@ export function ConnectionForm({
     return () => window.cancelAnimationFrame(id);
   }, [inline, open, connection?.id, isClone]);
 
-  const isTunnel = connectionType !== "direct";
-  const needsDestinationAuth = connectionType !== "port_forward";
+  const isTwoHop = connectionType !== "direct";
+  // OpenSSH's names for the two hosts of the current kind (direct has none).
+  const terms = hopTerms(connectionType === "port_forward" ? "port_forward" : "jump_shell");
+  const needsTargetAuth = connectionType !== "port_forward";
 
   const defaultCredentialName = (method: AuthMethod) => {
     const base = form.name.trim() || "connection";
@@ -338,7 +341,7 @@ export function ConnectionForm({
   };
 
   /**
-   * Required-field errors for the destination authentication: a saved
+   * Required-field errors for the target authentication: a saved
    * credential must be picked, and an inline one must pass the same checks
    * as the credential form.
    */
@@ -348,7 +351,7 @@ export function ConnectionForm({
       return {
         credential_id:
           connectionType === "jump_shell"
-            ? "Destination credential is required"
+            ? "Target credential is required"
             : "Credential is required",
       };
     }
@@ -387,9 +390,9 @@ export function ConnectionForm({
         if (connectionType === "direct") {
           portChecks.push({ key: "port", required: true, label: "Port" });
         }
-        if (isTunnel) {
-          portChecks.push({ key: "gateway_port", required: true, label: "Gateway port" });
-          portChecks.push({ key: "destination_port", required: true, label: "Destination port" });
+        if (isTwoHop) {
+          portChecks.push({ key: "gateway_port", required: true, label: terms.hopPort });
+          portChecks.push({ key: "destination_port", required: true, label: terms.targetPort });
         }
         if (connectionType === "port_forward") {
           portChecks.push({ key: "local_port", required: true, label: "Local port" });
@@ -437,18 +440,18 @@ export function ConnectionForm({
         if (connectionType === "direct" && !formWithPorts.host.trim()) {
           newFieldErrors.host = "Host is required";
         }
-        if (isTunnel) {
+        if (isTwoHop) {
           if (!formWithPorts.gateway_host || !formWithPorts.gateway_host.trim()) {
-            newFieldErrors.gateway_host = "Gateway host is required";
+            newFieldErrors.gateway_host = `${terms.hopHost} is required`;
           }
           if (!formWithPorts.gateway_credential_id) {
-            newFieldErrors.gateway_credential_id = "Gateway credential is required";
+            newFieldErrors.gateway_credential_id = `${terms.hopCredential} is required`;
           }
           if (!formWithPorts.destination_host || !formWithPorts.destination_host.trim()) {
-            newFieldErrors.destination_host = "Destination host is required";
+            newFieldErrors.destination_host = `${terms.targetHost} is required`;
           }
         }
-        if (needsDestinationAuth) {
+        if (needsTargetAuth) {
           Object.assign(newFieldErrors, authFieldErrors(formWithPorts.credential_id));
         }
         if (Object.keys(newFieldErrors).length > 0) {
@@ -456,10 +459,10 @@ export function ConnectionForm({
           throw new Error("Please fix the highlighted fields");
         }
 
-        // PortForward has no destination credential.
-        let credentialId = needsDestinationAuth ? formWithPorts.credential_id : undefined;
+        // A local forward has no target credential.
+        let credentialId = needsTargetAuth ? formWithPorts.credential_id : undefined;
         let createdCredentialId: string | null = null;
-        if (needsDestinationAuth && authMethod !== "credential") {
+        if (needsTargetAuth && authMethod !== "credential") {
           if (!onCreateCredential) throw new Error("Inline credentials are not available here");
           const cred = await onCreateCredential({
             name: saveCredential ? inlineCredentialName.trim() : `inline-${crypto.randomUUID()}`,
@@ -477,10 +480,10 @@ export function ConnectionForm({
           createdCredentialId = cred.id;
         }
 
-        // Mirror destination_host/port into top-level host/port for tunnel kinds so
+        // Mirror destination_host/port into top-level host/port for two-hop kinds so
         // list views can keep displaying a meaningful "host" label.
-        const effectiveHost = isTunnel ? (formWithPorts.destination_host ?? "") : formWithPorts.host;
-        const effectivePort = isTunnel
+        const effectiveHost = isTwoHop ? (formWithPorts.destination_host ?? "") : formWithPorts.host;
+        const effectivePort = isTwoHop
           ? (formWithPorts.destination_port ?? 22)
           : formWithPorts.port;
 
@@ -622,7 +625,7 @@ export function ConnectionForm({
     <div className="space-y-2">
       <CredentialSelect
         id="credential"
-        aria-label={connectionType === "jump_shell" ? "Destination credential" : "Credential"}
+        aria-label={connectionType === "jump_shell" ? "Target credential" : "Credential"}
         required
         credentials={credentials}
         value={form.credential_id}
@@ -663,36 +666,36 @@ export function ConnectionForm({
     </div>
   );
 
-  const gatewayBlock = (
+  const hopBlock = (
     <div className="rounded-lg border p-4 space-y-4">
-      <p className="text-sm font-medium text-muted-foreground">Gateway</p>
+      <p className="text-sm font-medium text-muted-foreground">{terms.hop}</p>
       <div className="grid grid-cols-2 gap-4">
         <div className="space-y-2">
-          <Label htmlFor="gateway_host">Gateway Host *</Label>
+          <Label htmlFor="gateway_host">{titleCase(terms.hopHost)} *</Label>
           <Input
             id="gateway_host"
-            placeholder="gateway.example.com"
+            placeholder={connectionType === "jump_shell" ? "bastion.example.com" : "ssh.example.com"}
             value={form.gateway_host ?? ""}
             onChange={(e) => {
               setForm({ ...form, gateway_host: e.target.value });
               clearFieldError("gateway_host");
             }}
-            data-testid="connection-form-gateway"
+            data-testid="connection-form-hop-host"
             {...invalidAria(fieldErrors.gateway_host, "gateway_host-error")}
           />
           <FieldError id="gateway_host-error" message={fieldErrors.gateway_host} />
         </div>
         <PortField
           id="gateway_port"
-          label="Gateway Port"
+          label={titleCase(terms.hopPort)}
           value={portInputs.gateway_port}
           onChange={(raw) => updatePort("gateway_port", raw)}
           error={portErrors.gateway_port}
-          testId="connection-form-gateway-port"
+          testId="connection-form-hop-port"
         />
       </div>
       <div className="space-y-2">
-        <Label htmlFor="gateway_credential">Gateway Credential *</Label>
+        <Label htmlFor="gateway_credential">{titleCase(terms.hopCredential)} *</Label>
         <CredentialSelect
           id="gateway_credential"
           credentials={credentials}
@@ -702,7 +705,7 @@ export function ConnectionForm({
             clearFieldError("gateway_credential_id");
           }}
           required
-          testId="connection-form-gateway-credential"
+          testId="connection-form-hop-credential"
           error={fieldErrors.gateway_credential_id}
           errorId="gateway_credential-error"
         />
@@ -711,12 +714,12 @@ export function ConnectionForm({
     </div>
   );
 
-  const destinationBlock = (
+  const targetBlock = (
     <div className="rounded-lg border p-4 space-y-4">
-      <p className="text-sm font-medium text-muted-foreground">Destination</p>
+      <p className="text-sm font-medium text-muted-foreground">{terms.target}</p>
       <div className="grid grid-cols-2 gap-4">
         <div className="space-y-2">
-          <Label htmlFor="destination_host">Destination Host *</Label>
+          <Label htmlFor="destination_host">{titleCase(terms.targetHost)} *</Label>
           <Input
             id="destination_host"
             placeholder={
@@ -729,19 +732,19 @@ export function ConnectionForm({
               setForm({ ...form, destination_host: e.target.value });
               clearFieldError("destination_host");
             }}
-            data-testid="connection-form-dest-host"
+            data-testid="connection-form-target-host"
             {...invalidAria(fieldErrors.destination_host, "destination_host-error")}
           />
           <FieldError id="destination_host-error" message={fieldErrors.destination_host} />
         </div>
         <PortField
           id="destination_port"
-          label="Destination Port"
+          label={titleCase(terms.targetPort)}
           placeholder={connectionType === "port_forward" ? "80" : "22"}
           value={portInputs.destination_port}
           onChange={(raw) => updatePort("destination_port", raw)}
           error={portErrors.destination_port}
-          testId="connection-form-dest-port"
+          testId="connection-form-target-port"
         />
       </div>
     </div>
@@ -758,8 +761,9 @@ export function ConnectionForm({
       testId="connection-form-local-port"
       help={
         <>
-          SSIX will listen on <code>127.0.0.1:&lt;local_port&gt;</code> and forward
-          connections through the gateway to the destination.
+          SSIX listens on <code>127.0.0.1:&lt;local port&gt;</code> and forwards each
+          connection through the SSH server to the remote host, like{" "}
+          <code>ssh -L</code>. The remote host is resolved by the SSH server.
         </>
       }
     />
@@ -782,21 +786,27 @@ export function ConnectionForm({
           className="flex-1 data-[state=inactive]:bg-transparent data-[state=inactive]:hover:bg-background/70 data-[state=inactive]:hover:text-foreground data-[state=active]:bg-background data-[state=active]:shadow-sm"
           data-testid="connection-form-kind-direct"
         >
-          Direct
+          {KIND_LABELS.direct}
         </TabsTrigger>
         <TabsTrigger
           value="port_forward"
           className="flex-1 data-[state=inactive]:bg-transparent data-[state=inactive]:hover:bg-background/70 data-[state=inactive]:hover:text-foreground data-[state=active]:bg-background data-[state=active]:shadow-sm"
-          data-testid="connection-form-kind-portforward"
+          data-testid="connection-form-kind-localforward"
         >
-          Port Forward
+          {KIND_LABELS.port_forward}
+          <span aria-hidden="true" className="ml-1 font-mono text-xs text-muted-foreground-soft">
+            {KIND_FLAGS.port_forward}
+          </span>
         </TabsTrigger>
         <TabsTrigger
           value="jump_shell"
           className="flex-1 data-[state=inactive]:bg-transparent data-[state=inactive]:hover:bg-background/70 data-[state=inactive]:hover:text-foreground data-[state=active]:bg-background data-[state=active]:shadow-sm"
-          data-testid="connection-form-kind-jumpshell"
+          data-testid="connection-form-kind-jumphost"
         >
-          Jump Shell
+          {KIND_LABELS.jump_shell}
+          <span aria-hidden="true" className="ml-1 font-mono text-xs text-muted-foreground-soft">
+            {KIND_FLAGS.jump_shell}
+          </span>
         </TabsTrigger>
       </TabsList>
     </Tabs>
@@ -853,19 +863,19 @@ export function ConnectionForm({
         </div>
       )}
 
-      {isTunnel && (
+      {isTwoHop && (
         <>
-          {gatewayBlock}
-          {destinationBlock}
+          {hopBlock}
+          {targetBlock}
           {connectionType === "port_forward" && localPortBlock}
         </>
       )}
 
-      {needsDestinationAuth && (
+      {needsTargetAuth && (
         <div className="space-y-3">
           <Label>
             {connectionType === "jump_shell"
-              ? "Destination Authentication"
+              ? "Target Authentication"
               : "Authentication"}
           </Label>
           <Tabs
