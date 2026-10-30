@@ -108,32 +108,46 @@ fn load_data_unlocked() -> Result<AppData, String> {
         }
     }
 
-    let content = fs::read_to_string(&path)
-        .map_err(|e| format!("{} could not be read: {}", path.display(), e))?;
-    let mut data: AppData = serde_json::from_str(&content)
-        .map_err(|e| format!("{} is not valid SSIX data: {}", path.display(), e))?;
+    let mut data = read_data_file(&path)?;
     // Walk the loaded `schema_version` up to the current one (also runs the
     // LegacyTunnel → JumpShell rewrite for pre-stamp v0 files). Idempotent
-    // for files already at HEAD.
-    if data.migrate_to_current() {
-        // Save the repair so it runs, and is logged, once rather than on
-        // every load. The save refreshes the cache, which needs its lock.
-        drop(cache);
-        if let Err(e) = save_data_unlocked(&data) {
-            crate::logs::log_local(
-                "warn",
-                "migration",
-                format!("Could not save the migrated data: {e}"),
-            );
-        }
-        return Ok(data);
-    }
+    // for files already at HEAD. Reads only migrate in memory; the repair
+    // reaches disk through `persist_migrations` at startup or the next save.
+    data.migrate_to_current();
     *cache = Some(CachedData {
         path,
         stamp,
         data: data.clone(),
     });
     Ok(data)
+}
+
+/// Parse `data.json` as stored, without migrating it.
+fn read_data_file(path: &Path) -> Result<AppData, String> {
+    let content = fs::read_to_string(path)
+        .map_err(|e| format!("{} could not be read: {}", path.display(), e))?;
+    serde_json::from_str(&content)
+        .map_err(|e| format!("{} is not valid SSIX data: {}", path.display(), e))
+}
+
+/// Save the load-time migrations once, so a repaired file stops being
+/// repaired (and logged) on every launch. Run at startup on the blocking
+/// pool: plain reads never write. Returns whether the file was rewritten.
+///
+/// A file written by a newer build is left alone, so merely opening this
+/// build never rewrites it at an older schema and drops its newer fields.
+pub fn persist_migrations() -> Result<bool, String> {
+    let _guard = DATA_LOCK.lock().map_err(|e| e.to_string())?;
+    let path = get_data_path();
+    if !path.exists() {
+        return Ok(false);
+    }
+    let mut data = read_data_file(&path)?;
+    if data.schema_version > crate::models::CURRENT_SCHEMA_VERSION || !data.migrate_to_current() {
+        return Ok(false);
+    }
+    save_data_unlocked(&data)?;
+    Ok(true)
 }
 
 /// Atomically write `content` to `path`, durably, with optional Unix mode.
@@ -282,30 +296,75 @@ mod tests {
     use super::*;
     use std::sync::atomic::{AtomicU64, Ordering};
 
-    /// A load that repairs the data (here: a reference to a deleted
-    /// credential) saves the repair, so it is not redone on every load.
+    fn write_raw(data: &AppData) {
+        let path = get_data_path();
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(&path, serde_json::to_string(data).unwrap()).unwrap();
+    }
+
+    fn with_dangling_reference(schema_version: u32) -> AppData {
+        let mut data = AppData {
+            schema_version,
+            ..AppData::default()
+        };
+        data.connections.push(crate::models::Connection::new(
+            "web".into(),
+            "h".into(),
+            22,
+            Some("deleted-credential".into()),
+            crate::models::ConnectionKind::Direct,
+        ));
+        data
+    }
+
+    /// Reads repair in memory only; `persist_migrations` writes the repair
+    /// once, after which there is nothing left to save.
     #[test]
-    fn load_saves_a_migration_repair() {
+    fn migrations_are_saved_by_persist_migrations_not_by_reads() {
         test_support::with_isolated_data_dir(|| {
-            let path = get_data_path();
-            let mut data = AppData::default();
-            data.connections.push(crate::models::Connection::new(
-                "web".into(),
-                "h".into(),
-                22,
-                Some("deleted-credential".into()),
-                crate::models::ConnectionKind::Direct,
+            write_raw(&with_dangling_reference(
+                crate::models::CURRENT_SCHEMA_VERSION,
             ));
-            fs::create_dir_all(path.parent().unwrap()).unwrap();
-            fs::write(&path, serde_json::to_string(&data).unwrap()).unwrap();
+            let path = get_data_path();
 
             assert_eq!(load_data().unwrap().connections[0].credential_id, None);
-            let on_disk = fs::read_to_string(&path).unwrap();
-            assert!(!on_disk.contains("deleted-credential"), "{on_disk}");
-            // A clean file is not rewritten.
-            let stamp = file_stamp(&path);
-            let _ = load_data().unwrap();
-            assert_eq!(file_stamp(&path), stamp);
+            assert!(fs::read_to_string(&path)
+                .unwrap()
+                .contains("deleted-credential"));
+
+            assert!(persist_migrations().unwrap());
+            assert!(!fs::read_to_string(&path)
+                .unwrap()
+                .contains("deleted-credential"));
+            assert!(!persist_migrations().unwrap());
+        });
+    }
+
+    /// An unstamped (v0) file is stamped even when nothing else changed.
+    #[test]
+    fn persist_migrations_stamps_an_unversioned_file() {
+        test_support::with_isolated_data_dir(|| {
+            write_raw(&AppData {
+                schema_version: 0,
+                ..AppData::default()
+            });
+            assert!(persist_migrations().unwrap());
+            let stored: AppData =
+                serde_json::from_str(&fs::read_to_string(get_data_path()).unwrap()).unwrap();
+            assert_eq!(stored.schema_version, crate::models::CURRENT_SCHEMA_VERSION);
+        });
+    }
+
+    /// A file from a newer build is never rewritten by this one's startup.
+    #[test]
+    fn persist_migrations_leaves_a_newer_file_alone() {
+        test_support::with_isolated_data_dir(|| {
+            write_raw(&with_dangling_reference(
+                crate::models::CURRENT_SCHEMA_VERSION + 1,
+            ));
+            let before = fs::read_to_string(get_data_path()).unwrap();
+            assert!(!persist_migrations().unwrap());
+            assert_eq!(fs::read_to_string(get_data_path()).unwrap(), before);
         });
     }
 

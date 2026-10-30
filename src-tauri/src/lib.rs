@@ -14,6 +14,19 @@ pub fn run() {
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_dialog::init())
         .manage(SshState::new())
+        .setup(|_app| {
+            // Write any load-time repair once, off the UI thread.
+            tauri::async_runtime::spawn_blocking(|| {
+                if let Err(e) = storage::persist_migrations() {
+                    logs::log_local(
+                        "warn",
+                        "migration",
+                        format!("Could not save the repaired data: {e}"),
+                    );
+                }
+            });
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             commands::credentials::get_credentials,
             commands::credentials::get_credential_secrets,

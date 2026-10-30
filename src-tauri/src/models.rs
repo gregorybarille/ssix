@@ -373,9 +373,12 @@ impl AppData {
     /// regardless of stamp because pre-stamp files (v0) may carry the
     /// LegacyTunnel variant that v1+ readers must not see.
     ///
-    /// Returns whether connections were rewritten, so the loader can save
-    /// the repair once instead of redoing (and re-logging) it every load.
+    /// Returns whether anything changed, the version stamp included, so
+    /// `storage::persist_migrations` knows the file needs saving. A future
+    /// `if self.schema_version < N` branch needs no extra bookkeeping: the
+    /// stamp moving is itself a change.
     pub fn migrate_to_current(&mut self) -> bool {
+        let loaded_version = self.schema_version;
         // Step 1: legacy variants are dropped on every load (cheap, idempotent).
         let migrated = self.migrate_legacy_kinds();
         let dropped = self.drop_dangling_credential_refs();
@@ -389,7 +392,7 @@ impl AppData {
         //   if self.schema_version < 3 { … }
 
         self.schema_version = CURRENT_SCHEMA_VERSION;
-        migrated || dropped
+        migrated || dropped || loaded_version != CURRENT_SCHEMA_VERSION
     }
 
     /// Clear credential references whose credential no longer exists.
