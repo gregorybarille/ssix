@@ -7,7 +7,7 @@ SSIX is a Tauri v2 desktop application with a React frontend and a Rust backend.
 ### Frontend
 
 - `src/App.tsx` is the composition layer: it wires stores to the top-level layout, hosts the app-wide dialogs, and holds the cross-store submit handlers. It mounts the side panel column (`PanelSlotProvider` / `PanelSlot` in `src/components/ui/panel-slot.tsx`) to the right of `<main>`; every `<DialogContent>` except the quick-connect palette portals into it, so dialogs take part in the layout instead of floating over it. It subscribes to stores through shallow selectors so loading/error flips in one store do not re-render the shell.
-- `src/components/views/` holds the tab-level views (`ConnectionsView`, `CredentialsView`); `src/components/` contains the remaining UI components and feature views.
+- `src/components/views/` holds the tab-level views (`ConnectionsView`, `CredentialsView`, `ScriptsView`); `src/components/` contains the remaining UI components and feature views.
 - `src/hooks/` holds reusable React hooks (`useGlobalShortcuts`, `useRovingFocus`, `useUnsavedChangesGuard`, `useScreenshotToast`, `useApplySettings`, `useDebouncedCallback`).
 - `src/lib/` holds pure helpers shared across components (`search.ts` for the connection filter, `terminalTheme.ts` for the xterm palettes, `port.ts`, `hostKey.ts`, ...).
 - `src/components/ui/` contains shared Radix-based primitives.
@@ -25,6 +25,7 @@ SSIX is a Tauri v2 desktop application with a React frontend and a Rust backend.
 - `src-tauri/src/commands/` contains domain-specific Tauri commands.
 - `src-tauri/src/ssh.rs` handles shell sessions, local forwards (`ssh -L`), jump host bridging (`ssh -J`), and SSH I/O loops.
 - `src-tauri/src/known_hosts.rs` verifies server host keys (trust-on-first-use) against `~/.ssix/known_hosts`.
+- `src-tauri/src/remote_script.rs` runs a saved script on an authenticated session (see Script Runs).
 
 ## Data Flow
 
@@ -32,7 +33,7 @@ UI -> Zustand store -> `invoke()` -> Tauri command -> storage / SSH subsystem ->
 
 ## Persistence Model
 
-- `AppData` stores credentials, connections, and settings in a single JSON document.
+- `AppData` stores credentials, connections, settings and scripts in a single JSON document.
 - `storage.rs` keeps the parsed document in memory, keyed by path and mtime, so reads never touch disk unless the file changed underneath the app; every write goes through `atomic_write` and refreshes the cache.
 - Secrets are stored separately from the main JSON file. A credential's secrets are read and replaced as one unit (`keychain::snapshot_for_credential` / `replace_for_credential`); commands that change a credential snapshot first and restore on a failed save so `data.json` and `secrets.json` never disagree. A corrupt secrets file is reported as such instead of being treated as empty.
 - Secrets never reach the frontend store. `get_credentials`, `add_credential` and `update_credential` return redacted credentials (password `""`, no inline key or passphrase; `private_key_path` is kept because a path is not a secret). The credential edit form fetches one credential's secrets with `get_credential_secrets(id)` when it opens and drops them when it closes; `update_credential` takes `keep_secrets`, set by the form whenever the secret fields were not changed (or could not be loaded), so unchanged secrets are never sent back and a failed fetch can never wipe them. Every backend consumer that needs real secrets (SSH/SCP auth, key install, connection cloning, sync-export redaction) resolves them server-side through `keychain::enrich_credential` / `snapshot_for_credential`.
@@ -62,6 +63,12 @@ The stored fields keep their original names: `gateway_*` is the first hop
 - Jump host shells and SCP share `bridge_via_jump_host`, which returns a loopback stream only once the jump host's channel is open (no handshake/bridge race) and times out instead of hanging if the jump host never answers.
 - Jump host connections bridge through the jump host and then establish the target's SSH session behind it.
 - Forward sessions appear in the Port forwards view, not in the shell tab bar.
+
+## Script Runs
+
+- `run_script(script_id, connection_id)` runs one saved script on one connection; the Scripts view calls it once per picked host, all at once, and `useScriptsStore` fills in each host's result as it arrives.
+- SCP and script runs open their session through `commands::ssh::connect_session`, which authenticates on a direct host or on the target behind a jump host (with the connection's proxy command on the first hop).
+- `remote_script::run` execs the interpreter (`sh -s` by default) and writes the script to its stdin, then reads stdout and stderr until the server sends EOF and collects the exit status or signal. The session runs non-blocking for the whole run, so a quiet script is not cut off by the 15 s setup timeout and output is read while the body is still being sent. Each stream keeps 1 MiB (the rest is read and dropped so the server never stalls) and a run stops after 10 minutes.
 
 ## Git Sync Model
 

@@ -2,8 +2,9 @@ use crate::commands::blocking;
 use crate::keychain;
 use crate::models::{Connection, ConnectionKind, Credential, CredentialKind};
 use crate::ssh::{
-    build_startup_command, start_jump_shell, start_port_forward, start_ssh_session, AuthMethod,
-    Endpoint, SessionContext, SessionMsg, ShellOptions, SshState,
+    bridge_via_jump_host, build_startup_command, open_authenticated_session,
+    open_authenticated_session_over_stream, start_jump_shell, start_port_forward,
+    start_ssh_session, AuthMethod, Endpoint, SessionContext, SessionMsg, ShellOptions, SshState,
 };
 use crate::storage;
 use tauri::ipc::{Channel, InvokeResponseBody};
@@ -78,6 +79,88 @@ pub(crate) fn find_connection(
         .ok_or_else(|| "Connection not found".to_string())?
         .clone();
     Ok((data, conn))
+}
+
+/// An authenticated session to a connection's shell host: the host itself
+/// for a direct connection, the target behind the jump host otherwise.
+pub(crate) struct ConnectedSession {
+    pub session: ssh2::Session,
+    pub destination_label: String,
+}
+
+/// Open an authenticated session for SCP or a script run. `feature` names
+/// the caller in the error a local forward gets.
+pub(crate) fn connect_session(
+    data: &crate::models::AppData,
+    conn: &Connection,
+    feature: &str,
+) -> Result<ConnectedSession, String> {
+    match &conn.kind {
+        ConnectionKind::Direct => {
+            let cred_id = conn
+                .credential_id
+                .as_ref()
+                .ok_or_else(|| "No credential configured for this connection".to_string())?;
+            let target = resolve_endpoint(&data.credentials, &conn.host, conn.port, cred_id)?
+                .through(conn.proxy_command.as_deref());
+            let session =
+                open_authenticated_session(&target, conn.verbosity, conn.extra_args.as_deref())?;
+            Ok(ConnectedSession {
+                session,
+                destination_label: format!("{}@{}", target.username, target.addr()),
+            })
+        }
+        ConnectionKind::JumpShell {
+            gateway_host,
+            gateway_port,
+            gateway_credential_id,
+            destination_host,
+            destination_port,
+        } => {
+            let dest_cred_id = conn
+                .credential_id
+                .as_ref()
+                .ok_or_else(|| "Jump host connection requires a target credential".to_string())?;
+            let gateway = resolve_endpoint(
+                &data.credentials,
+                gateway_host,
+                *gateway_port,
+                gateway_credential_id,
+            )?
+            .through(conn.proxy_command.as_deref());
+            let destination = resolve_endpoint(
+                &data.credentials,
+                destination_host,
+                *destination_port,
+                dest_cred_id,
+            )?;
+            let stream = bridge_via_jump_host(
+                &gateway,
+                &destination.host,
+                destination.port,
+                conn.verbosity,
+            )?;
+            let session = open_authenticated_session_over_stream(
+                stream,
+                &destination,
+                conn.verbosity,
+                conn.extra_args.as_deref(),
+            )?;
+            Ok(ConnectedSession {
+                session,
+                destination_label: format!(
+                    "{}@{} via {}",
+                    destination.username,
+                    destination.addr(),
+                    gateway.addr()
+                ),
+            })
+        }
+        ConnectionKind::PortForward { .. } | ConnectionKind::LegacyTunnel { .. } => Err(format!(
+            "{} is only available for direct and jump host connections",
+            feature
+        )),
+    }
 }
 
 /// Open a session for `connection_id`. Shell output is streamed to

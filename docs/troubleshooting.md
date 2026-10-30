@@ -49,6 +49,13 @@ Older builds showed this as `TypeError: ... window.__TAURI_INTERNALS__ is undefi
 - Use recursive mode when the source or target is a directory.
 - Check whether the remote path exists or whether the remote user has permission to write there.
 
+## A Script Fails On Some Hosts
+
+- Exit 127 usually means the interpreter (or a command the script calls) is not installed on that host, for example `bash` on a minimal Alpine image. Pick `sh -s` or install it.
+- The script runs without a terminal and with the remote user's non-login environment, so `PATH` additions from `.bash_profile` and commands that prompt (`sudo` asking for a password) do not work; use full paths and `sudo -n`.
+- "only available for direct and jump host connections" means the host is a local forward.
+- Connection errors appear on the card; raise the connection's verbosity to see the `ssh -v` lines in the Logs view.
+
 ## Git Sync Fails
 
 - Confirm the configured repository path exists and contains `.git/`.

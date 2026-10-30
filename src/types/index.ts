@@ -245,6 +245,36 @@ export interface BackupList {
   backups: BackupInfo[];
 }
 
+/** A saved script (see `src-tauri/src/commands/scripts.rs`). */
+export interface Script {
+  id: string;
+  name: string;
+  body: string;
+  /** Remote command that reads the body on stdin, e.g. `sh -s`. */
+  interpreter: string;
+}
+
+export interface ScriptInput {
+  name: string;
+  body: string;
+  /** Blank means `sh -s`. */
+  interpreter: string;
+}
+
+/** What one run of a script on one host produced. */
+export interface ScriptResult {
+  stdout: string;
+  stderr: string;
+  /** Absent when the script was killed by a signal or stopped at the time limit. */
+  exit_code?: number | null;
+  /** Signal name without the `SIG` prefix. */
+  exit_signal?: string | null;
+  duration_ms: number;
+  /** A stream went past 1 MiB and was cut there. */
+  truncated: boolean;
+  timed_out: boolean;
+}
+
 export interface GitSyncStatus {
   configured: boolean;
   repo_path?: string;

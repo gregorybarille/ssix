@@ -5,6 +5,7 @@ mod known_hosts;
 mod logs;
 mod models;
 mod proxy;
+mod remote_script;
 mod ssh;
 mod ssh_debug;
 mod storage;
@@ -65,6 +66,11 @@ pub fn run() {
             commands::ssh::ssh_forget_host_key,
             commands::scp::scp_upload,
             commands::scp::scp_download,
+            commands::scripts::get_scripts,
+            commands::scripts::add_script,
+            commands::scripts::update_script,
+            commands::scripts::delete_script,
+            commands::scripts::run_script,
             commands::ssh_keygen::generate_ssh_key,
             commands::ssh_keygen::ssh_install_public_key_by_credential,
             commands::screenshot::take_screenshot,

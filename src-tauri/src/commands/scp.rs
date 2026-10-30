@@ -7,16 +7,14 @@
 //! are unchanged, so the frontend `invoke()` calls in
 //! `src/store/useFileTransferStore.ts` continue to work unmodified.
 //!
-//! The shared helpers `find_connection` and `resolve_endpoint` live in
-//! `commands/ssh.rs`; jump host bridging is `crate::ssh::bridge_via_jump_host`,
-//! the same code path the jump host terminal uses.
+//! The shared helpers `find_connection` and `connect_session` live in
+//! `commands/ssh.rs`; a jump host connection is bridged by
+//! `crate::ssh::bridge_via_jump_host`, the same code path the jump host
+//! terminal uses.
 
 use crate::commands::blocking;
-use crate::commands::ssh::{find_connection, resolve_endpoint};
+use crate::commands::ssh::{connect_session, find_connection, ConnectedSession};
 use crate::models::{Connection, ConnectionKind};
-use crate::ssh::{
-    bridge_via_jump_host, open_authenticated_session, open_authenticated_session_over_stream,
-};
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::io::{Read, Write};
@@ -60,7 +58,7 @@ fn scp_upload_sync(input: ScpUploadInput) -> Result<ScpResult, String> {
         return Err("SCP is not available for port-forward connections".to_string());
     }
 
-    let mut ssh = connect_file_transfer_session(&data, &conn)?;
+    let mut ssh = connect_session(&data, &conn, "SCP")?;
     let local = Path::new(&input.local_path);
     let (remote, bytes, entries) = if local.is_dir() {
         if !input.recursive {
@@ -111,7 +109,7 @@ fn scp_download_sync(input: ScpDownloadInput) -> Result<ScpResult, String> {
     }
 
     let remote_path = resolve_download_remote_path(&conn, &input.remote_path);
-    let mut ssh = connect_file_transfer_session(&data, &conn)?;
+    let mut ssh = connect_session(&data, &conn, "SCP")?;
     let sftp = ssh
         .session
         .sftp()
@@ -149,85 +147,9 @@ fn scp_download_sync(input: ScpDownloadInput) -> Result<ScpResult, String> {
     })
 }
 
-struct ConnectedSession {
-    session: ssh2::Session,
-    destination_label: String,
-}
-
 struct TransferStats {
     bytes: u64,
     entries: u64,
-}
-
-fn connect_file_transfer_session(
-    data: &crate::models::AppData,
-    conn: &Connection,
-) -> Result<ConnectedSession, String> {
-    match &conn.kind {
-        ConnectionKind::Direct => {
-            let cred_id = conn
-                .credential_id
-                .as_ref()
-                .ok_or_else(|| "No credential configured for this connection".to_string())?;
-            let target = resolve_endpoint(&data.credentials, &conn.host, conn.port, cred_id)?
-                .through(conn.proxy_command.as_deref());
-            let session =
-                open_authenticated_session(&target, conn.verbosity, conn.extra_args.as_deref())?;
-            Ok(ConnectedSession {
-                session,
-                destination_label: format!("{}@{}", target.username, target.addr()),
-            })
-        }
-        ConnectionKind::JumpShell {
-            gateway_host,
-            gateway_port,
-            gateway_credential_id,
-            destination_host,
-            destination_port,
-        } => {
-            let dest_cred_id = conn
-                .credential_id
-                .as_ref()
-                .ok_or_else(|| "Jump host connection requires a target credential".to_string())?;
-            let gateway = resolve_endpoint(
-                &data.credentials,
-                gateway_host,
-                *gateway_port,
-                gateway_credential_id,
-            )?
-            .through(conn.proxy_command.as_deref());
-            let destination = resolve_endpoint(
-                &data.credentials,
-                destination_host,
-                *destination_port,
-                dest_cred_id,
-            )?;
-            let stream = bridge_via_jump_host(
-                &gateway,
-                &destination.host,
-                destination.port,
-                conn.verbosity,
-            )?;
-            let session = open_authenticated_session_over_stream(
-                stream,
-                &destination,
-                conn.verbosity,
-                conn.extra_args.as_deref(),
-            )?;
-            Ok(ConnectedSession {
-                session,
-                destination_label: format!(
-                    "{}@{} via {}",
-                    destination.username,
-                    destination.addr(),
-                    gateway.addr()
-                ),
-            })
-        }
-        ConnectionKind::PortForward { .. } | ConnectionKind::LegacyTunnel { .. } => {
-            Err("SCP is only available for direct and jump host connections".to_string())
-        }
-    }
 }
 
 fn upload_bytes(

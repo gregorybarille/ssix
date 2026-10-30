@@ -1,11 +1,12 @@
 import React from "react";
-import { Server, Key, TerminalSquare, Cable, ScrollText, GitBranch } from "lucide-react";
+import { Server, Key, TerminalSquare, Cable, ScrollText, GitBranch, FileCode } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 export type NavItem =
   | "connections"
   | "credentials"
   | "forwards"
+  | "scripts"
   | "logs"
   | "git_sync"
   | "settings"
@@ -23,6 +24,7 @@ const navItems: { id: NavItem; label: string; icon: React.ReactNode }[] = [
   { id: "connections", label: "Connections", icon: <Server className="h-5 w-5" /> },
   { id: "forwards", label: "Port forwards", icon: <Cable className="h-5 w-5" /> },
   { id: "credentials", label: "Credentials", icon: <Key className="h-5 w-5" /> },
+  { id: "scripts", label: "Scripts", icon: <FileCode className="h-5 w-5" /> },
   { id: "logs", label: "Logs", icon: <ScrollText className="h-5 w-5" /> },
 ];
 

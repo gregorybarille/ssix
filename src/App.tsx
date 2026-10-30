@@ -40,7 +40,7 @@ import { connectMany } from "./lib/bulk-actions";
 import type { TagGroup } from "./lib/tags";
 
 /**
- * Settings, Git-Sync, Logs and the SCP dialogs are leaf views the user
+ * Settings, Git-Sync, Logs, Scripts and the SCP dialogs are leaf views the user
  * opens infrequently and that pull in sizeable component trees.
  * Lazy-loading them keeps the initial bundle small and shifts their
  * cost to first use.
@@ -53,6 +53,9 @@ const GitSyncView = lazy(() =>
 );
 const LogsView = lazy(() =>
   import("./components/LogsView").then((m) => ({ default: m.LogsView })),
+);
+const ScriptsView = lazy(() =>
+  import("./components/views/ScriptsView").then((m) => ({ default: m.ScriptsView })),
 );
 const ScpDialog = lazy(() =>
   import("./components/ScpDialog").then((m) => ({ default: m.ScpDialog })),
@@ -489,6 +492,11 @@ function App() {
                   />
                 )}
 
+                {view === "scripts" && (
+                  <Suspense fallback={<ViewFallback label="Loading scripts…" />}>
+                    <ScriptsView />
+                  </Suspense>
+                )}
                 {view === "logs" && (
                   <Suspense fallback={<ViewFallback label="Loading logs…" />}>
                     <LogsView />

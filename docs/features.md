@@ -132,6 +132,33 @@ The terminal tab bar is a true WAI-ARIA tablist. With focus on a tab:
 
 See [File Transfer](file-transfer.md) for behavior and limitations.
 
+## Scripts
+
+The **Scripts** view (sidebar) keeps scripts you run on several hosts at
+once.
+
+- **New Script** opens the editor in the side panel: a name, the remote
+  **interpreter** and the script itself. The interpreter is the command
+  the server runs; it reads the script on its standard input, so nothing
+  is copied to the host first. Presets cover `sh -s` (the default),
+  `bash -s` and `python3 -`; any other command that reads a program from
+  stdin works too. Names are unique; a script can be up to 256 KiB.
+- Select a script to see its body and the hosts it can run on: every
+  direct and jump host connection (local forwards cannot run scripts).
+  Tick hosts, or **All hosts**, and **Run on N hosts**.
+- The script starts on every picked host at the same time. Each host
+  gets its own card as it finishes: success when it exits 0, otherwise
+  the exit code, the signal that killed it, or the connection error, plus
+  how long it took, its standard output and its standard error.
+- Each stream keeps the first 1 MiB of output; the card says when output
+  was cut. A script still running after 10 minutes is stopped.
+- The last run's results stay while you visit other views, and running
+  again starts from the hosts you picked last time.
+- Each run is also logged (source `script`) in the Logs view, and a
+  connection's verbosity adds its `ssh -v` lines there as for a shell.
+- Scripts are saved in `data.json`, so Local Backups and Git Sync carry
+  them. Deleting one asks for confirmation first.
+
 ## Git Sync
 
 - sanitized config export into `.ssix-sync/`
@@ -250,8 +277,8 @@ and (on Windows / Linux) the minimize / maximize / close window controls.
 
 ## Side Panel
 
-Nothing in SSIX opens a floating window. Editors (connection and
-credential forms), SCP and bulk SCP, key generation and key install open
+Nothing in SSIX opens a floating window. Editors (connection,
+credential and script forms), SCP and bulk SCP, key generation and key install open
 in a panel column on the right of the app, beside the current view, so
 the list you came from stays visible and usable. Confirmations appear as
 a compact card at the top of that column, above the panel they are about.
@@ -276,6 +303,7 @@ SSIX shows an in-app confirmation before any destructive action:
 
 - deleting a connection
 - deleting a credential
+- deleting a script
 - closing a live terminal pane
 - closing a tab whose panes still hold a live SSH session
 
@@ -472,7 +500,7 @@ return (
 
 ## Unsaved-changes guard
 
-`ConnectionForm` and `CredentialForm` snapshot their initial state when
+`ConnectionForm`, `CredentialForm` and `ScriptForm` snapshot their initial state when
 the app panel opens and watch for changes via the `useUnsavedChangesGuard`
 hook (`src/hooks/useUnsavedChangesGuard.ts`). When the user attempts to
 close the panel (Cancel button or `Esc`) or to open another editor from
@@ -488,7 +516,8 @@ form; **Discard** confirms and closes the panel (or opens the editor
 that was asked for). The open form registers this check in
 `useDialogsStore` (`connFormGuard` / `credFormGuard`), which runs it
 before `openEditConnection`, `openNewConnection`, `openCloneConnection`
-and their credential counterparts swap the form.
+and their credential counterparts swap the form; the Scripts view keeps
+the same check for its editor.
 
 The guard self-disables for the close that immediately follows a
 successful save: submit handlers call `guard.markSaved()` before

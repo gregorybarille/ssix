@@ -209,7 +209,7 @@ fn control_channel() -> Result<(SessionHandle, ControlRx), String> {
 /// and a wake pipe; the command layer writes a byte to the pipe when it
 /// queues input. Windows falls back to a short sleep.
 #[cfg(unix)]
-mod wake {
+pub(crate) mod wake {
     use std::io::{self, Read, Write};
     use std::os::fd::{AsRawFd, RawFd};
     use std::os::unix::net::UnixStream;
@@ -278,7 +278,7 @@ mod wake {
 }
 
 #[cfg(windows)]
-mod wake {
+pub(crate) mod wake {
     use std::io;
     use std::os::windows::io::{AsRawSocket, RawSocket};
     use std::time::Duration;
@@ -689,7 +689,7 @@ fn spawn_shell_worker(
 /// Longest we wait for a channel close to go out on a non-blocking session.
 const CLOSE_TIMEOUT: Duration = Duration::from_secs(2);
 
-fn is_eagain(e: &ssh2::Error) -> bool {
+pub(crate) fn is_eagain(e: &ssh2::Error) -> bool {
     e.code() == ssh2::ErrorCode::Session(LIBSSH2_ERROR_EAGAIN)
 }
 
@@ -697,7 +697,7 @@ fn is_eagain(e: &ssh2::Error) -> bool {
 /// single `close()` may only queue the request, and dropping the channel
 /// then leaks it in libssh2 (and half-open on the server) until the
 /// session ends.
-fn close_channel(channel: &mut ssh2::Channel) {
+pub(crate) fn close_channel(channel: &mut ssh2::Channel) {
     let deadline = Instant::now() + CLOSE_TIMEOUT;
     let retry = |step: &mut dyn FnMut() -> Result<(), ssh2::Error>| loop {
         match step() {

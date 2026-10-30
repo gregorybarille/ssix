@@ -370,6 +370,9 @@ pub struct AppData {
     pub credentials: Vec<Credential>,
     pub connections: Vec<Connection>,
     pub settings: AppSettings,
+    /// Saved scripts. Files from before scripts existed have none.
+    #[serde(default)]
+    pub scripts: Vec<Script>,
 }
 
 /// Current `AppData.schema_version` written by this build.
@@ -391,6 +394,38 @@ impl Default for AppData {
             credentials: Vec::new(),
             connections: Vec::new(),
             settings: AppSettings::default(),
+            scripts: Vec::new(),
+        }
+    }
+}
+
+pub const DEFAULT_SCRIPT_INTERPRETER: &str = "sh -s";
+
+fn default_script_interpreter() -> String {
+    DEFAULT_SCRIPT_INTERPRETER.to_string()
+}
+
+/// A script the user runs on one or more hosts. `interpreter` is the remote
+/// command that receives `body` on its standard input (`sh -s`,
+/// `bash -s`, `python3 -`).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(test, derive(TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
+pub struct Script {
+    pub id: String,
+    pub name: String,
+    pub body: String,
+    #[serde(default = "default_script_interpreter")]
+    pub interpreter: String,
+}
+
+impl Script {
+    pub fn new(name: String, body: String, interpreter: String) -> Self {
+        Self {
+            id: Uuid::new_v4().to_string(),
+            name,
+            body,
+            interpreter,
         }
     }
 }
@@ -942,6 +977,7 @@ mod tests {
                 },
             }],
             settings: AppSettings::default(),
+            scripts: Vec::new(),
         };
 
         data.migrate_to_current();

@@ -27,6 +27,7 @@ export const sel = {
   navSettings: '[data-testid="nav-settings"]',
   navGitSync: '[data-testid="nav-git-sync"]',
   navLogs: '[data-testid="nav-logs"]',
+  navScripts: '[data-testid="nav-scripts"]',
 
   // The right-hand column every editor, SCP panel and confirmation opens in.
   appPanelSlot: '[data-testid="app-panel-slot"]',
@@ -170,6 +171,25 @@ export const sel = {
   backupRestoreConfirm: '[data-testid="backup-restore-dialog-confirm"]',
   backupRestoreDialog: '[data-testid="backup-restore-dialog"]',
 
+  // Scripts view. Script rows, host checkboxes and result cards carry
+  // `data-name` (script or connection name); results also carry
+  // `data-status` (running, success, error) and `data-exit-code`.
+  addScriptButton: '[data-testid="add-script-button"]',
+  scriptForm: '[data-testid="script-form"]',
+  scriptFormName: '[data-testid="script-form-name"]',
+  scriptFormInterpreter: '[data-testid="script-form-interpreter"]',
+  scriptFormBody: '[data-testid="script-form-body"]',
+  scriptFormSubmit: '[data-testid="script-form-submit"]',
+  scriptRowByName: (name: string) => `[data-testid="script-row"][data-name="${name}"]`,
+  // Scoped under a script row.
+  scriptRowSelect: '[data-testid="script-row-select"]',
+  scriptHostByName: (name: string) => `[data-testid="script-host"][data-name="${name}"]`,
+  scriptRun: '[data-testid="script-run"]',
+  scriptResultByName: (name: string) => `[data-testid="script-result"][data-name="${name}"]`,
+  // Scoped under a result card.
+  scriptResultStdout: '[data-testid="script-result-stdout"]',
+  scriptResultStderr: '[data-testid="script-result-stderr"]',
+
   // Layout toggle (list / tile / tags)
   layoutToggleList: '[data-testid="layout-toggle-list"]',
   layoutToggleTile: '[data-testid="layout-toggle-tile"]',
@@ -212,4 +232,5 @@ export const sel = {
   credentialsLoadErrorRetry: '[data-testid="credentials-load-error-retry"]',
   settingsLoadError: '[data-testid="settings-load-error"]',
   settingsLoadErrorRetry: '[data-testid="settings-load-error-retry"]',
+  scriptsLoadError: '[data-testid="scripts-load-error"]',
 } as const;

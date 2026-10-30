@@ -4,6 +4,7 @@ import { invoke } from "@/lib/tauri";
 import { runAsync, runAsyncRethrow } from "@/lib/asyncAction";
 import { useConnectionsStore } from "./useConnectionsStore";
 import { useCredentialsStore } from "./useCredentialsStore";
+import { useScriptsStore } from "./useScriptsStore";
 import { useSettingsStore } from "./useSettingsStore";
 
 interface BackupsState {
@@ -49,6 +50,7 @@ export const useBackupsStore = create<BackupsState>((set, get) => ({
         useConnectionsStore.getState().fetchConnections(),
         useCredentialsStore.getState().fetchCredentials(),
         useSettingsStore.getState().fetchSettings(),
+        useScriptsStore.getState().fetchScripts(),
       ]);
       return previous;
     }, { recordError: false }),

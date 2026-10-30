@@ -2,6 +2,7 @@
 import type { AppSettings } from "./AppSettings";
 import type { Connection } from "./Connection";
 import type { Credential } from "./Credential";
+import type { Script } from "./Script";
 
 export type AppData = { 
 /**
@@ -13,4 +14,8 @@ export type AppData = {
  * branch any time you change the on-disk shape in a way that
  * requires a one-time fixup at load time.
  */
-schema_version: number, credentials: Array<Credential>, connections: Array<Connection>, settings: AppSettings, };
+schema_version: number, credentials: Array<Credential>, connections: Array<Connection>, settings: AppSettings, 
+/**
+ * Saved scripts. Files from before scripts existed have none.
+ */
+scripts: Array<Script>, };

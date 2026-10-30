@@ -77,7 +77,7 @@ describe("BackupsList", () => {
     await waitFor(() =>
       expect(mockInvoke).toHaveBeenCalledWith("restore_backup", { name: "ssix-backup-a.zip" }),
     );
-    for (const cmd of ["get_connections", "get_credentials", "get_settings"]) {
+    for (const cmd of ["get_connections", "get_credentials", "get_settings", "get_scripts"]) {
       await waitFor(() => expect(mockInvoke).toHaveBeenCalledWith(cmd));
     }
     expect(await screen.findByTestId("backup-notice")).toHaveTextContent("ssix-backup-before.zip");

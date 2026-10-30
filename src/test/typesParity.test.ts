@@ -32,11 +32,15 @@ import type { AppSettings as GenAppSettings } from "@/types/generated/AppSetting
 import type { Connection as GenConnection } from "@/types/generated/Connection";
 import type { Credential as GenCredential } from "@/types/generated/Credential";
 import type { CredentialSecrets as GenCredentialSecrets } from "@/types/generated/CredentialSecrets";
+import type { Script as GenScript } from "@/types/generated/Script";
+import type { ScriptResult as GenScriptResult } from "@/types/generated/ScriptResult";
 import type {
   AppSettings as HandAppSettings,
   Connection as HandConnection,
   Credential as HandCredential,
   CredentialSecrets as HandCredentialSecrets,
+  Script as HandScript,
+  ScriptResult as HandScriptResult,
 } from "@/types";
 
 // Build a fully-populated instance of each generated shape. tsc will
@@ -91,6 +95,18 @@ const genSettings: GenAppSettings = {
   backup_keep: 10,
 };
 
+const genScript: GenScript = { id: "id", name: "n", body: "b", interpreter: "sh -s" };
+
+const genScriptResult: GenScriptResult = {
+  stdout: "",
+  stderr: "",
+  exit_code: 0,
+  exit_signal: null,
+  duration_ms: 1,
+  truncated: false,
+  timed_out: false,
+};
+
 // Same fields against the hand-written types (with `null` swapped to
 // either omission or matching union members where the hand-written
 // signature requires it). tsc still validates these.
@@ -130,6 +146,16 @@ const handSettings: HandAppSettings = {
   backup_enabled: true,
   backup_interval_hours: 24,
   backup_keep: 10,
+};
+
+const handScript: HandScript = { id: "id", name: "n", body: "b", interpreter: "sh -s" };
+
+const handScriptResult: HandScriptResult = {
+  stdout: "",
+  stderr: "",
+  duration_ms: 1,
+  truncated: false,
+  timed_out: false,
 };
 
 /**
@@ -206,6 +232,14 @@ describe("Phase 6a — ts-rs parity (Rust models <-> TS index.ts)", () => {
     expect(missing, `Hand-written AppSettings is missing: ${missing.join(", ")}`).toEqual([]);
   });
 
+  it("Script and ScriptResult: every generated field exists on the hand-written interfaces", () => {
+    const scriptMissing = [...fieldSet(genScript)].filter((f) => !fieldSet(handScript).has(f));
+    expect(scriptMissing, `Hand-written Script is missing: ${scriptMissing.join(", ")}`).toEqual([]);
+    const handResult = fieldSet(handScriptResult, ["exit_code", "exit_signal"]);
+    const resultMissing = [...fieldSet(genScriptResult)].filter((f) => !handResult.has(f));
+    expect(resultMissing, `Hand-written ScriptResult is missing: ${resultMissing.join(", ")}`).toEqual([]);
+  });
+
   it("AppData: schema_version is exported by ts-rs and the wire field is snake_case", () => {
     // Light sanity check; AppData isn't mirrored in index.ts as a
     // standalone shape (the frontend reaches into AppData fields
@@ -217,6 +251,7 @@ describe("Phase 6a — ts-rs parity (Rust models <-> TS index.ts)", () => {
       credentials: [],
       connections: [],
       settings: genSettings,
+      scripts: [genScript],
     };
     expect(Object.keys(sample)).toContain("schema_version");
   });

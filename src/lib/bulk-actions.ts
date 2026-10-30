@@ -51,6 +51,9 @@ export async function connectMany(
   return { started, skipped };
 }
 
+/** Progress of one host in a batch operation (bulk SCP, script runs). */
+export type StepStatus = "pending" | "running" | "success" | "error" | "skipped";
+
 /** Per-host outcome for a bulk SCP operation. */
 export interface BulkScpStep {
   connectionId: string;
@@ -59,7 +62,7 @@ export interface BulkScpStep {
   remotePath: string;
   /** Final local path that was actually attempted (download = suffixed; upload = unchanged). */
   localPath: string;
-  status: "pending" | "running" | "success" | "error" | "skipped";
+  status: StepStatus;
   /** Bytes transferred on success; undefined otherwise. */
   bytes?: number;
   /** Item count on success; undefined otherwise. */

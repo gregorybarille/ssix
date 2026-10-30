@@ -40,11 +40,14 @@ export async function clickDialogFooterButton(selector: string): Promise<void> {
   }, selector);
 }
 
-export async function navigateTo(view: "connections" | "credentials" | "forwards" | "settings" | "git-sync" | "logs"): Promise<void> {
+export async function navigateTo(
+  view: "connections" | "credentials" | "forwards" | "scripts" | "settings" | "git-sync" | "logs",
+): Promise<void> {
   const map = {
     connections: sel.navConnections,
     credentials: sel.navCredentials,
     forwards: sel.navForwards,
+    scripts: sel.navScripts,
     settings: sel.navSettings,
     "git-sync": sel.navGitSync,
     logs: sel.navLogs,
