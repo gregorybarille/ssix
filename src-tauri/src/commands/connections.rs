@@ -128,22 +128,34 @@ pub async fn add_connection(input: AddConnectionInput) -> Result<Connection, Str
 
 fn add_connection_sync(input: AddConnectionInput) -> Result<Connection, String> {
     let f = input.fields;
-    validate_connection_fields(&f.name, &f.host, f.port)?;
-    with_data_mut(|data| insert_new_connection(data, f))
+    with_data_mut(|data| {
+        check_connection(data, &f, None)?;
+        Ok(insert_new_connection(data, f))
+    })
 }
 
-/// The checks a new connection must pass against the stored data.
-fn check_new_connection(data: &AppData, f: &ConnectionFields) -> Result<(), String> {
-    if data.connections.iter().any(|c| c.name == f.name) {
+/// Every check a saved connection must pass, shared by add, clone and
+/// update. `editing` is the id of the connection being updated, whose own
+/// name is not a clash.
+fn check_connection(
+    data: &AppData,
+    f: &ConnectionFields,
+    editing: Option<&str>,
+) -> Result<(), String> {
+    validate_connection_fields(&f.name, &f.host, f.port)?;
+    if data
+        .connections
+        .iter()
+        .any(|c| c.name == f.name && Some(c.id.as_str()) != editing)
+    {
         return Err(format!("A connection named '{}' already exists", f.name));
     }
     validate_connection_credentials(&data.credentials, f.credential_id.as_deref(), &f.kind)
 }
 
-/// Store `f` as a new connection: shared by add and clone, so a clone gets
-/// exactly the checks and normalization a new connection gets.
-fn insert_new_connection(data: &mut AppData, f: ConnectionFields) -> Result<Connection, String> {
-    check_new_connection(data, &f)?;
+/// Store `f`, already checked, as a new connection: shared by add and
+/// clone, so a clone gets exactly the normalization a new connection gets.
+fn insert_new_connection(data: &mut AppData, f: ConnectionFields) -> Connection {
     let mut connection = Connection::new(f.name, f.host, f.port, f.credential_id, f.kind);
     connection.verbosity = f.verbosity;
     connection.extra_args = f.extra_args;
@@ -152,7 +164,7 @@ fn insert_new_connection(data: &mut AppData, f: ConnectionFields) -> Result<Conn
     connection.tags = normalize_tags(f.tags);
     connection.color = f.color;
     data.connections.push(connection.clone());
-    Ok(connection)
+    connection
 }
 
 #[tauri::command]
@@ -161,7 +173,6 @@ pub async fn update_connection(input: UpdateConnectionInput) -> Result<Connectio
 }
 
 fn update_connection_sync(input: UpdateConnectionInput) -> Result<Connection, String> {
-    validate_connection_fields(&input.fields.name, &input.fields.host, input.fields.port)?;
     let (updated, orphaned_private) = with_data_mut(|data| apply_update(data, input))?;
     // Secrets go only once the save succeeded: deleting them inside the
     // transaction would leave a failed save pointing at a credential with
@@ -182,14 +193,7 @@ fn apply_update(
     let id = input.id;
     let f = input.fields;
     let mut orphaned_private: Option<String> = None;
-    if data
-        .connections
-        .iter()
-        .any(|c| c.name == f.name && c.id != id)
-    {
-        return Err(format!("A connection named '{}' already exists", f.name));
-    }
-    validate_connection_credentials(&data.credentials, f.credential_id.as_deref(), &f.kind)?;
+    check_connection(data, &f, Some(&id))?;
     let idx = data
         .connections
         .iter()
@@ -286,7 +290,6 @@ pub async fn clone_connection(input: CloneConnectionInput) -> Result<Connection,
 
 fn clone_connection_sync(input: CloneConnectionInput) -> Result<Connection, String> {
     let mut f = input.fields;
-    validate_connection_fields(&f.name, &f.host, f.port)?;
 
     // When the clone duplicates a private credential its secrets are
     // written inside the `with_data_mut` closure, but data.json is only
@@ -299,7 +302,7 @@ fn clone_connection_sync(input: CloneConnectionInput) -> Result<Connection, Stri
             return Err("Connection not found".to_string());
         }
         // Refuse a bad clone before any secret is copied.
-        check_new_connection(data, &f)?;
+        check_connection(data, &f, None)?;
         // A private credential belongs to one connection (it is created by
         // the inline auth tabs and hidden from the list), so a clone that
         // names one another connection uses gets its own copy instead of
@@ -350,7 +353,7 @@ fn clone_connection_sync(input: CloneConnectionInput) -> Result<Connection, Stri
             });
             f.credential_id = Some(new_cred_id);
         }
-        insert_new_connection(data, f)
+        Ok(insert_new_connection(data, f))
     });
 
     // If with_data_mut failed (validation Err from the closure, or a
