@@ -73,7 +73,7 @@ const TOKENS = {
     mutedForegroundSoft: "215 16% 38%",
     accent: "210 40% 96.1%",
     popover: "0 0% 100%",
-    destructive: "0 84.2% 60.2%",
+    destructive: "0 72% 51%",
     destructiveText: "0 72% 35%",
   },
   dark: {
@@ -83,7 +83,7 @@ const TOKENS = {
     mutedForegroundSoft: "215 14% 66%",
     accent: "215 16% 24%",
     popover: "215 16% 18%",
-    destructive: "0 62.8% 30.6%",
+    destructive: "0 72% 51%",
     destructiveText: "0 84.2% 76%",
   },
 } as const;
@@ -100,7 +100,29 @@ function blend(
   ];
 }
 
+const WHITE: [number, number, number] = [255, 255, 255];
+
 describe("Theme color contrast", () => {
+  /*
+   * Destructive buttons (Discard, Delete) are solid `bg-destructive` with
+   * white text in both themes, like the primary button. The label must
+   * meet AA, and the button must stand out from the page as a UI
+   * component (WCAG 1.4.11, >= 3:1).
+   */
+  for (const theme of ["light", "dark"] as const) {
+    it(`${theme}: white label on a destructive button meets WCAG AA (>= 4.5:1)`, () => {
+      expect(contrast(WHITE, rgbForToken(TOKENS[theme].destructive))).toBeGreaterThanOrEqual(4.5);
+    });
+
+    it(`${theme}: a destructive button stands out from the background (>= 3:1)`, () => {
+      const ratio = contrast(
+        rgbForToken(TOKENS[theme].destructive),
+        rgbForToken(TOKENS[theme].background),
+      );
+      expect(ratio).toBeGreaterThanOrEqual(3);
+    });
+  }
+
   it("light: muted-foreground-soft on background meets WCAG AA (>= 4.5:1)", () => {
     const ratio = contrast(
       rgbForToken(TOKENS.light.mutedForegroundSoft),
@@ -152,10 +174,9 @@ describe("Theme color contrast", () => {
    * Audit-3 #4: `text-destructive` semantic.
    *
    * `--destructive` is tuned to be a button BACKGROUND (paired with
-   * white text), so on dark theme it sits around L=30 and only
-   * achieves ~2:1 against the dark surfaces — which is why we
-   * introduced `--destructive-text`. Lock both themes to AA on every
-   * surface where text-destructive actually appears.
+   * white text), so as text it only reaches ~3.3:1 on the dark
+   * surfaces — which is why we introduced `--destructive-text`. Lock
+   * both themes to AA on every surface where text-destructive appears.
    */
   it("dark: destructive-text on background meets WCAG AA (>= 4.5:1)", () => {
     const ratio = contrast(

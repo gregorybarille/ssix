@@ -37,6 +37,9 @@ export interface ConfirmDialogProps {
  *
  * Default focus lands on the cancel button — never on the destructive
  * action — so a careless Enter press cannot delete data.
+ *
+ * The buttons mirror the create/edit form footers: an outlined Cancel and
+ * a solid action button (red for destructive actions).
  */
 export function ConfirmDialog({
   open,
@@ -92,7 +95,7 @@ export function ConfirmDialog({
         )}
         <DialogFooter className="gap-2 sm:[&>button]:min-w-28">
           <Button
-            variant="ghost"
+            variant="outline"
             autoFocus
             onClick={() => onOpenChange(false)}
             disabled={busy}
