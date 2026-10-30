@@ -127,26 +127,28 @@ pub async fn add_connection(input: AddConnectionInput) -> Result<Connection, Str
 }
 
 fn add_connection_sync(input: AddConnectionInput) -> Result<Connection, String> {
-    let f = input.fields;
+    let mut f = input.fields;
     with_data_mut(|data| {
-        check_connection(data, &f, None)?;
+        check_connection(data, &mut f, None)?;
         Ok(insert_new_connection(data, f))
     })
 }
 
 /// Every check a saved connection must pass, shared by add, clone and
-/// update. `editing` is the id of the connection being updated, whose own
+/// update. Trims the name first, so " web" is stored as, and clashes with,
+/// "web". `editing` is the id of the connection being updated, whose own
 /// name is not a clash.
 fn check_connection(
     data: &AppData,
-    f: &ConnectionFields,
+    f: &mut ConnectionFields,
     editing: Option<&str>,
 ) -> Result<(), String> {
+    f.name = f.name.trim().to_string();
     validate_connection_fields(&f.name, &f.host, f.port)?;
     if data
         .connections
         .iter()
-        .any(|c| c.name == f.name && Some(c.id.as_str()) != editing)
+        .any(|c| c.name.trim() == f.name && Some(c.id.as_str()) != editing)
     {
         return Err(format!("A connection named '{}' already exists", f.name));
     }
@@ -191,9 +193,9 @@ fn apply_update(
     input: UpdateConnectionInput,
 ) -> Result<(Connection, Option<String>), String> {
     let id = input.id;
-    let f = input.fields;
+    let mut f = input.fields;
     let mut orphaned_private: Option<String> = None;
-    check_connection(data, &f, Some(&id))?;
+    check_connection(data, &mut f, Some(&id))?;
     let idx = data
         .connections
         .iter()
@@ -302,7 +304,7 @@ fn clone_connection_sync(input: CloneConnectionInput) -> Result<Connection, Stri
             return Err("Connection not found".to_string());
         }
         // Refuse a bad clone before any secret is copied.
-        check_connection(data, &f, None)?;
+        check_connection(data, &mut f, None)?;
         // A private credential belongs to one connection (it is created by
         // the inline auth tabs and hidden from the list), so a clone that
         // names one another connection uses gets its own copy instead of
@@ -647,6 +649,44 @@ mod tests {
             let copy_id = clone.credential_id.expect("clone keeps a credential");
             assert_ne!(copy_id, private.id);
             assert_eq!(load_data().unwrap().credentials.len(), 3);
+        });
+    }
+
+    /// Names are trimmed before they are checked and stored, so padding
+    /// neither survives a save nor slips past the clash check.
+    #[test]
+    fn test_connection_names_are_trimmed() {
+        with_isolated_data_dir(|| {
+            let cred = password_credential("a");
+            store_credential(&cred);
+            let mut fields = direct_fields(Some(cred.id.clone()));
+            fields.name = "  web  ".to_string();
+            let conn = add_connection_sync(AddConnectionInput { fields }).unwrap();
+            assert_eq!(conn.name, "web");
+
+            let mut fields = direct_fields(Some(cred.id.clone()));
+            fields.name = "web ".to_string();
+            let err = add_connection_sync(AddConnectionInput { fields }).unwrap_err();
+            assert_eq!(err, "A connection named 'web' already exists");
+
+            let mut fields = direct_fields(Some(cred.id.clone()));
+            fields.name = " web".to_string();
+            let err = clone_connection_sync(CloneConnectionInput {
+                id: conn.id.clone(),
+                fields,
+            })
+            .unwrap_err();
+            assert_eq!(err, "A connection named 'web' already exists");
+
+            // Re-saving the connection under its own padded name is no clash.
+            let mut fields = direct_fields(Some(cred.id.clone()));
+            fields.name = " web\t".to_string();
+            let updated = update_connection_sync(UpdateConnectionInput {
+                id: conn.id,
+                fields,
+            })
+            .unwrap();
+            assert_eq!(updated.name, "web");
         });
     }
 
