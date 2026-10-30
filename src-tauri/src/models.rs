@@ -193,6 +193,31 @@ impl Connection {
             color: None,
         }
     }
+
+    /// Every credential id this connection refers to: the destination
+    /// credential and, for tunnels, the gateway credential.
+    pub fn credential_ids(&self) -> impl Iterator<Item = &str> {
+        let gateway = match &self.kind {
+            ConnectionKind::PortForward {
+                gateway_credential_id,
+                ..
+            }
+            | ConnectionKind::JumpShell {
+                gateway_credential_id,
+                ..
+            } => Some(gateway_credential_id.as_str()),
+            ConnectionKind::LegacyTunnel {
+                gateway_credential_id,
+                ..
+            } => gateway_credential_id.as_deref(),
+            ConnectionKind::Direct => None,
+        };
+        self.credential_id
+            .as_deref()
+            .into_iter()
+            .chain(gateway)
+            .filter(|id| !id.is_empty())
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -329,6 +354,7 @@ impl AppData {
     pub fn migrate_to_current(&mut self) {
         // Step 1: legacy variants are dropped on every load (cheap, idempotent).
         self.migrate_legacy_kinds();
+        self.drop_dangling_credential_refs();
 
         // Step 2: future-proofing scaffold. Add branches here as the
         // schema evolves:
@@ -339,6 +365,52 @@ impl AppData {
         //   if self.schema_version < 3 { … }
 
         self.schema_version = CURRENT_SCHEMA_VERSION;
+    }
+
+    /// Clear credential references whose credential no longer exists.
+    /// Builds before `delete_credential` refused credentials in use left
+    /// them behind; cleared, the connection form flags the empty picker
+    /// inline instead of the save failing on an id the user cannot see.
+    pub fn drop_dangling_credential_refs(&mut self) {
+        let known: std::collections::HashSet<&str> =
+            self.credentials.iter().map(|c| c.id.as_str()).collect();
+        for conn in &mut self.connections {
+            let mut dropped = false;
+            if conn
+                .credential_id
+                .as_deref()
+                .is_some_and(|id| !known.contains(id))
+            {
+                conn.credential_id = None;
+                dropped = true;
+            }
+            if let ConnectionKind::PortForward {
+                gateway_credential_id,
+                ..
+            }
+            | ConnectionKind::JumpShell {
+                gateway_credential_id,
+                ..
+            } = &mut conn.kind
+            {
+                if !gateway_credential_id.is_empty()
+                    && !known.contains(gateway_credential_id.as_str())
+                {
+                    gateway_credential_id.clear();
+                    dropped = true;
+                }
+            }
+            if dropped {
+                crate::logs::log_local(
+                    "warn",
+                    "migration",
+                    format!(
+                        "Connection {} referred to a deleted credential; it needs a new one",
+                        conn.id
+                    ),
+                );
+            }
+        }
     }
 
     /// Migrate legacy `ConnectionKind::LegacyTunnel` entries to `JumpShell`.
@@ -437,6 +509,56 @@ mod tests {
         }"#;
         let parsed: ConnectionKind = serde_json::from_str(json).unwrap();
         assert!(matches!(parsed, ConnectionKind::LegacyTunnel { .. }));
+    }
+
+    #[test]
+    fn test_dangling_credential_refs_are_cleared_on_load() {
+        let kept = Credential::new(
+            "kept".into(),
+            "root".into(),
+            CredentialKind::Password {
+                password: String::new(),
+            },
+        );
+        let jump = ConnectionKind::JumpShell {
+            gateway_host: "gw".into(),
+            gateway_port: 22,
+            gateway_credential_id: "deleted-gateway".into(),
+            destination_host: "db".into(),
+            destination_port: 22,
+        };
+        let mut data = AppData {
+            credentials: vec![kept.clone()],
+            connections: vec![
+                Connection::new(
+                    "a".into(),
+                    "h".into(),
+                    22,
+                    Some("deleted".into()),
+                    ConnectionKind::Direct,
+                ),
+                Connection::new("b".into(), "db".into(), 22, Some(kept.id.clone()), jump),
+            ],
+            ..AppData::default()
+        };
+        data.migrate_to_current();
+
+        assert_eq!(data.connections[0].credential_id, None);
+        assert_eq!(
+            data.connections[1].credential_id.as_deref(),
+            Some(kept.id.as_str())
+        );
+        match &data.connections[1].kind {
+            ConnectionKind::JumpShell {
+                gateway_credential_id,
+                ..
+            } => assert_eq!(gateway_credential_id, ""),
+            other => panic!("expected a jump shell, got {other:?}"),
+        }
+        assert_eq!(
+            data.connections[1].credential_ids().collect::<Vec<_>>(),
+            vec![kept.id.as_str()]
+        );
     }
 
     #[test]

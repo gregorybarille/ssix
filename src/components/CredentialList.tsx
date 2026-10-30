@@ -73,6 +73,7 @@ export function CredentialList({
         size="icon"
         className="h-7 w-7 text-destructive hover:text-destructive"
         onClick={() => onDelete(cred.id)}
+        data-testid={`delete-credential-${cred.id}`}
         aria-label={`Delete credential ${cred.name}`}
       >
         <Trash2 className="h-3.5 w-3.5" aria-hidden="true" />

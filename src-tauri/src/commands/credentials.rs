@@ -303,16 +303,39 @@ fn update_credential_sync(input: UpdateCredentialInput) -> Result<Credential, St
 
 #[tauri::command]
 pub async fn delete_credential(id: String) -> Result<(), String> {
-    blocking(move || {
-        with_data_mut(|data| {
-            data.credentials.retain(|c| c.id != id);
-            Ok(())
-        })?;
-        // Remove secrets from the keychain after the JSON entry is gone.
-        keychain::delete_all_for_credential(&id);
+    blocking(move || delete_credential_sync(&id)).await
+}
+
+/// Delete a credential no connection uses. One that is still in use is
+/// refused (naming the connections) rather than leaving them pointing at
+/// nothing, which used to surface only as a failure at connect time.
+fn delete_credential_sync(id: &str) -> Result<(), String> {
+    with_data_mut(|data| {
+        let users: Vec<&str> = data
+            .connections
+            .iter()
+            .filter(|c| c.credential_ids().any(|used| used == id))
+            .map(|c| c.name.as_str())
+            .collect();
+        if !users.is_empty() {
+            let name = data
+                .credentials
+                .iter()
+                .find(|c| c.id == id)
+                .map_or("This credential", |c| c.name.as_str());
+            return Err(format!(
+                "'{}' is used by {}. Pick another credential for {} first.",
+                name,
+                users.join(", "),
+                if users.len() == 1 { "it" } else { "them" }
+            ));
+        }
+        data.credentials.retain(|c| c.id != id);
         Ok(())
-    })
-    .await
+    })?;
+    // Remove secrets from the keychain after the JSON entry is gone.
+    keychain::delete_all_for_credential(id);
+    Ok(())
 }
 
 #[cfg(test)]
@@ -329,6 +352,52 @@ mod tests {
             is_private: false,
         })
         .unwrap()
+    }
+
+    fn password_kind() -> CredentialKind {
+        CredentialKind::Password {
+            password: "pw".to_string(),
+        }
+    }
+
+    #[test]
+    fn delete_refuses_a_credential_a_connection_uses() {
+        with_isolated_data_dir(|| {
+            let dest = add("dest", password_kind());
+            let gateway = add("gateway", password_kind());
+            let unused = add("unused", password_kind());
+            crate::storage::with_data_mut(|data| {
+                data.connections.push(crate::models::Connection::new(
+                    "jump".to_string(),
+                    "db".to_string(),
+                    22,
+                    Some(dest.id.clone()),
+                    crate::models::ConnectionKind::JumpShell {
+                        gateway_host: "gw".to_string(),
+                        gateway_port: 22,
+                        gateway_credential_id: gateway.id.clone(),
+                        destination_host: "db".to_string(),
+                        destination_port: 22,
+                    },
+                ));
+                Ok(())
+            })
+            .unwrap();
+
+            assert_eq!(
+                super::delete_credential_sync(&dest.id).unwrap_err(),
+                "'dest' is used by jump. Pick another credential for it first."
+            );
+            assert_eq!(
+                super::delete_credential_sync(&gateway.id).unwrap_err(),
+                "'gateway' is used by jump. Pick another credential for it first."
+            );
+            super::delete_credential_sync(&unused.id).unwrap();
+
+            let data = crate::storage::load_data().unwrap();
+            let ids: Vec<&str> = data.credentials.iter().map(|c| c.id.as_str()).collect();
+            assert_eq!(ids, vec![dest.id.as_str(), gateway.id.as_str()]);
+        });
     }
 
     fn inline_key_kind(key: &str, passphrase: Option<&str>) -> CredentialKind {

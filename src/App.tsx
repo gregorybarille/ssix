@@ -597,13 +597,14 @@ function App() {
           dialogs.confirmDeleteCred ? (
             <>
               Delete credential <strong>{dialogs.confirmDeleteCred.name}</strong>?
-              Connections that reference it will lose their saved
-              authentication.
+              A credential that connections still use cannot be deleted
+              until they use another one.
             </>
           ) : null
         }
         confirmLabel="Delete credential"
         variant="destructive"
+        testId="confirm-delete-credential"
         onConfirm={async () => {
           if (dialogs.confirmDeleteCred) {
             await deleteCredential(dialogs.confirmDeleteCred.id);

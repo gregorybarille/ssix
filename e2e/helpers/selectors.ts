@@ -93,6 +93,11 @@ export const sel = {
     `[data-testid="credential-form"][data-secrets-state="${state}"]`,
   // Scoped under a credential row (see credentialRowByName).
   credentialRowEditButton: '[data-testid^="edit-credential-"]',
+  credentialRowDeleteButton: '[data-testid^="delete-credential-"]',
+  // Delete-credential confirm dialog; its error line shows a refusal.
+  confirmDeleteCredential: '[data-testid="confirm-delete-credential"]',
+  confirmDeleteCredentialConfirm: '[data-testid="confirm-delete-credential-confirm"]',
+  confirmDeleteCredentialError: '[data-testid="confirm-delete-credential-error"]',
 
   // Connect / terminal
   connectButton: (id: string) => `[data-testid="connect-button-${id}"]`,

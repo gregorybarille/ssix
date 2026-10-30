@@ -7,6 +7,7 @@
  *   - a connection cannot be saved without a credential;
  *   - a refused save deletes the inline credential it created;
  *   - a clone keeps every field of its form;
+ *   - a credential that connections use cannot be deleted.
  */
 import { waitForAppReady } from "../helpers/app.js";
 import { TARGETS } from "../helpers/docker.js";
@@ -168,5 +169,27 @@ describe("Connections CRUD", () => {
     const clone = await browser.$(sel.connectionRowByName("conn-a-clone"));
     await clone.waitForExist({ timeout: 10_000 });
     expect(await clone.getAttribute("aria-label")).toContain("tagged cloned");
+  });
+
+  it("refuses to delete a credential that connections use", async () => {
+    await navigateTo("credentials");
+    const row = await browser.$(sel.credentialRowByName("cred-a"));
+    await row.waitForExist({ timeout: 10_000 });
+    // Row actions are revealed on hover or focus.
+    await browser.execute((el: HTMLElement) => el.focus(), row as unknown as HTMLElement);
+    const deleteButton = await row.$(sel.credentialRowDeleteButton);
+    await deleteButton.waitForClickable({ timeout: 10_000 });
+    await deleteButton.click();
+    await clickDialogFooterButton(sel.confirmDeleteCredentialConfirm);
+
+    const error = await browser.$(sel.confirmDeleteCredentialError);
+    await error.waitForDisplayed({ timeout: 10_000 });
+    expect(await error.getText()).toContain("'cred-a' is used by conn-a");
+    await browser.keys(["Escape"]);
+    await (await browser.$(sel.confirmDeleteCredential)).waitForExist({
+      reverse: true,
+      timeout: 10_000,
+    });
+    expect(await row.isExisting()).toBe(true);
   });
 });

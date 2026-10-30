@@ -32,6 +32,10 @@ everything in it (kind, gateway, tags, colour, options) is saved as the
 new connection. A private inline credential is copied, so the clone and
 the original never share one.
 
+A credential that connections use cannot be deleted. The delete
+confirmation names those connections; give them another credential
+first.
+
 The credentials list only holds redacted credentials. Opening **Edit**
 fetches that one credential's saved secrets (`get_credential_secrets`)
 and prefills them; the secret fields and the **Update** button are
@@ -257,8 +261,11 @@ responsive instead of nagging.
 The backend enforces the credential rule too: `add_connection`,
 `update_connection` and `clone_connection` refuse a Direct or Jump Shell
 connection without a credential, a tunnel without a gateway credential,
-and any credential id that no longer exists (deleting a credential
-leaves the connections that used it pointing at nothing).
+and any credential id that no longer exists. A connection never points
+at a deleted credential: deleting a credential that connections still
+use is refused with their names, and references that older builds left
+behind are cleared when the data loads, so the form asks for a new
+credential inline.
 
 A refused save keeps everything the user entered. The forms submit
 through `submitWithoutReset` (`src/lib/formSubmit.ts`) instead of
