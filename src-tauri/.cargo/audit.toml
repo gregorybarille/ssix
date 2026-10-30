@@ -1,0 +1,10 @@
+# cargo-audit reads every package in Cargo.lock, including optional
+# dependencies whose features are off. These two are never compiled
+# (`cargo tree -i rsa` and `cargo tree -i crypto-bigint` print nothing):
+# ssh-key lists them for its RSA and ECDSA support, which SSIX does not
+# use. Drop an entry if `cargo tree` ever shows the crate.
+[advisories]
+ignore = [
+    "RUSTSEC-2023-0071", # rsa 0.9: Marvin timing attack, no fixed release
+    "RUSTSEC-2026-0387", # crypto-bigint 0.5: non-constant-time operations
+]

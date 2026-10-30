@@ -100,7 +100,7 @@ Continuous integration (`.github/workflows/test.yml`, required on PRs):
 - Backend: `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`, `cargo test`, and a
   `git diff --exit-code src/types/generated/` check so regenerated ts-rs
   bindings are always committed
-- `cargo audit` via `rustsec/audit-check` for advisories in `Cargo.lock`
+- `cargo audit` via `rustsec/audit-check` for advisories in `src-tauri/Cargo.lock`. `src-tauri/.cargo/audit.toml` ignores advisories for optional crates that are in the lockfile but never compiled, with the reason for each
 
 End-to-end:
 
