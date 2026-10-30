@@ -11,6 +11,14 @@ import {
   SelectValue,
 } from "./ui/select";
 
+/**
+ * `aria-invalid` and `aria-describedby` for a field whose message renders
+ * in `<FieldError id={errorId}>`; nothing while the field is valid.
+ */
+export function invalidAria(error: string | undefined, errorId: string | undefined) {
+  return error ? { "aria-invalid": true, "aria-describedby": errorId } : {};
+}
+
 /** Inline error line used by every field in the connection form. */
 export function FieldError({
   id,
@@ -121,8 +129,7 @@ export function CredentialSelect({
         data-testid={testId}
         aria-label={ariaLabel}
         aria-required={required ? true : undefined}
-        aria-invalid={error ? true : undefined}
-        aria-describedby={error ? errorId : undefined}
+        {...invalidAria(error, errorId)}
       >
         <SelectValue placeholder="Select credential..." />
       </SelectTrigger>
@@ -196,8 +203,7 @@ export function SaveCredentialFields({
             value={name}
             onChange={(e) => onNameChange(e.target.value)}
             aria-required="true"
-            aria-invalid={error ? true : undefined}
-            aria-describedby={error ? errorId : undefined}
+            {...invalidAria(error, errorId)}
           />
           <FieldError id={errorId} message={error} />
         </div>

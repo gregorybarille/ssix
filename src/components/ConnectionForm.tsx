@@ -25,6 +25,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "./ui/tabs";
 import {
   CredentialSelect,
   FieldError,
+  invalidAria,
   PortField,
   SaveCredentialFields,
 } from "./ConnectionFormFields";
@@ -254,8 +255,7 @@ export function ConnectionForm({
     | `inline_${CredentialFieldKey}`;
   const { fieldErrors, setFieldErrors, clearFieldError } = useFieldErrors<FieldKey>();
   // aria wiring for an input whose message renders in `<FieldError id={errorId}>`.
-  const invalidProps = (key: FieldKey, errorId: string) =>
-    fieldErrors[key] ? { "aria-invalid": true, "aria-describedby": errorId } : {};
+  const invalidProps = (key: FieldKey, errorId: string) => invalidAria(fieldErrors[key], errorId);
 
   const updatePort = (key: PortKey, raw: string) => {
     setPortInputs((p) => ({ ...p, [key]: raw }));
