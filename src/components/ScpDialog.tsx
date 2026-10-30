@@ -8,6 +8,7 @@ import { Tabs, TabsList, TabsTrigger } from "./ui/tabs";
 import { Checkbox } from "./ui/checkbox";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "./ui/dialog";
 import { cn } from "@/lib/utils";
+import { submitWithoutReset } from "@/lib/formSubmit";
 
 type ScpMode = "upload" | "download";
 
@@ -124,7 +125,7 @@ export function ScpDialog({ open, onOpenChange, connection }: ScpDialogProps) {
             Transfer files between your machine and the remote host over SSH/SCP.
           </DialogDescription>
         </DialogHeader>
-        <form action={scpAction} className="space-y-4" noValidate>
+        <form onSubmit={submitWithoutReset(scpAction)} className="space-y-4" noValidate>
           <Tabs value={mode} onValueChange={(v) => setMode(v as "upload" | "download")}>
             <TabsList className="w-full">
               <TabsTrigger value="upload" className="flex-1" data-testid="scp-mode-upload">Upload</TabsTrigger>

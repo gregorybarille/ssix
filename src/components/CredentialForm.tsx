@@ -20,6 +20,7 @@ import { ConfirmDialog } from "./ConfirmDialog";
 import { useUnsavedChangesGuard } from "@/hooks/useUnsavedChangesGuard";
 import { pickFile } from "@/lib/dialog";
 import { isTextInput } from "@/lib/focus";
+import { submitWithoutReset } from "@/lib/formSubmit";
 import { FolderOpen } from "lucide-react";
 
 interface CredentialFormProps {
@@ -371,7 +372,7 @@ export function CredentialForm({
         )}
       </DialogHeader>
       <form
-        action={submitAction}
+        onSubmit={submitWithoutReset(submitAction)}
         className="flex flex-col flex-1 min-h-0"
         data-testid="credential-form"
         data-secrets-state={secretsState}

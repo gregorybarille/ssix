@@ -1,5 +1,6 @@
 import { useActionState, useState, useEffect } from "react";
 import { invoke } from "@/lib/tauri";
+import { submitWithoutReset } from "@/lib/formSubmit";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
 import { PasswordInput } from "./ui/password-input";
@@ -92,7 +93,7 @@ export function GenerateKeyDialog({
             Generate a new ed25519 SSH key pair and choose where to store it.
           </DialogDescription>
         </DialogHeader>
-        <form action={generateAction} className="space-y-4">
+        <form onSubmit={submitWithoutReset(generateAction)} className="space-y-4">
           <div className="space-y-2">
             {/*
               Audit-3 P2#9: storage picker is a single-choice picker

@@ -235,6 +235,13 @@ The offending input gets `aria-invalid="true"` and an
 into the input clears the error immediately so the validation feels
 responsive instead of nagging.
 
+A refused save keeps everything the user entered. The forms submit
+through `submitWithoutReset` (`src/lib/formSubmit.ts`) instead of
+`<form action>`, because React resets an action form after every
+submission and Radix Select, Checkbox and RadioGroup answer that reset
+by returning to their initial value: a picked credential would silently
+go back to "None".
+
 ## Connection List Actions
 
 The **Connect** action (green Play icon) is the primary CTA on every

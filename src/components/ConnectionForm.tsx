@@ -31,6 +31,7 @@ import { parsePort } from "@/lib/port";
 import { isTextInput } from "@/lib/focus";
 import { UploadCloud } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { submitWithoutReset } from "@/lib/formSubmit";
 import { useUnsavedChangesGuard } from "@/hooks/useUnsavedChangesGuard";
 import { ConfirmDialog } from "./ConfirmDialog";
 
@@ -1152,7 +1153,7 @@ export function ConnectionForm({
         )}
       </DialogHeader>
       <form
-        action={submitAction}
+        onSubmit={submitWithoutReset(submitAction)}
         className="flex flex-col flex-1 min-h-0"
         data-testid="connection-form"
         aria-labelledby={inline ? inlineTitleId : undefined}
