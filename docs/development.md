@@ -80,6 +80,20 @@ Current builds are unsigned and intended for personal use:
   require (2.34 today), which Debian 12, Fedora and RHEL 10 all meet. RHEL 10 and its rebuilds get WebKitGTK
   4.1 from EPEL. RHEL 9 has no WebKitGTK 4.1 at all, so it is not supported.
 
+## Icons
+
+Every file in `src-tauri/icons` is generated from the SVGs in
+`src-tauri/icons/source` by `npm run icons` (`scripts/generate-icons.mjs`):
+
+- `ssix.svg` is the icon itself, used for Windows, Linux, Android and iOS.
+- `ssix-small.svg` replaces it at 16–32 px (the small sizes of `icon.ico`
+  and `32x32.png`), with solid wings instead of the sketched ones, which blur
+  at that size.
+- `icon.icns` puts `ssix.svg` on Apple's icon grid (an 824 px body in the
+  1024 px canvas), so it matches the size of other Dock icons.
+
+Edit the SVGs, run `npm run icons`, and commit the regenerated files.
+
 ## Repo Structure
 
 - `src/` frontend app (React 19 + Vite 8 + TypeScript 7). `tsc` is the native TypeScript 7 compiler (per-platform binary, no JS compiler API); `npm run build` runs `tsc && vite build`

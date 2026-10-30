@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+<!-- App icon. Edit here, then run `npm run icons`. Drawn in a 400-unit space. -->
+<g transform="scale(2.56)">
+<rect width="400" height="400" rx="88" fill="#2E3F55"/>
+<g fill="none" stroke="#FFFFFF" stroke-linecap="round" stroke-linejoin="round" transform="translate(104,214) rotate(12) scale(0.78)"><path stroke-width="9" d="M6 -4 C -18 -36 -62 -50 -108 -42"/><path stroke-width="9" d="M6 -4 C 16 6 12 20 0 20 C -10 20 -11 10 -3 8"/><path stroke-width="8" d="M -46 -44 C -78 -46 -102 -38 -114 -28 C -90 -24 -64 -22 -36 -22"/><path stroke-width="8" d="M -36 -22 C -68 -22 -92 -12 -104 0 C -80 0 -54 2 -26 0"/><path stroke-width="8" d="M -26 0 C -54 2 -76 12 -86 26 C -62 22 -40 18 -12 12"/></g>
+<g fill="none" stroke="#FFFFFF" stroke-linecap="round" stroke-linejoin="round" transform="translate(296,214) scale(-1,1) rotate(12) scale(0.78)"><path stroke-width="9" d="M6 -4 C -18 -36 -62 -50 -108 -42"/><path stroke-width="9" d="M6 -4 C 16 6 12 20 0 20 C -10 20 -11 10 -3 8"/><path stroke-width="8" d="M -46 -44 C -78 -46 -102 -38 -114 -28 C -90 -24 -64 -22 -36 -22"/><path stroke-width="8" d="M -36 -22 C -68 -22 -92 -12 -104 0 C -80 0 -54 2 -26 0"/><path stroke-width="8" d="M -26 0 C -54 2 -76 12 -86 26 C -62 22 -40 18 -12 12"/></g>
+<g transform="translate(200,202) scale(1.3) translate(-200,-202)">
+<rect x="128" y="132" width="144" height="140" rx="24" fill="#2E3F55" stroke="#F2C523" stroke-width="10"/>
+<line x1="128" y1="166" x2="272" y2="166" stroke="#F2C523" stroke-width="8"/>
+<g fill="#F2C523"><circle cx="152" cy="149" r="5.5"/><circle cx="171" cy="149" r="5.5"/><circle cx="190" cy="149" r="5.5"/></g>
+<g fill="none" stroke-linecap="round" stroke-linejoin="round"><path stroke="#FFFFFF" stroke-width="14" d="M158 194 L186 216 L158 238"/><path stroke="#F2C523" stroke-width="14" d="M202 240 L240 240"/></g>
+</g>
+</g>
+</svg>
