@@ -65,5 +65,7 @@ jobs:
       - uses: rustsec/audit-check@v2.0.0
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
-          # Cargo.lock and the ignore list (.cargo/audit.toml) live here.
+          # The action runs `cargo audit --file src-tauri/Cargo.lock` from the
+          # repo root, which is where it reads the ignore list
+          # (.cargo/audit.toml).
           working-directory: src-tauri
