@@ -3,6 +3,9 @@ import { act, render, screen, fireEvent, waitFor, within } from "@testing-librar
 import { SettingsPanel } from "@/components/SettingsPanel";
 import type { AppSettings } from "@/types";
 
+// The backups list has its own store and tests (BackupsList.test.tsx).
+vi.mock("@/components/BackupsList", () => ({ BackupsList: () => null }));
+
 /** Must match SETTINGS_SAVE_DEBOUNCE_MS in SettingsPanel.tsx. */
 const DEBOUNCE_MS = 300;
 
@@ -27,6 +30,9 @@ const defaults: AppSettings = {
   default_open_mode: "tab",
   auto_copy_selection: false,
   git_sync_remote: "origin",
+  backup_enabled: true,
+  backup_interval_hours: 24,
+  backup_keep: 10,
 };
 
 describe("SettingsPanel", () => {

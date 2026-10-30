@@ -216,6 +216,33 @@ export interface AppSettings {
   git_sync_repo_path?: string;
   git_sync_remote: string;
   git_sync_branch?: string;
+  /** Take automatic local backups of `~/.ssix`. */
+  backup_enabled: boolean;
+  /** Hours between automatic backups (1-720). */
+  backup_interval_hours: number;
+  /** Automatic backups kept (1-100); manual ones stay until deleted. */
+  backup_keep: number;
+}
+
+export type BackupReason = "manual" | "automatic" | "before_restore";
+
+/** One archive in `~/.ssix/backups` (see `src-tauri/src/backup.rs`). */
+export interface BackupInfo {
+  /** File name; also the id passed to restore and delete. */
+  name: string;
+  /** Unix time in milliseconds. */
+  created_at: number;
+  size: number;
+  reason?: BackupReason | null;
+  files: string[];
+  /** Why the archive cannot be restored, when it cannot. */
+  error?: string | null;
+}
+
+export interface BackupList {
+  dir: string;
+  /** Newest first. */
+  backups: BackupInfo[];
 }
 
 export interface GitSyncStatus {

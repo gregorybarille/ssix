@@ -156,6 +156,17 @@ export const sel = {
   settingsGitSyncRepoPath: '[data-testid="settings-git-sync-repo-path"]',
   settingsSavedStatus: '[data-testid="settings-saved-status"]',
 
+  // Settings → Backups. Rows carry `data-name` (archive file name) and
+  // `data-reason` (manual, automatic, before_restore), newest first.
+  backupCreate: '[data-testid="backup-create"]',
+  backupNotice: '[data-testid="backup-notice"]',
+  backupRow: '[data-testid="backup-row"]',
+  backupRowByReason: (reason: string) => `[data-testid="backup-row"][data-reason="${reason}"]`,
+  // Scoped under a backup row.
+  backupRestoreButton: '[data-testid="backup-restore"]',
+  backupRestoreConfirm: '[data-testid="backup-restore-dialog-confirm"]',
+  backupRestoreDialog: '[data-testid="backup-restore-dialog"]',
+
   // Layout toggle (list / tile / tags)
   layoutToggleList: '[data-testid="layout-toggle-list"]',
   layoutToggleTile: '[data-testid="layout-toggle-tile"]',

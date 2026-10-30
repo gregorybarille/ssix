@@ -25,6 +25,12 @@ Older builds showed this as `TypeError: ... window.__TAURI_INTERNALS__ is undefi
 - For **Through WSL**, check `wsl.exe -e nc -h` works in a Windows terminal, and install `netcat-openbsd` in the distribution if it does not.
 - Set the connection's verbosity to -v: the Logs view then shows the expanded command that was run.
 
+## Restoring A Backup
+
+- A restore that is refused leaves every file as it was; the message names the file that failed its check.
+- To undo a restore, restore the "Before restore" backup it created.
+- Backups live in `~/.ssix/backups` (or `$SSIX_DATA_DIR/backups`). Copy one elsewhere to keep it safe from a lost disk, and remember that it contains your secrets.
+
 ## Host Key Has Changed
 
 - SSIX refuses to connect when a server's host key differs from the one recorded on first use. The failure view shows the new SHA256 fingerprint.

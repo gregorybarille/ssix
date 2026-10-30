@@ -28,6 +28,9 @@ const DEFAULT_SETTINGS: AppSettings = {
   git_sync_repo_path: undefined,
   git_sync_remote: "origin",
   git_sync_branch: undefined,
+  backup_enabled: true,
+  backup_interval_hours: 24,
+  backup_keep: 10,
 };
 
 // Audit-4 Dup H1: same async-action pattern as the other stores.

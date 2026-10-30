@@ -163,7 +163,7 @@ End-to-end:
 
   The first iteration covers credentials/connections CRUD, direct
   SSH, jump host, local forwarding, SCP round-trip, key generation +
-  install, and git-sync export. Selectors are centralised in
+  install, git-sync export, local backup and restore. Selectors are centralised in
   `e2e/helpers/selectors.ts`; some `data-testid` attributes are still
   to be added as the suite is brought green for the first time
   (Sidebar, ConnectionList, and the App add-buttons are wired today).
@@ -187,3 +187,4 @@ End-to-end:
 - SCP file transfer
 - Recursive SCP directory transfer
 - Git Sync export, diff, one-click sync
+- Back up now, change something, restore the backup, then restore the "before restore" one

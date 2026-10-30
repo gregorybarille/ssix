@@ -30,6 +30,9 @@ const settings: AppSettings = {
   default_open_mode: "tab",
   auto_copy_selection: false,
   git_sync_remote: "origin",
+  backup_enabled: true,
+  backup_interval_hours: 24,
+  backup_keep: 10,
 };
 
 const LOAD_ERROR = "/home/u/.ssix/data.json is not valid SSIX data: expected value at line 1";

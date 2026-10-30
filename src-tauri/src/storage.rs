@@ -279,6 +279,16 @@ fn save_data_unlocked(data: &AppData) -> Result<(), String> {
     Ok(())
 }
 
+/// Run `f` while no other thread can read or write `data.json`, then drop
+/// the cached copy so the next load reads whatever `f` left on disk. Used
+/// by backups, which copy and replace the file as raw bytes.
+pub(crate) fn with_data_file_locked<T>(f: impl FnOnce() -> T) -> T {
+    let _guard = DATA_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let result = f();
+    *DATA_CACHE.lock().unwrap_or_else(|e| e.into_inner()) = None;
+    result
+}
+
 /// Execute a read-modify-write transaction against AppData under one lock.
 pub fn with_data_mut<R, F>(mutator: F) -> Result<R, String>
 where

@@ -290,6 +290,15 @@ pub struct AppSettings {
     /// Optional branch override. When omitted, SSIX uses the current branch.
     #[serde(default)]
     pub git_sync_branch: Option<String>,
+    /// Take automatic local backups of the data directory (see `backup.rs`).
+    #[serde(default = "default_true")]
+    pub backup_enabled: bool,
+    /// Hours between automatic backups.
+    #[serde(default = "default_backup_interval_hours")]
+    pub backup_interval_hours: u32,
+    /// How many automatic backups to keep; manual ones are kept until deleted.
+    #[serde(default = "default_backup_keep")]
+    pub backup_keep: u32,
 }
 
 fn default_font_size() -> u8 {
@@ -313,6 +322,15 @@ fn default_open_mode() -> String {
 fn default_git_remote() -> String {
     "origin".to_string()
 }
+fn default_true() -> bool {
+    true
+}
+fn default_backup_interval_hours() -> u32 {
+    24
+}
+fn default_backup_keep() -> u32 {
+    10
+}
 
 impl Default for AppSettings {
     fn default() -> Self {
@@ -329,6 +347,9 @@ impl Default for AppSettings {
             git_sync_repo_path: None,
             git_sync_remote: default_git_remote(),
             git_sync_branch: None,
+            backup_enabled: true,
+            backup_interval_hours: default_backup_interval_hours(),
+            backup_keep: default_backup_keep(),
         }
     }
 }

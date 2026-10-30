@@ -142,6 +142,35 @@ See [File Transfer](file-transfer.md) for behavior and limitations.
 
 See [Git Sync](git-sync.md) for details.
 
+## Local Backups
+
+Settings → **Backups** keeps ZIP copies of `~/.ssix` in `~/.ssix/backups`:
+`data.json` (connections, credentials, settings), `secrets.json`
+(passwords, passphrases and inline keys) and `known_hosts`. Unlike Git
+Sync, a backup holds the secrets, so archives are created readable only by
+you (0600, in a 0700 folder) and never leave the machine.
+
+- **Back up automatically** (on by default) checks a minute after launch
+  and then every ten minutes, and takes a backup once the chosen
+  frequency (every hour to every week, default every day) has passed
+  since the newest backup — unless nothing changed since then.
+- **Automatic backups kept** (default 10) prunes the oldest automatic
+  backups. Manual and "before restore" backups stay until you delete them.
+- **Back up now** takes a manual backup.
+- **Restore** (after a confirmation) checks the whole archive before it
+  touches anything: only the expected files, each matching the size and
+  SHA-256 in its `manifest.json`, contents SSIX can load, and a format no
+  newer than this build. It then backs up the current files as a "before
+  restore" backup, so a restore can itself be undone, and replaces the
+  live files with the archive's; a file the archive does not hold is
+  removed. Connections, credentials and settings reload at once.
+- An archive SSIX cannot read is listed with the reason and can only be
+  deleted.
+
+Each archive is written in full before it appears under its final name
+(`ssix-backup-YYYYMMDD-HHMMSS-mmm.zip`, UTC), so a crash never leaves a
+half-written backup in the list.
+
 ## Diagnostics
 
 - backend logs

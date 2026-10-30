@@ -1,3 +1,4 @@
+mod backup;
 mod commands;
 mod keychain;
 mod known_hosts;
@@ -18,6 +19,7 @@ pub fn run() {
         .manage(SshState::new())
         .setup(|app| {
             logs::init(app.handle().clone());
+            backup::spawn_scheduler();
             // Write any load-time repair once, off the UI thread.
             tauri::async_runtime::spawn_blocking(|| {
                 if let Err(e) = storage::persist_migrations() {
@@ -42,6 +44,10 @@ pub fn run() {
             commands::connections::delete_connection,
             commands::connections::clone_connection,
             commands::connections::get_orphan_private_credential,
+            commands::backup::list_backups,
+            commands::backup::create_backup,
+            commands::backup::restore_backup,
+            commands::backup::delete_backup,
             commands::settings::get_settings,
             commands::settings::save_settings,
             commands::git_sync::git_sync_status,

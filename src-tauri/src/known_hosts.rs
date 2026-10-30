@@ -26,6 +26,12 @@ pub const MISMATCH_PREFIX: &str = "HOST_KEY_MISMATCH";
 /// newly recorded key.
 static KNOWN_HOSTS_LOCK: Mutex<()> = Mutex::new(());
 
+/// Run `f` while no other thread can read or write the known_hosts file.
+pub(crate) fn with_known_hosts_locked<T>(f: impl FnOnce() -> T) -> T {
+    let _guard = KNOWN_HOSTS_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    f()
+}
+
 pub fn known_hosts_path() -> PathBuf {
     crate::storage::data_dir().join("known_hosts")
 }

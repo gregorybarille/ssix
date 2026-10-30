@@ -17,6 +17,8 @@ Files are written under:
 
 Passphrases are represented as redacted markers when present, not as the original values.
 
+For a full local copy that includes the secrets, use [Local Backups](features.md#local-backups) instead.
+
 ## Manual Actions
 
 The Git Sync view supports:

@@ -1,5 +1,5 @@
 /**
- * Spec 11: a failed load is shown, never mistaken for an empty catalogue.
+ * Spec 12: a failed load is shown, never mistaken for an empty catalogue.
  *
  * Corrupts `data.json`, reloads the app, and expects the Connections,
  * Credentials and Settings views to show a load-error banner naming the

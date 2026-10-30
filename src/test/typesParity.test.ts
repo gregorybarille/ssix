@@ -86,6 +86,9 @@ const genSettings: GenAppSettings = {
   git_sync_repo_path: null,
   git_sync_remote: "origin",
   git_sync_branch: null,
+  backup_enabled: true,
+  backup_interval_hours: 24,
+  backup_keep: 10,
 };
 
 // Same fields against the hand-written types (with `null` swapped to
@@ -124,6 +127,9 @@ const handSettings: HandAppSettings = {
   default_open_mode: "tab",
   auto_copy_selection: false,
   git_sync_remote: "origin",
+  backup_enabled: true,
+  backup_interval_hours: 24,
+  backup_keep: 10,
 };
 
 /**
