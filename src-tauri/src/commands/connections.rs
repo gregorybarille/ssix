@@ -67,16 +67,16 @@ pub fn get_connections() -> Result<Vec<Connection>, String> {
 fn validate_connection_fields(name: &str, host: &str, port: u16) -> Result<(), String> {
     let trimmed_name = name.trim();
     if trimmed_name.is_empty() {
-        return Err("Connection name is required.".to_string());
+        return Err("Connection name is required".to_string());
     }
     if trimmed_name.chars().count() > 128 {
-        return Err("Connection name must be 128 characters or fewer.".to_string());
+        return Err("Connection name must be 128 characters or fewer".to_string());
     }
     if host.trim().is_empty() {
-        return Err("Host is required.".to_string());
+        return Err("Host is required".to_string());
     }
     if port == 0 {
-        return Err("Port must be between 1 and 65535.".to_string());
+        return Err("Port must be between 1 and 65535".to_string());
     }
     Ok(())
 }
@@ -803,19 +803,19 @@ mod tests {
     #[test]
     fn test_validate_rejects_blank_name() {
         let err = validate_connection_fields("   ", "host", 22).unwrap_err();
-        assert!(err.contains("name"), "got: {}", err);
+        assert_eq!(err, "Connection name is required");
     }
 
     #[test]
     fn test_validate_rejects_blank_host() {
         let err = validate_connection_fields("ok", "  ", 22).unwrap_err();
-        assert!(err.contains("Host"), "got: {}", err);
+        assert_eq!(err, "Host is required");
     }
 
     #[test]
     fn test_validate_rejects_port_zero() {
         let err = validate_connection_fields("ok", "host", 0).unwrap_err();
-        assert!(err.contains("Port"), "got: {}", err);
+        assert_eq!(err, "Port must be between 1 and 65535");
     }
 
     #[test]

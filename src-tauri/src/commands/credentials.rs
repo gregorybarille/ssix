@@ -124,17 +124,17 @@ fn validate_credential_fields(name: &str, username: &str, is_private: bool) -> R
     if !is_private {
         let trimmed = name.trim();
         if trimmed.is_empty() {
-            return Err("Credential name is required.".to_string());
+            return Err("Credential name is required".to_string());
         }
         if trimmed.chars().count() > 128 {
-            return Err("Credential name must be 128 characters or fewer.".to_string());
+            return Err("Credential name must be 128 characters or fewer".to_string());
         }
     }
     if username.trim().is_empty() {
-        return Err("Username is required.".to_string());
+        return Err("Username is required".to_string());
     }
     if username.chars().count() > 256 {
-        return Err("Username must be 256 characters or fewer.".to_string());
+        return Err("Username must be 256 characters or fewer".to_string());
     }
     Ok(())
 }
