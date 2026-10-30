@@ -14,7 +14,7 @@ import {
   createPasswordCredential,
   fill,
   navigateTo,
-  pickCredential,
+  pickOption,
 } from "../helpers/flows.js";
 import { sel } from "../helpers/selectors.js";
 
@@ -87,7 +87,7 @@ describe("Port forward (server-a → server-c:22)", () => {
     // has no remote shell, so only the SSH server needs creds).
     await fill(sel.connectionFormHopHost, TARGETS.a.host);
     await fill(sel.connectionFormHopPort, String(TARGETS.a.sshPort));
-    await pickCredential(sel.connectionFormHopCredential, "cred-05-a");
+    await pickOption(sel.connectionFormHopCredential, "cred-05-a");
     await fill(sel.connectionFormTargetHost, "server-c");
     await fill(sel.connectionFormTargetPort, "22");
     await fill(sel.connectionFormLocalPort, String(LOCAL_PORT));

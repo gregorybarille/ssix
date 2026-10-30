@@ -200,7 +200,12 @@ fn connect_file_transfer_session(
                 *destination_port,
                 dest_cred_id,
             )?;
-            let stream = bridge_via_jump_host(&gateway, &destination.host, destination.port)?;
+            let stream = bridge_via_jump_host(
+                &gateway,
+                &destination.host,
+                destination.port,
+                conn.verbosity,
+            )?;
             let session = open_authenticated_session_over_stream(
                 stream,
                 &destination,

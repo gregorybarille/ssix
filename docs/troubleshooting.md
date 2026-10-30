@@ -17,7 +17,7 @@ Older builds showed this as `TypeError: ... window.__TAURI_INTERNALS__ is undefi
 
 - Verify host, port, username, and credential choice.
 - Check whether a jump host connection has credentials for both the jump host and the target.
-- Use a higher verbosity level in the connection settings to surface more SSH output.
+- Set the connection's verbosity to -v (or -vv) and reconnect: the Logs view shows each step of the connection, like `ssh -v`, so the last line before the error tells you where it failed.
 
 ## Host Key Has Changed
 

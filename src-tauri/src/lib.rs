@@ -4,6 +4,7 @@ mod known_hosts;
 mod logs;
 mod models;
 mod ssh;
+mod ssh_debug;
 mod storage;
 
 use ssh::SshState;
@@ -14,7 +15,8 @@ pub fn run() {
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_dialog::init())
         .manage(SshState::new())
-        .setup(|_app| {
+        .setup(|app| {
+            logs::init(app.handle().clone());
             // Write any load-time repair once, off the UI thread.
             tauri::async_runtime::spawn_blocking(|| {
                 if let Err(e) = storage::persist_migrations() {

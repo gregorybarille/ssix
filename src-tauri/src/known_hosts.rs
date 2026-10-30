@@ -1,7 +1,7 @@
 //! Host-key verification (trust-on-first-use).
 //!
-//! Every SSH handshake — direct, gateway, jump-shell destination, SCP and
-//! the key-install helper — passes through [`verify_session`] before any
+//! Every SSH handshake — direct, jump host, the target behind it, a local
+//! forward's SSH server, SCP and the key-install helper — passes through [`verify_session`] before any
 //! credential is sent. The first time a `host:port` is seen its key is
 //! recorded in `<data_dir>/known_hosts` (OpenSSH format, so it can be
 //! inspected or edited with the usual tools). A later connection whose key
@@ -36,10 +36,7 @@ pub fn verify_session(session: &Session, host: &str, port: u16) -> Result<(), St
     let (key, key_type) = session
         .host_key()
         .ok_or_else(|| format!("{}:{} did not present a host key", host, port))?;
-    let fingerprint = session
-        .host_key_hash(ssh2::HashType::Sha256)
-        .map(|h| format!("SHA256:{}", STANDARD_NO_PAD.encode(h)))
-        .unwrap_or_else(|| "unknown".to_string());
+    let fingerprint = fingerprint(session);
     check_and_record(
         session,
         host,
@@ -49,6 +46,14 @@ pub fn verify_session(session: &Session, host: &str, port: u16) -> Result<(), St
         &fingerprint,
         &known_hosts_path(),
     )
+}
+
+/// The server key's fingerprint in OpenSSH's `SHA256:<base64>` form.
+pub fn fingerprint(session: &Session) -> String {
+    session
+        .host_key_hash(ssh2::HashType::Sha256)
+        .map(|h| format!("SHA256:{}", STANDARD_NO_PAD.encode(h)))
+        .unwrap_or_else(|| "unknown".to_string())
 }
 
 /// OpenSSH spells non-default ports as `[host]:port`.

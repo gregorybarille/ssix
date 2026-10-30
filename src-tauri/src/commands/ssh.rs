@@ -138,6 +138,7 @@ pub async fn ssh_connect(
                 *local_port,
                 destination_host.clone(),
                 *destination_port,
+                conn.verbosity,
                 ctx,
             )
         }

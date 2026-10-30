@@ -143,9 +143,10 @@ pub struct Connection {
     #[serde(flatten)]
     #[cfg_attr(test, ts(flatten))]
     pub kind: ConnectionKind,
-    /// SSH verbosity level: 0 = silent, 1 = standard SSH debug output,
-    /// 2 = enables libssh2 trace (verbose). Output is written to the terminal
-    /// pane before the shell prompt appears.
+    /// SSH verbosity, like OpenSSH's `-v` flags: 0 = quiet, 1 = `-v`
+    /// (connection steps), 2 = `-vv` (negotiated algorithms), 3 = `-vvv`
+    /// (local proposals and timings). Lines go to the Logs view; from 1 the
+    /// terminal also shows a "Connected" banner.
     #[serde(default)]
     pub verbosity: u8,
     /// Additional CLI-style flags passed to the SSH subsystem (e.g. `-C` for

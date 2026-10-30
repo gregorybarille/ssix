@@ -11,7 +11,9 @@
 //! All sessions (direct, jump host, target behind a jump host, SSH server of a
 //! forward) go through
 //! [`open_authenticated_session_over_stream`], which enforces a connect
-//! timeout, a libssh2 setup timeout and host-key verification.
+//! timeout, a libssh2 setup timeout and host-key verification. A
+//! connection's verbosity adds `ssh -v` style lines to the Logs view along
+//! the way (see `crate::ssh_debug`).
 
 use std::io::{self, Read, Write};
 use std::net::{Shutdown, SocketAddr, TcpListener, TcpStream, ToSocketAddrs};
@@ -24,6 +26,8 @@ use std::time::{Duration, Instant};
 
 use serde::Serialize;
 use ssh2::Session;
+
+use crate::ssh_debug::{host_key_type_name, SshDebug};
 use tauri::ipc::{Channel, InvokeResponseBody};
 use tauri::{AppHandle, Emitter, Manager};
 
@@ -403,7 +407,20 @@ pub(crate) fn open_authenticated_session(
     verbosity: u8,
     extra_args: Option<&str>,
 ) -> Result<Session, String> {
+    let debug = SshDebug::new(verbosity, endpoint.addr());
+    debug.at(1, || {
+        format!("Connecting to {} port {}.", endpoint.host, endpoint.port)
+    });
+    let started = Instant::now();
     let tcp = connect_tcp(&endpoint.host, endpoint.port)?;
+    debug.at(1, || "Connection established.".to_string());
+    debug.at(2, || match tcp.peer_addr() {
+        Ok(peer) => format!("Socket peer: {}", peer),
+        Err(e) => format!("Socket peer unknown: {}", e),
+    });
+    debug.at(3, || {
+        format!("TCP connect took {} ms", started.elapsed().as_millis())
+    });
     open_authenticated_session_over_stream(tcp, endpoint, verbosity, extra_args)
 }
 
@@ -417,33 +434,77 @@ pub(crate) fn open_authenticated_session_over_stream(
 ) -> Result<Session, String> {
     tcp.set_nonblocking(false).ok();
 
+    let debug = SshDebug::new(verbosity, endpoint.addr());
     let mut session = Session::new().map_err(|e| format!("SSH session create failed: {}", e))?;
     session.set_timeout(SESSION_TIMEOUT_MS);
-
-    if verbosity >= 2 {
-        session.trace(ssh2::TraceFlags::all());
-    }
 
     if extra_args
         .map(|args| args.split_whitespace().any(|t| t == "-C"))
         .unwrap_or(false)
     {
+        debug.at(2, || "Compression requested (-C).".to_string());
         session.set_compress(true);
     }
 
+    debug.proposal(&session);
     session.set_tcp_stream(tcp);
+    debug.at(1, || "Starting key exchange.".to_string());
+    let started = Instant::now();
     session
         .handshake()
         .map_err(|e| format!("SSH handshake with {} failed: {}", endpoint.addr(), e))?;
+    debug.at(3, || {
+        format!("Key exchange took {} ms", started.elapsed().as_millis())
+    });
+    debug.negotiated(&session);
+    debug.at(1, || match session.host_key() {
+        Some((_, kind)) => format!(
+            "Server host key: {} {}",
+            host_key_type_name(kind),
+            crate::known_hosts::fingerprint(&session)
+        ),
+        None => "Server presented no host key.".to_string(),
+    });
 
     crate::known_hosts::verify_session(&session, &endpoint.host, endpoint.port)?;
+    debug.at(1, || {
+        format!(
+            "Host key verified against {}",
+            crate::known_hosts::known_hosts_path().display()
+        )
+    });
 
-    authenticate(&session, endpoint)?;
+    authenticate(&session, endpoint, &debug)?;
     Ok(session)
 }
 
-fn authenticate(session: &Session, endpoint: &Endpoint) -> Result<(), String> {
+fn authenticate(session: &Session, endpoint: &Endpoint, debug: &SshDebug) -> Result<(), String> {
     let username = &endpoint.username;
+    // Listing the methods sends a "none" request, as `ssh -v` does. A
+    // server that accepts it leaves nothing else to do.
+    if debug.enabled(1) {
+        match session.auth_methods(username) {
+            Ok(methods) => debug.at(1, || {
+                format!("Authentications that can continue: {}", methods)
+            }),
+            Err(e) => debug.at(1, || {
+                format!("Could not list authentication methods: {}", e)
+            }),
+        }
+        if session.authenticated() {
+            debug.at(1, || "Authentication succeeded (none).".to_string());
+            return Ok(());
+        }
+    }
+    let method = match &endpoint.auth {
+        AuthMethod::Password(_) => "password".to_string(),
+        AuthMethod::Key { path, .. } => format!("publickey ({})", path),
+        AuthMethod::KeyMemory { .. } => "publickey (stored key)".to_string(),
+    };
+    debug.at(1, || {
+        format!("Next authentication method: {} as {}", method, username)
+    });
+    let started = Instant::now();
     match &endpoint.auth {
         AuthMethod::Password(pw) => session
             .userauth_password(username, pw)
@@ -461,6 +522,10 @@ fn authenticate(session: &Session, endpoint: &Endpoint) -> Result<(), String> {
     if !session.authenticated() {
         return Err("Authentication failed".to_string());
     }
+    debug.at(1, || format!("Authentication succeeded ({}).", method));
+    debug.at(3, || {
+        format!("Authentication took {} ms", started.elapsed().as_millis())
+    });
     Ok(())
 }
 
@@ -509,15 +574,24 @@ fn open_shell_over_stream(
         opts.extra_args.as_deref(),
     )?;
 
+    let debug = SshDebug::new(opts.verbosity, endpoint.addr());
+    debug.at(1, || "Opening a session channel.".to_string());
     let mut channel = session
         .channel_session()
         .map_err(|e| format!("Channel open failed: {}", e))?;
+    debug.at(1, || {
+        "Requesting a PTY (xterm-256color, 80x24).".to_string()
+    });
     channel
         .request_pty("xterm-256color", None, Some((80, 24, 0, 0)))
         .map_err(|e| format!("PTY request failed: {}", e))?;
+    debug.at(1, || "Requesting a shell.".to_string());
     channel
         .shell()
         .map_err(|e| format!("Shell request failed: {}", e))?;
+    if let Some(command) = opts.startup_command.as_deref() {
+        debug.at(2, || format!("Sending startup command: {}", command));
+    }
     write_startup_command(&mut channel, opts.startup_command.as_deref());
 
     session.set_blocking(false);
@@ -737,9 +811,18 @@ fn run_io_loop(
 // ---------------------------------------------------------------------------
 
 /// Open the session to the first hop: the SSH server of a local forward or
-/// the jump host of a jump connection. `role` names it in errors.
-pub(crate) fn open_hop_session(hop: &Endpoint, role: &str) -> Result<Session, String> {
-    open_authenticated_session(hop, 0, None).map_err(|e| format!("{} {}: {}", role, hop.addr(), e))
+/// the jump host of a jump connection. `role` names it in errors and debug
+/// lines.
+pub(crate) fn open_hop_session(
+    hop: &Endpoint,
+    role: &str,
+    verbosity: u8,
+) -> Result<Session, String> {
+    SshDebug::new(verbosity, hop.addr()).at(1, || {
+        format!("Using {} {}", role.to_lowercase(), hop.addr())
+    });
+    open_authenticated_session(hop, verbosity, None)
+        .map_err(|e| format!("{} {}: {}", role, hop.addr(), e))
 }
 
 /// Open a `direct-tcpip` channel on a non-blocking session, waiting for the
@@ -863,6 +946,7 @@ pub(crate) fn bridge_via_jump_host(
     gateway: &Endpoint,
     destination_host: &str,
     destination_port: u16,
+    verbosity: u8,
 ) -> Result<TcpStream, String> {
     let listener = TcpListener::bind("127.0.0.1:0")
         .map_err(|e| format!("Failed to bind ephemeral loopback port: {}", e))?;
@@ -870,13 +954,20 @@ pub(crate) fn bridge_via_jump_host(
         .local_addr()
         .map_err(|e| format!("local_addr() failed: {}", e))?
         .port();
-    let gateway_session = open_hop_session(gateway, "Jump host")?;
+    let gateway_session = open_hop_session(gateway, "Jump host", verbosity)?;
+    let debug = SshDebug::new(verbosity, gateway.addr());
 
     let (ready_tx, ready_rx) = mpsc::channel::<Result<(), String>>();
     {
         let session = gateway_session.clone();
         let destination_host = destination_host.to_string();
         thread::spawn(move || {
+            debug.at(1, || {
+                format!(
+                    "Opening a direct-tcpip channel to {}:{}.",
+                    destination_host, destination_port
+                )
+            });
             let (local_stream, peer) = match listener.accept() {
                 Ok(accepted) => accepted,
                 Err(e) => {
@@ -892,6 +983,7 @@ pub(crate) fn bridge_via_jump_host(
                 Some((&peer.ip().to_string(), peer.port())),
             ) {
                 Ok(channel) => {
+                    debug.at(2, || format!("direct-tcpip channel open for {}", peer));
                     session.set_blocking(false);
                     let _ = ready_tx.send(Ok(()));
                     forward_bidi(local_stream, channel, &session, &AtomicUsize::new(1));
@@ -939,13 +1031,21 @@ pub fn start_port_forward(
     local_port: u16,
     destination_host: String,
     destination_port: u16,
+    verbosity: u8,
     ctx: SessionContext,
 ) -> Result<SessionHandle, String> {
     let bind_addr = SocketAddr::from(([127, 0, 0, 1], local_port));
     let listener = TcpListener::bind(bind_addr)
         .map_err(|e| format!("Failed to bind 127.0.0.1:{}: {}", local_port, e))?;
 
-    let session = open_hop_session(&gateway, "SSH server")?;
+    let session = open_hop_session(&gateway, "SSH server", verbosity)?;
+    let debug = SshDebug::new(verbosity, gateway.addr());
+    debug.at(1, || {
+        format!(
+            "Local forwarding listening on 127.0.0.1 port {}.",
+            local_port
+        )
+    });
     // Non-blocking so one slow client can never stall the others: libssh2
     // serialises every call made on a session.
     session.set_blocking(false);
@@ -1012,7 +1112,14 @@ pub fn start_port_forward(
             let destination_host = destination_host.clone();
             let active = Arc::clone(&active);
             let status = status.clone();
+            let debug = debug.clone();
             thread::spawn(move || {
+                debug.at(1, || {
+                    format!(
+                        "Connection to port {} forwarding to {} port {} requested.",
+                        local_port, destination_host, destination_port
+                    )
+                });
                 let channel =
                     match open_direct_tcpip(&session, &destination_host, destination_port, peer) {
                         Ok(channel) => channel,
@@ -1026,6 +1133,7 @@ pub fn start_port_forward(
                 forward_bidi(local_stream, channel, &session, &active);
                 active.fetch_sub(1, Ordering::SeqCst);
                 status("client_closed", Some(format!("from {}", peer)));
+                debug.at(2, || format!("Forwarded connection from {} closed.", peer));
             });
         }
         drop(listener);
@@ -1043,7 +1151,12 @@ pub fn start_jump_shell(
     opts: ShellOptions,
     ctx: SessionContext,
 ) -> Result<SessionHandle, String> {
-    let stream = bridge_via_jump_host(&gateway, &destination.host, destination.port)?;
+    let stream = bridge_via_jump_host(
+        &gateway,
+        &destination.host,
+        destination.port,
+        opts.verbosity,
+    )?;
     let (session, channel) = open_shell_over_stream(stream, &destination, &opts)
         .map_err(|e| format!("Target connect via jump host failed: {}", e))?;
     let (handle, control) = control_channel()?;

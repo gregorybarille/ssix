@@ -24,7 +24,7 @@ describe("ConnectionForm verbosity copy", () => {
     expect(screen.queryByText(/libssh2/i)).toBeNull();
   });
 
-  it("describes level 2 as a full SSH protocol trace", () => {
+  it("describes the levels in ssh -v terms", () => {
     render(
       <ConnectionForm
         open
@@ -33,12 +33,9 @@ describe("ConnectionForm verbosity copy", () => {
         onSubmit={vi.fn()}
       />,
     );
-    // The helper paragraph and dropdown items should both still
-    // communicate that level 2 is verbose / for diagnostics.
-    expect(
-      screen.getByText(
-        /low-level SSH protocol trace/i,
-      ),
-    ).toBeInTheDocument();
+    // The helper paragraph says where the lines go and what -vv adds.
+    const hint = document.getElementById("verbosity-hint");
+    expect(hint?.textContent).toMatch(/Logs view/);
+    expect(hint?.textContent).toMatch(/-vv adds the negotiated ciphers/);
   });
 });

@@ -87,10 +87,10 @@ export async function textContentOf(el: WebdriverIO.Element): Promise<string> {
  * Choose the option whose `data-name` is `name` in the Radix Select behind
  * `triggerSelector`, and confirm the trigger now shows it. A click that
  * lands while the listbox is still opening closes it without selecting;
- * the form would then save with no credential and fail much later, so
- * the pick is verified and retried.
+ * the form would then save the old value and fail much later, so the
+ * pick is verified and retried.
  */
-export async function pickCredential(triggerSelector: string, name: string): Promise<void> {
+export async function pickOption(triggerSelector: string, name: string): Promise<void> {
   const trigger = await browser.$(triggerSelector);
   for (let attempt = 1; attempt <= 3; attempt++) {
     await trigger.waitForClickable({ timeout: 10_000 });
@@ -130,6 +130,8 @@ export interface DirectConnectionInput {
   port: number;
   credentialName: string;
   tags?: string[];
+  /** Label of a verbosity option, e.g. "-vv (negotiated algorithms)". */
+  verbosity?: string;
 }
 
 export async function saveConnectionForm(): Promise<void> {
@@ -145,7 +147,10 @@ export async function createDirectConnection(input: DirectConnectionInput): Prom
   await click(sel.connectionFormKindDirect);
   await fill(sel.connectionFormHost, input.host);
   await fill(sel.connectionFormPort, String(input.port));
-  await pickCredential(sel.connectionFormCredential, input.credentialName);
+  await pickOption(sel.connectionFormCredential, input.credentialName);
+  if (input.verbosity) {
+    await pickOption(sel.connectionFormVerbosity, input.verbosity);
+  }
   if (input.tags && input.tags.length > 0) {
     const tagsInput = await browser.$("#tags");
     await tagsInput.waitForExist({ timeout: 10_000 });

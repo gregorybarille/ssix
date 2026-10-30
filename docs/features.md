@@ -23,7 +23,7 @@ Each shell-capable connection can also define:
 - `remote_path`
 - tags
 - color accent
-- verbosity level
+- verbosity level (see [Diagnostics](#diagnostics))
 - extra SSH arguments
 
 ## Credentials
@@ -124,6 +124,20 @@ See [Git Sync](git-sync.md) for details.
 
 - backend logs
 - frontend logs
+- per-connection verbosity, modelled on `ssh -v`. Each level adds
+  `debugN: [host:port] …` lines to the backend logs for every hop of the
+  connection (jump host, SSH server, target), SCP included:
+  - **-v**: connecting, server version, key exchange and host key
+    algorithms, the server host key and its fingerprint, the
+    authentication methods the server allows and which one succeeded,
+    session channel, PTY and shell requests, `direct-tcpip` channels and
+    forwarded connections
+  - **-vv**: the socket peer, the negotiated cipher, MAC and compression
+    in each direction, the startup command, closed forwarded connections
+  - **-vvv**: the algorithms SSIX offers and how long the TCP connect,
+    key exchange and authentication took
+  From -v the terminal also starts with a "Connected to …" line.
+  Passwords and key contents are never logged.
 - screenshot capture from the **Window actions** context menu (right-click
   any empty area of the window, outside an input or terminal selection)
 

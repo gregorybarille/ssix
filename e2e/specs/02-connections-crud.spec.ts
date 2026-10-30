@@ -20,7 +20,7 @@ import {
   createDirectConnection,
   ensureConnectionRowsLayout,
   fill,
-  pickCredential,
+  pickOption,
   saveConnectionForm,
   textContentOf,
 } from "../helpers/flows.js";
@@ -142,7 +142,7 @@ describe("Connections CRUD", () => {
     const picker = await browser.$(sel.connectionFormCredential);
     expect(await picker.getAttribute("aria-invalid")).toBe("true");
 
-    await pickCredential(sel.connectionFormCredential, "cred-a");
+    await pickOption(sel.connectionFormCredential, "cred-a");
     await credentialError.waitForExist({ reverse: true, timeout: 5_000 });
 
     // A save refused for another reason must not drop the picked credential

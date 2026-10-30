@@ -59,6 +59,8 @@ function LogList({ entries, empty }: { entries: LogEntry[]; empty: string }) {
       {entries.map((e, i) => (
         <div
           key={`${e.ts}-${e.source}-${e.message}-${i}`}
+          data-testid="log-entry"
+          data-level={e.level}
           className="grid grid-cols-[90px_72px_100px_1fr] gap-2 px-2 py-0.5 hover:bg-accent/30 rounded items-start"
         >
           <span className="text-muted-foreground-soft">{fmtTs(e.ts)}</span>

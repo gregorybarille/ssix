@@ -80,7 +80,7 @@ interface ConnectionBase {
    * For `port_forward` this is unused (the gateway credential lives on the kind fields).
    */
   credential_id?: string;
-  /** SSH verbosity level: 0 = silent, 1 = info, 2 = debug (libssh2 trace). */
+  /** SSH verbosity, like `ssh -v`: 0 = quiet, 1-3 = `-v` to `-vvv` debug lines in the Logs view. */
   verbosity?: number;
   /** Additional SSH flags, e.g. "-C" for compression. */
   extra_args?: string;

@@ -28,6 +28,9 @@ export const sel = {
   navGitSync: '[data-testid="nav-git-sync"]',
   navLogs: '[data-testid="nav-logs"]',
 
+  // Logs view: one row per entry, with `data-level` (info, warn, debug…).
+  logEntry: '[data-testid="log-entry"]',
+
   // Connection list (renders as either `connection-grid` or
   // `connection-list-rows`; specs use the row testid pattern).
   connectionList: '[data-testid="connection-grid"], [data-testid="connection-list-rows"]',
@@ -68,6 +71,7 @@ export const sel = {
   // jump host has its own picker, see HopCredential).
   connectionFormTargetCredential: '[data-testid="connection-form-credential"]',
   connectionFormLocalPort: '[data-testid="connection-form-local-port"]',
+  connectionFormVerbosity: '[data-testid="connection-form-verbosity"]',
   connectionFormSubmit: '[data-testid="connection-form-submit"]',
   connectionFormCancel: '[data-testid="connection-form-cancel"]',
 

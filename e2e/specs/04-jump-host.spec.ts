@@ -22,7 +22,7 @@ import {
   createPasswordCredential,
   fill,
   navigateTo,
-  pickCredential,
+  pickOption,
   typeIntoTerminal,
   waitForTerminalContains,
 } from "../helpers/flows.js";
@@ -53,14 +53,14 @@ describe("Jump host session (server-a → server-c)", () => {
     // Jump host = server-a (with cred-04-a).
     await fill(sel.connectionFormHopHost, TARGETS.a.host);
     await fill(sel.connectionFormHopPort, String(TARGETS.a.sshPort));
-    await pickCredential(sel.connectionFormHopCredential, "cred-04-a");
+    await pickOption(sel.connectionFormHopCredential, "cred-04-a");
     // Target = server-c (with cred-04-c). server-c sshd is on
     // port 22 inside the docker network; the SSH command runs from
     // INSIDE server-a, so we always use port 22 here regardless of
     // whether the test runner is dockerized.
     await fill(sel.connectionFormTargetHost, "server-c");
     await fill(sel.connectionFormTargetPort, "22");
-    await pickCredential(sel.connectionFormTargetCredential, "cred-04-c");
+    await pickOption(sel.connectionFormTargetCredential, "cred-04-c");
     await click(sel.connectionFormSubmit);
 
     await connectToConnection("jump-04-c");

@@ -212,6 +212,15 @@ function serializeFormState(s: {
   ]);
 }
 
+/** The verbosity choices, named after the `ssh` flags they match. */
+const VERBOSITY_LEVELS = [
+  { value: 0, label: "Quiet (default)" },
+  { value: 1, label: "-v (connection steps)" },
+  { value: 2, label: "-vv (negotiated algorithms)" },
+  { value: 3, label: "-vvv (everything)" },
+] as const;
+
+
 export function ConnectionForm({
   open,
   onOpenChange,
@@ -1100,20 +1109,26 @@ export function ConnectionForm({
           value={String(form.verbosity ?? 0)}
           onValueChange={(v) => setForm({ ...form, verbosity: Number(v) })}
         >
-          <SelectTrigger id="verbosity" aria-describedby="verbosity-hint">
+          <SelectTrigger
+            id="verbosity"
+            aria-describedby="verbosity-hint"
+            data-testid="connection-form-verbosity"
+          >
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
-            <SelectItem value="0">0 — Silent (default)</SelectItem>
-            <SelectItem value="1">1 — Info (connection events)</SelectItem>
-            <SelectItem value="2">2 — Debug (full SSH protocol trace)</SelectItem>
+            {VERBOSITY_LEVELS.map((level) => (
+              <SelectItem key={level.value} value={String(level.value)} data-name={level.label}>
+                {level.label}
+              </SelectItem>
+            ))}
           </SelectContent>
         </Select>
         <p id="verbosity-hint" className="text-xs text-muted-foreground">
-          Level 1 prints connection lifecycle messages (handshake, authentication,
-          channel open) to the terminal. Level 2 also emits a low-level SSH
-          protocol trace — useful for diagnosing auth or transport failures, but
-          very noisy.
+          Like <code>ssh -v</code>: each level adds debug lines to the Logs view.
+          -v shows the connection steps (key exchange, host key, authentication,
+          channels), -vv adds the negotiated ciphers, MACs and compression, and
+          -vvv the algorithms SSIX offers and how long each step took.
         </p>
       </div>
 
