@@ -6,6 +6,10 @@ import { runAsync, runAsyncRethrow } from "@/lib/asyncAction";
 interface SettingsState {
   settings: AppSettings;
   isLoading: boolean;
+  /**
+   * Why the last `fetchSettings` failed (the defaults are shown meanwhile).
+   * `saveSettings` failures go to its caller, not here.
+   */
   error: string | null;
   fetchSettings: () => Promise<void>;
   saveSettings: (settings: AppSettings) => Promise<void>;
@@ -52,5 +56,5 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
         set({ settings: previous });
         throw err;
       }
-    }),
+    }, { recordError: false }),
 }));

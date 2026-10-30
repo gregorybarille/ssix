@@ -22,7 +22,7 @@
 ## Architecture
 
 - **Tauri v2** desktop app: React/Vite frontend (`src/`) + Rust backend (`src-tauri/`)
-- **Frontend state**: Zustand stores in `src/store/` call Tauri via `src/lib/tauri.ts` (lazy-loaded for test mocking)
+- **Frontend state**: Zustand stores in `src/store/` call Tauri via `src/lib/tauri.ts` (lazy-loaded for test mocking; rejects with a readable message outside the desktop runtime, see `src/lib/runtime.ts`). A store's `error` is its last load failure, rendered with `<ErrorBanner>`; form-driven mutations pass `{ recordError: false }` and show their own errors
 - **Backend commands**: `src-tauri/src/commands/` → registered in `lib.rs` `invoke_handler![]`
 - **SSH sessions**: `ssh2` crate, one thread per session; the command layer talks to a worker through `SessionHandle` (mpsc + wake pipe). Shell output streams as raw bytes over a Tauri `Channel` (`src/lib/terminalOutput.ts` → `ssh_connect { onOutput }`), with `error`/`closed` notifications as JSON `OutputEvent`s on the same channel; tunnels emit `ssix:tunnel:status:{id}` (use helpers in `src-tauri/src/ssh.rs` + `src/lib/events.ts`). Every handshake goes through `open_authenticated_session_over_stream` (timeouts + host-key verification in `known_hosts.rs`) — never call `Session::handshake` elsewhere
 - **Terminal**: xterm.js, stays mounted when hidden; tunnels live in `TunnelsView`, not the terminal tab bar
@@ -63,7 +63,7 @@
 
 ## Key Conventions
 
-- **UI primitives**: Always use shared components (`<Input>`, `<Button>`, `<Checkbox>`, `<PasswordInput>`, `<RadioGroup>`, `<ConfirmDialog>`, `<ContextMenu>`) — never hand-roll
+- **UI primitives**: Always use shared components (`<Input>`, `<Button>`, `<Checkbox>`, `<PasswordInput>`, `<RadioGroup>`, `<ConfirmDialog>`, `<ContextMenu>`, `<ErrorBanner>`) — never hand-roll
 - **Accessibility**: Every icon-only button needs `aria-label`; decorative icons need `aria-hidden="true"`; every dialog needs `<DialogDescription>`; required fields need `aria-required="true"`
 - **Styling**: Use `text-muted-foreground-soft` for tertiary metadata (not `/70` opacity blends); use `text-destructive` for error text (never `--destructive` or hex)
 - **Forms**: Mount `<ConnectionForm>` / `<CredentialForm>` at App root (not per-view); use `useUnsavedChangesGuard`; call `guard.markSaved()` before closing on success

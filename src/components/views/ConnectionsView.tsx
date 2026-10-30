@@ -8,6 +8,8 @@ import { Button } from "../ui/button";
 import { ViewFallback } from "../ViewFallback";
 import { useShallow } from "zustand/react/shallow";
 import { useDialogsStore } from "@/store/useDialogsStore";
+import { useConnectionsStore } from "@/store/useConnectionsStore";
+import { ErrorBanner } from "../ui/error-banner";
 import { filterConnections } from "@/lib/search";
 import type { TagGroup } from "@/lib/tags";
 import type { AppSettings, Connection, ConnectionInput, Credential, LayoutMode } from "@/types";
@@ -60,6 +62,10 @@ export function ConnectionsView({
       openScp: s.openScp,
     })),
   );
+  // A failed load must not look like an empty list.
+  const { loadError, retryLoad } = useConnectionsStore(
+    useShallow((s) => ({ loadError: s.error, retryLoad: s.fetchConnections })),
+  );
   const [searchQuery, setSearchQuery] = React.useState("");
 
   // Search is a pure filter over the loaded list; the tag-groups view
@@ -98,6 +104,15 @@ export function ConnectionsView({
         />
       ) : (
         <>
+          {loadError && (
+            <div className="px-6 pt-3">
+              <ErrorBanner
+                message={`Could not load connections: ${loadError}`}
+                onRetry={() => void retryLoad()}
+                testId="connections-load-error"
+              />
+            </div>
+          )}
           <div className="px-6 py-3 border-b border-border">
             <SearchBar
               value={searchQuery}

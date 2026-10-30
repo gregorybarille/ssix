@@ -108,8 +108,10 @@ fn load_data_unlocked() -> Result<AppData, String> {
         }
     }
 
-    let content = fs::read_to_string(&path).map_err(|e| e.to_string())?;
-    let mut data: AppData = serde_json::from_str(&content).map_err(|e| e.to_string())?;
+    let content = fs::read_to_string(&path)
+        .map_err(|e| format!("{} could not be read: {}", path.display(), e))?;
+    let mut data: AppData = serde_json::from_str(&content)
+        .map_err(|e| format!("{} is not valid SSIX data: {}", path.display(), e))?;
     // Walk the loaded `schema_version` up to the current one (also runs the
     // LegacyTunnel → JumpShell rewrite for pre-stamp v0 files). Idempotent
     // for files already at HEAD.
@@ -267,6 +269,19 @@ where
 mod tests {
     use super::*;
     use std::sync::atomic::{AtomicU64, Ordering};
+
+    /// A corrupt data file is an error that names the file, never an empty
+    /// catalogue: the frontend shows it in a load-error banner.
+    #[test]
+    fn corrupt_data_file_is_reported_with_its_path() {
+        test_support::with_isolated_data_dir(|| {
+            let path = get_data_path();
+            fs::write(&path, "{ not json").unwrap();
+            let err = load_data().unwrap_err();
+            assert!(err.contains("data.json"), "got: {}", err);
+            assert!(err.contains("is not valid SSIX data"), "got: {}", err);
+        });
+    }
 
     #[test]
     fn test_app_data_default() {

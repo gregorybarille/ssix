@@ -24,6 +24,8 @@
  * Both manage `isLoading` and `error` identically.
  */
 
+import { errorMessage } from "./errors";
+
 /**
  * The shape of `set` we depend on. We use a parameter-less generic so
  * Zustand's actual `set` (which is invariant in its state type) widens
@@ -50,9 +52,19 @@ export async function runAsync<T>(
     set({ isLoading: false });
     return result;
   } catch (err) {
-    set({ error: String(err), isLoading: false });
+    set({ error: errorMessage(err), isLoading: false });
     return undefined;
   }
+}
+
+export interface RethrowOptions {
+  /**
+   * Record a failure in the store's `error` field (default true). Pass
+   * false when the caller shows the error itself, as forms do next to
+   * their fields: `error` is then left untouched, so a failed save never
+   * lingers as a list-level load error after the form closes.
+   */
+  recordError?: boolean;
 }
 
 /**
@@ -62,14 +74,15 @@ export async function runAsync<T>(
 export async function runAsyncRethrow<T>(
   set: SetLoadingError,
   fn: () => Promise<T>,
+  { recordError = true }: RethrowOptions = {},
 ): Promise<T> {
-  set({ isLoading: true, error: null });
+  set(recordError ? { isLoading: true, error: null } : { isLoading: true });
   try {
     const result = await fn();
     set({ isLoading: false });
     return result;
   } catch (err) {
-    set({ error: String(err), isLoading: false });
+    set(recordError ? { error: errorMessage(err), isLoading: false } : { isLoading: false });
     throw err;
   }
 }

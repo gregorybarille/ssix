@@ -1,5 +1,18 @@
 # Troubleshooting
 
+## "SSIX is running outside its desktop app"
+
+Older builds showed this as `TypeError: ... window.__TAURI_INTERNALS__ is undefined`.
+
+- The frontend was opened in a regular browser, usually `npm run dev` at `http://localhost:1420`. Backend commands only exist inside the Tauri webview, so every view shows this message instead of data.
+- Start the app with `npm run tauri dev`. The browser dev server is still fine for layout work that needs no backend.
+
+## A View Shows "Could not load …"
+
+- The backend could not read `data.json` (`~/.ssix/`, or `SSIX_DATA_DIR` when set). The banner names the file and the parse error.
+- `data.json` is written atomically, so a corrupt file usually means a manual edit or a bad merge in a synced repository. Fix or restore the file, then click **Retry** in each view.
+- Settings show their defaults while their load error is displayed. Fix the file and retry before changing settings.
+
 ## Connection Fails Immediately
 
 - Verify host, port, username, and credential choice.

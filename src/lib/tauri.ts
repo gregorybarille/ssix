@@ -32,18 +32,22 @@
  *   - top-level params → camelCase from JS
  *   - struct fields    → snake_case from JS
  */
+import { assertTauriRuntime } from "./runtime";
+
 type InvokeFn = <T>(cmd: string, args?: Record<string, unknown>) => Promise<T>;
 
 let _invoke: InvokeFn | null = null;
 
+/**
+ * Call a backend command. Outside the desktop runtime (the dev server in a
+ * plain browser) this rejects with `TAURI_UNAVAILABLE_MESSAGE` instead of
+ * the bridge's "__TAURI_INTERNALS__ is undefined" TypeError.
+ */
 export async function invoke<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
+  assertTauriRuntime();
   if (!_invoke) {
-    try {
-      const tauri = await import("@tauri-apps/api/core");
-      _invoke = tauri.invoke as InvokeFn;
-    } catch {
-      throw new Error("Tauri is not available");
-    }
+    const tauri = await import("@tauri-apps/api/core");
+    _invoke = tauri.invoke as InvokeFn;
   }
   return _invoke<T>(cmd, args);
 }

@@ -167,4 +167,12 @@ export const sel = {
   confirmTagAction: '[data-testid="confirm-tag-action"]',
   confirmTagActionConfirm: '[data-testid="confirm-tag-action-confirm"]',
   confirmTagActionCancel: '[data-testid="confirm-tag-action-cancel"]',
+
+  // Load-error banners (shown instead of an empty list when a load fails)
+  connectionsLoadError: '[data-testid="connections-load-error"]',
+  connectionsLoadErrorRetry: '[data-testid="connections-load-error-retry"]',
+  credentialsLoadError: '[data-testid="credentials-load-error"]',
+  credentialsLoadErrorRetry: '[data-testid="credentials-load-error-retry"]',
+  settingsLoadError: '[data-testid="settings-load-error"]',
+  settingsLoadErrorRetry: '[data-testid="settings-load-error-retry"]',
 } as const;

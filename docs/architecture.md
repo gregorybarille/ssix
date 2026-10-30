@@ -11,7 +11,8 @@ SSIX is a Tauri v2 desktop application with a React frontend and a Rust backend.
 - `src/hooks/` holds reusable React hooks (`useGlobalShortcuts`, `useRovingFocus`, `useUnsavedChangesGuard`, `useScreenshotToast`, `useApplySettings`, `useDebouncedCallback`).
 - `src/lib/` holds pure helpers shared across components (`search.ts` for the connection filter, `terminalTheme.ts` for the xterm palettes, `port.ts`, `hostKey.ts`, ...).
 - `src/components/ui/` contains shared Radix-based primitives.
-- `src/store/` contains Zustand stores that act as the async boundary for the UI.
+- `src/store/` contains Zustand stores that act as the async boundary for the UI. A store's `error` holds the last *load* failure only; views render it with the shared `ErrorBanner` (Retry re-runs the fetch) so a failed load never looks like an empty list. Mutations called from forms and confirm dialogs pass `runAsyncRethrow(..., { recordError: false })`: the caller shows the error and nothing lingers in `error` after the form closes. The Git Sync store is the exception and records action errors too, since its view is where they are shown.
+- `src/lib/tauri.ts` (`invoke`) and `src/lib/terminalOutput.ts` (`createOutputChannel`) call `assertTauriRuntime()` from `src/lib/runtime.ts` first, so outside the desktop webview every backend call rejects with one readable message instead of the bridge's `__TAURI_INTERNALS__ is undefined` TypeError.
 - `src/lib/tauri.ts` lazy-loads Tauri `invoke()` so frontend tests can mock it.
 - `src/types/index.ts` mirrors backend data structures. ts-rs writes a reference copy of every Rust model to `src/types/generated/` on `cargo test`; a parity test (`src/test/typesParity.test.ts`) fails when a generated field is missing from the hand-written index.ts.
 

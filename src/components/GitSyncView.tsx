@@ -1,3 +1,4 @@
+import { ErrorBanner } from "./ui/error-banner";
 import React, { useEffect } from "react";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
@@ -202,15 +203,7 @@ export function GitSyncView() {
           + aria-live=assertive. text-destructive resolves to the
           AA-safe destructive-text token (per AGENTS.md).
         */}
-        {error && (
-          <div
-            role="alert"
-            aria-live="assertive"
-            className="rounded-md bg-destructive/10 text-destructive text-sm px-3 py-2"
-          >
-            {error}
-          </div>
-        )}
+        {error && <ErrorBanner message={error} />}
       </div>
     </div>
   );

@@ -1,3 +1,4 @@
+import { errorMessage } from "@/lib/errors";
 import React from "react";
 import {
   Dialog,
@@ -67,7 +68,7 @@ export function ConfirmDialog({
       await onConfirm();
       onOpenChange(false);
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      setError(errorMessage(err));
     } finally {
       setBusy(false);
     }

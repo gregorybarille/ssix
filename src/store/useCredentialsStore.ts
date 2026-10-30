@@ -6,6 +6,10 @@ import { runAsync, runAsyncRethrow } from "@/lib/asyncAction";
 interface CredentialsState {
   credentials: Credential[];
   isLoading: boolean;
+  /**
+   * Why the last `fetchCredentials` failed, shown as a banner in the
+   * Credentials view. Mutations report to their caller and leave it alone.
+   */
   error: string | null;
   fetchCredentials: () => Promise<void>;
   /**
@@ -43,7 +47,7 @@ export const useCredentialsStore = create<CredentialsState>((set) => ({
       const cred = await invoke<Credential>("add_credential", { input });
       set((state) => ({ credentials: [...state.credentials, cred] }));
       return cred;
-    }),
+    }, { recordError: false }),
 
   // Inline (private) credentials skip the store-level loading/error
   // tracking because they're an implementation detail of save_connection
@@ -56,11 +60,11 @@ export const useCredentialsStore = create<CredentialsState>((set) => ({
       set((state) => ({
         credentials: state.credentials.map((c) => (c.id === cred.id ? cred : c)),
       }));
-    }),
+    }, { recordError: false }),
 
   deleteCredential: (id) =>
     runAsyncRethrow(set, async () => {
       await invoke("delete_credential", { id });
       set((state) => ({ credentials: state.credentials.filter((c) => c.id !== id) }));
-    }),
+    }, { recordError: false }),
 }));

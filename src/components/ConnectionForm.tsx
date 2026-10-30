@@ -1,3 +1,4 @@
+import { errorMessage } from "@/lib/errors";
 import React, { useActionState, useState, useEffect, useRef } from "react";
 import { Connection, ConnectionDraft, ConnectionInput, Credential, ConnectionType, OPEN_COLORS } from "@/types";
 import { Button } from "./ui/button";
@@ -536,7 +537,7 @@ export function ConnectionForm({
         onOpenChange(false);
         return { error: null };
       } catch (err) {
-        return { error: err instanceof Error ? err.message : String(err) };
+        return { error: errorMessage(err) };
       }
     },
     initialSubmitState,

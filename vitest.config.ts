@@ -1,5 +1,5 @@
 import { defineConfig, mergeConfig } from "vitest/config";
-import viteConfig from "./vite.config";
+import viteConfig from "./vite.config.ts";
 
 // Test config is kept separate from `vite.config.ts` so the dev/build
 // pipeline doesn't pull in vitest's types and `defineConfig` overload.

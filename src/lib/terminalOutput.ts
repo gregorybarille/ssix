@@ -15,6 +15,8 @@
  * terminal mounts is still reported instead of lost.
  */
 
+import { assertTauriRuntime } from "./runtime";
+
 /** Upper bound on bytes held for a terminal that has not attached yet. */
 const MAX_BUFFERED_BYTES = 4 * 1024 * 1024;
 
@@ -121,6 +123,9 @@ export function deliverChannelMessage(sink: OutputSink, payload: unknown): void 
  * backend has returned one.
  */
 export async function createOutputChannel(): Promise<{ channel: unknown; sink: OutputSink }> {
+  // `new Channel` reaches into the Tauri bridge too; fail with the same
+  // readable message as `invoke` when it is missing.
+  assertTauriRuntime();
   const { Channel } = await import("@tauri-apps/api/core");
   const sink = new OutputSink();
   const channel = new Channel<unknown>((payload) => deliverChannelMessage(sink, payload));

@@ -1,3 +1,4 @@
+import { errorMessage } from "@/lib/errors";
 import { create } from "zustand";
 import { invoke } from "@/lib/tauri";
 import { log as appLog } from "@/lib/log";
@@ -174,10 +175,10 @@ export const useTerminalsStore = create<TerminalsState>((set, get) => {
           return;
         }
         updateSessionEverywhere(placeholderId, {
-          error: String(err),
+          error: errorMessage(err),
           retrying: false,
         });
-        appLog.error("ssh", `Connect failed for ${conn.name}: ${String(err)}`);
+        appLog.error("ssh", `Connect failed for ${conn.name}: ${errorMessage(err)}`);
       }
     },
 

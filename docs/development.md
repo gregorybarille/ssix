@@ -27,6 +27,12 @@ npm test
 cd src-tauri && cargo test
 ```
 
+`npm run dev` serves the frontend alone at `http://localhost:1420`. Opened in a
+browser it has no backend: `src/lib/runtime.ts` detects the missing Tauri
+bridge and every backend call fails with "SSIX is running outside its desktop
+app". Use it for layout work only; anything that loads or saves data needs
+`npm run tauri dev`.
+
 ## Windows Releases
 
 Windows releases are built by `.github/workflows/release.yml` on the

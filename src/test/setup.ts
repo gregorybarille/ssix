@@ -17,6 +17,11 @@ if (typeof globalThis.ResizeObserver === "undefined") {
   } as unknown as typeof ResizeObserver;
 }
 
+// Tests run as if inside the desktop webview, which injects this bridge
+// object; `src/lib/runtime.ts` checks for it before any backend call.
+// `src/test/runtime.test.ts` removes it to cover the plain-browser path.
+(window as unknown as Record<string, unknown>).__TAURI_INTERNALS__ = {};
+
 vi.mock("@tauri-apps/api/core", () => ({
   invoke: vi.fn(),
   Channel: class {

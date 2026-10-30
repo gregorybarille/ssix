@@ -1,3 +1,4 @@
+import { errorMessage } from "@/lib/errors";
 import { create } from "zustand";
 import { invoke } from "@/lib/tauri";
 import { log as appLog } from "@/lib/log";
@@ -94,11 +95,11 @@ export const useTunnelsStore = create<TunnelsState>((set, get) => ({
       set((state) => ({
         sessions: state.sessions.map((s) =>
           s.sessionId === placeholderId
-            ? { ...s, error: String(err), retrying: false }
+            ? { ...s, error: errorMessage(err), retrying: false }
             : s,
         ),
       }));
-      appLog.error("tunnel", `Failed to start ${conn.name}: ${String(err)}`);
+      appLog.error("tunnel", `Failed to start ${conn.name}: ${errorMessage(err)}`);
     }
   },
 

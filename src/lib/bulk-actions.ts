@@ -1,3 +1,4 @@
+import { errorMessage } from "./errors";
 import type { Connection, ScpResult } from "@/types";
 import { invoke } from "@/lib/tauri";
 import { useTerminalsStore } from "@/store/useTerminalsStore";
@@ -187,7 +188,7 @@ export async function runBulkScp(
       step.localPath = result.local_path;
     } catch (err) {
       step.status = "error";
-      step.error = err instanceof Error ? err.message : String(err);
+      step.error = errorMessage(err);
     }
     emit();
   }

@@ -1,3 +1,5 @@
+import { ErrorBanner } from "./components/ui/error-banner";
+import { errorMessage } from "@/lib/errors";
 import React, { Suspense, useEffect, lazy } from "react";
 import { Sidebar } from "./components/Sidebar";
 import { TitleBar } from "./components/TitleBar";
@@ -113,9 +115,10 @@ function App() {
     })),
   );
 
-  const { settings, fetchSettings, saveSettings } = useSettingsStore(
+  const { settings, settingsLoadError, fetchSettings, saveSettings } = useSettingsStore(
     useShallow((s) => ({
       settings: s.settings,
+      settingsLoadError: s.error,
       fetchSettings: s.fetchSettings,
       saveSettings: s.saveSettings,
     })),
@@ -264,7 +267,7 @@ function App() {
     } catch (error) {
       appLog.error(
         "connections",
-        `Failed to delete connection: ${error instanceof Error ? error.message : String(error)}`,
+        `Failed to delete connection: ${errorMessage(error)}`,
       );
     }
   };
@@ -377,7 +380,7 @@ function App() {
       appLog.error(
         "settings",
         `Failed to save layout settings: ${
-          error instanceof Error ? error.message : String(error)
+          errorMessage(error)
         }`,
       );
     });
@@ -498,6 +501,15 @@ function App() {
               {view === "settings" && (
                 <Suspense fallback={<ViewFallback label="Loading settings…" />}>
                   <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain">
+                    {settingsLoadError && (
+                      <div className="px-6 pt-6 max-w-lg">
+                        <ErrorBanner
+                          message={`Could not load settings, showing defaults: ${settingsLoadError}`}
+                          onRetry={() => void fetchSettings()}
+                          testId="settings-load-error"
+                        />
+                      </div>
+                    )}
                     <SettingsPanel
                       settings={settings}
                       onSave={async (next) => {
