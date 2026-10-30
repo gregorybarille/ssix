@@ -7,6 +7,7 @@
  *   - a connection cannot be saved without a credential;
  *   - a refused save deletes the inline credential it created;
  *   - a clone keeps every field of its form;
+ *   - a refused clone deletes the inline credential its form created;
  *   - a credential that connections use cannot be deleted.
  */
 import { waitForAppReady } from "../helpers/app.js";
@@ -24,6 +25,55 @@ import {
   textContentOf,
 } from "../helpers/flows.js";
 import { sel } from "../helpers/selectors.js";
+
+async function openCloneForm(name: string): Promise<void> {
+  await ensureConnectionRowsLayout();
+  const row = await browser.$(sel.connectionRowByName(name));
+  await row.waitForExist({ timeout: 10_000 });
+  const cloneButton = await row.$(sel.connectionRowCloneButton);
+  await cloneButton.waitForClickable({ timeout: 10_000 });
+  await cloneButton.click();
+}
+
+/** Use the Password tab and tick "save as a named credential". */
+async function fillInlineCredentialToSave(credentialName: string): Promise<void> {
+  await click(sel.connectionFormAuthPassword);
+  await fill(sel.connectionFormInlineUsername, TARGETS.a.user);
+  await fill(sel.connectionFormInlinePassword, TARGETS.a.password);
+  await click(sel.connectionFormSaveCredential);
+  await fill(sel.connectionFormSaveCredentialName, credentialName);
+}
+
+/**
+ * Wait for the save to be refused because `takenName` is taken, then save
+ * under `freeName`. The refusal must have deleted the credential the form
+ * created, so the retry creates `credentialName` once, not twice.
+ */
+async function saveUnderFreeNameAndExpectOneCredential(
+  takenName: string,
+  freeName: string,
+  credentialName: string,
+): Promise<void> {
+  // Re-query each poll: the error line only appears once the save is refused.
+  await browser.waitUntil(
+    async () => {
+      const formError = await browser.$(sel.connectionFormError);
+      return (
+        (await formError.isExisting()) &&
+        (await textContentOf(formError)).includes(`connection named '${takenName}'`)
+      );
+    },
+    { timeout: 10_000, timeoutMsg: `the taken name ${takenName} should refuse the save` },
+  );
+
+  await fill(sel.connectionFormName, freeName);
+  await saveConnectionForm();
+  await navigateTo("credentials");
+  await (await browser.$(sel.credentialRowByName(credentialName))).waitForExist({
+    timeout: 10_000,
+  });
+  expect(await browser.$$(sel.credentialRowByName(credentialName)).length).toBe(1);
+}
 
 describe("Connections CRUD", () => {
   it("creates a Direct connection referencing a credential", async () => {
@@ -122,41 +172,13 @@ describe("Connections CRUD", () => {
     await click(sel.connectionFormKindDirect);
     await fill(sel.connectionFormHost, TARGETS.a.host);
     await fill(sel.connectionFormPort, String(TARGETS.a.sshPort));
-    await click(sel.connectionFormAuthPassword);
-    await fill(sel.connectionFormInlineUsername, TARGETS.a.user);
-    await fill(sel.connectionFormInlinePassword, TARGETS.a.password);
-    await click(sel.connectionFormSaveCredential);
-    await fill(sel.connectionFormSaveCredentialName, "cred-02-inline");
+    await fillInlineCredentialToSave("cred-02-inline");
     await clickDialogFooterButton(sel.connectionFormSubmit);
-    // Re-query each poll: the error line only appears once the save is refused.
-    await browser.waitUntil(
-      async () => {
-        const formError = await browser.$(sel.connectionFormError);
-        return (
-          (await formError.isExisting()) &&
-          (await textContentOf(formError)).includes("connection named 'conn-a'")
-        );
-      },
-      { timeout: 10_000, timeoutMsg: "the taken name should refuse the save" },
-    );
-
-    // The credential was deleted again, so its name is free for the retry.
-    await fill(sel.connectionFormName, "conn-a-inline");
-    await saveConnectionForm();
-    await navigateTo("credentials");
-    await (await browser.$(sel.credentialRowByName("cred-02-inline"))).waitForExist({
-      timeout: 10_000,
-    });
-    expect(await browser.$$(sel.credentialRowByName("cred-02-inline")).length).toBe(1);
+    await saveUnderFreeNameAndExpectOneCredential("conn-a", "conn-a-inline", "cred-02-inline");
   });
 
   it("saves every field of the clone form", async () => {
-    await ensureConnectionRowsLayout();
-    const row = await browser.$(sel.connectionRowByName("conn-a"));
-    await row.waitForExist({ timeout: 10_000 });
-    const cloneButton = await row.$(sel.connectionRowCloneButton);
-    await cloneButton.waitForClickable({ timeout: 10_000 });
-    await cloneButton.click();
+    await openCloneForm("conn-a");
     await fill(sel.connectionFormName, "conn-a-clone");
     // Tags used to be dropped: a clone only kept name, host, port and credential.
     const tagsInput = await browser.$("#tags");
@@ -169,6 +191,20 @@ describe("Connections CRUD", () => {
     const clone = await browser.$(sel.connectionRowByName("conn-a-clone"));
     await clone.waitForExist({ timeout: 10_000 });
     expect(await clone.getAttribute("aria-label")).toContain("tagged cloned");
+  });
+
+  it("deletes the credential a refused clone made", async () => {
+    await openCloneForm("conn-a");
+    // "conn-a-other" is taken, so the clone is refused after the form has
+    // created its inline credential.
+    await fill(sel.connectionFormName, "conn-a-other");
+    await fillInlineCredentialToSave("cred-02-clone");
+    await clickDialogFooterButton(sel.connectionFormSubmit);
+    await saveUnderFreeNameAndExpectOneCredential(
+      "conn-a-other",
+      "conn-a-clone-inline",
+      "cred-02-clone",
+    );
   });
 
   it("refuses to delete a credential that connections use", async () => {
