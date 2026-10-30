@@ -115,7 +115,19 @@ fn load_data_unlocked() -> Result<AppData, String> {
     // Walk the loaded `schema_version` up to the current one (also runs the
     // LegacyTunnel → JumpShell rewrite for pre-stamp v0 files). Idempotent
     // for files already at HEAD.
-    data.migrate_to_current();
+    if data.migrate_to_current() {
+        // Save the repair so it runs, and is logged, once rather than on
+        // every load. The save refreshes the cache, which needs its lock.
+        drop(cache);
+        if let Err(e) = save_data_unlocked(&data) {
+            crate::logs::log_local(
+                "warn",
+                "migration",
+                format!("Could not save the migrated data: {e}"),
+            );
+        }
+        return Ok(data);
+    }
     *cache = Some(CachedData {
         path,
         stamp,
@@ -269,6 +281,33 @@ where
 mod tests {
     use super::*;
     use std::sync::atomic::{AtomicU64, Ordering};
+
+    /// A load that repairs the data (here: a reference to a deleted
+    /// credential) saves the repair, so it is not redone on every load.
+    #[test]
+    fn load_saves_a_migration_repair() {
+        test_support::with_isolated_data_dir(|| {
+            let path = get_data_path();
+            let mut data = AppData::default();
+            data.connections.push(crate::models::Connection::new(
+                "web".into(),
+                "h".into(),
+                22,
+                Some("deleted-credential".into()),
+                crate::models::ConnectionKind::Direct,
+            ));
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            fs::write(&path, serde_json::to_string(&data).unwrap()).unwrap();
+
+            assert_eq!(load_data().unwrap().connections[0].credential_id, None);
+            let on_disk = fs::read_to_string(&path).unwrap();
+            assert!(!on_disk.contains("deleted-credential"), "{on_disk}");
+            // A clean file is not rewritten.
+            let stamp = file_stamp(&path);
+            let _ = load_data().unwrap();
+            assert_eq!(file_stamp(&path), stamp);
+        });
+    }
 
     /// A corrupt data file is an error that names the file, never an empty
     /// catalogue: the frontend shows it in a load-error banner.

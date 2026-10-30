@@ -351,10 +351,13 @@ impl AppData {
     /// Migration order matters: `migrate_legacy_kinds` runs first
     /// regardless of stamp because pre-stamp files (v0) may carry the
     /// LegacyTunnel variant that v1+ readers must not see.
-    pub fn migrate_to_current(&mut self) {
+    ///
+    /// Returns whether connections were rewritten, so the loader can save
+    /// the repair once instead of redoing (and re-logging) it every load.
+    pub fn migrate_to_current(&mut self) -> bool {
         // Step 1: legacy variants are dropped on every load (cheap, idempotent).
-        self.migrate_legacy_kinds();
-        self.drop_dangling_credential_refs();
+        let migrated = self.migrate_legacy_kinds();
+        let dropped = self.drop_dangling_credential_refs();
 
         // Step 2: future-proofing scaffold. Add branches here as the
         // schema evolves:
@@ -365,13 +368,16 @@ impl AppData {
         //   if self.schema_version < 3 { … }
 
         self.schema_version = CURRENT_SCHEMA_VERSION;
+        migrated || dropped
     }
 
     /// Clear credential references whose credential no longer exists.
     /// Builds before `delete_credential` refused credentials in use left
     /// them behind; cleared, the connection form flags the empty picker
     /// inline instead of the save failing on an id the user cannot see.
-    pub fn drop_dangling_credential_refs(&mut self) {
+    /// Returns whether any reference was cleared.
+    pub fn drop_dangling_credential_refs(&mut self) -> bool {
+        let mut any = false;
         let known: std::collections::HashSet<&str> =
             self.credentials.iter().map(|c| c.id.as_str()).collect();
         for conn in &mut self.connections {
@@ -400,6 +406,7 @@ impl AppData {
                     dropped = true;
                 }
             }
+            any |= dropped;
             if dropped {
                 crate::logs::log_local(
                     "warn",
@@ -411,13 +418,16 @@ impl AppData {
                 );
             }
         }
+        any
     }
 
     /// Migrate legacy `ConnectionKind::LegacyTunnel` entries to `JumpShell`.
     /// `LegacyTunnel.gateway_credential_id` was optional; if absent, we drop the
     /// connection's tunnel-ness and convert it to `Direct` (with a warning logged)
     /// since `JumpShell` requires a gateway credential.
-    pub fn migrate_legacy_kinds(&mut self) {
+    /// Returns whether any connection was migrated.
+    pub fn migrate_legacy_kinds(&mut self) -> bool {
+        let mut any = false;
         for conn in &mut self.connections {
             if let ConnectionKind::LegacyTunnel {
                 gateway_host,
@@ -427,6 +437,7 @@ impl AppData {
                 destination_port,
             } = &conn.kind
             {
+                any = true;
                 conn.kind = match gateway_credential_id {
                     Some(cred_id) => ConnectionKind::JumpShell {
                         gateway_host: gateway_host.clone(),
@@ -449,6 +460,7 @@ impl AppData {
                 };
             }
         }
+        any
     }
 }
 
