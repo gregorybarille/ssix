@@ -336,23 +336,13 @@ fn clone_connection_sync(input: CloneConnectionInput) -> Result<Connection, Stri
             }
             crate::keychain::replace_for_credential(&new_cred_id, &secrets)?;
             created_private_credential = Some(new_cred_id.clone());
-            let kind = match &orig_cred.kind {
-                CredentialKind::Password { .. } => CredentialKind::Password {
-                    password: String::new(),
-                },
-                CredentialKind::SshKey {
-                    private_key_path, ..
-                } => CredentialKind::SshKey {
-                    private_key_path: private_key_path.clone(),
-                    private_key: None,
-                    passphrase: None,
-                },
-            };
-            data.credentials.push(Credential {
+            let mut copy = Credential {
                 id: new_cred_id.clone(),
-                kind,
                 ..orig_cred
-            });
+            };
+            // The secrets live in the keychain; data.json keeps placeholders.
+            crate::commands::credentials::redact_secrets(&mut copy);
+            data.credentials.push(copy);
             f.credential_id = Some(new_cred_id);
         }
         Ok(insert_new_connection(data, f))
@@ -590,6 +580,21 @@ mod tests {
         });
     }
 
+    /// Clone `original_id` as "web copy" naming the private credential
+    /// `cred_id`, and return the id of the copy the clone got instead.
+    fn clone_with_credential(original_id: &str, cred_id: &str) -> String {
+        let mut fields = direct_fields(Some(cred_id.to_string()));
+        fields.name = "web copy".to_string();
+        let clone = clone_connection_sync(CloneConnectionInput {
+            id: original_id.to_string(),
+            fields,
+        })
+        .unwrap();
+        let copy_id = clone.credential_id.expect("clone keeps a credential");
+        assert_ne!(copy_id, cred_id);
+        copy_id
+    }
+
     #[test]
     fn test_clone_copies_a_private_credential() {
         with_isolated_data_dir(|| {
@@ -599,16 +604,7 @@ mod tests {
             })
             .unwrap();
 
-            let mut fields = direct_fields(Some(private.id.clone()));
-            fields.name = "web copy".to_string();
-            let clone = clone_connection_sync(CloneConnectionInput {
-                id: original.id,
-                fields,
-            })
-            .unwrap();
-
-            let copy_id = clone.credential_id.expect("clone keeps a credential");
-            assert_ne!(copy_id, private.id);
+            let copy_id = clone_with_credential(&original.id, &private.id);
             let data = load_data().unwrap();
             let copy = data.credentials.iter().find(|c| c.id == copy_id).unwrap();
             assert!(copy.is_private);
@@ -638,16 +634,7 @@ mod tests {
             fields.name = "other".to_string();
             add_connection_sync(AddConnectionInput { fields }).unwrap();
 
-            let mut fields = direct_fields(Some(private.id.clone()));
-            fields.name = "web copy".to_string();
-            let clone = clone_connection_sync(CloneConnectionInput {
-                id: original.id,
-                fields,
-            })
-            .unwrap();
-
-            let copy_id = clone.credential_id.expect("clone keeps a credential");
-            assert_ne!(copy_id, private.id);
+            clone_with_credential(&original.id, &private.id);
             assert_eq!(load_data().unwrap().credentials.len(), 3);
         });
     }

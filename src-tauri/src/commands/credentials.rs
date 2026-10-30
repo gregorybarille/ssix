@@ -139,14 +139,15 @@ fn validate_credential_fields(name: &str, username: &str, is_private: bool) -> R
     Ok(())
 }
 
-/// Strip every secret from a credential before it crosses the IPC boundary.
+/// Strip every secret from a credential before it crosses the IPC boundary
+/// (and from a cloned private credential before it is stored).
 ///
 /// Redaction rules: a password becomes `""`, an inline private key and a
 /// passphrase become `None`, and `private_key_path` is kept because a path
 /// is not a secret. `data.json` already stores these placeholders, so for
 /// current data this is a no-op; it exists so a legacy row that still
 /// carries a secret inline can never leak into the frontend store.
-fn redact_secrets(cred: &mut Credential) {
+pub(crate) fn redact_secrets(cred: &mut Credential) {
     cred.kind = match &cred.kind {
         CredentialKind::Password { .. } => CredentialKind::Password {
             password: String::new(),
