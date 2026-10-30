@@ -428,10 +428,10 @@ export function ConnectionForm({
         // (We don't await the state update — the local copy is enough.)
         setForm(formWithPorts);
 
-        // Every required field is checked before anything is saved: an
-        // inline credential is created first, so a failure after it would
-        // leave that credential behind. All problems are collected so the
-        // user sees them at once instead of one-at-a-time throw cycling.
+        // Every required field is checked before anything is saved, so the
+        // inline credential below is only created for a connection that
+        // passes the form's checks. All problems are collected so the user
+        // sees them at once instead of one-at-a-time throw cycling.
         const newFieldErrors: Partial<Record<FieldKey, string>> = {};
         if (!formWithPorts.name.trim()) {
           newFieldErrors.name = "Connection name is required";
@@ -535,9 +535,12 @@ export function ConnectionForm({
             await onSubmit(data);
           }
         } catch (err) {
-          // The backend refused the connection (a taken name, say): drop the
-          // credential made for it. The refusal is what the user needs to
-          // see, so a failed cleanup is only logged.
+          // The save failed, normally because the backend refused the
+          // connection (a taken name, say): drop the credential made for it.
+          // This can never remove a credential the connection ended up
+          // using: if the failure came after the connection was stored,
+          // `delete_credential` refuses a credential in use and the cleanup
+          // is only logged. The save's error is what the user sees.
           if (createdCredentialId && onDiscardCredential) {
             await onDiscardCredential(createdCredentialId).catch((cleanupErr: unknown) =>
               appLog.warn(

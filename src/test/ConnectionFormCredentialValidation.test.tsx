@@ -210,6 +210,22 @@ describe("ConnectionForm credential validation", () => {
     expect(onDiscardCredential).toHaveBeenCalledWith("new-cred");
   });
 
+  it("still shows the save's error when the cleanup is refused", async () => {
+    const user = userEvent.setup();
+    const onSubmit = vi.fn().mockRejectedValue("Saving failed");
+    const onDiscardCredential = vi
+      .fn()
+      .mockRejectedValue("'inline-x' is used by web. Pick another credential for it first.");
+    renderForm({ onSubmit, onDiscardCredential });
+    fillDirect();
+    await user.click(screen.getByRole("tab", { name: "Password" }));
+    fireEvent.change(screen.getByLabelText(/username \*/i), { target: { value: "root" } });
+    fireEvent.change(screen.getByLabelText(/^password \*/i), { target: { value: "s3cret" } });
+    submit();
+    expect(await screen.findByText("Saving failed")).toBeInTheDocument();
+    expect(onDiscardCredential).toHaveBeenCalledWith("new-cred");
+  });
+
   it("keeps a picked saved credential when the connection save is refused", async () => {
     const onSubmit = vi.fn().mockRejectedValue("A connection named 'web' already exists");
     const { onDiscardCredential } = renderForm({ onSubmit });

@@ -33,9 +33,9 @@ new connection. The original's private inline credential is copied, so
 the clone and the original never share one; inline auth entered in the
 clone form makes a credential for the clone alone.
 
-A credential that connections use cannot be deleted. The delete
-confirmation names those connections; give them another credential
-first.
+A credential that connections use cannot be deleted. Confirming the
+delete is refused, and the confirmation then lists the connections that
+use it; give them another credential first.
 
 The credentials list only holds redacted credentials. Opening **Edit**
 fetches that one credential's saved secrets (`get_credential_secrets`)

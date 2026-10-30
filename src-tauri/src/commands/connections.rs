@@ -82,9 +82,11 @@ fn validate_connection_fields(name: &str, host: &str, port: u16) -> Result<(), S
 }
 
 /// Every kind that opens a shell needs a credential for it, and each
-/// credential a connection names must still exist (`delete_credential`
-/// leaves references behind). Otherwise the connection saves fine and only
-/// fails once the user tries to connect.
+/// credential a connection names must exist. Otherwise the connection
+/// saves fine and only fails once the user tries to connect.
+/// `delete_credential` refuses a credential in use and loading clears old
+/// dangling references, so a missing id here means the credential was
+/// deleted while a form that had picked it was still open.
 fn validate_connection_credentials(
     credentials: &[Credential],
     credential_id: Option<&str>,
