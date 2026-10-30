@@ -211,6 +211,8 @@ jobs:
           name: macos-silicon-dmg
           path: release-assets
 
+      # The Linux artifact keeps the bundler's deb/, rpm/ and appimage/
+      # folders, since its files come from more than one directory.
       - name: Download Linux artifact
         uses: actions/download-artifact@v4
         with:
@@ -228,4 +230,4 @@ jobs:
           --notes-file .github/release-notes.md
           --prerelease
           && gh release upload "$RELEASE_TAG" release-assets/ssix.exe release-assets/*.dmg
-          release-assets/*.deb release-assets/*.rpm release-assets/*.AppImage --clobber
+          release-assets/deb/*.deb release-assets/rpm/*.rpm release-assets/appimage/*.AppImage --clobber
