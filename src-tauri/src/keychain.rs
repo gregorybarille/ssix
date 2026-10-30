@@ -15,7 +15,7 @@ use std::sync::Mutex;
 
 static SECRETS_LOCK: Mutex<()> = Mutex::new(());
 
-fn secrets_path() -> PathBuf {
+pub(crate) fn secrets_path() -> PathBuf {
     crate::storage::data_dir().join("secrets.json")
 }
 

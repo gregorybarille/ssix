@@ -130,13 +130,18 @@ fn add_connection_sync(input: AddConnectionInput) -> Result<Connection, String> 
     with_data_mut(|data| insert_new_connection(data, f))
 }
 
-/// Store `f` as a new connection: shared by add and clone, so a clone gets
-/// exactly the checks and normalization a new connection gets.
-fn insert_new_connection(data: &mut AppData, f: ConnectionFields) -> Result<Connection, String> {
+/// The checks a new connection must pass against the stored data.
+fn check_new_connection(data: &AppData, f: &ConnectionFields) -> Result<(), String> {
     if data.connections.iter().any(|c| c.name == f.name) {
         return Err(format!("A connection named '{}' already exists", f.name));
     }
-    validate_connection_credentials(&data.credentials, f.credential_id.as_deref(), &f.kind)?;
+    validate_connection_credentials(&data.credentials, f.credential_id.as_deref(), &f.kind)
+}
+
+/// Store `f` as a new connection: shared by add and clone, so a clone gets
+/// exactly the checks and normalization a new connection gets.
+fn insert_new_connection(data: &mut AppData, f: ConnectionFields) -> Result<Connection, String> {
+    check_new_connection(data, &f)?;
     let mut connection = Connection::new(f.name, f.host, f.port, f.credential_id, f.kind);
     connection.verbosity = f.verbosity;
     connection.extra_args = f.extra_args;
@@ -272,18 +277,28 @@ fn clone_connection_sync(input: CloneConnectionInput) -> Result<Connection, Stri
     let mut created_private_credential: Option<String> = None;
 
     let result = with_data_mut(|data| {
-        if !data.connections.iter().any(|c| c.id == input.id) {
-            return Err("Connection not found".to_string());
-        }
+        let original = data
+            .connections
+            .iter()
+            .find(|c| c.id == input.id)
+            .ok_or_else(|| "Connection not found".to_string())?;
+        // Refuse a bad clone before any secret is copied.
+        check_new_connection(data, &f)?;
         // A private credential belongs to one connection (it is created by
         // the inline auth tabs and hidden from the list), so a clone that
-        // keeps it gets its own copy instead of sharing it.
-        let private = f.credential_id.as_deref().and_then(|cred_id| {
-            data.credentials
-                .iter()
-                .find(|c| c.id == cred_id && c.is_private)
-                .cloned()
-        });
+        // keeps the original's gets its own copy instead of sharing it. A
+        // private credential the clone form just created for its own inline
+        // auth is the clone's already and is used as is.
+        let private = f
+            .credential_id
+            .as_deref()
+            .filter(|cred_id| original.credential_id.as_deref() == Some(*cred_id))
+            .and_then(|cred_id| {
+                data.credentials
+                    .iter()
+                    .find(|c| c.id == cred_id && c.is_private)
+                    .cloned()
+            });
         if let Some(orig_cred) = private {
             let new_cred_id = Uuid::new_v4().to_string();
             // Copy every secret in one read and one write.
@@ -552,17 +567,7 @@ mod tests {
     #[test]
     fn test_clone_copies_a_private_credential() {
         with_isolated_data_dir(|| {
-            let mut private = password_credential("inline-x");
-            private.is_private = true;
-            store_credential(&private);
-            crate::keychain::replace_for_credential(
-                &private.id,
-                &crate::models::CredentialSecrets {
-                    password: Some("s3cret".to_string()),
-                    ..Default::default()
-                },
-            )
-            .unwrap();
+            let private = private_credential("inline-x");
             let original = add_connection_sync(AddConnectionInput {
                 fields: direct_fields(Some(private.id.clone())),
             })
@@ -588,6 +593,66 @@ mod tests {
                     .as_deref(),
                 Some("s3cret")
             );
+        });
+    }
+
+    fn private_credential(name: &str) -> Credential {
+        let mut cred = password_credential(name);
+        cred.is_private = true;
+        store_credential(&cred);
+        crate::keychain::replace_for_credential(
+            &cred.id,
+            &crate::models::CredentialSecrets {
+                password: Some("s3cret".to_string()),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        cred
+    }
+
+    #[test]
+    fn test_clone_keeps_the_inline_credential_its_form_created() {
+        with_isolated_data_dir(|| {
+            let original_cred = private_credential("inline-original");
+            let original = add_connection_sync(AddConnectionInput {
+                fields: direct_fields(Some(original_cred.id.clone())),
+            })
+            .unwrap();
+            // The clone form's Password tab made this one for the clone.
+            let form_cred = private_credential("inline-clone");
+
+            let mut fields = direct_fields(Some(form_cred.id.clone()));
+            fields.name = "web copy".to_string();
+            let clone = clone_connection_sync(CloneConnectionInput {
+                id: original.id,
+                fields,
+            })
+            .unwrap();
+
+            assert_eq!(clone.credential_id.as_deref(), Some(form_cred.id.as_str()));
+            assert_eq!(load_data().unwrap().credentials.len(), 2);
+        });
+    }
+
+    #[test]
+    fn test_refused_clone_copies_no_secret() {
+        with_isolated_data_dir(|| {
+            let cred = private_credential("inline-original");
+            let original = add_connection_sync(AddConnectionInput {
+                fields: direct_fields(Some(cred.id.clone())),
+            })
+            .unwrap();
+            // Same name as the original: refused before the copy.
+            let err = clone_connection_sync(CloneConnectionInput {
+                id: original.id,
+                fields: direct_fields(Some(cred.id.clone())),
+            })
+            .unwrap_err();
+            assert_eq!(err, "A connection named 'web' already exists");
+            assert_eq!(load_data().unwrap().credentials.len(), 1);
+            let secrets = std::fs::read_to_string(crate::keychain::secrets_path()).unwrap();
+            assert_eq!(secrets.matches("s3cret").count(), 1);
         });
     }
 

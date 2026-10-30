@@ -29,8 +29,9 @@ The connection form can create inline credentials and optionally save them as na
 
 **Clone** opens the connection form prefilled from a connection, and
 everything in it (kind, gateway, tags, colour, options) is saved as the
-new connection. A private inline credential is copied, so the clone and
-the original never share one.
+new connection. The original's private inline credential is copied, so
+the clone and the original never share one; inline auth entered in the
+clone form makes a credential for the clone alone.
 
 A credential that connections use cannot be deleted. The delete
 confirmation names those connections; give them another credential
