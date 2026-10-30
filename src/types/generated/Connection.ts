@@ -14,6 +14,13 @@ verbosity: number,
  */
 extra_args?: string | null, 
 /**
+ * Local command whose stdin/stdout carry the SSH connection to the
+ * first hop, like OpenSSH's `ProxyCommand` (`%h`, `%p`, `%r`, `%%`).
+ * The first hop is the host of a direct connection, the jump host or
+ * the SSH server of a local forward.
+ */
+proxy_command?: string | null, 
+/**
  * Command to run after the shell session opens, e.g. `sudo su - deploy`.
  */
 login_command?: string | null, 

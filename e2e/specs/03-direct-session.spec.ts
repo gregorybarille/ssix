@@ -4,7 +4,7 @@
  * Full lifecycle: create credential + Direct connection, click connect,
  * wait for shell prompt, run `whoami`, assert output is `usera`. A second
  * connection at verbosity -vv must write `ssh -vv` style lines to the
- * Logs view.
+ * Logs view, and a third reaches server-a only through its proxy command.
  *
  * Exercises `start_ssh_session` + the OS-thread / mpsc plumbing in
  * `src-tauri/src/ssh.rs` against a real OpenSSH server.
@@ -82,5 +82,22 @@ describe("Direct SSH session", () => {
     expect(lines.some((l) => l.includes("debug1:") && l.includes("kex: algorithm:"))).toBe(true);
     expect(lines.some((l) => l.includes("debug2:") && l.includes("cipher:"))).toBe(true);
     expect(lines.some((l) => l.includes("debug3:"))).toBe(false);
+  });
+
+  it("reaches the host through its proxy command", async () => {
+    // The host name does not resolve: only the proxy command can reach
+    // server-a, so a shell proves the connection went through it.
+    await createDirectConnection({
+      name: "conn-03-proxy",
+      host: "proxied-a.invalid",
+      port: 22,
+      credentialName: "cred-03-a",
+      verbosity: "-v (connection steps)",
+      proxyCommand: `nc ${TARGETS.a.host} ${TARGETS.a.sshPort}`,
+    });
+    await connectToConnection("conn-03-proxy");
+    // Every open terminal is searched; the -v banner names this host and
+    // is only written once the proxied login has opened a shell.
+    await waitForTerminalContains("Connected to proxied-a.invalid:22", 30_000);
   });
 });

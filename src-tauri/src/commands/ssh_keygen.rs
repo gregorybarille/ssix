@@ -266,6 +266,7 @@ fn install_public_key_with_password(
         port,
         username: username.to_string(),
         auth: AuthMethod::Password(password.to_string()),
+        proxy_command: None,
     };
     let session = open_authenticated_session(&target, 0, None)?;
 

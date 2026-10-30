@@ -25,6 +25,28 @@ Each shell-capable connection can also define:
 - color accent
 - verbosity level (see [Diagnostics](#diagnostics))
 - extra SSH arguments
+- a proxy command (see below)
+
+### Proxy command and WSL
+
+A connection can reach its first hop — the host of a direct connection,
+the jump host, or a local forward's SSH server — through a local
+command instead of a TCP connection, like `ProxyCommand` in
+`ssh_config`. SSIX runs the command (`/bin/sh -c` on macOS and Linux,
+`cmd.exe /S /C` on Windows) and speaks SSH over its stdin and stdout.
+`%h`, `%p` and `%r` expand to the hop's host, port and user, and `%%` to
+`%`; other tokens are refused when the connection is saved. A host or
+user containing anything but letters, digits and `. - _ : @` is refused
+rather than pasted into the command. Lines the command prints on stderr
+appear in the Logs view (source `proxy`), and the command is stopped when
+the session closes.
+
+On Windows the **Through WSL** button fills in `wsl.exe -e nc %h %p`,
+which connects from inside the default WSL distribution, so SSIX reaches
+hosts only WSL can see (its own network, or a VPN running there). The
+distribution needs `nc` (`netcat-openbsd` on Debian and Ubuntu). SCP and
+local forwards use the proxy too; the copied `ssh` command carries it as
+`-o ProxyCommand=…`.
 
 ## Credentials
 

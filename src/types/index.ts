@@ -84,6 +84,11 @@ interface ConnectionBase {
   verbosity?: number;
   /** Additional SSH flags, e.g. "-C" for compression. */
   extra_args?: string;
+  /**
+   * Local command that carries the connection to the first hop, like
+   * OpenSSH's `ProxyCommand` (`%h`, `%p`, `%r`, `%%`).
+   */
+  proxy_command?: string;
   /** Command to run after login, e.g. `sudo su - deploy`. */
   login_command?: string;
   /** Preferred starting directory on the remote host. */
@@ -163,6 +168,7 @@ export type ConnectionDraft = {
   type: ConnectionType;
   verbosity?: number;
   extra_args?: string;
+  proxy_command?: string;
   login_command?: string;
   remote_path?: string;
   tags?: string[];

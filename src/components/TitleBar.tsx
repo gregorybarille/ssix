@@ -1,15 +1,7 @@
 import { useEffect, useState } from "react";
 import { Settings, Minus, Square, X } from "lucide-react";
 import { cn } from "@/lib/utils";
-
-type Platform = "macos" | "windows" | "linux";
-
-function detectPlatform(): Platform {
-  const ua = navigator.userAgent.toLowerCase();
-  if (ua.includes("mac")) return "macos";
-  if (ua.includes("win")) return "windows";
-  return "linux";
-}
+import { detectPlatform, type Platform } from "@/lib/platform";
 
 interface TitleBarProps {
   onSettings: () => void;

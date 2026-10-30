@@ -169,7 +169,8 @@ fn connect_file_transfer_session(
                 .credential_id
                 .as_ref()
                 .ok_or_else(|| "No credential configured for this connection".to_string())?;
-            let target = resolve_endpoint(&data.credentials, &conn.host, conn.port, cred_id)?;
+            let target = resolve_endpoint(&data.credentials, &conn.host, conn.port, cred_id)?
+                .through(conn.proxy_command.as_deref());
             let session =
                 open_authenticated_session(&target, conn.verbosity, conn.extra_args.as_deref())?;
             Ok(ConnectedSession {
@@ -193,7 +194,8 @@ fn connect_file_transfer_session(
                 gateway_host,
                 *gateway_port,
                 gateway_credential_id,
-            )?;
+            )?
+            .through(conn.proxy_command.as_deref());
             let destination = resolve_endpoint(
                 &data.credentials,
                 destination_host,

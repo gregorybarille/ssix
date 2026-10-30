@@ -37,6 +37,7 @@ import { TagInput } from "./ui/tag-input";
 import { RadioGroup, RadioGroupItem } from "./ui/radio-group";
 import { COLOR_VALUES } from "@/lib/colors";
 import { parsePort } from "@/lib/port";
+import { detectPlatform, WSL_PROXY_COMMAND } from "@/lib/platform";
 import { isTextInput } from "@/lib/focus";
 import { UploadCloud } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -74,6 +75,7 @@ const DEFAULT_FORM: ConnectionDraft = {
   type: "direct",
   verbosity: 0,
   extra_args: "",
+  proxy_command: "",
   login_command: "",
   remote_path: "",
   tags: [],
@@ -130,6 +132,7 @@ function initialFormState(
     type: connection.type,
     verbosity: connection.verbosity ?? 0,
     extra_args: connection.extra_args ?? "",
+    proxy_command: connection.proxy_command ?? "",
     login_command: connection.login_command ?? "",
     remote_path: connection.remote_path ?? "",
     tags: connection.tags ?? [],
@@ -190,6 +193,7 @@ function serializeFormState(s: {
     s.form.type,
     s.form.verbosity ?? 0,
     s.form.extra_args ?? "",
+    s.form.proxy_command ?? "",
     s.form.login_command ?? "",
     s.form.remote_path ?? "",
     s.form.tags ?? [],
@@ -340,6 +344,7 @@ export function ConnectionForm({
   }, [inline, open, connection?.id, isClone]);
 
   const isTwoHop = connectionType !== "direct";
+  const isWindows = detectPlatform() === "windows";
   // OpenSSH's names for the two hosts of the current kind (direct has none).
   const terms = hopTerms(connectionType === "port_forward" ? "port_forward" : "jump_shell");
   const needsTargetAuth = connectionType !== "port_forward";
@@ -507,6 +512,7 @@ export function ConnectionForm({
           credential_id: credentialId,
           verbosity: formWithPorts.verbosity ?? 0,
           extra_args: formWithPorts.extra_args || undefined,
+          proxy_command: formWithPorts.proxy_command?.trim() || undefined,
           login_command: formWithPorts.login_command || undefined,
           remote_path: formWithPorts.remote_path || undefined,
           tags: formWithPorts.tags ?? [],
@@ -1072,6 +1078,45 @@ export function ConnectionForm({
         <p id="extra_args-hint" className="text-xs text-muted-foreground">
           Pass extra flags to the SSH session (e.g. <code>-C</code> to enable
           compression). Unknown flags are ignored.
+        </p>
+      </div>
+
+      <div className="space-y-2">
+        <div className="flex items-center justify-between gap-2">
+          <Label htmlFor="proxy_command">Proxy Command</Label>
+          {isWindows && (
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              data-testid="connection-form-proxy-wsl"
+              onClick={() => setForm({ ...form, proxy_command: WSL_PROXY_COMMAND })}
+            >
+              Through WSL
+            </Button>
+          )}
+        </div>
+        <Input
+          id="proxy_command"
+          data-testid="connection-form-proxy-command"
+          placeholder="nc %h %p"
+          value={form.proxy_command ?? ""}
+          onChange={(e) => setForm({ ...form, proxy_command: e.target.value })}
+          aria-describedby="proxy_command-hint"
+        />
+        <p id="proxy_command-hint" className="text-xs text-muted-foreground">
+          Like <code>ProxyCommand</code> in <code>ssh_config</code>: SSIX runs this
+          command and talks SSH over its input and output instead of opening a
+          TCP connection to the {isTwoHop ? terms.hop.toLowerCase() : "host"}.{" "}
+          <code>%h</code>, <code>%p</code> and <code>%r</code> stand for its host,
+          port and user.
+          {isWindows && (
+            <>
+              {" "}
+              <strong>Through WSL</strong> connects from inside your WSL
+              distribution (it needs <code>nc</code> there).
+            </>
+          )}
         </p>
       </div>
 

@@ -72,6 +72,9 @@ export const sel = {
   connectionFormTargetCredential: '[data-testid="connection-form-credential"]',
   connectionFormLocalPort: '[data-testid="connection-form-local-port"]',
   connectionFormVerbosity: '[data-testid="connection-form-verbosity"]',
+  connectionFormProxyCommand: '[data-testid="connection-form-proxy-command"]',
+  // Only rendered on Windows.
+  connectionFormProxyWsl: '[data-testid="connection-form-proxy-wsl"]',
   connectionFormSubmit: '[data-testid="connection-form-submit"]',
   connectionFormCancel: '[data-testid="connection-form-cancel"]',
 

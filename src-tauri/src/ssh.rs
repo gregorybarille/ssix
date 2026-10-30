@@ -68,11 +68,23 @@ pub struct Endpoint {
     pub port: u16,
     pub username: String,
     pub auth: AuthMethod,
+    /// OpenSSH-style `ProxyCommand` used instead of a TCP connection; set
+    /// on the first hop only (see `crate::proxy`).
+    pub proxy_command: Option<String>,
 }
 
 impl Endpoint {
     pub fn addr(&self) -> String {
         format!("{}:{}", self.host, self.port)
+    }
+
+    /// This endpoint reached through `proxy_command`, when there is one.
+    pub fn through(mut self, proxy_command: Option<&str>) -> Self {
+        self.proxy_command = proxy_command
+            .map(str::trim)
+            .filter(|c| !c.is_empty())
+            .map(str::to_string);
+        self
     }
 }
 
@@ -402,17 +414,17 @@ pub(crate) fn connect_tcp(host: &str, port: u16) -> Result<TcpStream, String> {
     ))
 }
 
-pub(crate) fn open_authenticated_session(
-    endpoint: &Endpoint,
-    verbosity: u8,
-    extra_args: Option<&str>,
-) -> Result<Session, String> {
+/// Open the stream to `endpoint`: a TCP connection, or its proxy command.
+fn connect_endpoint(endpoint: &Endpoint, verbosity: u8) -> Result<TcpStream, String> {
     let debug = SshDebug::new(verbosity, endpoint.addr());
     debug.at(1, || {
         format!("Connecting to {} port {}.", endpoint.host, endpoint.port)
     });
     let started = Instant::now();
-    let tcp = connect_tcp(&endpoint.host, endpoint.port)?;
+    let tcp = match endpoint.proxy_command.as_deref() {
+        Some(command) => crate::proxy::connect(command, endpoint, &debug)?,
+        None => connect_tcp(&endpoint.host, endpoint.port)?,
+    };
     debug.at(1, || "Connection established.".to_string());
     debug.at(2, || match tcp.peer_addr() {
         Ok(peer) => format!("Socket peer: {}", peer),
@@ -421,6 +433,15 @@ pub(crate) fn open_authenticated_session(
     debug.at(3, || {
         format!("TCP connect took {} ms", started.elapsed().as_millis())
     });
+    Ok(tcp)
+}
+
+pub(crate) fn open_authenticated_session(
+    endpoint: &Endpoint,
+    verbosity: u8,
+    extra_args: Option<&str>,
+) -> Result<Session, String> {
+    let tcp = connect_endpoint(endpoint, verbosity)?;
     open_authenticated_session_over_stream(tcp, endpoint, verbosity, extra_args)
 }
 
@@ -602,7 +623,7 @@ fn open_shell(
     endpoint: &Endpoint,
     opts: &ShellOptions,
 ) -> Result<(Session, ssh2::Channel), String> {
-    let tcp = connect_tcp(&endpoint.host, endpoint.port)?;
+    let tcp = connect_endpoint(endpoint, opts.verbosity)?;
     open_shell_over_stream(tcp, endpoint, opts)
 }
 
@@ -1339,6 +1360,7 @@ mod tests {
             port: 2222,
             username: "u".into(),
             auth: AuthMethod::Password("p".into()),
+            proxy_command: None,
         };
         assert_eq!(ep.addr(), "example.com:2222");
     }

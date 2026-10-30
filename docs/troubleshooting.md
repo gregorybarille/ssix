@@ -19,6 +19,12 @@ Older builds showed this as `TypeError: ... window.__TAURI_INTERNALS__ is undefi
 - Check whether a jump host connection has credentials for both the jump host and the target.
 - Set the connection's verbosity to -v (or -vv) and reconnect: the Logs view shows each step of the connection, like `ssh -v`, so the last line before the error tells you where it failed.
 
+## Proxy Command Or WSL Connection Fails
+
+- Look in the Logs view for `proxy` entries: they are what the command printed on stderr (for example `nc: command not found`).
+- For **Through WSL**, check `wsl.exe -e nc -h` works in a Windows terminal, and install `netcat-openbsd` in the distribution if it does not.
+- Set the connection's verbosity to -v: the Logs view then shows the expanded command that was run.
+
 ## Host Key Has Changed
 
 - SSIX refuses to connect when a server's host key differs from the one recorded on first use. The failure view shows the new SHA256 fingerprint.

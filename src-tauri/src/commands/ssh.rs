@@ -60,6 +60,7 @@ pub(crate) fn resolve_endpoint(
         port,
         username,
         auth,
+        proxy_command: None,
     })
 }
 
@@ -116,7 +117,8 @@ pub async fn ssh_connect(
                 .credential_id
                 .as_deref()
                 .ok_or("No credential configured for this connection")?;
-            let target = resolve_endpoint(&data.credentials, &conn.host, conn.port, cred_id)?;
+            let target = resolve_endpoint(&data.credentials, &conn.host, conn.port, cred_id)?
+                .through(conn.proxy_command.as_deref());
             start_ssh_session(target, opts, ctx)
         }
         ConnectionKind::PortForward {
@@ -132,7 +134,8 @@ pub async fn ssh_connect(
                 gateway_host,
                 *gateway_port,
                 gateway_credential_id,
-            )?;
+            )?
+            .through(conn.proxy_command.as_deref());
             start_port_forward(
                 gateway,
                 *local_port,
@@ -158,7 +161,8 @@ pub async fn ssh_connect(
                 gateway_host,
                 *gateway_port,
                 gateway_credential_id,
-            )?;
+            )?
+            .through(conn.proxy_command.as_deref());
             let destination = resolve_endpoint(
                 &data.credentials,
                 destination_host,

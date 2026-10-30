@@ -3,6 +3,7 @@ mod keychain;
 mod known_hosts;
 mod logs;
 mod models;
+mod proxy;
 mod ssh;
 mod ssh_debug;
 mod storage;

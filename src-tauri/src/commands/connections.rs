@@ -22,6 +22,8 @@ pub struct ConnectionFields {
     #[serde(default)]
     pub extra_args: Option<String>,
     #[serde(default)]
+    pub proxy_command: Option<String>,
+    #[serde(default)]
     pub login_command: Option<String>,
     #[serde(default)]
     pub remote_path: Option<String>,
@@ -153,6 +155,10 @@ fn check_connection(
 ) -> Result<(), String> {
     f.name = f.name.trim().to_string();
     validate_connection_fields(&f.name, &f.host, f.port)?;
+    f.proxy_command = normalize_optional_text(f.proxy_command.take());
+    if let Some(command) = &f.proxy_command {
+        crate::proxy::validate(command)?;
+    }
     if data
         .connections
         .iter()
@@ -169,6 +175,7 @@ fn insert_new_connection(data: &mut AppData, f: ConnectionFields) -> Connection 
     let mut connection = Connection::new(f.name, f.host, f.port, f.credential_id, f.kind);
     connection.verbosity = f.verbosity;
     connection.extra_args = f.extra_args;
+    connection.proxy_command = f.proxy_command;
     connection.login_command = normalize_optional_text(f.login_command);
     connection.remote_path = normalize_remote_path(f.remote_path);
     connection.tags = normalize_tags(f.tags);
@@ -221,6 +228,7 @@ fn apply_update(
     data.connections[idx].kind = f.kind;
     data.connections[idx].verbosity = f.verbosity;
     data.connections[idx].extra_args = f.extra_args;
+    data.connections[idx].proxy_command = f.proxy_command;
     data.connections[idx].login_command = normalize_optional_text(f.login_command);
     data.connections[idx].remote_path = normalize_remote_path(f.remote_path);
     data.connections[idx].tags = normalize_tags(f.tags);
@@ -446,6 +454,7 @@ mod tests {
             kind: ConnectionKind::Direct,
             verbosity: 0,
             extra_args: None,
+            proxy_command: None,
             login_command: None,
             remote_path: None,
             tags: Vec::new(),
@@ -682,6 +691,36 @@ mod tests {
             })
             .unwrap();
             assert_eq!(updated.name, "web");
+        });
+    }
+
+    #[test]
+    fn test_proxy_command_is_trimmed_and_checked() {
+        with_isolated_data_dir(|| {
+            let cred = password_credential("a");
+            store_credential(&cred);
+            let mut fields = direct_fields(Some(cred.id.clone()));
+            fields.proxy_command = Some("  wsl.exe -e nc %h %p ".to_string());
+            let conn = add_connection_sync(AddConnectionInput { fields }).unwrap();
+            assert_eq!(conn.proxy_command.as_deref(), Some("wsl.exe -e nc %h %p"));
+
+            let mut fields = direct_fields(Some(cred.id.clone()));
+            fields.proxy_command = Some("   ".to_string());
+            let updated = update_connection_sync(UpdateConnectionInput {
+                id: conn.id.clone(),
+                fields,
+            })
+            .unwrap();
+            assert_eq!(updated.proxy_command, None);
+
+            let mut fields = direct_fields(Some(cred.id.clone()));
+            fields.proxy_command = Some("nc %h %q".to_string());
+            let err = update_connection_sync(UpdateConnectionInput {
+                id: conn.id,
+                fields,
+            })
+            .unwrap_err();
+            assert!(err.contains("%q"), "{err}");
         });
     }
 

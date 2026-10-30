@@ -16,6 +16,11 @@ import type { Connection, Credential } from "@/types";
  * matches (e.g. inline auth that hasn't been saved yet), the user portion is
  * omitted and the user is expected to fill it in.
  *
+ * A proxy command becomes `-o ProxyCommand=…` on the host it reaches (the
+ * first hop). Behind a jump host that hop is the jump host, which `-J`
+ * cannot give a proxy, so the jump is spelled out as a nested
+ * `ProxyCommand=ssh -W %h:%p …` instead.
+ *
  * Default port `22` is suppressed for readability. Identity files are
  * included only when the credential stores a filesystem path; inline keys
  * cannot be referenced from a CLI command and are skipped.
@@ -44,6 +49,9 @@ export function buildSshCommand(
   const userAt = (user: string | undefined, host: string) =>
     user ? `${q(user)}@${q(host)}` : q(host);
 
+  const proxy = connection.proxy_command?.trim() || undefined;
+  if (proxy && connection.type !== "jump_shell") push("-o", q(`ProxyCommand=${proxy}`));
+
   if (connection.type === "port_forward") {
     const gwCred = find(connection.gateway_credential_id);
     const local = connection.local_port;
@@ -60,11 +68,21 @@ export function buildSshCommand(
   if (connection.type === "jump_shell") {
     const gwCred = find(connection.gateway_credential_id);
     const gwPort = connection.gateway_port;
-    const jumpHost =
-      gwPort === 22
-        ? connection.gateway_host
-        : `${connection.gateway_host}:${gwPort}`;
-    push("-J", userAt(gwCred?.username, jumpHost));
+    if (proxy) {
+      // The outer ssh expands %h/%p first, so the inner command's own
+      // tokens are escaped as %%.
+      const inner = proxy.replace(/%/g, "%%").replace(/"/g, '\\"');
+      const hop = [`ssh -o "ProxyCommand=${inner}" -W %h:%p`];
+      if (gwPort !== 22) hop.push(`-p ${gwPort}`);
+      hop.push(userAt(gwCred?.username, connection.gateway_host));
+      push("-o", q(`ProxyCommand=${hop.join(" ")}`));
+    } else {
+      const jumpHost =
+        gwPort === 22
+          ? connection.gateway_host
+          : `${connection.gateway_host}:${gwPort}`;
+      push("-J", userAt(gwCred?.username, jumpHost));
+    }
     const idFile = identity(destCred);
     if (idFile) push("-i", q(idFile));
     const destPort = connection.destination_port;

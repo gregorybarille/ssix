@@ -157,6 +157,12 @@ pub struct Connection {
     // these unset). Mirrors the existing treatment of `color`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub extra_args: Option<String>,
+    /// Local command whose stdin/stdout carry the SSH connection to the
+    /// first hop, like OpenSSH's `ProxyCommand` (`%h`, `%p`, `%r`, `%%`).
+    /// The first hop is the host of a direct connection, the jump host or
+    /// the SSH server of a local forward.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub proxy_command: Option<String>,
     /// Command to run after the shell session opens, e.g. `sudo su - deploy`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub login_command: Option<String>,
@@ -188,6 +194,7 @@ impl Connection {
             kind,
             verbosity: 0,
             extra_args: None,
+            proxy_command: None,
             login_command: None,
             remote_path: None,
             tags: Vec::new(),
@@ -601,6 +608,7 @@ mod tests {
             credential_id: Some("dest-cred".into()),
             verbosity: 0,
             extra_args: None,
+            proxy_command: None,
             login_command: None,
             remote_path: None,
             tags: Vec::new(),
@@ -640,6 +648,7 @@ mod tests {
             credential_id: None,
             verbosity: 0,
             extra_args: None,
+            proxy_command: None,
             login_command: None,
             remote_path: None,
             tags: Vec::new(),
@@ -677,6 +686,7 @@ mod tests {
             credential_id: None,
             verbosity: 0,
             extra_args: None,
+            proxy_command: None,
             login_command: None,
             remote_path: None,
             tags: Vec::new(),
@@ -897,6 +907,7 @@ mod tests {
                 credential_id: None,
                 verbosity: 0,
                 extra_args: None,
+                proxy_command: None,
                 login_command: None,
                 remote_path: None,
                 tags: Vec::new(),

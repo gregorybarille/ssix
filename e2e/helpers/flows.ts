@@ -132,6 +132,7 @@ export interface DirectConnectionInput {
   tags?: string[];
   /** Label of a verbosity option, e.g. "-vv (negotiated algorithms)". */
   verbosity?: string;
+  proxyCommand?: string;
 }
 
 export async function saveConnectionForm(): Promise<void> {
@@ -150,6 +151,11 @@ export async function createDirectConnection(input: DirectConnectionInput): Prom
   await pickOption(sel.connectionFormCredential, input.credentialName);
   if (input.verbosity) {
     await pickOption(sel.connectionFormVerbosity, input.verbosity);
+  }
+  if (input.proxyCommand) {
+    const proxy = await browser.$(sel.connectionFormProxyCommand);
+    await proxy.scrollIntoView({ block: "center" });
+    await fill(sel.connectionFormProxyCommand, input.proxyCommand);
   }
   if (input.tags && input.tags.length > 0) {
     const tagsInput = await browser.$("#tags");
