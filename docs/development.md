@@ -33,22 +33,27 @@ bridge and every backend call fails with "SSIX is running outside its desktop
 app". Use it for layout work only; anything that loads or saves data needs
 `npm run tauri dev`.
 
-## Windows Releases
+## Releases
 
-Windows releases are built by `.github/workflows/release.yml` on the
-`windows-latest` GitHub Actions runner and uploaded to the repository's
-GitHub Releases page as prereleases. The workflow builds the app with
-`npm run tauri build -- --no-bundle` and uploads the resulting
-`src-tauri/target/release/ssix.exe` directly as a release asset for users who
-cannot install MSI packages.
+Releases are built by `.github/workflows/release.yml` and uploaded to the
+repository's GitHub Releases page as prereleases:
+
+| Platform | Runner | Asset |
+|---|---|---|
+| Windows | `windows-latest` | portable `ssix.exe` (`npm run tauri build -- --no-bundle`), for users who cannot install MSI packages |
+| macOS, Apple Silicon | `macos-15` | `.dmg` |
+| Linux, x86_64 | `ubuntu-22.04` | `.deb`, `.rpm` and AppImage (`--bundles deb,rpm,appimage`) |
+
+Windows and macOS tests run in their own jobs alongside the builds (Linux
+tests run on every push and pull request in `test.yml`). A small publish job
+uploads the assets only after every job succeeds. The beta builds disable
+release LTO and raise codegen units to cut turnaround time while still
+producing optimized binaries.
 
 The workflow publishes against the actual Git tag (for example
-`v1.0.0-beta.11`) using `gh release --verify-tag`, so the portable executable
-appears on the tagged release page. Windows tests and the portable build run in
-parallel jobs, and a small publish job uploads the produced `ssix.exe` only
-after both succeed. The beta build also disables release LTO while raising
-codegen units during the Windows build to reduce turnaround time while still
-producing an optimized portable EXE.
+`v1.0.0-beta.11`) using `gh release --verify-tag`, so the assets appear on the
+tagged release page. The release notes, with install steps per platform, come
+from `.github/release-notes.md`.
 
 The package version remains semver (`1.0.0`) in `src-tauri/tauri.conf.json`.
 Use prerelease labels on the Git tag and GitHub release name.
@@ -63,9 +68,31 @@ git push origin v1.0.0-beta.1
 The release workflow can also be started manually from the Actions tab by
 providing the release tag input, for example `v1.0.0-beta.1`.
 
-Current portable builds are unsigned and intended for personal use. Download
-`ssix.exe` from the release assets and run it directly. Windows may show
-SmartScreen warnings until code signing is added.
+Current builds are unsigned and intended for personal use:
+
+- **Windows** may show SmartScreen warnings until code signing is added.
+- **macOS**: the app is ad-hoc signed (`bundle.macOS.signingIdentity: "-"`)
+  but not notarized. Without the ad-hoc seal a downloaded copy is reported as
+  damaged; with it, Gatekeeper blocks the first launch and System Settings →
+  Privacy & Security offers **Open Anyway**.
+- **Linux**: the Linux build uses Ubuntu 22.04 because it is the oldest
+  runner with WebKitGTK 4.1. Its glibc (2.35) caps what the binary can
+  require (2.34 today), which Debian 12, Fedora and RHEL 10 all meet. RHEL 10 and its rebuilds get WebKitGTK
+  4.1 from EPEL. RHEL 9 has no WebKitGTK 4.1 at all, so it is not supported.
+
+## Icons
+
+Every file in `src-tauri/icons` is generated from the SVGs in
+`src-tauri/icons/source` by `npm run icons` (`scripts/generate-icons.mjs`):
+
+- `ssix.svg` is the icon itself, used for Windows, Linux, Android and iOS.
+- `ssix-small.svg` replaces it at 16–32 px (the small sizes of `icon.ico`
+  and `32x32.png`), with solid wings instead of the sketched ones, which blur
+  at that size.
+- `icon.icns` puts `ssix.svg` on Apple's icon grid (an 824 px body in the
+  1024 px canvas), so it matches the size of other Dock icons.
+
+Edit the SVGs, run `npm run icons`, and commit the regenerated files.
 
 ## Repo Structure
 
@@ -100,7 +127,7 @@ Continuous integration (`.github/workflows/test.yml`, required on PRs):
 - Backend: `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`, `cargo test`, and a
   `git diff --exit-code src/types/generated/` check so regenerated ts-rs
   bindings are always committed
-- `cargo audit` via `rustsec/audit-check` for advisories in `src-tauri/Cargo.lock`. `src-tauri/.cargo/audit.toml` ignores advisories for optional crates that are in the lockfile but never compiled, with the reason for each
+- `cargo audit` via `rustsec/audit-check` for advisories in `src-tauri/Cargo.lock`. `.cargo/audit.toml` (at the repo root, where the action runs) ignores advisories for optional crates that are in the lockfile but never compiled, with the reason for each
 
 End-to-end:
 

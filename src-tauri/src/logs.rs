@@ -61,7 +61,10 @@ pub fn log_local(level: &str, source: &str, message: impl Into<String>) {
 }
 
 fn push(entry: LogEntry) {
-    let mut buf = BUFFER.lock().unwrap_or_else(|e| e.into_inner());
+    push_into(&mut BUFFER.lock().unwrap_or_else(|e| e.into_inner()), entry);
+}
+
+fn push_into(buf: &mut VecDeque<LogEntry>, entry: LogEntry) {
     if buf.len() >= MAX_ENTRIES {
         buf.pop_front();
     }
@@ -85,16 +88,26 @@ pub fn clear_logs() -> Result<(), String> {
 mod tests {
     use super::*;
 
-    fn reset() {
-        BUFFER.lock().unwrap().clear();
+    // Tests in other modules log through the same global buffer while these
+    // run, so these only look at their own entries (by source) or use a
+    // local buffer. `test_clear` empties the buffer, so the tests that read
+    // it take turns through `SHARED`.
+    static SHARED: Mutex<()> = Mutex::new(());
+
+    fn own_entries(source: &str) -> Vec<LogEntry> {
+        get_logs()
+            .unwrap()
+            .into_iter()
+            .filter(|e| e.source == source)
+            .collect()
     }
 
     #[test]
     fn test_push_and_get() {
-        reset();
-        log_local("info", "test", "hello");
-        log_local("warn", "test", "world");
-        let logs = BUFFER.lock().unwrap();
+        let _turn = SHARED.lock().unwrap_or_else(|e| e.into_inner());
+        log_local("info", "test-push-and-get", "hello");
+        log_local("warn", "test-push-and-get", "world");
+        let logs = own_entries("test-push-and-get");
         assert_eq!(logs.len(), 2);
         assert_eq!(logs[0].message, "hello");
         assert_eq!(logs[1].level, "warn");
@@ -102,25 +115,31 @@ mod tests {
 
     #[test]
     fn test_ring_buffer_evicts_oldest() {
-        reset();
+        let mut buf = VecDeque::new();
         for i in 0..(MAX_ENTRIES + 50) {
-            log_local("info", "test", format!("msg-{i}"));
+            push_into(
+                &mut buf,
+                LogEntry {
+                    ts: 0,
+                    level: "info".to_string(),
+                    source: "test".to_string(),
+                    message: format!("msg-{i}"),
+                },
+            );
         }
-        let logs = BUFFER.lock().unwrap();
-        assert_eq!(logs.len(), MAX_ENTRIES);
-        assert_eq!(logs.front().unwrap().message, format!("msg-{}", 50));
+        assert_eq!(buf.len(), MAX_ENTRIES);
+        assert_eq!(buf.front().unwrap().message, format!("msg-{}", 50));
         assert_eq!(
-            logs.back().unwrap().message,
+            buf.back().unwrap().message,
             format!("msg-{}", MAX_ENTRIES + 49)
         );
     }
 
     #[test]
     fn test_clear() {
-        reset();
-        log_local("info", "test", "x");
-        log_local("info", "test", "y");
-        BUFFER.lock().unwrap().clear();
-        assert!(BUFFER.lock().unwrap().is_empty());
+        let _turn = SHARED.lock().unwrap_or_else(|e| e.into_inner());
+        log_local("info", "test-clear", "x");
+        clear_logs().unwrap();
+        assert!(own_entries("test-clear").is_empty());
     }
 }

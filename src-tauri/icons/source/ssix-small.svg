@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+<!-- The 16-32 px version of ssix.svg: solid wings, no title-bar dots. -->
+<g transform="scale(2.56)">
+<rect width="400" height="400" rx="88" fill="#2E3F55"/>
+<g fill="#FFFFFF" transform="translate(100,214) rotate(12) scale(0.8)"><path d="M8 -2 C -16 -36 -62 -50 -110 -42 C -98 -34 -84 -30 -70 -28 C -88 -22 -100 -12 -104 -2 C -86 -4 -68 -4 -52 -4 C -68 4 -80 14 -84 26 C -58 18 -30 12 -2 16 Z"/></g>
+<g fill="#FFFFFF" transform="translate(300,214) scale(-1,1) rotate(12) scale(0.8)"><path d="M8 -2 C -16 -36 -62 -50 -110 -42 C -98 -34 -84 -30 -70 -28 C -88 -22 -100 -12 -104 -2 C -86 -4 -68 -4 -52 -4 C -68 4 -80 14 -84 26 C -58 18 -30 12 -2 16 Z"/></g>
+<g transform="translate(200,202) scale(1.35) translate(-200,-202)">
+<rect x="128" y="132" width="144" height="140" rx="24" fill="#2E3F55" stroke="#F2C523" stroke-width="14"/>
+<line x1="128" y1="166" x2="272" y2="166" stroke="#F2C523" stroke-width="12"/>
+<g fill="none" stroke-linecap="round" stroke-linejoin="round"><path stroke="#FFFFFF" stroke-width="20" d="M160 192 L188 216 L160 240"/><path stroke="#F2C523" stroke-width="20" d="M204 240 L240 240"/></g>
+</g>
+</g>
+</svg>

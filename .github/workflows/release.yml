@@ -134,6 +134,58 @@ jobs:
           path: src-tauri/target/release/bundle/dmg/*.dmg
           if-no-files-found: error
 
+  linux-build:
+    name: Linux Build (x86_64)
+    # The oldest runner with WebKitGTK 4.1: its glibc 2.35 is older than
+    # Debian 12's, Fedora's and RHEL 10's, so the packages run on all three.
+    runs-on: ubuntu-22.04
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: "24"
+          cache: "npm"
+
+      - name: Install Tauri system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            build-essential \
+            curl \
+            wget \
+            file \
+            libxdo-dev \
+            libssl-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: "src-tauri -> target"
+
+      - run: npm ci
+
+      - name: Build .deb, .rpm and AppImage
+        run: npm run tauri build -- --bundles deb,rpm,appimage
+        env:
+          CARGO_PROFILE_RELEASE_LTO: "false"
+          CARGO_PROFILE_RELEASE_CODEGEN_UNITS: "16"
+
+      - name: Upload Linux packages artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-x86_64-packages
+          path: |
+            src-tauri/target/release/bundle/deb/*.deb
+            src-tauri/target/release/bundle/rpm/*.rpm
+            src-tauri/target/release/bundle/appimage/*.AppImage
+          if-no-files-found: error
+
   publish-release:
     name: Publish Release
     runs-on: ubuntu-latest
@@ -142,6 +194,7 @@ jobs:
       - windows-build
       - macos-tests
       - macos-build
+      - linux-build
 
     steps:
       - uses: actions/checkout@v5
@@ -158,6 +211,12 @@ jobs:
           name: macos-silicon-dmg
           path: release-assets
 
+      - name: Download Linux artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: linux-x86_64-packages
+          path: release-assets
+
       - name: Publish tagged prerelease
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -166,6 +225,7 @@ jobs:
           || gh release create "$RELEASE_TAG"
           --verify-tag
           --title "SSIX $RELEASE_TAG"
-          --notes "Unsigned builds for personal use. Windows: download ssix.exe and run directly (SmartScreen warning expected). macOS Apple Silicon: download the .dmg, open it, drag to Applications (Gatekeeper warning expected — right-click the app and choose Open to bypass)."
+          --notes-file .github/release-notes.md
           --prerelease
-          && gh release upload "$RELEASE_TAG" release-assets/ssix.exe release-assets/*.dmg --clobber
+          && gh release upload "$RELEASE_TAG" release-assets/ssix.exe release-assets/*.dmg
+          release-assets/*.deb release-assets/*.rpm release-assets/*.AppImage --clobber
