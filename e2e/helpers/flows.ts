@@ -8,7 +8,7 @@
  */
 import { sel } from "./selectors.js";
 
-async function fill(selector: string, value: string): Promise<void> {
+export async function fill(selector: string, value: string): Promise<void> {
   const el = await browser.$(selector);
   await el.waitForExist({ timeout: 10_000 });
   await el.waitForClickable({ timeout: 10_000 });
@@ -16,7 +16,7 @@ async function fill(selector: string, value: string): Promise<void> {
   await el.setValue(value);
 }
 
-async function click(selector: string): Promise<void> {
+export async function click(selector: string): Promise<void> {
   const el = await browser.$(selector);
   await el.waitForClickable({ timeout: 10_000 });
   await el.click();
@@ -83,6 +83,33 @@ export async function textContentOf(el: WebdriverIO.Element): Promise<string> {
   return browser.execute((node: HTMLElement) => node.textContent ?? "", el as unknown as HTMLElement);
 }
 
+/**
+ * Choose the option whose `data-name` is `name` in the Radix Select behind
+ * `triggerSelector`, and confirm the trigger now shows it. A click that
+ * lands while the listbox is still opening closes it without selecting;
+ * the form would then save with no credential and fail much later, so
+ * the pick is verified and retried.
+ */
+export async function pickCredential(triggerSelector: string, name: string): Promise<void> {
+  const trigger = await browser.$(triggerSelector);
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    await trigger.waitForClickable({ timeout: 10_000 });
+    await trigger.click();
+    const option = await browser.$(`[role="option"][data-name="${name}"]`);
+    await option.waitForClickable({ timeout: 10_000 });
+    await option.click();
+    const picked = await browser
+      .waitUntil(async () => (await textContentOf(trigger)).includes(name), { timeout: 2_000 })
+      .catch(() => false);
+    if (picked) return;
+    // Close a listbox the missed click left open before trying again.
+    if (await (await browser.$('[role="listbox"]')).isExisting()) {
+      await browser.keys(["Escape"]);
+    }
+  }
+  throw new Error(`Could not select "${name}" in ${triggerSelector}`);
+}
+
 export async function openCredentialEditor(name: string): Promise<void> {
   await navigateTo("credentials");
   const row = await browser.$(sel.credentialRowByName(name));
@@ -118,14 +145,7 @@ export async function createDirectConnection(input: DirectConnectionInput): Prom
   await click(sel.connectionFormKindDirect);
   await fill(sel.connectionFormHost, input.host);
   await fill(sel.connectionFormPort, String(input.port));
-  // Credential picker — implementation-specific; tests select by visible
-  // label. Adjust selector once the picker exposes its options.
-  const credentialPicker = await browser.$(sel.connectionFormCredential);
-  await credentialPicker.waitForClickable({ timeout: 10_000 });
-  await credentialPicker.click();
-  const opt = await browser.$(`[role="option"][data-name="${input.credentialName}"]`);
-  await opt.waitForClickable({ timeout: 10_000 });
-  await opt.click();
+  await pickCredential(sel.connectionFormCredential, input.credentialName);
   if (input.tags && input.tags.length > 0) {
     const tagsInput = await browser.$("#tags");
     await tagsInput.waitForExist({ timeout: 10_000 });
