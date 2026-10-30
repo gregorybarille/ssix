@@ -161,64 +161,80 @@ pub async fn update_connection(input: UpdateConnectionInput) -> Result<Connectio
 }
 
 fn update_connection_sync(input: UpdateConnectionInput) -> Result<Connection, String> {
+    validate_connection_fields(&input.fields.name, &input.fields.host, input.fields.port)?;
+    let (updated, orphaned_private) = with_data_mut(|data| apply_update(data, input))?;
+    // Secrets go only once the save succeeded: deleting them inside the
+    // transaction would leave a failed save pointing at a credential with
+    // no password, hidden from the user.
+    if let Some(old_id) = orphaned_private {
+        crate::keychain::delete_all_for_credential(&old_id);
+    }
+    Ok(updated)
+}
+
+/// The edit itself, on the loaded data. Never touches the keychain: a
+/// private credential the edit leaves unused is removed from `data` and its
+/// id returned, for the caller to delete its secrets after the save.
+fn apply_update(
+    data: &mut AppData,
+    input: UpdateConnectionInput,
+) -> Result<(Connection, Option<String>), String> {
     let id = input.id;
     let f = input.fields;
-    validate_connection_fields(&f.name, &f.host, f.port)?;
-    with_data_mut(|data| {
-        if data
-            .connections
-            .iter()
-            .any(|c| c.name == f.name && c.id != id)
-        {
-            return Err(format!("A connection named '{}' already exists", f.name));
-        }
-        validate_connection_credentials(&data.credentials, f.credential_id.as_deref(), &f.kind)?;
-        let idx = data
-            .connections
-            .iter()
-            .position(|c| c.id == id)
-            .ok_or_else(|| "Connection not found".to_string())?;
+    let mut orphaned_private: Option<String> = None;
+    if data
+        .connections
+        .iter()
+        .any(|c| c.name == f.name && c.id != id)
+    {
+        return Err(format!("A connection named '{}' already exists", f.name));
+    }
+    validate_connection_credentials(&data.credentials, f.credential_id.as_deref(), &f.kind)?;
+    let idx = data
+        .connections
+        .iter()
+        .position(|c| c.id == id)
+        .ok_or_else(|| "Connection not found".to_string())?;
 
-        // Capture the old credential_id before overwriting so we can clean up
-        // an orphaned private credential if the auth method changes.
-        let old_cred_id = data.connections[idx].credential_id.clone();
+    // Capture the old credential_id before overwriting so we can clean up
+    // an orphaned private credential if the auth method changes.
+    let old_cred_id = data.connections[idx].credential_id.clone();
 
-        data.connections[idx].name = f.name;
-        data.connections[idx].host = f.host;
-        data.connections[idx].port = f.port;
-        data.connections[idx].credential_id = f.credential_id.clone();
-        data.connections[idx].kind = f.kind;
-        data.connections[idx].verbosity = f.verbosity;
-        data.connections[idx].extra_args = f.extra_args;
-        data.connections[idx].login_command = normalize_optional_text(f.login_command);
-        data.connections[idx].remote_path = normalize_remote_path(f.remote_path);
-        data.connections[idx].tags = normalize_tags(f.tags);
-        data.connections[idx].color = f.color;
-        let updated = data.connections[idx].clone();
+    data.connections[idx].name = f.name;
+    data.connections[idx].host = f.host;
+    data.connections[idx].port = f.port;
+    data.connections[idx].credential_id = f.credential_id.clone();
+    data.connections[idx].kind = f.kind;
+    data.connections[idx].verbosity = f.verbosity;
+    data.connections[idx].extra_args = f.extra_args;
+    data.connections[idx].login_command = normalize_optional_text(f.login_command);
+    data.connections[idx].remote_path = normalize_remote_path(f.remote_path);
+    data.connections[idx].tags = normalize_tags(f.tags);
+    data.connections[idx].color = f.color;
+    let updated = data.connections[idx].clone();
 
-        // If the credential changed and the old one was private, check whether it
-        // is still referenced by another connection. If not, delete it so it
-        // doesn't become an invisible orphan.
-        if let Some(ref old_id) = old_cred_id {
-            if f.credential_id.as_deref() != Some(old_id.as_str()) {
-                let is_private = data
-                    .credentials
+    // If the credential changed and the old one was private, check whether it
+    // is still referenced by another connection. If not, delete it so it
+    // doesn't become an invisible orphan.
+    if let Some(ref old_id) = old_cred_id {
+        if f.credential_id.as_deref() != Some(old_id.as_str()) {
+            let is_private = data
+                .credentials
+                .iter()
+                .any(|c| c.id == *old_id && c.is_private);
+            if is_private {
+                let still_referenced = data
+                    .connections
                     .iter()
-                    .any(|c| c.id == *old_id && c.is_private);
-                if is_private {
-                    let still_referenced = data
-                        .connections
-                        .iter()
-                        .any(|c| c.credential_ids().any(|id| id == old_id));
-                    if !still_referenced {
-                        data.credentials.retain(|c| c.id != *old_id);
-                        crate::keychain::delete_all_for_credential(old_id);
-                    }
+                    .any(|c| c.credential_ids().any(|id| id == old_id));
+                if !still_referenced {
+                    data.credentials.retain(|c| c.id != *old_id);
+                    orphaned_private = Some(old_id.clone());
                 }
             }
         }
-        Ok(updated)
-    })
+    }
+    Ok((updated, orphaned_private))
 }
 
 #[tauri::command]
@@ -679,6 +695,47 @@ mod tests {
             add_connection_sync(AddConnectionInput { fields }).unwrap();
             // Still the jump shell's gateway credential: not an orphan.
             assert_eq!(get_orphan_private_credential(direct.id).unwrap(), None);
+        });
+    }
+
+    #[test]
+    fn test_update_deletes_a_replaced_private_credential_only_after_the_save() {
+        with_isolated_data_dir(|| {
+            let private = private_credential("inline-x");
+            let saved = password_credential("saved");
+            store_credential(&saved);
+            let conn = add_connection_sync(AddConnectionInput {
+                fields: direct_fields(Some(private.id.clone())),
+            })
+            .unwrap();
+            let secrets = crate::keychain::secrets_path();
+
+            // The transaction alone drops the credential but keeps its
+            // secrets, so a save that then fails loses nothing.
+            let mut data = load_data().unwrap();
+            let (_, orphaned) = apply_update(
+                &mut data,
+                UpdateConnectionInput {
+                    id: conn.id.clone(),
+                    fields: direct_fields(Some(saved.id.clone())),
+                },
+            )
+            .unwrap();
+            assert_eq!(orphaned.as_deref(), Some(private.id.as_str()));
+            assert!(!data.credentials.iter().any(|c| c.id == private.id));
+            assert!(std::fs::read_to_string(&secrets)
+                .unwrap()
+                .contains("s3cret"));
+
+            // The command deletes them once the save went through.
+            update_connection_sync(UpdateConnectionInput {
+                id: conn.id,
+                fields: direct_fields(Some(saved.id.clone())),
+            })
+            .unwrap();
+            assert!(!std::fs::read_to_string(&secrets)
+                .unwrap()
+                .contains("s3cret"));
         });
     }
 
