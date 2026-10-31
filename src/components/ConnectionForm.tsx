@@ -42,6 +42,7 @@ import { UploadCloud } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { submitWithoutReset } from "@/lib/formSubmit";
 import { useUnsavedChangesGuard } from "@/hooks/useUnsavedChangesGuard";
+import { useLeaveViewGuard } from "@/hooks/useLeaveViewGuard";
 import { useDialogsStore } from "@/store/useDialogsStore";
 import { ConfirmDialog } from "./ConfirmDialog";
 
@@ -324,6 +325,7 @@ export function ConnectionForm({
     setConnFormGuard((proceed) => requestClose(proceed));
     return () => setConnFormGuard(null);
   }, [open, requestClose, setConnFormGuard]);
+  useLeaveViewGuard(open, requestClose, () => onOpenChange(false));
 
   const isTwoHop = connectionType !== "direct";
   const isWindows = detectPlatform() === "windows";

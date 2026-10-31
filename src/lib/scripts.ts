@@ -46,15 +46,6 @@ export function scriptStatus(result: ScriptResult): StepStatus {
   return result.exit_code === 0 ? "success" : "error";
 }
 
-/** How the script ended, for the result header and the log. */
-export function describeScriptEnd(result: ScriptResult): string {
-  if (result.cancelled) return "cancelled";
-  if (result.timed_out) return "stopped at the time limit";
-  if (result.exit_signal) return `killed by SIG${result.exit_signal}`;
-  if (result.exit_code == null) return "no exit status";
-  return `exit ${result.exit_code}`;
-}
-
 export function formatDuration(ms: number): string {
   if (ms < 1000) return `${ms} ms`;
   const seconds = ms / 1000;

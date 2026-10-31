@@ -183,6 +183,10 @@ export const sel = {
   scriptFormBody: '[data-testid="script-form-body"]',
   scriptFormSubmit: '[data-testid="script-form-submit"]',
   scriptFormCancel: '[data-testid="script-form-cancel"]',
+  // "Discard unsaved changes?" for the script editor.
+  scriptDiscard: '[data-testid="script-discard"]',
+  scriptDiscardConfirm: '[data-testid="script-discard-confirm"]',
+  scriptDiscardCancel: '[data-testid="script-discard-cancel"]',
   scriptRowByName: (name: string) => `[data-testid="script-row"][data-name="${name}"]`,
   // Scoped under a script row.
   scriptRowSelect: '[data-testid="script-row-select"]',

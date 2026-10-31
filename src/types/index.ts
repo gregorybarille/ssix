@@ -283,6 +283,8 @@ export interface ScriptResult {
   timed_out: boolean;
   /** The user cancelled the run before the script finished. */
   cancelled: boolean;
+  /** How the script ended, for the result card and the log: `exit 3`, `killed by SIGTERM`, `cancelled`... */
+  end: string;
 }
 
 export interface GitSyncStatus {

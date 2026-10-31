@@ -450,10 +450,11 @@ pub fn delete(name: &str) -> Result<(), String> {
         .map_err(|e| format!("Could not delete {}: {}", name, e))
 }
 
-/// Delete the oldest automatic backups beyond `keep`; manual and
-/// before-restore backups are left for the user to delete.
-fn prune(dir: &Path, keep: usize) -> Result<Vec<String>, String> {
-    let removed: Vec<String> = list_in(dir)?
+/// Delete the oldest automatic backups beyond `keep` from `backups`, the
+/// folder's listing newest first; manual and before-restore backups are
+/// left for the user to delete.
+fn prune(dir: &Path, backups: Vec<BackupInfo>, keep: usize) -> Result<Vec<String>, String> {
+    let removed: Vec<String> = backups
         .into_iter()
         .filter(|b| b.reason == Some(BackupReason::Automatic))
         .skip(keep.max(1))
@@ -477,7 +478,8 @@ fn run_due(dir: &Path, now: u64) -> Result<Option<BackupInfo>, String> {
     if !settings.backup_enabled {
         return Ok(None);
     }
-    let newest = list_in(dir)?.into_iter().find(|b| b.error.is_none());
+    let backups = list_in(dir)?;
+    let newest = backups.iter().find(|b| b.error.is_none());
     if !is_due(
         now,
         newest.as_ref().map(|b| b.created_at),
@@ -489,7 +491,7 @@ fn run_due(dir: &Path, now: u64) -> Result<Option<BackupInfo>, String> {
     if !has_data(&files) {
         return Ok(None);
     }
-    if let Some(newest) = &newest {
+    if let Some(newest) = newest {
         let unchanged = open_zip(&dir.join(&newest.name))
             .and_then(|mut zip| read_manifest(&mut zip))
             .map(|m| m.files == manifest_files(&files))
@@ -499,7 +501,9 @@ fn run_due(dir: &Path, now: u64) -> Result<Option<BackupInfo>, String> {
         }
     }
     let info = write_archive(dir, &files, BackupReason::Automatic, now)?;
-    prune(dir, settings.backup_keep as usize)?;
+    // Being due means `now` is past every backup, so the new one leads.
+    let backups = std::iter::once(info.clone()).chain(backups).collect();
+    prune(dir, backups, settings.backup_keep as usize)?;
     Ok(Some(info))
 }
 
@@ -694,7 +698,7 @@ mod tests {
             for i in 0..4 {
                 write_archive(&dir, &files, BackupReason::Automatic, 2_000 + i).unwrap();
             }
-            let removed = prune(&dir, 2).unwrap();
+            let removed = prune(&dir, list_in(&dir).unwrap(), 2).unwrap();
             assert_eq!(removed.len(), 2);
             let left = list_in(&dir).unwrap();
             assert_eq!(left.len(), 3);

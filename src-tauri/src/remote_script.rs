@@ -6,15 +6,17 @@
 //! from both streams until the remote side closes the channel.
 //!
 //! On a POSIX host the interpreter is started through a POSIX `sh` that
-//! first prints its PID on stdout (held back from the output). sshd starts
+//! first prints a line with the run's marker and its PID on stdout (taken
+//! out of the output; a login shell may print lines before it). sshd starts
 //! every session in a new process group led by that process, so the PID
 //! names the group the script and everything it started belong to.
 //!
 //! On Windows the command line is read by cmd or PowerShell, whichever is
 //! the server's default shell, so it carries only plain words: PowerShell
-//! with a fixed `-EncodedCommand` bootstrap that reads the body from stdin
-//! (after a line giving its length) and runs it. Its errors are stripped of
-//! the colour codes PowerShell 7 adds.
+//! with a fixed `-EncodedCommand` bootstrap. stdin carries a prelude, which
+//! puts PowerShell in a new job object and starts a thread watching for the
+//! run's stop file, and then the body. Its errors are stripped of the
+//! colour codes PowerShell 7 adds.
 //!
 //! The session runs non-blocking for the whole run: the setup timeout of a
 //! blocking session would cut off any script that is quiet for 15 s, and
@@ -25,10 +27,16 @@
 //! `STOP_GRACE` to exit, and then its channel is closed. Closing the channel
 //! alone would leave the script running, and libssh2 cannot send the SSH
 //! `signal` request on a channel that has already started. So on POSIX
-//! `kill -s TERM -<group>` runs on a second channel of the same session. On
-//! Windows a second session's `taskkill` is refused ("Access denied"), so
-//! the stop is cooperative: stdin stays open after the body, and the
-//! bootstrap stops the script's processes and exits once stdin closes.
+//! `kill -s TERM -<group>` runs on a second channel of the same session; a
+//! stop asked for before the PID line arrived waits for it. On Windows a
+//! second session's `taskkill` is refused ("Access denied"), so the stop
+//! is cooperative: a second channel creates the run's stop file in
+//! `%TEMP%`, and the prelude's thread terminates the job, ending the script
+//! and everything it started at once.
+//!
+//! The exit status is only read once the server has closed the channel,
+//! since it sends the status just before closing; a run whose channel did
+//! not close has none.
 
 use crate::models::ScriptPlatform;
 use crate::ssh::{close_channel, is_eagain, wake};
@@ -71,7 +79,8 @@ pub struct ScriptResult {
     pub stdout: String,
     pub stderr: String,
     /// The remote exit status; `None` when the script was killed by a
-    /// signal, cancelled or stopped at the time limit.
+    /// signal, cancelled or stopped at the time limit, or the server sent
+    /// none.
     pub exit_code: Option<i32>,
     /// The signal that ended the script, without the `SIG` prefix.
     pub exit_signal: Option<String>,
@@ -83,10 +92,50 @@ pub struct ScriptResult {
     pub timed_out: bool,
     /// The user cancelled the run before the script finished.
     pub cancelled: bool,
+    /// How the script ended, for the result card and the log: `exit 3`,
+    /// `killed by SIGTERM`, `cancelled`, ...
+    pub end: String,
 }
 
-/// Longest first line still taken for a PID.
-const PID_LINE_MAX: usize = 20;
+impl ScriptResult {
+    /// The result of a run cancelled before the script started.
+    pub fn cancelled_before_start() -> Self {
+        Self {
+            stdout: String::new(),
+            stderr: String::new(),
+            exit_code: None,
+            exit_signal: None,
+            duration_ms: 0,
+            truncated: false,
+            timed_out: false,
+            cancelled: true,
+            end: String::new(),
+        }
+        .with_end()
+    }
+
+    fn with_end(mut self) -> Self {
+        self.end = describe_end(&self);
+        self
+    }
+}
+
+fn describe_end(result: &ScriptResult) -> String {
+    if result.cancelled {
+        return "cancelled".to_string();
+    }
+    if result.timed_out {
+        return "stopped at the time limit".to_string();
+    }
+    match (&result.exit_signal, result.exit_code) {
+        (Some(signal), _) => format!("killed by SIG{}", signal),
+        (None, Some(code)) => format!("exit {}", code),
+        (None, None) => "no exit status".to_string(),
+    }
+}
+
+/// Longest PID, in digits, after the marker.
+const PID_DIGITS_MAX: usize = 10;
 
 /// Runs a Windows script. stdin holds, as UTF-8, the length of
 /// `POWERSHELL_PRELUDE` in UTF-16 units on one line, the prelude, then the
@@ -179,13 +228,21 @@ fn encoded_powershell(interpreter: &str, flags: &str, script: &str) -> String {
     )
 }
 
-/// The command that starts the script. On POSIX `sh` prints its PID, which
-/// leads the session's process group and is what a stop signals, then runs
-/// the interpreter. `run_id` names the Windows stop file.
+/// What the POSIX wrapper prints before its PID: unique to run `run_id`, so
+/// no output of the script or the login shell is taken for it.
+fn pid_marker(run_id: &str) -> String {
+    format!("ssix-pid-{} ", run_id)
+}
+
+/// The command that starts the script. On POSIX `sh` prints its PID after
+/// the run's marker (the PID leads the session's process group and is what
+/// a stop signals), then runs the interpreter. `run_id` names the Windows
+/// stop file.
 fn wrapped_command(platform: ScriptPlatform, interpreter: &str, run_id: &str) -> String {
     match platform {
         ScriptPlatform::Posix => format!(
-            "exec sh -c 'echo $$; {}'",
+            "exec sh -c 'echo {}$$; {}'",
+            pid_marker(run_id),
             interpreter.replace('\'', r"'\''")
         ),
         ScriptPlatform::Windows => encoded_powershell(
@@ -197,8 +254,10 @@ fn wrapped_command(platform: ScriptPlatform, interpreter: &str, run_id: &str) ->
 }
 
 /// The command, run on a second channel, that stops the script: SIGTERM to
-/// its process group on POSIX (none without the group's PID), the run's
-/// stop file on Windows.
+/// its process group on POSIX (none until the group's PID is known), the
+/// run's stop file on Windows. The Windows command removes the file itself
+/// when nothing takes it within 2 s (the script had ended, or its watcher
+/// never started), so none is left behind.
 fn stop_command(
     platform: ScriptPlatform,
     interpreter: &str,
@@ -211,7 +270,9 @@ fn stop_command(
             interpreter,
             "",
             &format!(
-                "[IO.File]::WriteAllText([IO.Path]::Combine($env:TEMP, '{}'), '')",
+                "$f = [IO.Path]::Combine($env:TEMP, '{}'); [IO.File]::WriteAllText($f, ''); \
+                 for ($i = 0; $i -lt 10 -and [IO.File]::Exists($f); $i++) {{ [Threading.Thread]::Sleep(200) }}; \
+                 [IO.File]::Delete($f)",
                 stop_file(run_id)
             ),
         )),
@@ -244,51 +305,49 @@ fn strip_colours(text: &str) -> String {
 struct Capture {
     bytes: Vec<u8>,
     truncated: bool,
-    /// The first line while it is held back to be read as a PID.
-    pid_line: Option<Vec<u8>>,
+    /// The marker of the PID line while it is still awaited.
+    marker: Option<Vec<u8>>,
+    /// The start of a line that may turn out to be the PID line.
+    pending: Vec<u8>,
     pid: Option<u32>,
 }
 
 impl Capture {
-    /// A stream whose first line is the PID printed by `wrapped_command`.
-    fn with_pid_line() -> Self {
+    /// A stream carrying the line `<marker><pid>` printed by
+    /// `wrapped_command`, possibly after lines the login shell printed.
+    fn with_pid_marker(marker: String) -> Self {
         Self {
-            pid_line: Some(Vec::new()),
+            marker: Some(marker.into_bytes()),
             ..Self::default()
         }
     }
 
     fn push(&mut self, chunk: &[u8]) {
-        let Some(line) = self.pid_line.as_mut() else {
+        let Some(marker) = self.marker.clone() else {
             return self.keep(chunk);
         };
-        match chunk.iter().position(|&b| b == b'\n') {
-            Some(end) => {
-                line.extend_from_slice(&chunk[..end]);
-                let line = self.pid_line.take().unwrap_or_default();
-                self.pid = std::str::from_utf8(&line)
-                    .ok()
-                    .and_then(|l| l.trim().parse().ok());
-                if self.pid.is_none() {
-                    // Not our PID line: it is output.
-                    self.keep(&line);
-                    self.keep(b"\n");
-                }
-                self.keep(&chunk[end + 1..]);
+        self.pending.extend_from_slice(chunk);
+        while let Some(end) = self.pending.iter().position(|&b| b == b'\n') {
+            let line: Vec<u8> = self.pending.drain(..=end).collect();
+            let pid = line
+                .strip_prefix(marker.as_slice())
+                .and_then(|rest| std::str::from_utf8(rest).ok())
+                .and_then(|rest| rest.trim().parse().ok());
+            if pid.is_some() {
+                self.pid = pid;
+                self.marker = None;
+                let rest = std::mem::take(&mut self.pending);
+                return self.keep(&rest);
             }
-            None => {
-                line.extend_from_slice(chunk);
-                if line.len() > PID_LINE_MAX {
-                    self.release_pid_line();
-                }
-            }
-        }
-    }
-
-    /// Give a held-back first line to the output.
-    fn release_pid_line(&mut self) {
-        if let Some(line) = self.pid_line.take() {
             self.keep(&line);
+        }
+        // A partial line that cannot become the PID line is output now.
+        let pending = &self.pending;
+        let may_be_pid_line = pending.len() <= marker.len() + PID_DIGITS_MAX
+            && (marker.starts_with(pending) || pending.starts_with(&marker));
+        if !may_be_pid_line {
+            let rest = std::mem::take(&mut self.pending);
+            self.keep(&rest);
         }
     }
 
@@ -302,7 +361,8 @@ impl Capture {
     }
 
     fn text(&mut self) -> String {
-        self.release_pid_line();
+        let rest = std::mem::take(&mut self.pending);
+        self.keep(&rest);
         String::from_utf8_lossy(&self.bytes).into_owned()
     }
 }
@@ -337,16 +397,7 @@ pub fn run(
     let started = Instant::now();
     // Connecting can take a while; a run cancelled meanwhile never starts.
     if cancelled() {
-        return Ok(ScriptResult {
-            stdout: String::new(),
-            stderr: String::new(),
-            exit_code: None,
-            exit_signal: None,
-            duration_ms: 0,
-            truncated: false,
-            timed_out: false,
-            cancelled: true,
-        });
+        return Ok(ScriptResult::cancelled_before_start());
     }
     let mut channel = session
         .channel_session()
@@ -363,16 +414,20 @@ pub fn run(
 
     session.set_blocking(false);
     let input = script_input(platform, body);
+    let stdout = match platform {
+        ScriptPlatform::Posix => Capture::with_pid_marker(pid_marker(&run_id)),
+        ScriptPlatform::Windows => Capture::default(),
+    };
     let pumped = pump(
         session,
-        platform,
+        stdout,
         &|group| stop_command(platform, interpreter, &run_id, group),
         &mut channel,
         input.as_bytes(),
         started + timeout,
         cancelled,
     );
-    close_channel(&mut channel);
+    let closed = close_channel(&mut channel);
     session.set_blocking(true);
     let (mut stdout, mut stderr, stop) = pumped?;
 
@@ -381,7 +436,8 @@ pub fn run(
         .ok()
         .and_then(|s| s.exit_signal)
         .filter(|s| !s.is_empty());
-    let exit_code = if stop.is_some() || exit_signal.is_some() {
+    // libssh2 reports 0 when no status arrived; it arrives before the close.
+    let exit_code = if stop.is_some() || exit_signal.is_some() || !closed {
         None
     } else {
         channel.exit_status().ok()
@@ -400,7 +456,9 @@ pub fn run(
         truncated: stdout.truncated || stderr.truncated,
         timed_out: stop == Some(Stop::TimedOut),
         cancelled: stop == Some(Stop::Cancelled),
-    })
+        end: String::new(),
+    }
+    .with_end())
 }
 
 /// Whether a Windows server runs commands through PowerShell rather than
@@ -439,14 +497,15 @@ fn run_stop_command(session: &Session, command: &str) {
     session.set_blocking(false);
 }
 
-/// Feed `input` to the channel and collect both output streams until the
-/// remote side sends EOF. At `deadline`, or once `cancelled` returns true,
-/// the script is stopped with `stop_command(pid)`, given the PID the POSIX
-/// wrapper printed, and gets `STOP_GRACE` to exit.
+/// Feed `input` to the channel and collect both output streams, stdout
+/// into `stdout`, until the remote side sends EOF. At `deadline`, or once
+/// `cancelled` returns true, the script is stopped with `stop_command(pid)`,
+/// given the PID the POSIX wrapper printed (waiting for it if it has not
+/// arrived yet), and gets `STOP_GRACE` to exit.
 /// Returns stdout, stderr and why the run was stopped, if it was.
 fn pump(
     session: &Session,
-    platform: ScriptPlatform,
+    mut stdout: Capture,
     stop_command: &dyn Fn(Option<u32>) -> Option<String>,
     channel: &mut Channel,
     mut input: &[u8],
@@ -454,14 +513,11 @@ fn pump(
     cancelled: &dyn Fn() -> bool,
 ) -> Result<(Capture, Capture, Option<Stop>), String> {
     let fds = [wake::fd_of(session)];
-    let mut stdout = match platform {
-        ScriptPlatform::Posix => Capture::with_pid_line(),
-        ScriptPlatform::Windows => Capture::default(),
-    };
     let mut stderr = Capture::default();
     let mut buf = vec![0u8; 32 * 1024];
     let mut eof_sent = false;
     let mut stop = None;
+    let mut stop_sent = false;
     let mut give_up = deadline;
 
     loop {
@@ -513,16 +569,22 @@ fn pump(
                 None
             };
             if stop.is_some() {
-                // Without a stop command there is nothing to wait for.
-                give_up = now;
+                // Time for the PID to arrive, if it has not yet.
+                give_up = now + STOP_GRACE;
+            }
+        }
+        if stop.is_some() {
+            if !stop_sent {
                 if let Some(command) = stop_command(stdout.pid) {
                     run_stop_command(session, &command);
+                    stop_sent = true;
                     give_up = Instant::now() + STOP_GRACE;
+                    continue;
                 }
-                continue;
             }
-        } else if now >= give_up {
-            return Ok((stdout, stderr, stop));
+            if now >= give_up {
+                return Ok((stdout, stderr, stop));
+            }
         }
         if !progressed {
             wake::wait_readable(&fds, IDLE_WAIT.min(give_up.saturating_duration_since(now)));
@@ -549,35 +611,43 @@ mod tests {
 
     #[test]
     fn capture_takes_the_pid_line_out_of_the_output() {
-        let mut c = Capture::with_pid_line();
-        c.push(b"12");
+        let marker = || Capture::with_pid_marker(pid_marker("r1"));
+        let mut c = marker();
+        c.push(b"ssix-pid-r");
+        c.push(b"1 12");
         c.push(b"34\nhello\n");
         assert_eq!(c.pid, Some(1234));
         assert_eq!(c.text(), "hello\n");
 
-        // A first line that is not a PID stays in the output.
-        let mut c = Capture::with_pid_line();
+        // Lines a login shell prints first stay in the output, and the
+        // script's own output is never taken for the PID.
+        let mut c = marker();
+        c.push(b"Welcome\n42\nssix-pid-r1 77\nssix-pid-r1 88\n");
+        assert_eq!(c.pid, Some(77));
+        assert_eq!(c.text(), "Welcome\n42\nssix-pid-r1 88\n");
+
+        // Without the PID line everything is output, the partial last line
+        // as soon as it cannot become the PID line.
+        let mut c = marker();
         c.push(b"sh: not found\nmore");
         assert_eq!(c.pid, None);
-        assert_eq!(c.text(), "sh: not found\nmore");
-
-        // So does a long first line, and one that never ends.
-        let mut c = Capture::with_pid_line();
-        c.push(&[b'x'; PID_LINE_MAX + 1]);
-        c.push(b"y");
-        assert_eq!(c.text().len(), PID_LINE_MAX + 2);
-        let mut c = Capture::with_pid_line();
-        c.push(b"42");
-        assert_eq!(c.text(), "42");
+        assert_eq!(c.bytes, b"sh: not found\nmore");
+        let mut c = marker();
+        c.push(b"ssix-pid-r1 123456789012");
+        assert_eq!(c.bytes.len(), 24);
+        let mut c = marker();
+        c.push(b"ssix-pid");
+        assert!(c.bytes.is_empty());
+        assert_eq!(c.text(), "ssix-pid");
     }
 
     #[test]
     fn wrapped_command_quotes_the_interpreter() {
         let posix = |i| wrapped_command(ScriptPlatform::Posix, i, "r1");
-        assert_eq!(posix("sh -s"), "exec sh -c 'echo $$; sh -s'");
+        assert_eq!(posix("sh -s"), "exec sh -c 'echo ssix-pid-r1 $$; sh -s'");
         assert_eq!(
             posix("sudo -u 'app user' sh -s"),
-            r"exec sh -c 'echo $$; sudo -u '\''app user'\'' sh -s'"
+            r"exec sh -c 'echo ssix-pid-r1 $$; sudo -u '\''app user'\'' sh -s'"
         );
     }
 
@@ -659,6 +729,35 @@ mod tests {
         // Other escapes, and a lone ESC, are left alone.
         assert_eq!(strip_colours("a\x1b[2Jb\x1b"), "a\x1b[2Jb\x1b");
         assert_eq!(strip_colours("plain"), "plain");
+    }
+
+    #[test]
+    fn end_describes_each_ending() {
+        let base = ScriptResult {
+            exit_code: Some(3),
+            duration_ms: 1,
+            cancelled: false,
+            ..ScriptResult::cancelled_before_start()
+        };
+        assert_eq!(describe_end(&base), "exit 3");
+        let killed = ScriptResult {
+            exit_code: None,
+            exit_signal: Some("TERM".into()),
+            ..base.clone()
+        };
+        assert_eq!(describe_end(&killed), "killed by SIGTERM");
+        let stopped = ScriptResult {
+            exit_code: None,
+            timed_out: true,
+            ..base.clone()
+        };
+        assert_eq!(describe_end(&stopped), "stopped at the time limit");
+        let silent = ScriptResult {
+            exit_code: None,
+            ..base.clone()
+        };
+        assert_eq!(describe_end(&silent), "no exit status");
+        assert_eq!(ScriptResult::cancelled_before_start().end, "cancelled");
     }
 
     #[test]
@@ -858,12 +957,13 @@ mod live {
 
         let check = t.run_to_end(t.pick(
             "ps | grep -q '[s]leep 30' && exit 1\nexit 0\n",
-            "if (Get-Process ping -ErrorAction SilentlyContinue) { exit 1 }\nexit 0\n",
+            "if (Get-Process ping -ErrorAction SilentlyContinue) { exit 1 }\n\
+             if (Get-ChildItem $env:TEMP -Filter 'ssix-*.stop') { exit 2 }\nexit 0\n",
         ));
         assert_eq!(
             check.exit_code,
             Some(0),
-            "the script's child still runs: {:?}",
+            "the script's child still runs (1) or its stop file is left (2): {:?}",
             check
         );
     }

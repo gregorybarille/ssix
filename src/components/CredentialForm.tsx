@@ -18,6 +18,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "./ui/tabs";
 import { GenerateKeyDialog, GeneratedKey, KeyStorageMode } from "./GenerateKeyDialog";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { useUnsavedChangesGuard } from "@/hooks/useUnsavedChangesGuard";
+import { useLeaveViewGuard } from "@/hooks/useLeaveViewGuard";
 import { useDialogsStore } from "@/store/useDialogsStore";
 import { useFieldErrors } from "@/hooks/useFieldErrors";
 import { pickFile } from "@/lib/dialog";
@@ -222,6 +223,7 @@ export function CredentialForm({
     setCredFormGuard((proceed) => requestClose(proceed));
     return () => setCredFormGuard(null);
   }, [open, requestClose, setCredFormGuard]);
+  useLeaveViewGuard(open, requestClose, () => onOpenChange(false));
 
   const handleGenerated = (key: GeneratedKey, mode: KeyStorageMode) => {
     setGeneratedPublicKey(key.public_key);

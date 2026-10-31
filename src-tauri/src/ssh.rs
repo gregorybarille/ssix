@@ -696,19 +696,20 @@ pub(crate) fn is_eagain(e: &ssh2::Error) -> bool {
 /// Close a channel, retrying on `EAGAIN`: on a non-blocking session a
 /// single `close()` may only queue the request, and dropping the channel
 /// then leaks it in libssh2 (and half-open on the server) until the
-/// session ends.
-pub(crate) fn close_channel(channel: &mut ssh2::Channel) {
+/// session ends. Returns whether the server's close arrived; OpenSSH sends
+/// a command's exit status just before it, so only then is the status known.
+pub(crate) fn close_channel(channel: &mut ssh2::Channel) -> bool {
     let deadline = Instant::now() + CLOSE_TIMEOUT;
     let retry = |step: &mut dyn FnMut() -> Result<(), ssh2::Error>| loop {
         match step() {
             Err(e) if is_eagain(&e) && Instant::now() < deadline => {
                 thread::sleep(Duration::from_millis(1));
             }
-            _ => return,
+            result => return result.is_ok(),
         }
     };
     retry(&mut || channel.close());
-    retry(&mut || channel.wait_close());
+    retry(&mut || channel.wait_close())
 }
 
 /// Write all of `data` to a non-blocking writer so a large paste or burst

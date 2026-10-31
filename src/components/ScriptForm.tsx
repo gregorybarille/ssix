@@ -15,6 +15,7 @@ import {
 } from "./ui/dialog";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { useUnsavedChangesGuard } from "@/hooks/useUnsavedChangesGuard";
+import { useLeaveViewGuard } from "@/hooks/useLeaveViewGuard";
 import { useFieldErrors } from "@/hooks/useFieldErrors";
 import { submitWithoutReset } from "@/lib/formSubmit";
 import { errorMessage } from "@/lib/errors";
@@ -61,6 +62,7 @@ export function ScriptForm({ script, onSubmit, onClose, onGuardChange }: ScriptF
     onGuardChange((proceed) => guardRequestClose(proceed));
     return () => onGuardChange(null);
   }, [guardRequestClose, onGuardChange]);
+  useLeaveViewGuard(true, guardRequestClose, onClose);
 
   const [{ error }, submitAction, isSubmitting] = useActionState<{ error: string | null }>(
     async () => {
@@ -267,6 +269,7 @@ export function ScriptForm({ script, onSubmit, onClose, onGuardChange }: ScriptF
         cancelLabel="Keep editing"
         variant="destructive"
         onConfirm={guard.confirmDiscard}
+        testId="script-discard"
       />
     </>
   );

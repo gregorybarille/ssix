@@ -15,7 +15,6 @@ import { useConnectionsStore } from "@/store/useConnectionsStore";
 import type { FormSwitchGuard } from "@/store/useDialogsStore";
 import { isBulkActionable } from "@/lib/bulk-actions";
 import {
-  describeScriptEnd,
   formatDuration,
   planScriptRun,
   PLATFORM_LABELS,
@@ -352,7 +351,7 @@ function ScriptRunArea({
 function ScriptResultCard({ step }: { step: ScriptRunStep }) {
   const { result } = step;
   const summary = result
-    ? `${describeScriptEnd(result)} · ${formatDuration(result.duration_ms)}`
+    ? `${result.end} · ${formatDuration(result.duration_ms)}`
     : step.status === "running"
       ? "running…"
       : null;

@@ -523,8 +523,9 @@ return (
 `ConnectionForm`, `CredentialForm` and `ScriptForm` snapshot their initial state when
 the app panel opens and watch for changes via the `useUnsavedChangesGuard`
 hook (`src/hooks/useUnsavedChangesGuard.ts`). When the user attempts to
-close the panel (Cancel button or `Esc`) or to open another editor from
-the list beside it, and the form state differs from the baseline, a
+close the panel (Cancel button or `Esc`), to open another editor from
+the list beside it, or to switch to another view, and the form state
+differs from the baseline, a
 destructive `<ConfirmDialog>` prompts:
 
 > **Discard unsaved changes?** You have unsaved changes to this
@@ -537,7 +538,11 @@ that was asked for). The open form registers this check in
 `useDialogsStore` (`connFormGuard` / `credFormGuard`), which runs it
 before `openEditConnection`, `openNewConnection`, `openCloneConnection`
 and their credential counterparts swap the form; the Scripts view keeps
-the same check for its editor.
+the same check for its editor. Each form also registers it as the
+`useViewStore` leave guard (`useLeaveViewGuard`): `setView` to another
+view, from the sidebar, a shortcut or a store, runs it first. A clean
+form closes and the view changes at once; on **Keep editing** the app
+stays on the form's view.
 
 The guard self-disables for the close that immediately follows a
 successful save: submit handlers call `guard.markSaved()` before

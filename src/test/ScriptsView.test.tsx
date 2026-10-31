@@ -1,9 +1,10 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { screen, fireEvent, waitFor, within } from "@testing-library/react";
+import { act, screen, fireEvent, waitFor, within } from "@testing-library/react";
 import { ScriptsView } from "@/components/views/ScriptsView";
 import { invoke } from "@/lib/tauri";
 import { useScriptsStore } from "@/store/useScriptsStore";
 import { useConnectionsStore } from "@/store/useConnectionsStore";
+import { useViewStore } from "@/store/useViewStore";
 import type { Connection, Script, ScriptResult } from "@/types";
 import { renderInPanel } from "./panel";
 
@@ -48,6 +49,7 @@ const ok = (stdout: string): ScriptResult => ({
   truncated: false,
   timed_out: false,
   cancelled: false,
+  end: "exit 0",
 });
 
 function respond(handlers: Record<string, (args?: Record<string, unknown>) => unknown>) {
@@ -210,7 +212,7 @@ describe("ScriptsView", () => {
     fireEvent.click(screen.getByTestId("script-cancel"));
     await waitFor(() => expect(mockInvoke).toHaveBeenCalledWith("cancel_script_run", { run: 3 }));
     expect(screen.getByTestId("script-cancel")).toHaveTextContent("Cancelling...");
-    pending.b({ ...ok("partial\n"), exit_code: null, exit_signal: "TERM", cancelled: true });
+    pending.b({ ...ok("partial\n"), exit_code: null, exit_signal: "TERM", cancelled: true, end: "cancelled" });
 
     await waitFor(() => expect(screen.queryByTestId("script-cancel")).not.toBeInTheDocument());
     const [web, db] = screen.getAllByTestId("script-result");
@@ -241,5 +243,75 @@ describe("ScriptsView", () => {
     expect(screen.getByTestId("script-form-name")).toHaveValue("uptime");
     fireEvent.click(screen.getByRole("button", { name: "Discard" }));
     await waitFor(() => expect(screen.getByTestId("script-form-name")).toHaveValue("other"));
+  });
+
+  it("asks before leaving the view with unsaved changes", async () => {
+    respond({ get_scripts: () => [script] });
+    useViewStore.setState({ view: "scripts", leaveGuard: null });
+    renderInPanel(<ScriptsView />);
+    fireEvent.click(await screen.findByTestId("script-row-edit"));
+    fireEvent.change(await screen.findByTestId("script-form-body"), { target: { value: "id" } });
+
+    act(() => useViewStore.getState().setView("connections"));
+    expect(await screen.findByTestId("script-discard")).toBeInTheDocument();
+    fireEvent.click(screen.getByTestId("script-discard-cancel"));
+    await waitFor(() => expect(screen.queryByTestId("script-discard")).not.toBeInTheDocument());
+    expect(useViewStore.getState().view).toBe("scripts");
+    expect(screen.getByTestId("script-form-body")).toHaveValue("id");
+
+    act(() => useViewStore.getState().setView("connections"));
+    fireEvent.click(await screen.findByTestId("script-discard-confirm"));
+    await waitFor(() => expect(useViewStore.getState().view).toBe("connections"));
+    expect(screen.queryByTestId("script-form")).not.toBeInTheDocument();
+    expect(useViewStore.getState().leaveGuard).toBeNull();
+  });
+
+  it("leaves at once when the editor is clean", async () => {
+    respond({ get_scripts: () => [script] });
+    useViewStore.setState({ view: "scripts", leaveGuard: null });
+    renderInPanel(<ScriptsView />);
+    fireEvent.click(await screen.findByTestId("script-row-edit"));
+    await screen.findByTestId("script-form");
+    act(() => useViewStore.getState().setView("logs"));
+    expect(useViewStore.getState().view).toBe("logs");
+    expect(screen.queryByTestId("script-discard")).not.toBeInTheDocument();
+  });
+
+  it("cancels the run of a script it deletes", async () => {
+    respond({
+      get_scripts: () => [script],
+      begin_script_run: () => 7,
+      cancel_script_run: () => null,
+      delete_script: () => null,
+      run_script: () => new Promise(() => {}),
+    });
+    await useScriptsStore.getState().fetchScripts();
+    const running = useScriptsStore
+      .getState()
+      .runScript("s1", [{ connectionId: "a", connectionName: "web", status: "pending" }]);
+    await waitFor(() => expect(mockInvoke).toHaveBeenCalledWith("run_script", { scriptId: "s1", connectionId: "a", run: 7 }));
+    await useScriptsStore.getState().deleteScript("s1");
+    expect(mockInvoke).toHaveBeenCalledWith("cancel_script_run", { run: 7 });
+    expect(useScriptsStore.getState().run).toBeNull();
+    void running;
+  });
+
+  it("starts no host when the script is deleted before the run is numbered", async () => {
+    let number!: (n: number) => void;
+    respond({
+      get_scripts: () => [script],
+      begin_script_run: () => new Promise((resolve) => (number = resolve)),
+      delete_script: () => null,
+    });
+    await useScriptsStore.getState().fetchScripts();
+    const running = useScriptsStore
+      .getState()
+      .runScript("s1", [{ connectionId: "a", connectionName: "web", status: "pending" }]);
+    await waitFor(() => expect(mockInvoke).toHaveBeenCalledWith("begin_script_run"));
+    await useScriptsStore.getState().deleteScript("s1");
+    number(8);
+    await running;
+    expect(mockInvoke).not.toHaveBeenCalledWith("run_script", expect.anything());
+    expect(useScriptsStore.getState().running).toBe(false);
   });
 });

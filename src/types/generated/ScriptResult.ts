@@ -6,7 +6,8 @@
 export type ScriptResult = { stdout: string, stderr: string, 
 /**
  * The remote exit status; `None` when the script was killed by a
- * signal, cancelled or stopped at the time limit.
+ * signal, cancelled or stopped at the time limit, or the server sent
+ * none.
  */
 exit_code: number | null, 
 /**
@@ -24,4 +25,9 @@ timed_out: boolean,
 /**
  * The user cancelled the run before the script finished.
  */
-cancelled: boolean, };
+cancelled: boolean, 
+/**
+ * How the script ended, for the result card and the log: `exit 3`,
+ * `killed by SIGTERM`, `cancelled`, ...
+ */
+end: string, };

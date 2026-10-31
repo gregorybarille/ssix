@@ -1,7 +1,6 @@
 import { describe, it, expect } from "vitest";
 import type { Connection, ScriptResult } from "@/types";
 import {
-  describeScriptEnd,
   formatDuration,
   interpreterForPlatform,
   planScriptRun,
@@ -17,6 +16,7 @@ const result = (overrides: Partial<ScriptResult> = {}): ScriptResult => ({
   truncated: false,
   timed_out: false,
   cancelled: false,
+  end: "exit 0",
   ...overrides,
 });
 
@@ -28,14 +28,6 @@ describe("scripts helpers", () => {
     expect(scriptStatus(result({ exit_code: 2 }))).toBe("error");
     expect(scriptStatus(result({ exit_code: null, exit_signal: "KILL" }))).toBe("error");
     expect(scriptStatus(result({ exit_code: null, exit_signal: "TERM", cancelled: true }))).toBe("cancelled");
-  });
-
-  it("describes each way a script ends", () => {
-    expect(describeScriptEnd(result({ exit_code: 3 }))).toBe("exit 3");
-    expect(describeScriptEnd(result({ exit_code: null, exit_signal: "TERM" }))).toBe("killed by SIGTERM");
-    expect(describeScriptEnd(result({ exit_code: null, timed_out: true }))).toBe("stopped at the time limit");
-    expect(describeScriptEnd(result({ exit_code: null }))).toBe("no exit status");
-    expect(describeScriptEnd(result({ exit_code: null, exit_signal: "TERM", cancelled: true }))).toBe("cancelled");
   });
 
   it("formats durations", () => {

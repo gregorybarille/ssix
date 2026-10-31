@@ -14,6 +14,9 @@
  * only check that the editor swaps in PowerShell and that the run starts
  * PowerShell rather than `sh`: the host answers "not found", exit 127.
  *
+ * A fourth test leaves the view with unsaved changes in the editor: the
+ * app must ask first, stay on "keep editing", and only switch on discard.
+ *
  * Exercises `run_script` (exec of `sh -s` with the body on stdin, both
  * streams collected) and `cancel_script_run` against real OpenSSH servers.
  */
@@ -157,5 +160,27 @@ describe("Scripts", () => {
     const card = await resultCard("conn-12-a", "error");
     expect(await card.getAttribute("data-exit-code")).toBe("127");
     expect(await textContentOf(await card.$(sel.scriptResultStderr))).toContain("powershell");
+  });
+
+  it("asks before leaving the view with unsaved changes", async () => {
+    await navigateTo("scripts");
+    await click(sel.addScriptButton);
+    await (await browser.$(sel.scriptForm)).waitForExist({ timeout: 10_000 });
+    await fill(sel.scriptFormName, "script-12-unsaved");
+
+    await navigateTo("connections");
+    const discard = await browser.$(sel.scriptDiscard);
+    await discard.waitForExist({ timeout: 5_000 });
+    await click(sel.scriptDiscardCancel);
+    await discard.waitForExist({ reverse: true, timeout: 5_000 });
+    expect(await (await browser.$(sel.scriptFormName)).getValue()).toBe("script-12-unsaved");
+    expect(await (await browser.$(sel.addConnectionButton)).isExisting()).toBe(false);
+
+    await navigateTo("connections");
+    await click(sel.scriptDiscardConfirm);
+    await (await browser.$(sel.addConnectionButton)).waitForExist({ timeout: 5_000 });
+    await navigateTo("scripts");
+    expect(await (await browser.$(sel.scriptForm)).isExisting()).toBe(false);
+    expect(await (await browser.$(sel.scriptRowByName("script-12-unsaved"))).isExisting()).toBe(false);
   });
 });

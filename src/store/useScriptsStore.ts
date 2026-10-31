@@ -66,6 +66,8 @@ export const useScriptsStore = create<ScriptsState>((set, get) => ({
   deleteScript: (id) =>
     runAsyncRethrow(set, async () => {
       await invoke("delete_script", { id });
+      // A run of the deleted script would go on with no card to show it.
+      if (get().run?.scriptId === id) await get().cancelRun();
       set((state) => ({
         scripts: state.scripts.filter((s) => s.id !== id),
         run: state.run?.scriptId === id ? null : state.run,
@@ -94,7 +96,10 @@ export const useScriptsStore = create<ScriptsState>((set, get) => ({
     });
     try {
       const run = await invoke<number>("begin_script_run");
-      set((state) => (state.run?.scriptId === scriptId ? { run: { ...state.run, runNumber: run } } : {}));
+      const current = get().run;
+      // The script was deleted while the run was being numbered.
+      if (current?.scriptId !== scriptId) return;
+      set({ run: { ...current, runNumber: run } });
       await Promise.all(
         steps.map(async ({ connectionId }) => {
           try {

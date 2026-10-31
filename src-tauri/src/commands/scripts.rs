@@ -3,25 +3,36 @@
 //! `run_script` runs one saved script on one connection; the frontend calls
 //! it once per selected host, in parallel, the way bulk SCP does.
 //!
-//! A run is numbered by `begin_script_run` and every host of it passes that
-//! number; `cancel_script_run` moves the counter on, so each host of the
-//! run, even one whose call arrives after the cancel, sees it is cancelled.
+//! A run gets a number of its own from `begin_script_run` and every host of
+//! it passes that number; `cancel_script_run` marks the number cancelled,
+//! so each host of the run, even one whose call arrives after the cancel,
+//! sees it is cancelled, and no other run does.
 
 use crate::commands::blocking;
-use crate::commands::ssh::{connect_session, find_connection};
+use crate::commands::ssh::{connect_session, find_connection, ConnectedSession};
 use crate::logs::log_local;
-use crate::models::{Script, ScriptPlatform};
+use crate::models::{AppData, Connection, Script, ScriptPlatform};
 use crate::remote_script::{self, ScriptResult, RUN_TIMEOUT};
 use crate::storage::{load_data, with_data_mut};
+use dashmap::DashSet;
 use serde::Deserialize;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::mpsc::{self, RecvTimeoutError};
+use std::sync::LazyLock;
+use std::thread;
+use std::time::Duration;
 
 const NAME_MAX_CHARS: usize = 128;
 const INTERPRETER_MAX_CHARS: usize = 256;
 const BODY_MAX_BYTES: usize = 256 * 1024;
 
-/// The number of the current script run; cancelling moves it on.
-static CURRENT_RUN: AtomicU64 = AtomicU64::new(0);
+/// The number the next script run gets.
+static NEXT_RUN: AtomicU64 = AtomicU64::new(0);
+/// The runs cancelled so far: a few bytes per cancel, kept for the app's
+/// lifetime so a host of the run that starts late still sees its cancel.
+static CANCELLED: LazyLock<DashSet<u64>> = LazyLock::new(DashSet::new);
+/// How often a run still connecting checks for its cancel.
+const CANCEL_POLL: Duration = Duration::from_millis(100);
 
 #[derive(Debug, Deserialize)]
 pub struct ScriptInput {
@@ -155,18 +166,18 @@ pub async fn delete_script(id: String) -> Result<(), String> {
 /// Number a new run, to pass to `run_script` for each of its hosts.
 #[tauri::command]
 pub fn begin_script_run() -> u64 {
-    CURRENT_RUN.load(Ordering::SeqCst)
+    NEXT_RUN.fetch_add(1, Ordering::SeqCst)
 }
 
-/// Stop every host of run `run` that is still going. A stale number (a run
-/// already cancelled) changes nothing.
+/// Stop every host of run `run` that is still going, and any that starts
+/// later. Other runs, before or after it, carry on.
 #[tauri::command]
 pub fn cancel_script_run(run: u64) {
-    let _ = CURRENT_RUN.compare_exchange(run, run + 1, Ordering::SeqCst, Ordering::SeqCst);
+    CANCELLED.insert(run);
 }
 
 fn is_cancelled(run: u64) -> bool {
-    CURRENT_RUN.load(Ordering::SeqCst) != run
+    CANCELLED.contains(&run)
 }
 
 #[tauri::command]
@@ -187,15 +198,16 @@ fn run_script_sync(script_id: &str, connection_id: &str, run: u64) -> Result<Scr
         .cloned()
         .ok_or_else(|| "Script not found".to_string())?;
 
-    let outcome = connect_session(&data, &conn, "Running a script").and_then(|ssh| {
-        remote_script::run(
+    let outcome = connect_unless_cancelled(data, conn.clone(), run).and_then(|ssh| match ssh {
+        None => Ok(ScriptResult::cancelled_before_start()),
+        Some(ssh) => remote_script::run(
             &ssh.session,
             script.platform,
             &script.interpreter,
             &script.body,
             RUN_TIMEOUT,
             &|| is_cancelled(run),
-        )
+        ),
     });
     match &outcome {
         Ok(result) => log_local(
@@ -207,10 +219,7 @@ fn run_script_sync(script_id: &str, connection_id: &str, run: u64) -> Result<Scr
             "script",
             format!(
                 "\"{}\" on {}: {} in {} ms",
-                script.name,
-                conn.name,
-                describe_end(result),
-                result.duration_ms
+                script.name, conn.name, result.end, result.duration_ms
             ),
         ),
         Err(e) => log_local(
@@ -222,17 +231,27 @@ fn run_script_sync(script_id: &str, connection_id: &str, run: u64) -> Result<Scr
     outcome
 }
 
-fn describe_end(result: &ScriptResult) -> String {
-    if result.cancelled {
-        return "cancelled".to_string();
-    }
-    if result.timed_out {
-        return "stopped at the time limit".to_string();
-    }
-    match (&result.exit_signal, result.exit_code) {
-        (Some(signal), _) => format!("killed by SIG{}", signal),
-        (None, Some(code)) => format!("exit {}", code),
-        (None, None) => "no exit status".to_string(),
+/// Connect to `conn` for run `run`, or `None` once the run is cancelled:
+/// a connection can take a while to fail. An abandoned attempt ends on
+/// its own connect and handshake timeouts.
+fn connect_unless_cancelled(
+    data: AppData,
+    conn: Connection,
+    run: u64,
+) -> Result<Option<ConnectedSession>, String> {
+    let (tx, rx) = mpsc::channel();
+    thread::spawn(move || {
+        let _ = tx.send(connect_session(&data, &conn, "Running a script"));
+    });
+    loop {
+        match rx.recv_timeout(CANCEL_POLL) {
+            Ok(connected) => return connected.map(Some),
+            Err(RecvTimeoutError::Timeout) if is_cancelled(run) => return Ok(None),
+            Err(RecvTimeoutError::Timeout) => {}
+            Err(RecvTimeoutError::Disconnected) => {
+                return Err("The connection attempt stopped unexpectedly".to_string())
+            }
+        }
     }
 }
 
@@ -366,55 +385,72 @@ mod tests {
         });
     }
 
-    #[test]
-    fn describe_end_covers_each_ending() {
-        let base = ScriptResult {
-            stdout: String::new(),
-            stderr: String::new(),
-            exit_code: Some(3),
-            exit_signal: None,
-            duration_ms: 1,
-            truncated: false,
-            timed_out: false,
-            cancelled: false,
-        };
-        assert_eq!(describe_end(&base), "exit 3");
-        let killed = ScriptResult {
-            exit_code: None,
-            exit_signal: Some("TERM".into()),
-            ..base.clone()
-        };
-        assert_eq!(describe_end(&killed), "killed by SIGTERM");
-        let stopped = ScriptResult {
-            exit_code: None,
-            timed_out: true,
-            ..base.clone()
-        };
-        assert_eq!(describe_end(&stopped), "stopped at the time limit");
-        let cancelled = ScriptResult {
-            exit_code: None,
-            exit_signal: Some("TERM".into()),
-            cancelled: true,
-            ..base.clone()
-        };
-        assert_eq!(describe_end(&cancelled), "cancelled");
-    }
-
     /// Cancelling reaches every host of the run, including one that starts
-    /// after the cancel, and never a later run.
+    /// after the cancel, and never another run, even one begun at the same
+    /// time.
     #[test]
     fn cancel_stops_only_its_own_run() {
         let run = begin_script_run();
+        let other = begin_script_run();
+        assert_ne!(run, other);
         assert!(!is_cancelled(run));
         cancel_script_run(run);
         assert!(is_cancelled(run));
+        assert!(!is_cancelled(other), "a cancel must not stop another run");
         let next = begin_script_run();
-        assert!(!is_cancelled(next));
         cancel_script_run(run);
         assert!(
             !is_cancelled(next),
             "a stale cancel must not stop the next run"
         );
-        cancel_script_run(next);
+    }
+
+    /// A run cancelled while its host is still connecting ends at once,
+    /// not when the connection attempt gives up.
+    #[test]
+    fn cancel_ends_a_run_still_connecting() {
+        with_isolated_data_dir(|| {
+            // Accepts connections (into the backlog) but never speaks SSH.
+            let silent = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+            let port = silent.local_addr().unwrap().port();
+            let cred = crate::models::Credential::new(
+                "c".into(),
+                "u".into(),
+                crate::models::CredentialKind::Password {
+                    password: "p".into(),
+                },
+            );
+            let conn = Connection::new(
+                "silent".into(),
+                "127.0.0.1".into(),
+                port,
+                Some(cred.id.clone()),
+                crate::models::ConnectionKind::Direct,
+            );
+            let conn_id = conn.id.clone();
+            with_data_mut(|data| {
+                data.credentials.push(cred);
+                data.connections.push(conn);
+                Ok(())
+            })
+            .unwrap();
+            let script = add_script_sync(input("x", "true", "")).unwrap();
+
+            let run = begin_script_run();
+            let started = std::time::Instant::now();
+            let canceller = thread::spawn(move || {
+                thread::sleep(Duration::from_millis(300));
+                cancel_script_run(run);
+            });
+            let result = run_script_sync(&script.id, &conn_id, run).unwrap();
+            canceller.join().unwrap();
+            assert!(result.cancelled, "{:?}", result);
+            assert_eq!(result.end, "cancelled");
+            assert!(
+                started.elapsed() < Duration::from_secs(3),
+                "took {:?}",
+                started.elapsed()
+            );
+        });
     }
 }
