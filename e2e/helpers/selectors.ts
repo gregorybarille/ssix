@@ -28,6 +28,8 @@ export const sel = {
   navGitSync: '[data-testid="nav-git-sync"]',
   navLogs: '[data-testid="nav-logs"]',
   navScripts: '[data-testid="nav-scripts"]',
+  // Each sidebar button's tooltip is `${its testid}-tooltip`.
+  navTooltip: (navTestId: string) => `[data-testid="${navTestId}-tooltip"]`,
 
   // The right-hand column every editor, SCP panel and confirmation opens in.
   appPanelSlot: '[data-testid="app-panel-slot"]',

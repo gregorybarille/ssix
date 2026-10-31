@@ -63,7 +63,7 @@
 
 ## Key Conventions
 
-- **UI primitives**: Always use shared components (`<Input>`, `<Button>`, `<Checkbox>`, `<PasswordInput>`, `<RadioGroup>`, `<ConfirmDialog>`, `<ContextMenu>`, `<ErrorBanner>`) — never hand-roll
+- **UI primitives**: Always use shared components (`<Input>`, `<Button>`, `<Checkbox>`, `<PasswordInput>`, `<RadioGroup>`, `<ConfirmDialog>`, `<ContextMenu>`, `<ErrorBanner>`, `<Tooltip>`) — never hand-roll
 - **Accessibility**: Every icon-only button needs `aria-label`; decorative icons need `aria-hidden="true"`; every dialog needs `<DialogDescription>`; required fields need `aria-required="true"`
 - **Styling**: Use `text-muted-foreground-soft` for tertiary metadata (not `/70` opacity blends); use `text-destructive` for error text (never `--destructive` or hex)
 - **Forms**: Mount `<ConnectionForm>` / `<CredentialForm>` once, in their view; they open as the right-hand side panel beside the list; use `useUnsavedChangesGuard`; call `guard.markSaved()` before closing on success; submit `useActionState` actions with `onSubmit={submitWithoutReset(action)}` (`src/lib/formSubmit.ts`), never `<form action>` (its automatic reset puts Radix Select/Checkbox/RadioGroup back to their initial value after a refused save); keep inline field errors in `useFieldErrors`

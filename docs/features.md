@@ -280,6 +280,18 @@ are shown inline for the final state of the burst.
 - default terminal open mode
 - Git Sync repository settings
 
+## Sidebar
+
+The left sidebar holds one icon button per view: Connections, Port
+forwards, Credentials, Scripts, Logs, Terminals (while any are open) and
+Git Sync. Hovering a button, or focusing it from the keyboard, shows a
+tooltip on its right with the view's name and one line on what it is for,
+so the icons can be learned without trying each one. The tooltips share
+one provider (`<TooltipProvider>` from `src/components/ui/tooltip.tsx`):
+the first opens after 300 ms, and moving to the next one shows it at once.
+Each button's accessible name stays its `aria-label`, which also carries
+the terminal count and Git Sync's pending-changes state.
+
 ## Title Bar
 
 SSIX renders its own draggable title bar so it can host a Settings shortcut

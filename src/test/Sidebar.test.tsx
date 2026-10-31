@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { render, screen, fireEvent } from "@testing-library/react";
+import { act, render, screen, fireEvent, within } from "@testing-library/react";
 import { Sidebar } from "@/components/Sidebar";
 
 describe("Sidebar", () => {
@@ -129,5 +129,27 @@ describe("Sidebar", () => {
       name: /primary/i,
     });
     expect(complementary).toBeNull();
+  });
+
+  it("names each view and says what it is for in a tooltip on focus", async () => {
+    render(<Sidebar active="connections" onNavigate={vi.fn()} terminalCount={1} />);
+    const cases: [string, RegExp][] = [
+      ["nav-connections", /saved hosts/],
+      ["nav-forwards", /ssh -L/],
+      ["nav-credentials", /SSH keys/],
+      ["nav-scripts", /several hosts/],
+      ["nav-logs", /app and your connections/],
+      ["nav-terminals", /terminals you have open/],
+      ["nav-git-sync", /git repository/],
+    ];
+    for (const [testId, hint] of cases) {
+      const button = screen.getByTestId(testId);
+      act(() => button.focus());
+      const tooltip = await screen.findByTestId(`${testId}-tooltip`);
+      expect(within(tooltip).getByText(hint)).toBeInTheDocument();
+      act(() => button.blur());
+    }
+    // The tooltip adds a visible name; the accessible name stays the label.
+    expect(screen.getByRole("button", { name: "Port forwards" })).toBeInTheDocument();
   });
 });

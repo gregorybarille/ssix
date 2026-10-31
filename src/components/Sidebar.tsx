@@ -1,6 +1,7 @@
 import React from "react";
 import { Server, Key, TerminalSquare, Cable, ScrollText, GitBranch, FileCode } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 
 export type NavItem =
   | "connections"
@@ -20,17 +21,47 @@ interface SidebarProps {
   gitPending?: boolean;
 }
 
-const navItems: { id: NavItem; label: string; icon: React.ReactNode }[] = [
-  { id: "connections", label: "Connections", icon: <Server className="h-5 w-5" /> },
-  { id: "forwards", label: "Port forwards", icon: <Cable className="h-5 w-5" /> },
-  { id: "credentials", label: "Credentials", icon: <Key className="h-5 w-5" /> },
-  { id: "scripts", label: "Scripts", icon: <FileCode className="h-5 w-5" /> },
-  { id: "logs", label: "Logs", icon: <ScrollText className="h-5 w-5" /> },
+/**
+ * `hint` is the one line under the name in each button's tooltip: the
+ * icons alone do not tell a new user what is behind them.
+ */
+const navItems: { id: NavItem; label: string; hint: string; icon: React.ReactNode }[] = [
+  {
+    id: "connections",
+    label: "Connections",
+    hint: "Your saved hosts: open a terminal, transfer files",
+    icon: <Server className="h-5 w-5" aria-hidden="true" />,
+  },
+  {
+    id: "forwards",
+    label: "Port forwards",
+    hint: "Local forwards (ssh -L) and whether they are running",
+    icon: <Cable className="h-5 w-5" aria-hidden="true" />,
+  },
+  {
+    id: "credentials",
+    label: "Credentials",
+    hint: "Passwords and SSH keys used to log in",
+    icon: <Key className="h-5 w-5" aria-hidden="true" />,
+  },
+  {
+    id: "scripts",
+    label: "Scripts",
+    hint: "Saved scripts to run on several hosts at once",
+    icon: <FileCode className="h-5 w-5" aria-hidden="true" />,
+  },
+  {
+    id: "logs",
+    label: "Logs",
+    hint: "What the app and your connections did",
+    icon: <ScrollText className="h-5 w-5" aria-hidden="true" />,
+  },
 ];
 
 function NavButton({
   active,
   label,
+  hint,
   onClick,
   icon,
   badge,
@@ -39,6 +70,7 @@ function NavButton({
 }: {
   active: boolean;
   label: string;
+  hint: string;
   onClick: () => void;
   icon: React.ReactNode;
   badge?: number;
@@ -61,44 +93,49 @@ function NavButton({
     .filter(Boolean)
     .join(", ");
   return (
-    <button
-      type="button"
-      // E2E hook — kept on the button itself (not a wrapper) so wdio's
-      // waitForClickable resolves on the actual interactive element.
-      data-testid={testId}
-      // Audit-3 follow-up P3#7: dropped redundant `title=` attribute.
-      // The badge count and "pending changes" state are already
-      // conveyed visually (badge chip / red dot) and via aria-label.
-      // The earlier title="Git Sync (3)" both duplicated the visible
-      // label text and drifted from aria-label ("3 active") — pure
-      // noise for sighted-mouse users with no information gain.
-      aria-label={accessibleName}
-      aria-current={active ? "page" : undefined}
-      onClick={onClick}
-      className={cn(
-        "w-10 h-10 rounded-lg flex items-center justify-center transition-colors relative",
-        "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-card",
-        active
-          ? "bg-accent text-foreground"
-          : "text-muted-foreground hover:text-foreground hover:bg-accent/50",
-      )}
-    >
-      {icon}
-      {badge !== undefined && badge > 0 && (
-        <span
-          className="absolute -top-0.5 -right-0.5 min-w-[16px] h-4 rounded-full bg-primary text-primary-foreground text-[10px] font-bold flex items-center justify-center px-1"
-          aria-hidden="true"
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <button
+          type="button"
+          // E2E hook — kept on the button itself (not a wrapper) so wdio's
+          // waitForClickable resolves on the actual interactive element.
+          data-testid={testId}
+          // No `title=`: the tooltip below names the view and says what
+          // it is for, on hover and on keyboard focus. The badge count and
+          // "pending changes" state stay in aria-label and on the icon.
+          aria-label={accessibleName}
+          aria-current={active ? "page" : undefined}
+          onClick={onClick}
+          className={cn(
+            "w-10 h-10 rounded-lg flex items-center justify-center transition-colors relative",
+            "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-card",
+            active
+              ? "bg-accent text-foreground"
+              : "text-muted-foreground hover:text-foreground hover:bg-accent/50",
+          )}
         >
-          {badge}
-        </span>
-      )}
-      {dot && (
-        <span
-          className="absolute top-1 right-1 h-2.5 w-2.5 rounded-full bg-orange-500"
-          aria-hidden="true"
-        />
-      )}
-    </button>
+          {icon}
+          {badge !== undefined && badge > 0 && (
+            <span
+              className="absolute -top-0.5 -right-0.5 min-w-[16px] h-4 rounded-full bg-primary text-primary-foreground text-[10px] font-bold flex items-center justify-center px-1"
+              aria-hidden="true"
+            >
+              {badge}
+            </span>
+          )}
+          {dot && (
+            <span
+              className="absolute top-1 right-1 h-2.5 w-2.5 rounded-full bg-orange-500"
+              aria-hidden="true"
+            />
+          )}
+        </button>
+      </TooltipTrigger>
+      <TooltipContent side="right" data-testid={testId ? `${testId}-tooltip` : undefined}>
+        <p className="font-medium">{label}</p>
+        <p className="text-muted-foreground">{hint}</p>
+      </TooltipContent>
+    </Tooltip>
   );
 }
 
@@ -123,47 +160,52 @@ export function Sidebar({
       className="w-16 bg-card border-r border-border flex flex-col items-center py-4 gap-2 shrink-0 overflow-hidden"
       data-testid="sidebar"
     >
-      <nav aria-label="Primary" className="contents">
-        {navItems.map(({ id, label, icon }) => (
-          <NavButton
-            key={id}
-            active={active === id}
-            label={label}
-            onClick={() => onNavigate(id)}
-            icon={icon}
-            badge={id === "forwards" ? forwardCount : undefined}
-            testId={`nav-${id.replace("_", "-")}`}
-          />
-        ))}
-
-        {terminalCount > 0 && (
-          <>
-            <div
-              className="w-6 border-t border-border my-1"
-              aria-hidden="true"
-            />
+      <TooltipProvider>
+        <nav aria-label="Primary" className="contents">
+          {navItems.map(({ id, label, hint, icon }) => (
             <NavButton
-              active={active === "terminals"}
-              label="Terminals"
-              onClick={() => onNavigate("terminals")}
-              icon={<TerminalSquare className="h-5 w-5" />}
-              badge={terminalCount}
-              testId="nav-terminals"
+              key={id}
+              active={active === id}
+              label={label}
+              hint={hint}
+              onClick={() => onNavigate(id)}
+              icon={icon}
+              badge={id === "forwards" ? forwardCount : undefined}
+              testId={`nav-${id.replace("_", "-")}`}
             />
-          </>
-        )}
+          ))}
 
-        <div className="mt-auto pt-2">
-          <NavButton
-            active={active === "git_sync"}
-            label="Git Sync"
-            onClick={() => onNavigate("git_sync")}
-            icon={<GitBranch className="h-5 w-5" />}
-            dot={gitPending}
-            testId="nav-git-sync"
-          />
-        </div>
-      </nav>
+          {terminalCount > 0 && (
+            <>
+              <div
+                className="w-6 border-t border-border my-1"
+                aria-hidden="true"
+              />
+              <NavButton
+                active={active === "terminals"}
+                label="Terminals"
+                hint="The terminals you have open"
+                onClick={() => onNavigate("terminals")}
+                icon={<TerminalSquare className="h-5 w-5" aria-hidden="true" />}
+                badge={terminalCount}
+                testId="nav-terminals"
+              />
+            </>
+          )}
+
+          <div className="mt-auto pt-2">
+            <NavButton
+              active={active === "git_sync"}
+              label="Git Sync"
+              hint="Export your connections and settings to a git repository"
+              onClick={() => onNavigate("git_sync")}
+              icon={<GitBranch className="h-5 w-5" aria-hidden="true" />}
+              dot={gitPending}
+              testId="nav-git-sync"
+            />
+          </div>
+        </nav>
+      </TooltipProvider>
     </aside>
   );
 }

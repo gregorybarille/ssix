@@ -88,10 +88,15 @@ export async function textContentOf(el: WebdriverIO.Element): Promise<string> {
 
 /**
  * Choose the option whose `data-name` is `name` in the Radix Select behind
- * `triggerSelector`, and confirm the trigger now shows it. A click that
- * lands while the listbox is still opening closes it without selecting;
- * the form would then save the old value and fail much later, so the
- * pick is verified and retried.
+ * `triggerSelector`, and confirm the trigger now shows it.
+ *
+ * The option is picked from the keyboard (focused, then Enter), never by
+ * a click: a long list is still scrolling to the current value while it
+ * opens, so a click at the coordinates measured a moment before lands on
+ * another option. Radix moves focus into the list once it is open, so
+ * that is awaited first, or it would take focus back from the option.
+ * The pick is still verified and retried, since a wrong value would only
+ * fail much later.
  */
 export async function pickOption(triggerSelector: string, name: string): Promise<void> {
   const trigger = await browser.$(triggerSelector);
@@ -99,8 +104,17 @@ export async function pickOption(triggerSelector: string, name: string): Promise
     await trigger.waitForClickable({ timeout: 10_000 });
     await trigger.click();
     const option = await browser.$(`[role="option"][data-name="${name}"]`);
-    await option.waitForClickable({ timeout: 10_000 });
-    await option.click();
+    await option.waitForExist({ timeout: 10_000 });
+    await browser.waitUntil(
+      () => browser.execute(() => !!document.activeElement?.closest('[role="listbox"]')),
+      { timeout: 5_000, timeoutMsg: "The listbox never took focus" },
+    );
+    const focused = await browser.execute((node: HTMLElement) => {
+      node.scrollIntoView({ block: "nearest" });
+      node.focus();
+      return document.activeElement === node;
+    }, option as unknown as HTMLElement);
+    if (focused) await browser.keys(["Enter"]);
     const picked = await browser
       .waitUntil(async () => (await textContentOf(trigger)).includes(name), { timeout: 2_000 })
       .catch(() => false);

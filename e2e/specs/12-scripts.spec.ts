@@ -16,6 +16,8 @@
  *
  * A fourth test leaves the view with unsaved changes in the editor: the
  * app must ask first, stay on "keep editing", and only switch on discard.
+ * It starts from the sidebar's Scripts button, whose tooltip must say
+ * what the view is for.
  *
  * Exercises `run_script` (exec of `sh -s` with the body on stdin, both
  * streams collected) and `cancel_script_run` against real OpenSSH servers.
@@ -163,6 +165,11 @@ describe("Scripts", () => {
   });
 
   it("asks before leaving the view with unsaved changes", async () => {
+    const nav = await browser.$(sel.navScripts);
+    await browser.execute((node: HTMLElement) => node.focus(), nav as unknown as HTMLElement);
+    const tooltip = await browser.$(sel.navTooltip("nav-scripts"));
+    await tooltip.waitForExist({ timeout: 5_000 });
+    expect(await textContentOf(tooltip)).toContain("Saved scripts to run on several hosts");
     await navigateTo("scripts");
     await click(sel.addScriptButton);
     await (await browser.$(sel.scriptForm)).waitForExist({ timeout: 10_000 });
