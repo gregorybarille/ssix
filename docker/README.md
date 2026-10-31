@@ -107,3 +107,23 @@ The terminal that opens is a shell on `server-c`, reached via `server-a`.
 | server-b | `127.0.0.1` | userb    | passb    | 2202      | Direct, jump host or SSH server |
 | server-c | `127.0.0.1` | userc    | passc    | 2203      | Direct, or via server-a (local forward or jump host) |
 | server-d | `127.0.0.1` | userd    | passd    | 2204      | Direct, or via server-b (local forward or jump host) |
+
+## Windows OpenSSH server (script tests)
+
+`docker/windows-sshd/` builds a Windows Server Core image with Win32-OpenSSH and a
+local user `ssix` / `Remote-Run-2026!`. It runs only on a Windows host whose kernel
+matches the base image (`ltsc2022`, so Windows Server 2022 or a `windows-2022`
+GitHub runner); Docker on macOS and Linux cannot run it. CI uses it to run the
+script tests in `src-tauri/src/remote_script.rs` (`remote_script::live`) against a
+real Windows host:
+
+```powershell
+docker build -t ssix-windows-sshd docker/windows-sshd
+docker run -d --name ssix-windows-sshd ssix-windows-sshd
+$ip = docker inspect -f "{{.NetworkSettings.Networks.nat.IPAddress}}" ssix-windows-sshd
+$env:SSIX_LIVE_SSH = "${ip}:22"; $env:SSIX_LIVE_USER = "ssix"
+$env:SSIX_LIVE_PASSWORD = "Remote-Run-2026!"; $env:SSIX_LIVE_PLATFORM = "windows"
+cd src-tauri; cargo test live_ -- --ignored --test-threads=1
+```
+
+The same tests run against `server-a` for POSIX (see the module docs).

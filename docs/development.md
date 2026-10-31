@@ -120,13 +120,23 @@ Frontend:
 Backend:
 
 - Rust unit tests inside the relevant modules
+- Script tests against a real SSH server (`remote_script::live`, ignored by
+  a plain `cargo test`). Point them at a host with `SSIX_LIVE_SSH`,
+  `SSIX_LIVE_USER`, `SSIX_LIVE_PASSWORD` and `SSIX_LIVE_PLATFORM`, then run
+  `cargo test live_ -- --ignored --test-threads=1`; for POSIX, start
+  `server-a` (`docker compose -f docker/docker-compose.yml up -d --wait server-a`)
+  and use `127.0.0.1:2201`, `usera`, `passa`, `posix`. The Windows server is
+  in `docker/README.md`.
 
 Continuous integration (`.github/workflows/test.yml`, required on PRs):
 
 - Frontend: `npm audit --omit=dev --audit-level=high`, `npm test`, `npm run build`
 - Backend: `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`, `cargo test`, and a
   `git diff --exit-code src/types/generated/` check so regenerated ts-rs
-  bindings are always committed
+  bindings are always committed, then the script tests against `server-a`
+- Scripts on Windows: the script tests on a `windows-2022` runner against the
+  `docker/windows-sshd` container, once with cmd and once with PowerShell as
+  the server's default shell
 - `cargo audit` via `rustsec/audit-check` for advisories in `src-tauri/Cargo.lock`. `.cargo/audit.toml` (at the repo root, where the action runs) ignores advisories for optional crates that are in the lockfile but never compiled, with the reason for each
 
 End-to-end:

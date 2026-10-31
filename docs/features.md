@@ -154,7 +154,9 @@ once.
   missing path in `Get-Item`) leave it at 0: use `exit 1`, or set
   `$ErrorActionPreference = 'Stop'`, to make them fail the host.
   Switching platform swaps a preset interpreter for the other platform's
-  default; a command you typed stays.
+  default; a command you typed stays. A Windows script starts a fraction
+  of a second later than a POSIX one: PowerShell first compiles
+  the small helper that lets Cancel stop it.
 - Select a script to see its body and the hosts it can run on: every
   direct and jump host connection (local forwards cannot run scripts).
   Tick hosts, or **All hosts**, and **Run on N hosts**.
@@ -163,8 +165,8 @@ once.
   the exit code, the signal that killed it, or the connection error, plus
   how long it took, its standard output and its standard error.
 - **Cancel** (shown while a run is going) stops every host that has not
-  finished: the script and everything it started get SIGTERM (on Windows,
-  `taskkill /T /F`), and the
+  finished: the script and everything it started get SIGTERM (on Windows
+  they are ended together, see below), and the
   card shows **cancelled** with the output printed so far. Hosts that had
   already finished keep their result.
 - Each stream keeps the first 1 MiB of output; the card says when output

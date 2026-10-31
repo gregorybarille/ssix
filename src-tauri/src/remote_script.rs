@@ -12,21 +12,23 @@
 //!
 //! On Windows the command line is read by cmd or PowerShell, whichever is
 //! the server's default shell, so it carries only plain words: PowerShell
-//! with a fixed `-EncodedCommand` bootstrap that prints its PID, reads the
-//! body from stdin and runs it. Its errors are stripped of the colour codes
-//! PowerShell 7 adds.
+//! with a fixed `-EncodedCommand` bootstrap that reads the body from stdin
+//! (after a line giving its length) and runs it. Its errors are stripped of
+//! the colour codes PowerShell 7 adds.
 //!
 //! The session runs non-blocking for the whole run: the setup timeout of a
 //! blocking session would cut off any script that is quiet for 15 s, and
 //! writing the body while reading output keeps a script that prints before
 //! it has read all of its input from stalling on a full window.
 //!
-//! A run that is cancelled or reaches the time limit runs
-//! `kill -s TERM -<group>` (or `taskkill /T /F /PID <pid>` on Windows) on a
-//! second channel of the same session, waits briefly for the script to
-//! exit, and then closes the channel. Closing the channel alone would leave
-//! the script running, and libssh2 cannot send the SSH `signal` request on
-//! a channel that has already started.
+//! A run that is cancelled or reaches the time limit is stopped, given
+//! `STOP_GRACE` to exit, and then its channel is closed. Closing the channel
+//! alone would leave the script running, and libssh2 cannot send the SSH
+//! `signal` request on a channel that has already started. So on POSIX
+//! `kill -s TERM -<group>` runs on a second channel of the same session. On
+//! Windows a second session's `taskkill` is refused ("Access denied"), so
+//! the stop is cooperative: stdin stays open after the body, and the
+//! bootstrap stops the script's processes and exits once stdin closes.
 
 use crate::models::ScriptPlatform;
 use crate::ssh::{close_channel, is_eagain, wake};
@@ -50,9 +52,9 @@ pub const RUN_TIMEOUT: Duration = Duration::from_secs(10 * 60);
 /// longest a cancel waits to be noticed.
 const IDLE_WAIT: Duration = Duration::from_millis(100);
 
-/// How long a stopped script gets to exit after SIGTERM before the channel
-/// is closed on it.
-const STOP_GRACE: Duration = Duration::from_secs(2);
+/// How long a stopped script gets to exit before the channel is closed on
+/// it. Windows needs a few seconds to list and stop the processes.
+const STOP_GRACE: Duration = Duration::from_secs(5);
 
 /// Why a run ended before the script finished on its own.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -86,52 +88,133 @@ pub struct ScriptResult {
 /// Longest first line still taken for a PID.
 const PID_LINE_MAX: usize = 20;
 
-/// Runs a Windows script: prints PowerShell's PID, then reads the body
-/// from stdin as UTF-8 and runs it. The exit status is the script's `exit`,
-/// else the last program's exit code; an uncaught error exits 1.
+/// Runs a Windows script. stdin holds, as UTF-8, the length of
+/// `POWERSHELL_PRELUDE` in UTF-16 units on one line, the prelude, then the
+/// body. The prelude runs first; the body then runs as a script block. The
+/// exit status is the script's `exit`, else the last program's exit code;
+/// an uncaught error exits 1.
 /// Written for Windows PowerShell 5.1 as well as PowerShell 7.
 const POWERSHELL_BOOTSTRAP: &str = r#"$ProgressPreference = 'SilentlyContinue'
 if ($PSStyle) { $PSStyle.OutputRendering = 'PlainText' }
 $utf8 = New-Object Text.UTF8Encoding -ArgumentList $false
 try { [Console]::OutputEncoding = $utf8 } catch {}
 $OutputEncoding = $utf8
-[Console]::Out.WriteLine($PID)
-[Console]::Out.Flush()
-$body = (New-Object IO.StreamReader -ArgumentList ([Console]::OpenStandardInput()), $utf8).ReadToEnd()
+$all = (New-Object IO.StreamReader -ArgumentList ([Console]::OpenStandardInput()), $utf8).ReadToEnd()
+$at = $all.IndexOf([char]10)
+$size = [int]$all.Substring(0, $at)
+& ([ScriptBlock]::Create($all.Substring($at + 1, $size))) ([IO.Path]::Combine($env:TEMP, 'STOP_FILE'))
 $global:LASTEXITCODE = 0
-& ([ScriptBlock]::Create($body))
+& ([ScriptBlock]::Create($all.Substring($at + 1 + $size)))
 exit $LASTEXITCODE
 "#;
 
-/// The command that starts the script, printing first the PID to stop it
-/// by. On POSIX `sh` prints its PID, which leads the session's process
-/// group, then runs the interpreter.
-fn wrapped_command(platform: ScriptPlatform, interpreter: &str) -> String {
+/// Puts the script's PowerShell in a new job object, so every process the
+/// script starts is in it too, and starts a thread that waits for the run's
+/// stop file and then terminates the job: the script and all it started
+/// stop at once. Where the job cannot be joined, only PowerShell is
+/// stopped.
+const POWERSHELL_PRELUDE: &str = r##"param($stop)
+Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+public static class SsixJob {
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode)] static extern IntPtr CreateJobObjectW(IntPtr attributes, string name);
+    [DllImport("kernel32.dll")] static extern bool AssignProcessToJobObject(IntPtr job, IntPtr process);
+    [DllImport("kernel32.dll")] static extern bool TerminateJobObject(IntPtr job, uint exitCode);
+    [DllImport("kernel32.dll")] static extern IntPtr GetCurrentProcess();
+    static IntPtr job;
+
+    public static bool Join() {
+        job = CreateJobObjectW(IntPtr.Zero, null);
+        return job != IntPtr.Zero && AssignProcessToJobObject(job, GetCurrentProcess());
+    }
+
+    public static void Terminate() {
+        TerminateJobObject(job, 1);
+    }
+}
+'@
+$joined = [SsixJob]::Join()
+$watch = [PowerShell]::Create()
+$null = $watch.AddScript({
+    param($stop, $job, $joined)
+    # Without this the process waits for the thread after the script ends.
+    [Threading.Thread]::CurrentThread.IsBackground = $true
+    while (-not [IO.File]::Exists($stop)) { [Threading.Thread]::Sleep(200) }
+    try { [IO.File]::Delete($stop) } catch {}
+    if ($joined) { $job::Terminate() }
+    [Diagnostics.Process]::GetCurrentProcess().Kill()
+}).AddArgument($stop).AddArgument([SsixJob]).AddArgument($joined)
+$null = $watch.BeginInvoke()
+"##;
+
+/// What is written to the script's stdin: on Windows the prelude goes
+/// first, as `POWERSHELL_BOOTSTRAP` reads it.
+fn script_input(platform: ScriptPlatform, body: &str) -> String {
+    match platform {
+        ScriptPlatform::Posix => body.to_string(),
+        ScriptPlatform::Windows => format!(
+            "{}\n{}{}",
+            POWERSHELL_PRELUDE.encode_utf16().count(),
+            POWERSHELL_PRELUDE,
+            body
+        ),
+    }
+}
+
+/// The file in the remote user's `%TEMP%` that stops Windows run `run_id`.
+fn stop_file(run_id: &str) -> String {
+    format!("ssix-{}.stop", run_id)
+}
+
+/// `interpreter` running `script` given as `-EncodedCommand`: plain words
+/// that cmd and PowerShell both pass through unchanged.
+fn encoded_powershell(interpreter: &str, flags: &str, script: &str) -> String {
+    let utf16: Vec<u8> = script.encode_utf16().flat_map(u16::to_le_bytes).collect();
+    format!(
+        "{} -NoProfile -NonInteractive {}-EncodedCommand {}",
+        interpreter,
+        flags,
+        STANDARD.encode(utf16)
+    )
+}
+
+/// The command that starts the script. On POSIX `sh` prints its PID, which
+/// leads the session's process group and is what a stop signals, then runs
+/// the interpreter. `run_id` names the Windows stop file.
+fn wrapped_command(platform: ScriptPlatform, interpreter: &str, run_id: &str) -> String {
     match platform {
         ScriptPlatform::Posix => format!(
             "exec sh -c 'echo $$; {}'",
             interpreter.replace('\'', r"'\''")
         ),
-        ScriptPlatform::Windows => {
-            let utf16: Vec<u8> = POWERSHELL_BOOTSTRAP
-                .encode_utf16()
-                .flat_map(u16::to_le_bytes)
-                .collect();
-            format!(
-                "{} -NoProfile -NonInteractive -InputFormat Text -OutputFormat Text -EncodedCommand {}",
-                interpreter,
-                STANDARD.encode(utf16)
-            )
-        }
+        ScriptPlatform::Windows => encoded_powershell(
+            interpreter,
+            "-InputFormat Text -OutputFormat Text ",
+            &POWERSHELL_BOOTSTRAP.replace("STOP_FILE", &stop_file(run_id)),
+        ),
     }
 }
 
-/// The command that stops the script whose wrapper printed `pid`, and
-/// everything it started.
-fn stop_command(platform: ScriptPlatform, pid: u32) -> String {
+/// The command, run on a second channel, that stops the script: SIGTERM to
+/// its process group on POSIX (none without the group's PID), the run's
+/// stop file on Windows.
+fn stop_command(
+    platform: ScriptPlatform,
+    interpreter: &str,
+    run_id: &str,
+    group: Option<u32>,
+) -> Option<String> {
     match platform {
-        ScriptPlatform::Posix => format!("kill -s TERM -{}", pid),
-        ScriptPlatform::Windows => format!("taskkill /T /F /PID {}", pid),
+        ScriptPlatform::Posix => group.map(|g| format!("kill -s TERM -{}", g)),
+        ScriptPlatform::Windows => Some(encoded_powershell(
+            interpreter,
+            "",
+            &format!(
+                "[IO.File]::WriteAllText([IO.Path]::Combine($env:TEMP, '{}'), '')",
+                stop_file(run_id)
+            ),
+        )),
     }
 }
 
@@ -268,16 +351,24 @@ pub fn run(
     let mut channel = session
         .channel_session()
         .map_err(|e| format!("Failed to open a channel: {}", e))?;
+    let run_id = uuid::Uuid::new_v4().simple().to_string();
+    let mut command = wrapped_command(platform, interpreter, &run_id);
+    if platform == ScriptPlatform::Windows && default_shell_is_powershell(session) {
+        // `powershell -c` turns a program's non-zero exit status into 1.
+        command.push_str("; exit $LASTEXITCODE");
+    }
     channel
-        .exec(&wrapped_command(platform, interpreter))
+        .exec(&command)
         .map_err(|e| format!("Failed to start {}: {}", interpreter, e))?;
 
     session.set_blocking(false);
+    let input = script_input(platform, body);
     let pumped = pump(
         session,
         platform,
+        &|group| stop_command(platform, interpreter, &run_id, group),
         &mut channel,
-        body.as_bytes(),
+        input.as_bytes(),
         started + timeout,
         cancelled,
     );
@@ -312,9 +403,32 @@ pub fn run(
     })
 }
 
+/// Whether a Windows server runs commands through PowerShell rather than
+/// cmd (its `DefaultShell`): cmd expands `%COMSPEC%`, PowerShell prints it
+/// as is. Assumes cmd, the Windows default, when the probe fails.
+fn default_shell_is_powershell(session: &Session) -> bool {
+    (|| -> Result<String, ssh2::Error> {
+        let mut channel = session.channel_session()?;
+        channel.exec(SHELL_PROBE)?;
+        channel.send_eof()?;
+        let mut out = String::new();
+        let _ = channel.read_to_string(&mut out);
+        channel.wait_close()?;
+        Ok(out)
+    })()
+    .map(|out| probe_says_powershell(&out))
+    .unwrap_or(false)
+}
+
+const SHELL_PROBE: &str = "echo %COMSPEC%";
+
+fn probe_says_powershell(out: &str) -> bool {
+    out.contains("%COMSPEC%")
+}
+
 /// Run `command` on a second channel to stop the script. Best effort: if
 /// it fails, the script's channel is closed on it anyway.
-fn stop_script(session: &Session, command: &str) {
+fn run_stop_command(session: &Session, command: &str) {
     session.set_blocking(true);
     let _ = (|| -> Result<(), ssh2::Error> {
         let mut channel = session.channel_session()?;
@@ -327,18 +441,23 @@ fn stop_script(session: &Session, command: &str) {
 
 /// Feed `input` to the channel and collect both output streams until the
 /// remote side sends EOF. At `deadline`, or once `cancelled` returns true,
-/// the script is stopped (`stop_command`) and gets `STOP_GRACE` to exit.
+/// the script is stopped with `stop_command(pid)`, given the PID the POSIX
+/// wrapper printed, and gets `STOP_GRACE` to exit.
 /// Returns stdout, stderr and why the run was stopped, if it was.
 fn pump(
     session: &Session,
     platform: ScriptPlatform,
+    stop_command: &dyn Fn(Option<u32>) -> Option<String>,
     channel: &mut Channel,
     mut input: &[u8],
     deadline: Instant,
     cancelled: &dyn Fn() -> bool,
 ) -> Result<(Capture, Capture, Option<Stop>), String> {
     let fds = [wake::fd_of(session)];
-    let mut stdout = Capture::with_pid_line();
+    let mut stdout = match platform {
+        ScriptPlatform::Posix => Capture::with_pid_line(),
+        ScriptPlatform::Windows => Capture::default(),
+    };
     let mut stderr = Capture::default();
     let mut buf = vec![0u8; 32 * 1024];
     let mut eof_sent = false;
@@ -394,10 +513,10 @@ fn pump(
                 None
             };
             if stop.is_some() {
-                // Without the PID there is nothing to stop: close now.
+                // Without a stop command there is nothing to wait for.
                 give_up = now;
-                if let Some(pid) = stdout.pid {
-                    stop_script(session, &stop_command(platform, pid));
+                if let Some(command) = stop_command(stdout.pid) {
+                    run_stop_command(session, &command);
                     give_up = Instant::now() + STOP_GRACE;
                 }
                 continue;
@@ -454,7 +573,7 @@ mod tests {
 
     #[test]
     fn wrapped_command_quotes_the_interpreter() {
-        let posix = |i| wrapped_command(ScriptPlatform::Posix, i);
+        let posix = |i| wrapped_command(ScriptPlatform::Posix, i, "r1");
         assert_eq!(posix("sh -s"), "exec sh -c 'echo $$; sh -s'");
         assert_eq!(
             posix("sudo -u 'app user' sh -s"),
@@ -466,7 +585,8 @@ mod tests {
     /// character limit, and carries the bootstrap as UTF-16LE base64.
     #[test]
     fn windows_command_encodes_the_bootstrap() {
-        let command = wrapped_command(ScriptPlatform::Windows, "pwsh");
+        let run_id = "0123abcd";
+        let command = wrapped_command(ScriptPlatform::Windows, "pwsh", run_id);
         let (head, encoded) = command.rsplit_once(' ').unwrap();
         assert_eq!(
             head,
@@ -474,21 +594,60 @@ mod tests {
         );
         assert!(command.len() < 8191, "{} characters", command.len());
         assert!(!command.contains(['"', '\'', '&', '|', '<', '>', '^', '%']));
+        assert_eq!(
+            decode_utf16(encoded),
+            POWERSHELL_BOOTSTRAP.replace("STOP_FILE", "ssix-0123abcd.stop")
+        );
+    }
+
+    /// The script inside an `-EncodedCommand`.
+    fn decode_utf16(encoded: &str) -> String {
         let bytes = STANDARD.decode(encoded).unwrap();
         let units: Vec<u16> = bytes
             .chunks(2)
             .map(|p| u16::from_le_bytes([p[0], p[1]]))
             .collect();
-        assert_eq!(String::from_utf16(&units).unwrap(), POWERSHELL_BOOTSTRAP);
+        String::from_utf16(&units).unwrap()
+    }
+
+    /// The bootstrap splits stdin by UTF-16 units, so a character outside
+    /// the BMP counts twice.
+    #[test]
+    fn windows_input_leads_with_the_prelude() {
+        assert_eq!(script_input(ScriptPlatform::Posix, "ls\n"), "ls\n");
+        let input = script_input(ScriptPlatform::Windows, "Get-Date\n");
+        let (size, rest) = input.split_once('\n').unwrap();
+        let size: usize = size.parse().unwrap();
+        let units: Vec<u16> = rest.encode_utf16().collect();
+        assert_eq!(
+            String::from_utf16(&units[..size]).unwrap(),
+            POWERSHELL_PRELUDE
+        );
+        assert_eq!(String::from_utf16(&units[size..]).unwrap(), "Get-Date\n");
+        assert!(!POWERSHELL_PRELUDE.is_ascii() || size == POWERSHELL_PRELUDE.len());
+    }
+
+    #[test]
+    fn shell_probe_tells_cmd_from_powershell() {
+        assert!(!probe_says_powershell("C:\\Windows\\system32\\cmd.exe\r\n"));
+        assert!(probe_says_powershell("%COMSPEC%\r\n"));
+        assert!(!probe_says_powershell(""));
     }
 
     #[test]
     fn stop_command_fits_the_platform() {
-        assert_eq!(stop_command(ScriptPlatform::Posix, 42), "kill -s TERM -42");
         assert_eq!(
-            stop_command(ScriptPlatform::Windows, 42),
-            "taskkill /T /F /PID 42"
+            stop_command(ScriptPlatform::Posix, "sh -s", "r1", Some(42)).as_deref(),
+            Some("kill -s TERM -42")
         );
+        assert_eq!(
+            stop_command(ScriptPlatform::Posix, "sh -s", "r1", None),
+            None
+        );
+        let windows = stop_command(ScriptPlatform::Windows, "pwsh", "r1", None).unwrap();
+        let (head, encoded) = windows.rsplit_once(' ').unwrap();
+        assert_eq!(head, "pwsh -NoProfile -NonInteractive -EncodedCommand");
+        assert!(decode_utf16(encoded).contains("'ssix-r1.stop'"));
     }
 
     #[test]
@@ -540,5 +699,197 @@ mod tests {
 
         let mut broken = Chunks(vec![Err(io::ErrorKind::ConnectionReset.into())]);
         assert!(drain(&mut broken, &mut c, &mut buf).is_err());
+    }
+}
+
+/// Runs against a real SSH server, so a plain `cargo test` skips them.
+/// Point them at one and run them one at a time:
+///
+/// ```text
+/// SSIX_LIVE_SSH=127.0.0.1:2201 SSIX_LIVE_USER=usera SSIX_LIVE_PASSWORD=passa \
+/// SSIX_LIVE_PLATFORM=posix cargo test live_ -- --ignored --test-threads=1
+/// ```
+///
+/// CI runs them on the Linux test servers and on a Windows container
+/// (`docker/windows-sshd`).
+#[cfg(test)]
+mod live {
+    use super::*;
+    use crate::ssh::{open_authenticated_session, AuthMethod, Endpoint};
+    use crate::storage::test_support::with_isolated_data_dir;
+
+    struct Target {
+        endpoint: Endpoint,
+        platform: ScriptPlatform,
+    }
+
+    impl Target {
+        fn from_env() -> Self {
+            let var = |name: &str| {
+                std::env::var(name)
+                    .unwrap_or_else(|_| panic!("{} is not set; see `remote_script::live`", name))
+            };
+            let addr = var("SSIX_LIVE_SSH");
+            let (host, port) = addr.rsplit_once(':').expect("SSIX_LIVE_SSH is host:port");
+            let platform = match var("SSIX_LIVE_PLATFORM").as_str() {
+                "posix" => ScriptPlatform::Posix,
+                "windows" => ScriptPlatform::Windows,
+                other => panic!("SSIX_LIVE_PLATFORM is posix or windows, not {}", other),
+            };
+            Self {
+                endpoint: Endpoint {
+                    host: host.to_string(),
+                    port: port.parse().expect("SSIX_LIVE_SSH port"),
+                    username: var("SSIX_LIVE_USER"),
+                    auth: AuthMethod::Password(var("SSIX_LIVE_PASSWORD")),
+                    proxy_command: None,
+                },
+                platform,
+            }
+        }
+
+        fn windows(&self) -> bool {
+            self.platform == ScriptPlatform::Windows
+        }
+
+        /// The script for this target's platform.
+        fn pick<'a>(&self, posix: &'a str, windows: &'a str) -> &'a str {
+            if self.windows() {
+                windows
+            } else {
+                posix
+            }
+        }
+
+        /// Run `body` with the platform's default interpreter on a new session.
+        fn run(&self, body: &str, timeout: Duration, cancelled: &dyn Fn() -> bool) -> ScriptResult {
+            let mut result = None;
+            with_isolated_data_dir(|| {
+                let session = open_authenticated_session(&self.endpoint, 0, None)
+                    .unwrap_or_else(|e| panic!("connect to {}: {}", self.endpoint.addr(), e));
+                let interpreter = self.platform.default_interpreter();
+                result = Some(
+                    run(
+                        &session,
+                        self.platform,
+                        interpreter,
+                        body,
+                        timeout,
+                        cancelled,
+                    )
+                    .unwrap_or_else(|e| panic!("run: {}", e)),
+                );
+            });
+            result.unwrap()
+        }
+
+        /// Run `body`, which should end well within a minute.
+        fn run_to_end(&self, body: &str) -> ScriptResult {
+            self.run(body, Duration::from_secs(60), &|| false)
+        }
+    }
+
+    /// Windows ends lines with CRLF.
+    fn lines(text: &str) -> String {
+        text.replace("\r\n", "\n")
+    }
+
+    #[test]
+    #[ignore]
+    fn live_output_streams_and_exit_code() {
+        let t = Target::from_env();
+        let r = t.run_to_end(t.pick(
+            "echo 'héllo ✓'\nfor i in 1 2; do\n  echo \"line $i\"\ndone\necho to-stderr >&2\nexit 3\n",
+            "Write-Output 'héllo ✓'\nforeach ($i in 1..2) {\n  \"line $i\"\n}\n[Console]::Error.WriteLine('to-stderr')\nexit 3\n",
+        ));
+        assert_eq!(lines(&r.stdout), "héllo ✓\nline 1\nline 2\n", "{:?}", r);
+        assert_eq!(lines(&r.stderr), "to-stderr\n", "{:?}", r);
+        assert_eq!(r.exit_code, Some(3), "{:?}", r);
+        assert!(!r.cancelled && !r.timed_out && !r.truncated, "{:?}", r);
+    }
+
+    #[test]
+    #[ignore]
+    fn live_exit_status_follows_programs_and_errors() {
+        let t = Target::from_env();
+        let r = t.run_to_end(t.pick("sh -c 'exit 5'\n", "cmd /c exit 5\n"));
+        assert_eq!(
+            r.exit_code,
+            Some(5),
+            "the last program's exit code: {:?}",
+            r
+        );
+
+        let r = t.run_to_end(t.pick("echo boom >&2\nexit 1\n", "throw 'boom'\n"));
+        assert_eq!(r.exit_code, Some(1), "an uncaught error: {:?}", r);
+        assert!(r.stderr.contains("boom"), "{:?}", r);
+        assert!(!r.stderr.contains('\x1b'), "colour codes left: {:?}", r);
+
+        if t.windows() {
+            let r = t.run_to_end("Write-Error 'soft'\nWrite-Output after\n");
+            assert_eq!(r.exit_code, Some(0), "an error that does not stop: {:?}", r);
+            assert!(r.stderr.contains("soft"), "{:?}", r);
+            assert_eq!(lines(&r.stdout), "after\n", "{:?}", r);
+        }
+    }
+
+    #[test]
+    #[ignore]
+    fn live_cancel_stops_the_script_and_what_it_started() {
+        let t = Target::from_env();
+        let start = Instant::now();
+        let r = t.run(
+            t.pick(
+                "echo started\nsleep 30\necho finished\n",
+                "Write-Output started\nping -n 30 127.0.0.1 | Out-Null\nWrite-Output finished\n",
+            ),
+            RUN_TIMEOUT,
+            &|| start.elapsed() > Duration::from_secs(5),
+        );
+        assert!(r.cancelled, "{:?}", r);
+        assert_eq!(r.exit_code, None, "{:?}", r);
+        assert_eq!(lines(&r.stdout), "started\n", "{:?}", r);
+        assert!(
+            start.elapsed() < Duration::from_secs(12),
+            "the cancel took {:?}: {:?}",
+            start.elapsed(),
+            r
+        );
+
+        let check = t.run_to_end(t.pick(
+            "ps | grep -q '[s]leep 30' && exit 1\nexit 0\n",
+            "if (Get-Process ping -ErrorAction SilentlyContinue) { exit 1 }\nexit 0\n",
+        ));
+        assert_eq!(
+            check.exit_code,
+            Some(0),
+            "the script's child still runs: {:?}",
+            check
+        );
+    }
+
+    #[test]
+    #[ignore]
+    fn live_time_limit_stops_the_script() {
+        let t = Target::from_env();
+        let r = t.run(
+            t.pick("sleep 31\n", "ping -n 31 127.0.0.1 | Out-Null\n"),
+            Duration::from_secs(4),
+            &|| false,
+        );
+        assert!(r.timed_out && !r.cancelled, "{:?}", r);
+        assert_eq!(r.exit_code, None, "{:?}", r);
+        assert!(r.duration_ms < 12_000, "{:?}", r);
+
+        let check = t.run_to_end(t.pick(
+            "ps | grep -q '[s]leep 31' && exit 1\nexit 0\n",
+            "if (Get-Process ping -ErrorAction SilentlyContinue) { exit 1 }\nexit 0\n",
+        ));
+        assert_eq!(
+            check.exit_code,
+            Some(0),
+            "the script still runs: {:?}",
+            check
+        );
     }
 }

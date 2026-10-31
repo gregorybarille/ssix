@@ -56,6 +56,61 @@ jobs:
         working-directory: src-tauri
       - name: Generated TS bindings are committed
         run: git diff --exit-code src/types/generated/
+      - name: Script tests on a Linux SSH server
+        run: |
+          docker compose -f ../docker/docker-compose.yml up -d --wait server-a
+          cargo test live_ -- --ignored --test-threads=1
+        working-directory: src-tauri
+        env:
+          SSIX_LIVE_SSH: 127.0.0.1:2201
+          SSIX_LIVE_USER: usera
+          SSIX_LIVE_PASSWORD: passa
+          SSIX_LIVE_PLATFORM: posix
+
+  scripts-windows:
+    name: Scripts on Windows
+    # Windows containers need a Windows host whose kernel matches the
+    # image (docker/windows-sshd uses ltsc2022).
+    runs-on: windows-2022
+    env:
+      SSIX_LIVE_USER: ssix
+      SSIX_LIVE_PASSWORD: Remote-Run-2026!
+      SSIX_LIVE_PLATFORM: windows
+    steps:
+      - uses: actions/checkout@v5
+      - name: Start a Windows OpenSSH server
+        shell: pwsh
+        run: |
+          # Some runners come up with the Docker service stopped.
+          if ((Get-Service docker).Status -ne 'Running') { Start-Service docker }
+          docker build -t ssix-windows-sshd docker/windows-sshd
+          if ($LASTEXITCODE) { exit 1 }
+          docker run -d --name ssix-windows-sshd ssix-windows-sshd
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: "src-tauri -> target"
+      - name: Build the tests
+        run: cargo test --no-run
+        working-directory: src-tauri
+      - name: Wait for sshd
+        shell: pwsh
+        run: |
+          $ip = docker inspect -f "{{.NetworkSettings.Networks.nat.IPAddress}}" ssix-windows-sshd
+          "SSIX_LIVE_SSH=${ip}:22" >> $env:GITHUB_ENV
+          for ($i = 0; $i -lt 60; $i++) {
+            try { (New-Object Net.Sockets.TcpClient $ip, 22).Close(); exit 0 } catch { Start-Sleep -Seconds 2 }
+          }
+          docker logs ssix-windows-sshd
+          exit 1
+      - name: Script tests, cmd as the server's default shell
+        run: cargo test live_ -- --ignored --test-threads=1
+        working-directory: src-tauri
+      - name: Make PowerShell the server's default shell
+        run: docker exec ssix-windows-sshd powershell -NoProfile -Command "New-ItemProperty -Path HKLM:\SOFTWARE\OpenSSH -Name DefaultShell -Value C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe -PropertyType String -Force"
+      - name: Script tests, PowerShell as the server's default shell
+        run: cargo test live_ -- --ignored --test-threads=1
+        working-directory: src-tauri
 
   audit-backend:
     name: Backend Dependency Audit
