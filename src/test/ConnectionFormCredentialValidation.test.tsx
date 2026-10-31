@@ -67,32 +67,32 @@ describe("ConnectionForm credential validation", () => {
     expect(onSubmit.mock.calls[0][0]).toMatchObject({ type: "direct", credential_id: "c1" });
   });
 
-  it("asks for the destination credential on a jump shell", async () => {
+  it("asks for the target credential on a jump host connection", async () => {
     const user = userEvent.setup();
     const { onSubmit } = renderForm();
-    await user.click(screen.getByRole("tab", { name: "Jump Shell" }));
+    await user.click(screen.getByRole("tab", { name: "Jump host" }));
     fireEvent.change(screen.getByLabelText(/connection name/i), { target: { value: "jump" } });
-    fireEvent.change(screen.getByLabelText(/gateway host/i), { target: { value: "gw" } });
-    fireEvent.change(screen.getByLabelText(/destination host/i), { target: { value: "db" } });
-    chooseSelectValue(screen.getByRole("combobox", { name: /gateway credential/i }), "c1");
+    fireEvent.change(screen.getByLabelText(/^jump host \*/i), { target: { value: "gw" } });
+    fireEvent.change(screen.getByLabelText(/target host/i), { target: { value: "db" } });
+    chooseSelectValue(screen.getByRole("combobox", { name: /jump host credential/i }), "c1");
     submit();
-    expect(await screen.findByText("Destination credential is required")).toBeInTheDocument();
-    expect(screen.getByRole("combobox", { name: "Destination credential" })).toHaveAttribute(
+    expect(await screen.findByText("Target credential is required")).toBeInTheDocument();
+    expect(screen.getByRole("combobox", { name: "Target credential" })).toHaveAttribute(
       "aria-invalid",
       "true",
     );
     expect(onSubmit).not.toHaveBeenCalled();
   });
 
-  it("does not ask a port forward for a destination credential", async () => {
+  it("does not ask a local forward for a target credential", async () => {
     const user = userEvent.setup();
     const { onSubmit } = renderForm();
-    await user.click(screen.getByRole("tab", { name: "Port Forward" }));
+    await user.click(screen.getByRole("tab", { name: "Local forward" }));
     fireEvent.change(screen.getByLabelText(/connection name/i), { target: { value: "pf" } });
-    fireEvent.change(screen.getByLabelText(/gateway host/i), { target: { value: "gw" } });
-    fireEvent.change(screen.getByLabelText(/destination host/i), { target: { value: "db" } });
+    fireEvent.change(screen.getByLabelText(/ssh server host/i), { target: { value: "gw" } });
+    fireEvent.change(screen.getByLabelText(/remote host/i), { target: { value: "db" } });
     fireEvent.change(screen.getByLabelText(/local port/i), { target: { value: "15432" } });
-    chooseSelectValue(screen.getByRole("combobox", { name: /gateway credential/i }), "c1");
+    chooseSelectValue(screen.getByRole("combobox", { name: /ssh server credential/i }), "c1");
     submit();
     await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
     expect(onSubmit.mock.calls[0][0]).toMatchObject({

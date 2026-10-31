@@ -2,13 +2,13 @@
 
 [![Test](https://github.com/gregorybarille/ssix/actions/workflows/test.yml/badge.svg?branch=main)](https://github.com/gregorybarille/ssix/actions/workflows/test.yml)
 
-SSIX is a desktop SSH client built with Tauri, React, and Rust. It combines saved SSH connections, reusable credentials, tabbed and split terminals, tunnels, SCP transfers, diagnostics, screenshots, and Git-backed config sync in one app.
+SSIX is a desktop SSH client built with Tauri, React, and Rust. It combines saved SSH connections, reusable credentials, tabbed and split terminals, port forwards, SCP transfers, diagnostics, screenshots, and Git-backed config sync in one app.
 
 ![Connections](docs/screenshots/connections.png)
 
 ## Highlights
 
-- Direct SSH, port forward, and jump-shell connections
+- Direct SSH, local forward (`ssh -L`) and jump host (`ssh -J`) connections
 - Saved credentials with password, key-path, and inline-key support
 - Terminal tabs and split panes
 - SCP upload/download, including recursive directory transfer
@@ -42,7 +42,7 @@ cd src-tauri && cargo test
 ## Quick Start
 
 1. Create a credential or use inline auth in the connection form.
-2. Create a direct, port-forward, or jump-shell connection.
+2. Create a direct, local forward, or jump host connection.
 3. Connect from the Connections view.
 4. Optionally set `login_command` and `remote_path` on the connection.
 5. Use `Transfer files` for SCP or `Git Sync` for sanitized config sync.

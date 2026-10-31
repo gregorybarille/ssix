@@ -455,6 +455,7 @@ fn render_summary(data: &AppData) -> String {
     out.push_str("Sanitized export for git sync. Passwords, inline private keys, and other secrets are omitted.\n\n");
     out.push_str(&format!("- Connections: {}\n", data.connections.len()));
     out.push_str(&format!("- Credentials: {}\n", data.credentials.len()));
+    out.push_str(&format!("- Scripts: {}\n", data.scripts.len()));
     out.push_str(&format!("- Theme: {}\n", data.settings.theme));
     out
 }

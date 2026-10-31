@@ -1,4 +1,5 @@
 import React from "react";
+import { KIND_LABELS } from "@/lib/sshTerms";
 import { Connection, Credential, LayoutMode } from "@/types";
 import { Button } from "./ui/button";
 import { Badge } from "./ui/badge";
@@ -70,7 +71,7 @@ function TypeBadge({ conn }: { conn: Connection }) {
   if (conn.type === "direct") return null;
   return (
     <Badge variant="secondary" className="text-xs shrink-0">
-      {conn.type === "port_forward" ? "port-forward" : "jump-shell"}
+      {KIND_LABELS[conn.type].toLowerCase()}
     </Badge>
   );
 }
@@ -125,7 +126,7 @@ function RowActions({ conn, onEdit, onDelete, onClone, onConnect, onScp }: RowAc
       )}
       {onScp && (
         <span
-          title={scpBlocked ? "SCP not available for port-forward connections" : undefined}
+          title={scpBlocked ? "SCP not available for local forwards" : undefined}
           className="inline-flex"
         >
           <Button
@@ -138,7 +139,7 @@ function RowActions({ conn, onEdit, onDelete, onClone, onConnect, onScp }: RowAc
             }, conn)}
             aria-label={
               scpBlocked
-                ? "SCP not available for port-forward connections"
+                ? "SCP not available for local forwards"
                 : `Transfer files to ${conn.name}`
             }
             data-testid={`scp-open-${conn.id}`}

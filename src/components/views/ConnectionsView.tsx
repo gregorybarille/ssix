@@ -34,9 +34,9 @@ interface ConnectionsViewProps {
 }
 
 /**
- * The Connections tab: header with layout toggle, the inline
- * connection form when it is open, otherwise the search bar and either
- * the list/grid or the tag-group view.
+ * The Connections tab: header with layout toggle, the search bar and
+ * either the list/grid or the tag-group view. The connection form opens
+ * as the right-hand panel beside them.
  */
 export function ConnectionsView({
   connections,
@@ -93,61 +93,55 @@ export function ConnectionsView({
           </Button>
         </div>
       </div>
-      {dialogs.connFormOpen ? (
-        <ConnectionForm
-          inline
-          open={dialogs.connFormOpen}
-          onOpenChange={dialogs.setConnFormOpen}
-          connection={dialogs.cloningConn ?? dialogs.editingConn}
-          credentials={credentials}
-          onSubmit={dialogs.cloningConn ? onCloneSubmit : onSubmit}
-          onCreateCredential={onCreateCredential}
-          onDiscardCredential={onDiscardCredential}
-          isClone={!!dialogs.cloningConn}
-        />
-      ) : (
-        <>
-          {loadError && (
-            <div className="px-6 pt-3">
-              <ErrorBanner
-                message={`Could not load connections: ${loadError}`}
-                onRetry={() => void retryLoad()}
-                testId="connections-load-error"
-              />
-            </div>
-          )}
-          <div className="px-6 py-3 border-b border-border">
-            <SearchBar
-              value={searchQuery}
-              onChange={setSearchQuery}
-              placeholder={settings.connection_layout === "tags" ? "Search tags…" : undefined}
-            />
-          </div>
-          <div className="flex-1 overflow-y-auto px-4 py-2">
-            {settings.connection_layout === "tags" ? (
-              <Suspense fallback={<ViewFallback label="Loading tags…" />}>
-                <TagGroupGrid
-                  connections={connections}
-                  query={searchQuery}
-                  onConnectAll={onConnectAllInTag}
-                  onScpAll={onScpAllInTag}
-                />
-              </Suspense>
-            ) : (
-              <ConnectionList
-                connections={visibleConnections}
-                credentials={credentials}
-                layout={settings.connection_layout}
-                onEdit={(conn) => dialogs.openEditConnection(conn)}
-                onDelete={onDelete}
-                onClone={(conn) => dialogs.openCloneConnection(conn)}
-                onConnect={onConnect}
-                onScp={(conn) => dialogs.openScp(conn)}
-              />
-            )}
-          </div>
-        </>
+      {loadError && (
+        <div className="px-6 pt-3">
+          <ErrorBanner
+            message={`Could not load connections: ${loadError}`}
+            onRetry={() => void retryLoad()}
+            testId="connections-load-error"
+          />
+        </div>
       )}
+      <div className="px-6 py-3 border-b border-border">
+        <SearchBar
+          value={searchQuery}
+          onChange={setSearchQuery}
+          placeholder={settings.connection_layout === "tags" ? "Search tags…" : undefined}
+        />
+      </div>
+      <div className="flex-1 overflow-y-auto px-4 py-2">
+        {settings.connection_layout === "tags" ? (
+          <Suspense fallback={<ViewFallback label="Loading tags…" />}>
+            <TagGroupGrid
+              connections={connections}
+              query={searchQuery}
+              onConnectAll={onConnectAllInTag}
+              onScpAll={onScpAllInTag}
+            />
+          </Suspense>
+        ) : (
+          <ConnectionList
+            connections={visibleConnections}
+            credentials={credentials}
+            layout={settings.connection_layout}
+            onEdit={(conn) => dialogs.openEditConnection(conn)}
+            onDelete={onDelete}
+            onClone={(conn) => dialogs.openCloneConnection(conn)}
+            onConnect={onConnect}
+            onScp={(conn) => dialogs.openScp(conn)}
+          />
+        )}
+      </div>
+      <ConnectionForm
+        open={dialogs.connFormOpen}
+        onOpenChange={dialogs.setConnFormOpen}
+        connection={dialogs.cloningConn ?? dialogs.editingConn}
+        credentials={credentials}
+        onSubmit={dialogs.cloningConn ? onCloneSubmit : onSubmit}
+        onCreateCredential={onCreateCredential}
+        onDiscardCredential={onDiscardCredential}
+        isClone={!!dialogs.cloningConn}
+      />
     </>
   );
 }

@@ -3,6 +3,7 @@ import { XIcon } from "lucide-react";
 import { Dialog as DialogPrimitive } from "radix-ui";
 
 import { cn } from "@/lib/utils";
+import { usePanelSlot } from "./panel-slot";
 
 function Dialog({
   modal,
@@ -22,6 +23,24 @@ function DialogPortal({
 }: React.ComponentProps<typeof DialogPrimitive.Portal>) {
   return <DialogPrimitive.Portal data-slot="dialog-portal" {...props} />;
 }
+
+/**
+ * How a dialog sits in the app:
+ * - `panel` (default): fills the right-hand panel column beside the view.
+ * - `confirm`: a compact card at the top of that column, above any panel
+ *   it is about.
+ * - `palette`: centred over the app, for the quick-connect picker.
+ */
+type DialogKind = "panel" | "confirm" | "palette";
+
+const KIND_CLASSES: Record<DialogKind, string> = {
+  panel:
+    "relative flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto border-b border-border bg-card p-6 outline-none last:border-b-0",
+  confirm:
+    "relative order-first flex shrink-0 flex-col gap-4 border-b-2 border-primary/40 bg-muted/40 p-5 outline-none",
+  palette:
+    "fixed top-[50%] left-[50%] z-50 grid max-h-[calc(100vh-5rem)] w-full max-w-[calc(100vw-2rem)] translate-x-[-50%] translate-y-[-50%] gap-4 overflow-hidden rounded-xl border border-border/80 bg-card p-6 shadow-2xl shadow-black/25 duration-200 outline-none ring-1 ring-white/5 data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=closed]:zoom-out-95 data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=open]:zoom-in-95 sm:max-w-lg",
+};
 
 function DialogClose({
   ...props
@@ -100,12 +119,16 @@ function DialogContent({
   className,
   children,
   showCloseButton = true,
+  kind = "panel",
   onCloseAutoFocus,
+  onInteractOutside,
   ...props
 }: React.ComponentProps<typeof DialogPrimitive.Content> & {
   showCloseButton?: boolean;
+  kind?: DialogKind;
 }) {
   const triggerRef = React.useRef<HTMLElement | null>(null);
+  const slot = usePanelSlot();
 
   // Best-effort: capture the trigger as soon as we know about it. We
   // try at render time, then again in a layout effect (after the dom
@@ -129,9 +152,17 @@ function DialogContent({
   }
 
   return (
-    <DialogPortal data-slot="dialog-portal">
+    <DialogPortal data-slot="dialog-portal" container={kind === "palette" ? undefined : slot}>
       <DialogPrimitive.Content
         data-slot="app-panel-content"
+        data-kind={kind}
+        onInteractOutside={(event) => {
+          onInteractOutside?.(event);
+          // A panel sits beside the view the user keeps working in, so
+          // clicking or tabbing there never closes it; Escape, Cancel and
+          // the close button do.
+          if (kind !== "palette") event.preventDefault();
+        }}
         onCloseAutoFocus={(event) => {
           onCloseAutoFocus?.(event);
           if (event.defaultPrevented) return;
@@ -148,10 +179,7 @@ function DialogContent({
             triggerRef.current.focus();
           }
         }}
-        className={cn(
-          "fixed top-[50%] left-[50%] z-50 grid max-h-[calc(100vh-5rem)] w-full max-w-[calc(100vw-2rem)] translate-x-[-50%] translate-y-[-50%] gap-4 overflow-hidden rounded-xl border border-border/80 bg-card p-6 shadow-2xl shadow-black/25 duration-200 outline-none ring-1 ring-white/5 data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=closed]:zoom-out-95 data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=open]:zoom-in-95 sm:max-w-lg",
-          className,
-        )}
+        className={cn(KIND_CLASSES[kind], className)}
         {...props}
       >
         {/*

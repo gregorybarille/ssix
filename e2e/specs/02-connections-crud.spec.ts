@@ -3,7 +3,8 @@
  *
  * Creates a credential, then a Direct connection that references it.
  * Asserts the connection appears in the list (round-tripped through
- * `add_connection` and `data.json`), then covers the credential rules:
+ * `add_connection` and `data.json`) and that the form opens in the side
+ * panel with the list still on screen, then covers the credential rules:
  *   - a connection cannot be saved without a credential;
  *   - a refused save deletes the inline credential it created;
  *   - a clone keeps every field of its form;
@@ -20,7 +21,7 @@ import {
   createDirectConnection,
   ensureConnectionRowsLayout,
   fill,
-  pickCredential,
+  pickOption,
   saveConnectionForm,
   textContentOf,
 } from "../helpers/flows.js";
@@ -95,6 +96,20 @@ describe("Connections CRUD", () => {
     expect(await row.isExisting()).toBe(true);
   });
 
+  it("opens the connection form in the side panel, beside the list", async () => {
+    await ensureConnectionRowsLayout();
+    await click(sel.addConnectionButton);
+    const panel = await browser.$(sel.appPanelSlot);
+    await (await panel.$(sel.connectionForm)).waitForExist({ timeout: 10_000 });
+    const row = await browser.$(sel.connectionRowByName("conn-a"));
+    expect(await row.isDisplayed()).toBe(true);
+    // Clicking the list leaves the panel open.
+    await row.click();
+    expect(await (await browser.$(sel.connectionForm)).isExisting()).toBe(true);
+    await clickDialogFooterButton(sel.connectionFormCancel);
+    await (await browser.$(sel.connectionForm)).waitForExist({ reverse: true, timeout: 10_000 });
+  });
+
   it("filters the list client-side as the user types", async () => {
     await createDirectConnection({
       name: "conn-a-other",
@@ -142,7 +157,7 @@ describe("Connections CRUD", () => {
     const picker = await browser.$(sel.connectionFormCredential);
     expect(await picker.getAttribute("aria-invalid")).toBe("true");
 
-    await pickCredential(sel.connectionFormCredential, "cred-a");
+    await pickOption(sel.connectionFormCredential, "cred-a");
     await credentialError.waitForExist({ reverse: true, timeout: 5_000 });
 
     // A save refused for another reason must not drop the picked credential

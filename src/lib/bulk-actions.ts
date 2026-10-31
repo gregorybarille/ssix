@@ -6,7 +6,7 @@ import { suffixedLocalDownloadPath } from "@/lib/tags";
 
 /**
  * Connections that can't participate in bulk SSH/SCP operations.
- * Currently only port-forward entries — they aren't real shells
+ * Currently only local forwards — they aren't real shells
  * and SCP commands reject them server-side anyway. Centralized so
  * the filter rule lives in one place if it ever changes.
  */
@@ -51,6 +51,9 @@ export async function connectMany(
   return { started, skipped };
 }
 
+/** Progress of one host in a batch operation (bulk SCP, script runs). */
+export type StepStatus = "pending" | "running" | "success" | "error" | "skipped" | "cancelled";
+
 /** Per-host outcome for a bulk SCP operation. */
 export interface BulkScpStep {
   connectionId: string;
@@ -59,7 +62,7 @@ export interface BulkScpStep {
   remotePath: string;
   /** Final local path that was actually attempted (download = suffixed; upload = unchanged). */
   localPath: string;
-  status: "pending" | "running" | "success" | "error" | "skipped";
+  status: StepStatus;
   /** Bytes transferred on success; undefined otherwise. */
   bytes?: number;
   /** Item count on success; undefined otherwise. */
@@ -86,7 +89,7 @@ export interface BulkScpDownloadInput {
 
 /**
  * Build the initial `BulkScpStep[]` array for an upload operation.
- * Port-forward connections become `"skipped"` rows so they're still
+ * Local forwards become `"skipped"` rows so they're still
  * visible in the progress UI (silent skips are confusing — the user
  * needs to see why the count dropped).
  */
@@ -100,7 +103,7 @@ export function planBulkUpload(
     remotePath: input.remotePath ?? conn.remote_path ?? "",
     localPath: input.localPath,
     status: isBulkActionable(conn) ? "pending" : "skipped",
-    error: isBulkActionable(conn) ? undefined : "Port-forward connections cannot transfer files",
+    error: isBulkActionable(conn) ? undefined : "Local forwards cannot transfer files",
   }));
 }
 
@@ -124,7 +127,7 @@ export function planBulkDownload(
       conn.name,
     ),
     status: isBulkActionable(conn) ? "pending" : "skipped",
-    error: isBulkActionable(conn) ? undefined : "Port-forward connections cannot transfer files",
+    error: isBulkActionable(conn) ? undefined : "Local forwards cannot transfer files",
   }));
 }
 

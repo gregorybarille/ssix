@@ -1,6 +1,6 @@
 # SSH Test Environment
 
-Docker Compose setup for testing direct connections, port forwarding, and jump-shell SSH connections.
+Docker Compose setup for testing direct connections, local forwards (`ssh -L`), and jump host (`ssh -J`) connections.
 
 ## Architecture
 
@@ -17,9 +17,9 @@ Host machine
 ```
 
 - All four servers are directly accessible from the host on their respective ports.
-- **server-c** is additionally reachable through **server-a** via the `private_a` internal network (for testing port forwarding and jump-shell connections).
+- **server-c** is additionally reachable through **server-a** via the `private_a` internal network (for testing local forwards and jump host connections).
 - **server-d** is additionally reachable through **server-b** via the `private_b` internal network.
-- All servers have `AllowTcpForwarding yes` in sshd, which is required for port-forward and jump-shell to work.
+- All servers have `AllowTcpForwarding yes` in sshd, which local forwards and jump host connections need.
 
 ## Usage
 
@@ -46,27 +46,27 @@ ssh -L 9001:server-c:22 usera@localhost -p 2201 -N
 npm run docker:down
 ```
 
-## Testing SSIX tunneling features
+## Testing local forwards and jump hosts
 
-The Docker environment is designed to validate the two SSIX tunnel kinds end-to-end.
+The Docker environment is designed to validate both two-hop connection kinds end-to-end.
 
-### Port Forward (`ConnectionKind::PortForward`)
+### Local forward (`ConnectionKind::PortForward`, like `ssh -L`)
 
-SSIX opens an SSH session to the gateway with password auth, binds `127.0.0.1:<local_port>`,
-and forwards every accepted local connection through the gateway to the destination. The
-destination need not run sshd — any TCP service works.
+SSIX opens an SSH session to the SSH server with password auth, binds `127.0.0.1:<local_port>`,
+and forwards every accepted local connection through the SSH server to the remote host. The
+remote host need not run sshd — any TCP service works.
 
 Configure an SSIX connection:
 
 | Field                | Value           |
 |----------------------|-----------------|
-| Type                 | Port Forward    |
-| Gateway Host         | `127.0.0.1`     |
-| Gateway Port         | `2201`          |
-| Gateway Credential   | usera / passa   |
+| Type                 | Local forward   |
+| SSH Server Host      | `127.0.0.1`     |
+| SSH Server Port      | `2201`          |
+| SSH Server Credential| usera / passa   |
 | Local Port           | `9001`          |
-| Destination Host     | `server-c`      |
-| Destination Port     | `22`            |
+| Remote Host          | `server-c`      |
+| Remote Port          | `22`            |
 
 After connecting, validate from any other shell on the host:
 
@@ -75,25 +75,25 @@ ssh -p 9001 userc@127.0.0.1
 ```
 
 The same pattern works for forwarding non-SSH services (HTTP APIs, databases, etc.) — set
-`Destination Port` to whatever the service listens on inside the private network.
+`Remote Port` to whatever the service listens on inside the private network.
 
-### Jump Shell (`ConnectionKind::JumpShell`)
+### Jump host (`ConnectionKind::JumpShell`, like `ssh -J`)
 
-SSIX opens an SSH terminal to the destination *through* the gateway. No SSH keys are
- required on the gateway: SSIX authenticates to both gateway and destination separately
+SSIX opens an SSH terminal to the target *through* the jump host. No SSH keys are
+required on the jump host: SSIX authenticates to both the jump host and the target separately
 with their own credentials.
 
 Configure an SSIX connection:
 
 | Field                  | Value         |
 |------------------------|---------------|
-| Type                   | Jump Shell    |
-| Gateway Host           | `127.0.0.1`   |
-| Gateway Port           | `2201`        |
-| Gateway Credential     | usera / passa |
-| Destination Host       | `server-c`    |
-| Destination Port       | `22`          |
-| Destination Credential | userc / passc |
+| Type                   | Jump host     |
+| Jump Host              | `127.0.0.1`   |
+| Jump Host Port         | `2201`        |
+| Jump Host Credential   | usera / passa |
+| Target Host            | `server-c`    |
+| Target Port            | `22`          |
+| Target Credential      | userc / passc |
 
 The terminal that opens is a shell on `server-c`, reached via `server-a`.
 
@@ -103,7 +103,27 @@ The terminal that opens is a shell on `server-c`, reached via `server-a`.
 
 | Server   | Hostname    | Username | Password | Host Port | Access                        |
 |----------|-------------|----------|----------|-----------|-------------------------------|
-| server-a | `127.0.0.1` | usera    | passa    | 2201      | Direct or gateway             |
-| server-b | `127.0.0.1` | userb    | passb    | 2202      | Direct or gateway             |
-| server-c | `127.0.0.1` | userc    | passc    | 2203      | Direct, port-forward, or jump via server-a |
-| server-d | `127.0.0.1` | userd    | passd    | 2204      | Direct, port-forward, or jump via server-b |
+| server-a | `127.0.0.1` | usera    | passa    | 2201      | Direct, jump host or SSH server |
+| server-b | `127.0.0.1` | userb    | passb    | 2202      | Direct, jump host or SSH server |
+| server-c | `127.0.0.1` | userc    | passc    | 2203      | Direct, or via server-a (local forward or jump host) |
+| server-d | `127.0.0.1` | userd    | passd    | 2204      | Direct, or via server-b (local forward or jump host) |
+
+## Windows OpenSSH server (script tests)
+
+`docker/windows-sshd/` builds a Windows Server Core image with Win32-OpenSSH and a
+local user `ssix` / `Remote-Run-2026!`. It runs only on a Windows host whose kernel
+matches the base image (`ltsc2022`, so Windows Server 2022 or a `windows-2022`
+GitHub runner); Docker on macOS and Linux cannot run it. CI uses it to run the
+script tests in `src-tauri/src/remote_script.rs` (`remote_script::live`) against a
+real Windows host:
+
+```powershell
+docker build -t ssix-windows-sshd docker/windows-sshd
+docker run -d --name ssix-windows-sshd ssix-windows-sshd
+$ip = docker inspect -f "{{.NetworkSettings.Networks.nat.IPAddress}}" ssix-windows-sshd
+$env:SSIX_LIVE_SSH = "${ip}:22"; $env:SSIX_LIVE_USER = "ssix"
+$env:SSIX_LIVE_PASSWORD = "Remote-Run-2026!"; $env:SSIX_LIVE_PLATFORM = "windows"
+cd src-tauri; cargo test live_ -- --ignored --test-threads=1
+```
+
+The same tests run against `server-a` for POSIX (see the module docs).

@@ -120,13 +120,23 @@ Frontend:
 Backend:
 
 - Rust unit tests inside the relevant modules
+- Script tests against a real SSH server (`remote_script::live`, ignored by
+  a plain `cargo test`). Point them at a host with `SSIX_LIVE_SSH`,
+  `SSIX_LIVE_USER`, `SSIX_LIVE_PASSWORD` and `SSIX_LIVE_PLATFORM`, then run
+  `cargo test live_ -- --ignored --test-threads=1`; for POSIX, start
+  `server-a` (`docker compose -f docker/docker-compose.yml up -d --wait server-a`)
+  and use `127.0.0.1:2201`, `usera`, `passa`, `posix`. The Windows server is
+  in `docker/README.md`.
 
 Continuous integration (`.github/workflows/test.yml`, required on PRs):
 
 - Frontend: `npm audit --omit=dev --audit-level=high`, `npm test`, `npm run build`
 - Backend: `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`, `cargo test`, and a
   `git diff --exit-code src/types/generated/` check so regenerated ts-rs
-  bindings are always committed
+  bindings are always committed, then the script tests against `server-a`
+- Scripts on Windows: the script tests on a `windows-2022` runner against the
+  `docker/windows-sshd` container, once with cmd and once with PowerShell as
+  the server's default shell
 - `cargo audit` via `rustsec/audit-check` for advisories in `src-tauri/Cargo.lock`. `.cargo/audit.toml` (at the repo root, where the action runs) ignores advisories for optional crates that are in the lockfile but never compiled, with the reason for each
 
 End-to-end:
@@ -162,8 +172,8 @@ End-to-end:
   artifact in CI.
 
   The first iteration covers credentials/connections CRUD, direct
-  SSH, jump-shell, port forwarding, SCP round-trip, key generation +
-  install, and git-sync export. Selectors are centralised in
+  SSH, jump host, local forwarding, SCP round-trip, key generation +
+  install, git-sync export, local backup and restore. Selectors are centralised in
   `e2e/helpers/selectors.ts`; some `data-testid` attributes are still
   to be added as the suite is brought green for the first time
   (Sidebar, ConnectionList, and the App add-buttons are wired today).
@@ -182,8 +192,9 @@ End-to-end:
 
 - Direct shell with password auth
 - Direct shell with SSH key auth
-- Jump-shell through gateway
-- Port forward and local client access
+- Jump host connection
+- Local forward and local client access
 - SCP file transfer
 - Recursive SCP directory transfer
 - Git Sync export, diff, one-click sync
+- Back up now, change something, restore the backup, then restore the "before restore" one

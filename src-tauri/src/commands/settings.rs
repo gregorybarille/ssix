@@ -16,6 +16,12 @@ pub async fn save_settings(settings: AppSettings) -> Result<AppSettings, String>
 
 fn save_settings_sync(settings: AppSettings) -> Result<AppSettings, String> {
     validate_git_remote(&settings.git_sync_remote)?;
+    if !(1..=720).contains(&settings.backup_interval_hours) {
+        return Err("Backup interval must be between 1 and 720 hours".to_string());
+    }
+    if !(1..=100).contains(&settings.backup_keep) {
+        return Err("Keep between 1 and 100 automatic backups".to_string());
+    }
     if let Some(branch) = settings.git_sync_branch.as_deref() {
         if !branch.trim().is_empty() {
             validate_git_branch(branch)?;
@@ -46,6 +52,18 @@ mod tests {
         let json = serde_json::to_string(&settings).unwrap();
         assert!(json.contains("font_size"));
         assert!(json.contains("color_scheme"));
+    }
+
+    #[test]
+    fn save_settings_bounds_the_backup_schedule() {
+        for (hours, keep) in [(0, 10), (721, 10), (24, 0), (24, 101)] {
+            let s = AppSettings {
+                backup_interval_hours: hours,
+                backup_keep: keep,
+                ..AppSettings::default()
+            };
+            assert!(save_settings_sync(s).is_err(), "{hours}h keep {keep}");
+        }
     }
 
     /// A remote or branch that git would parse as an option must never be

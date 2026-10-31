@@ -21,9 +21,9 @@ describe("ConnectionForm verbosity", () => {
     expect(screen.getByText(/verbosity level/i)).toBeInTheDocument();
   });
 
-  it("defaults to level 0 (silent)", () => {
+  it("defaults to quiet", () => {
     render(<ConnectionForm {...defaultProps} />);
-    const matches = screen.getAllByText(/0.*silent/i);
+    const matches = screen.getAllByText(/Quiet \(default\)/);
     expect(matches.length).toBeGreaterThan(0);
   });
 
@@ -37,7 +37,7 @@ describe("ConnectionForm verbosity", () => {
       verbosity: 1,
     };
     render(<ConnectionForm {...defaultProps} connection={conn} />);
-    const matches = screen.getAllByText(/1.*info/i);
+    const matches = screen.getAllByText(/-v \(connection steps\)/);
     expect(matches.length).toBeGreaterThan(0);
   });
 });

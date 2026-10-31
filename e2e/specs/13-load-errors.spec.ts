@@ -1,9 +1,9 @@
 /**
- * Spec 11: a failed load is shown, never mistaken for an empty catalogue.
+ * Spec 13: a failed load is shown, never mistaken for an empty catalogue.
  *
  * Corrupts `data.json`, reloads the app, and expects the Connections,
- * Credentials and Settings views to show a load-error banner naming the
- * file. Restoring the file and clicking Retry brings the data back.
+ * Credentials, Scripts and Settings views to show a load-error banner
+ * naming the file. Restoring the file and clicking Retry brings the data back.
  *
  * Runs last: while the file is corrupt every backend read fails.
  */
@@ -46,6 +46,8 @@ describe("Load errors", () => {
 
     await navigateTo("credentials");
     await (await browser.$(sel.credentialsLoadError)).waitForExist({ timeout: 10_000 });
+    await navigateTo("scripts");
+    await (await browser.$(sel.scriptsLoadError)).waitForExist({ timeout: 10_000 });
     await navigateTo("settings");
     await (await browser.$(sel.settingsLoadError)).waitForExist({ timeout: 10_000 });
 
@@ -62,5 +64,10 @@ describe("Load errors", () => {
     await (await browser.$(sel.credentialsLoadErrorRetry)).click();
     await (await browser.$(sel.credentialsLoadError)).waitForExist({ reverse: true, timeout: 10_000 });
     await (await browser.$(sel.credentialRowByName("cred-11"))).waitForExist({ timeout: 10_000 });
+
+    // The Scripts view loads again each time it opens.
+    await navigateTo("scripts");
+    await (await browser.$(sel.addScriptButton)).waitForExist({ timeout: 10_000 });
+    await (await browser.$(sel.scriptsLoadError)).waitForExist({ reverse: true, timeout: 10_000 });
   });
 });

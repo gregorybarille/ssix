@@ -1,7 +1,7 @@
 /**
  * Backend event-name helpers.
  *
- * These mirror the helpers in `src-tauri/src/ssh.rs` (`tunnel_status_event`).
+ * These mirror the helpers in `src-tauri/src/ssh.rs` (`forward_status_event`).
  * Shell output and per-session `error` / `closed` notifications are not
  * events: they travel over the Tauri `Channel` created in
  * `src/lib/terminalOutput.ts` and passed to `ssh_connect`, so they stay
@@ -18,4 +18,4 @@
  * is one-point.
  */
 
-export const tunnelStatusEvent = (sessionId: string) => `ssix:tunnel:status:${sessionId}`;
+export const forwardStatusEvent = (sessionId: string) => `ssix:forward:status:${sessionId}`;

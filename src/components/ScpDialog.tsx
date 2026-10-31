@@ -117,7 +117,7 @@ export function ScpDialog({ open, onOpenChange, connection }: ScpDialogProps) {
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-[500px]" data-testid="scp-dialog">
+      <DialogContent data-testid="scp-dialog">
         <DialogHeader>
           <DialogTitle>SCP {connection ? `for ${connection.name}` : ""}</DialogTitle>
           {/* P1#5: sr-only description so the dialog has a wired aria-describedby. */}

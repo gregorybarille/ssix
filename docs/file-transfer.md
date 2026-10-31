@@ -3,9 +3,9 @@
 SSIX supports SCP-based file transfer for:
 
 - direct connections
-- jump-shell connections
+- jump host connections
 
-Port-forward connection definitions are not valid SCP targets.
+Local forwards are not valid SCP targets.
 
 ## Supported Operations
 

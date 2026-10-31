@@ -22,6 +22,8 @@ pub struct ConnectionFields {
     #[serde(default)]
     pub extra_args: Option<String>,
     #[serde(default)]
+    pub proxy_command: Option<String>,
+    #[serde(default)]
     pub login_command: Option<String>,
     #[serde(default)]
     pub remote_path: Option<String>,
@@ -92,27 +94,35 @@ fn validate_connection_credentials(
     credential_id: Option<&str>,
     kind: &ConnectionKind,
 ) -> Result<(), String> {
+    // `label` starts mid-sentence; the "is required" message capitalizes it.
     let check = |label: &str, id: Option<&str>| match id.filter(|id| !id.is_empty()) {
-        None => Err(format!("{label} is required")),
-        Some(id) if !credentials.iter().any(|c| c.id == id) => Err(format!(
-            "The selected {} no longer exists",
-            label.to_lowercase()
-        )),
+        None => {
+            let mut chars = label.chars();
+            let first = chars.next().map(|c| c.to_uppercase().collect::<String>());
+            Err(format!(
+                "{}{} is required",
+                first.unwrap_or_default(),
+                chars.as_str()
+            ))
+        }
+        Some(id) if !credentials.iter().any(|c| c.id == id) => {
+            Err(format!("The selected {label} no longer exists"))
+        }
         Some(_) => Ok(()),
     };
     match kind {
-        ConnectionKind::Direct => check("Credential", credential_id),
+        ConnectionKind::Direct => check("credential", credential_id),
         ConnectionKind::JumpShell {
             gateway_credential_id,
             ..
         } => {
-            check("Gateway credential", Some(gateway_credential_id))?;
-            check("Destination credential", credential_id)
+            check("jump host credential", Some(gateway_credential_id))?;
+            check("target credential", credential_id)
         }
         ConnectionKind::PortForward {
             gateway_credential_id,
             ..
-        } => check("Gateway credential", Some(gateway_credential_id)),
+        } => check("SSH server credential", Some(gateway_credential_id)),
         // Old files are migrated to JumpShell on load; the variant still
         // deserializes, so a request carrying it must not be stored.
         ConnectionKind::LegacyTunnel { .. } => {
@@ -145,6 +155,10 @@ fn check_connection(
 ) -> Result<(), String> {
     f.name = f.name.trim().to_string();
     validate_connection_fields(&f.name, &f.host, f.port)?;
+    f.proxy_command = normalize_optional_text(f.proxy_command.take());
+    if let Some(command) = &f.proxy_command {
+        crate::proxy::validate(command)?;
+    }
     if data
         .connections
         .iter()
@@ -161,6 +175,7 @@ fn insert_new_connection(data: &mut AppData, f: ConnectionFields) -> Connection 
     let mut connection = Connection::new(f.name, f.host, f.port, f.credential_id, f.kind);
     connection.verbosity = f.verbosity;
     connection.extra_args = f.extra_args;
+    connection.proxy_command = f.proxy_command;
     connection.login_command = normalize_optional_text(f.login_command);
     connection.remote_path = normalize_remote_path(f.remote_path);
     connection.tags = normalize_tags(f.tags);
@@ -213,6 +228,7 @@ fn apply_update(
     data.connections[idx].kind = f.kind;
     data.connections[idx].verbosity = f.verbosity;
     data.connections[idx].extra_args = f.extra_args;
+    data.connections[idx].proxy_command = f.proxy_command;
     data.connections[idx].login_command = normalize_optional_text(f.login_command);
     data.connections[idx].remote_path = normalize_remote_path(f.remote_path);
     data.connections[idx].tags = normalize_tags(f.tags);
@@ -438,6 +454,7 @@ mod tests {
             kind: ConnectionKind::Direct,
             verbosity: 0,
             extra_args: None,
+            proxy_command: None,
             login_command: None,
             remote_path: None,
             tags: Vec::new(),
@@ -461,11 +478,11 @@ mod tests {
         );
         assert_eq!(
             validate_connection_credentials(&creds, None, &jump_kind(id)),
-            required("Destination credential is required")
+            required("Target credential is required")
         );
         assert_eq!(
             validate_connection_credentials(&creds, Some(id), &jump_kind("")),
-            required("Gateway credential is required")
+            required("Jump host credential is required")
         );
         assert!(validate_connection_credentials(&creds, Some(id), &direct).is_ok());
         assert!(validate_connection_credentials(&creds, Some(id), &jump_kind(id)).is_ok());
@@ -483,11 +500,11 @@ mod tests {
         );
         assert_eq!(
             validate_connection_credentials(&creds, Some("gone"), &jump_kind(id)),
-            Err("The selected destination credential no longer exists".to_string())
+            Err("The selected target credential no longer exists".to_string())
         );
         assert_eq!(
             validate_connection_credentials(&creds, None, &port_forward_kind("gone")),
-            Err("The selected gateway credential no longer exists".to_string())
+            Err("The selected SSH server credential no longer exists".to_string())
         );
     }
 
@@ -674,6 +691,36 @@ mod tests {
             })
             .unwrap();
             assert_eq!(updated.name, "web");
+        });
+    }
+
+    #[test]
+    fn test_proxy_command_is_trimmed_and_checked() {
+        with_isolated_data_dir(|| {
+            let cred = password_credential("a");
+            store_credential(&cred);
+            let mut fields = direct_fields(Some(cred.id.clone()));
+            fields.proxy_command = Some("  wsl.exe -e nc %h %p ".to_string());
+            let conn = add_connection_sync(AddConnectionInput { fields }).unwrap();
+            assert_eq!(conn.proxy_command.as_deref(), Some("wsl.exe -e nc %h %p"));
+
+            let mut fields = direct_fields(Some(cred.id.clone()));
+            fields.proxy_command = Some("   ".to_string());
+            let updated = update_connection_sync(UpdateConnectionInput {
+                id: conn.id.clone(),
+                fields,
+            })
+            .unwrap();
+            assert_eq!(updated.proxy_command, None);
+
+            let mut fields = direct_fields(Some(cred.id.clone()));
+            fields.proxy_command = Some("nc %h %q".to_string());
+            let err = update_connection_sync(UpdateConnectionInput {
+                id: conn.id,
+                fields,
+            })
+            .unwrap_err();
+            assert!(err.contains("%q"), "{err}");
         });
     }
 

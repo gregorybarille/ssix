@@ -26,7 +26,7 @@ describe("Form mounting structure", () => {
   it("App renders each view in its own branch", () => {
     const conn = app.indexOf('view === "connections"');
     const cred = app.indexOf('view === "credentials"', conn);
-    const tun = app.indexOf('view === "tunnels"', cred);
+    const tun = app.indexOf('view === "forwards"', cred);
     expect(conn).toBeGreaterThan(-1);
     expect(app.slice(conn, cred)).toMatch(/<ConnectionsView[\s\n]/);
     expect(app.slice(cred, tun)).toMatch(/<CredentialsView[\s\n]/);

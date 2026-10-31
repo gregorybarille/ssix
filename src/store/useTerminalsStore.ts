@@ -9,7 +9,7 @@ import type {
   TerminalSession,
 } from "@/components/TerminalTabs";
 import { useViewStore } from "./useViewStore";
-import { useTunnelsStore } from "./useTunnelsStore";
+import { usePortForwardsStore } from "./usePortForwardsStore";
 import { useSettingsStore } from "./useSettingsStore";
 
 /**
@@ -23,7 +23,7 @@ import { useSettingsStore } from "./useSettingsStore";
  *    `ssh_connect` IPC resolves (so the resulting session id is
  *    disconnected immediately rather than left dangling)
  *
- * `connect()` routes port_forward connections to the tunnels store
+ * `connect()` routes port_forward connections to the port forwards store
  * and shell connections into a new tab (or split into the active
  * tab, depending on `mode`). When the last tab closes, view falls
  * back to "connections" via the view store.
@@ -37,7 +37,7 @@ interface TerminalsState {
   setActiveTabId: (id: string | null) => void;
 
   /**
-   * Open a connection. For port_forward, hands off to the tunnels
+   * Open a connection. For port_forward, hands off to the port forwards
    * store. Otherwise opens a shell session in a new tab or split.
    * `replaceSessionId` re-opens an existing failed pane in place,
    * preserving its slot/order.
@@ -110,7 +110,7 @@ export const useTerminalsStore = create<TerminalsState>((set, get) => {
 
     connect: async (conn, options) => {
       if (conn.type === "port_forward") {
-        await useTunnelsStore.getState().connectTunnel(conn);
+        await usePortForwardsStore.getState().startForward(conn);
         return;
       }
 

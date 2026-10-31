@@ -115,4 +115,32 @@ describe("buildSshCommand", () => {
     );
     expect(cmd).toBe("ssh alice@'weird host with spaces'");
   });
+  it("passes a proxy command with -o ProxyCommand", () => {
+    const cmd = buildSshCommand(
+      directConn({ proxy_command: "wsl.exe -e nc %h %p" }),
+      [passCred],
+    );
+    expect(cmd).toBe("ssh -o 'ProxyCommand=wsl.exe -e nc %h %p' alice@example.com");
+  });
+
+  it("spells out the jump when the jump host has a proxy command", () => {
+    const conn: Connection = {
+      id: "c4",
+      name: "jump",
+      host: "",
+      port: 22,
+      type: "jump_shell",
+      gateway_host: "bastion.example",
+      gateway_port: 2200,
+      gateway_credential_id: passCred.id,
+      destination_host: "internal.example",
+      destination_port: 22,
+      credential_id: keyCred.id,
+      proxy_command: "nc %h %p",
+    };
+    expect(buildSshCommand(conn, [passCred, keyCred])).toBe(
+      "ssh -o 'ProxyCommand=ssh -o \"ProxyCommand=nc %%h %%p\" -W %h:%p -p 2200 alice@bastion.example'" +
+        " -i /home/u/.ssh/id_ed25519 deploy@internal.example",
+    );
+  });
 });

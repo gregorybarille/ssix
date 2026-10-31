@@ -1,9 +1,13 @@
+mod backup;
 mod commands;
 mod keychain;
 mod known_hosts;
 mod logs;
 mod models;
+mod proxy;
+mod remote_script;
 mod ssh;
+mod ssh_debug;
 mod storage;
 
 use ssh::SshState;
@@ -14,7 +18,9 @@ pub fn run() {
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_dialog::init())
         .manage(SshState::new())
-        .setup(|_app| {
+        .setup(|app| {
+            logs::init(app.handle().clone());
+            backup::spawn_scheduler();
             // Write any load-time repair once, off the UI thread.
             tauri::async_runtime::spawn_blocking(|| {
                 if let Err(e) = storage::persist_migrations() {
@@ -39,6 +45,10 @@ pub fn run() {
             commands::connections::delete_connection,
             commands::connections::clone_connection,
             commands::connections::get_orphan_private_credential,
+            commands::backup::list_backups,
+            commands::backup::create_backup,
+            commands::backup::restore_backup,
+            commands::backup::delete_backup,
             commands::settings::get_settings,
             commands::settings::save_settings,
             commands::git_sync::git_sync_status,
@@ -56,6 +66,13 @@ pub fn run() {
             commands::ssh::ssh_forget_host_key,
             commands::scp::scp_upload,
             commands::scp::scp_download,
+            commands::scripts::get_scripts,
+            commands::scripts::add_script,
+            commands::scripts::update_script,
+            commands::scripts::delete_script,
+            commands::scripts::begin_script_run,
+            commands::scripts::cancel_script_run,
+            commands::scripts::run_script,
             commands::ssh_keygen::generate_ssh_key,
             commands::ssh_keygen::ssh_install_public_key_by_credential,
             commands::screenshot::take_screenshot,

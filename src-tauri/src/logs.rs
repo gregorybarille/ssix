@@ -9,7 +9,7 @@ use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
-use std::sync::LazyLock;
+use std::sync::{LazyLock, OnceLock};
 use tauri::{AppHandle, Emitter};
 
 pub const MAX_ENTRIES: usize = 1000;
@@ -20,13 +20,21 @@ pub struct LogEntry {
     pub ts: u64,
     /// "info", "warn", "error", or "debug".
     pub level: String,
-    /// Logical source (e.g. "ssh", "tunnel", "system").
+    /// Logical source (e.g. "ssh", "forward", "system").
     pub source: String,
     pub message: String,
 }
 
 static BUFFER: LazyLock<Mutex<VecDeque<LogEntry>>> =
     LazyLock::new(|| Mutex::new(VecDeque::with_capacity(MAX_ENTRIES)));
+
+/// Set once at startup so [`log_local`] can stream its entries too.
+static APP: OnceLock<AppHandle> = OnceLock::new();
+
+/// Remember the app handle; called from the Tauri `setup` hook.
+pub fn init(app: AppHandle) {
+    let _ = APP.set(app);
+}
 
 fn now_ms() -> u64 {
     SystemTime::now()
@@ -49,15 +57,19 @@ pub fn log(app: &AppHandle, level: &str, source: &str, message: impl Into<String
     let _ = app.emit("app-log", entry);
 }
 
-/// Variant for code paths that don't have an `AppHandle` (e.g. helpers used
-/// before a session has been wired). Stored but no event emitted.
+/// Variant for code paths that don't have an `AppHandle` (helpers below
+/// the command layer, such as the SSH handshake). Emits through the handle
+/// recorded by [`init`]; before that (and in tests) the entry is only stored.
 pub fn log_local(level: &str, source: &str, message: impl Into<String>) {
-    push(LogEntry {
-        ts: now_ms(),
-        level: level.to_string(),
-        source: source.to_string(),
-        message: message.into(),
-    });
+    match APP.get() {
+        Some(app) => log(app, level, source, message),
+        None => push(LogEntry {
+            ts: now_ms(),
+            level: level.to_string(),
+            source: source.to_string(),
+            message: message.into(),
+        }),
+    }
 }
 
 fn push(entry: LogEntry) {

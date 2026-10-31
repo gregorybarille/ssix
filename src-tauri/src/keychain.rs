@@ -65,6 +65,12 @@ fn save_secrets(secrets: &HashMap<String, String>) -> Result<(), String> {
     crate::storage::atomic_write(&path, content.as_bytes(), Some(0o600))
 }
 
+/// Run `f` while no other thread can read or write the secrets file.
+pub(crate) fn with_secrets_file_locked<T>(f: impl FnOnce() -> T) -> T {
+    let _guard = SECRETS_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    f()
+}
+
 /// Run `f` with an exclusive lock on the secrets file.
 ///
 /// A read or parse failure is propagated rather than treated as "no

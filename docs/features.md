@@ -2,11 +2,20 @@
 
 ## Connections
 
-SSIX supports three connection types:
+SSIX supports three connection types, named after the OpenSSH options they
+correspond to:
 
-- `direct`
-- `port_forward`
-- `jump_shell`
+| Kind | `ssh` equivalent | Hosts |
+|---|---|---|
+| Direct (`direct`) | `ssh user@host` | the host |
+| Local forward (`port_forward`) | `ssh -L local:remote:port user@server` | the **SSH server**, which forwards a local port to the **remote host** |
+| Jump host (`jump_shell`) | `ssh -J user@jumphost user@target` | the **jump host**, which relays the session to the **target** |
+
+The names in backticks are the stored values in `data.json`; they predate
+the OpenSSH wording and are kept so existing data loads unchanged. The
+`gateway_*` fields hold the SSH server or jump host, and the
+`destination_*` fields hold the remote host or target. `src/lib/sshTerms.ts`
+maps each kind to the words the UI shows.
 
 Each shell-capable connection can also define:
 
@@ -14,8 +23,30 @@ Each shell-capable connection can also define:
 - `remote_path`
 - tags
 - color accent
-- verbosity level
+- verbosity level (see [Diagnostics](#diagnostics))
 - extra SSH arguments
+- a proxy command (see below)
+
+### Proxy command and WSL
+
+A connection can reach its first hop — the host of a direct connection,
+the jump host, or a local forward's SSH server — through a local
+command instead of a TCP connection, like `ProxyCommand` in
+`ssh_config`. SSIX runs the command (`/bin/sh -c` on macOS and Linux,
+`cmd.exe /S /C` on Windows) and speaks SSH over its stdin and stdout.
+`%h`, `%p` and `%r` expand to the hop's host, port and user, and `%%` to
+`%`; other tokens are refused when the connection is saved. A host or
+user containing anything but letters, digits and `. - _ : @` is refused
+rather than pasted into the command. Lines the command prints on stderr
+appear in the Logs view (source `proxy`), and the command is stopped when
+the session closes.
+
+On Windows the **Through WSL** button fills in `wsl.exe -e nc %h %p`,
+which connects from inside the default WSL distribution, so SSIX reaches
+hosts only WSL can see (its own network, or a VPN running there). The
+distribution needs `nc` (`netcat-openbsd` on Debian and Ubuntu). SCP and
+local forwards use the proxy too; the copied `ssh` command carries it as
+`-o ProxyCommand=…`.
 
 ## Credentials
 
@@ -28,7 +59,7 @@ Supported credential modes:
 The connection form can create inline credentials and optionally save them as named credentials.
 
 **Clone** opens the connection form prefilled from a connection, and
-everything in it (kind, gateway, tags, colour, options) is saved as the
+everything in it (kind, jump host or SSH server, tags, colour, options) is saved as the
 new connection. The original's private inline credential is copied, so
 the clone and the original never share one; inline auth entered in the
 clone form makes a credential for the clone alone.
@@ -60,7 +91,7 @@ changes, because the unsaved-changes baseline follows the fetched values.
 
 ### Host-key verification
 
-Every SSH connection — direct, gateway, the destination behind a gateway, SCP and the public-key installer — verifies the server's host key before a password or key is sent.
+Every SSH connection — direct, the jump host, the target behind it, a local forward's SSH server, SCP and the public-key installer — verifies the server's host key before a password or key is sent.
 
 - The first time a `host:port` is seen its key is recorded in `~/.ssix/known_hosts` (OpenSSH format, so `ssh-keygen -F`/`-R` work on it).
 - If the key later differs the connection is refused. The failure view names the host, shows the new SHA256 fingerprint and offers **Trust new host key**, which forgets the stale entry and reconnects. Use it only when you know the server was reinstalled or re-keyed.
@@ -75,18 +106,19 @@ The terminal tab bar is a true WAI-ARIA tablist. With focus on a tab:
 - **Delete** or **Cmd/Ctrl+W** — close the focused tab
 - The "x" affordance on tabs is mouse-only.
 
-## Tunnels
+## Port Forwards
 
-- local port forwarding through a gateway
-- one row per tunnel definition with status indicator:
+- local forwards (`ssh -L`): SSIX listens on `127.0.0.1:<local port>` and
+  forwards each connection through the SSH server to the remote host
+- one row per local forward with status indicator:
   grey for not connected/connecting, green for connected, red for connection errors
-- expandable inline detail panes beneath each tunnel connection; multiple rows can stay expanded
+- expandable inline detail panes beneath each forward; multiple rows can stay expanded
 
 ## Search, Tags, And Colors
 
 - search filters the loaded list in the frontend (`src/lib/search.ts`); no backend call per keystroke
 - query terms are AND-matched, case-insensitive
-- matches run across connection name, host, gateway/destination host, and tags; the same matcher powers the Connect Picker
+- matches run across connection name, host, jump host / SSH server, target / remote host, and tags; the same matcher powers the Connect Picker
 - color accents appear on connection cards and terminal tabs
 
 ## SCP File Transfer
@@ -95,10 +127,57 @@ The terminal tab bar is a true WAI-ARIA tablist. With focus on a tab:
 - download files
 - upload directories recursively
 - download directories recursively
-- direct and jump-shell connections supported
-- port-forward definitions are not SCP targets
+- direct and jump host connections supported
+- local forwards are not SCP targets
 
 See [File Transfer](file-transfer.md) for behavior and limitations.
+
+## Scripts
+
+The **Scripts** view (sidebar) keeps scripts you run on several hosts at
+once.
+
+- **New Script** opens the editor in the side panel: a name, what it
+  **runs on**, the **interpreter** and the script itself. Names are
+  unique; a script can be up to 256 KiB.
+- **Linux, macOS, BSD** (the default): the interpreter is the command the
+  server runs; it reads the script on its standard input, so nothing is
+  copied to the host first. Presets cover `sh -s` (the default), `bash -s`
+  and `python3 -`; any other command that reads a program from stdin works
+  too. The interpreter is started through the host's POSIX `sh`.
+- **Windows** (Windows OpenSSH servers): the script is PowerShell, run by
+  `powershell` (Windows PowerShell, built in; the default) or `pwsh`
+  (PowerShell 7), or a path to either without spaces. It works with
+  either cmd or PowerShell as the server's default shell. The exit code
+  is the script's `exit`, else the last program's exit code; an uncaught
+  error exits 1. Errors that don't stop the script (`Write-Error`, a
+  missing path in `Get-Item`) leave it at 0: use `exit 1`, or set
+  `$ErrorActionPreference = 'Stop'`, to make them fail the host.
+  Switching platform swaps a preset interpreter for the other platform's
+  default; a command you typed stays. A Windows script starts a fraction
+  of a second later than a POSIX one: PowerShell first compiles
+  the small helper that lets Cancel stop it.
+- Select a script to see its body and the hosts it can run on: every
+  direct and jump host connection (local forwards cannot run scripts).
+  Tick hosts, or **All hosts**, and **Run on N hosts**.
+- The script starts on every picked host at the same time. Each host
+  gets its own card as it finishes: success when it exits 0, otherwise
+  the exit code, the signal that killed it, or the connection error, plus
+  how long it took, its standard output and its standard error.
+- **Cancel** (shown while a run is going) stops every host that has not
+  finished: the script and everything it started get SIGTERM (on Windows
+  they are ended together, see below), and the
+  card shows **cancelled** with the output printed so far. Hosts that had
+  already finished keep their result.
+- Each stream keeps the first 1 MiB of output; the card says when output
+  was cut. A script still running after 10 minutes is stopped the same way
+  as a cancel.
+- The last run's results stay while you visit other views, and running
+  again starts from the hosts you picked last time.
+- Each run is also logged (source `script`) in the Logs view, and a
+  connection's verbosity adds its `ssh -v` lines there as for a shell.
+- Scripts are saved in `data.json`, so Local Backups and Git Sync carry
+  them. Deleting one asks for confirmation first.
 
 ## Git Sync
 
@@ -110,10 +189,53 @@ See [File Transfer](file-transfer.md) for behavior and limitations.
 
 See [Git Sync](git-sync.md) for details.
 
+## Local Backups
+
+Settings → **Backups** keeps ZIP copies of `~/.ssix` in `~/.ssix/backups`:
+`data.json` (connections, credentials, settings), `secrets.json`
+(passwords, passphrases and inline keys) and `known_hosts`. Unlike Git
+Sync, a backup holds the secrets, so archives are created readable only by
+you (0600, in a 0700 folder) and never leave the machine.
+
+- **Back up automatically** (on by default) checks a minute after launch
+  and then every ten minutes, and takes a backup once the chosen
+  frequency (every hour to every week, default every day) has passed
+  since the newest backup — unless nothing changed since then.
+- **Automatic backups kept** (default 10) prunes the oldest automatic
+  backups. Manual and "before restore" backups stay until you delete them.
+- **Back up now** takes a manual backup.
+- **Restore** (after a confirmation) checks the whole archive before it
+  touches anything: only the expected files, each matching the size and
+  SHA-256 in its `manifest.json`, contents SSIX can load, and a format no
+  newer than this build. It then backs up the current files as a "before
+  restore" backup, so a restore can itself be undone, and replaces the
+  live files with the archive's; a file the archive does not hold is
+  removed. Connections, credentials and settings reload at once.
+- An archive SSIX cannot read is listed with the reason and can only be
+  deleted.
+
+Each archive is written in full before it appears under its final name
+(`ssix-backup-YYYYMMDD-HHMMSS-mmm.zip`, UTC), so a crash never leaves a
+half-written backup in the list.
+
 ## Diagnostics
 
 - backend logs
 - frontend logs
+- per-connection verbosity, modelled on `ssh -v`. Each level adds
+  `debugN: [host:port] …` lines to the backend logs for every hop of the
+  connection (jump host, SSH server, target), SCP included:
+  - **-v**: connecting, server version, key exchange and host key
+    algorithms, the server host key and its fingerprint, the
+    authentication methods the server allows and which one succeeded,
+    session channel, PTY and shell requests, `direct-tcpip` channels and
+    forwarded connections
+  - **-vv**: the socket peer, the negotiated cipher, MAC and compression
+    in each direction, the startup command, closed forwarded connections
+  - **-vvv**: the algorithms SSIX offers and how long the TCP connect,
+    key exchange and authentication took
+  From -v the terminal also starts with a "Connected to …" line.
+  Passwords and key contents are never logged.
 - screenshot capture from the **Window actions** context menu (right-click
   any empty area of the window, outside an input or terminal selection)
 
@@ -158,6 +280,18 @@ are shown inline for the final state of the burst.
 - default terminal open mode
 - Git Sync repository settings
 
+## Sidebar
+
+The left sidebar holds one icon button per view: Connections, Port
+forwards, Credentials, Scripts, Logs, Terminals (while any are open) and
+Git Sync. Hovering a button, or focusing it from the keyboard, shows a
+tooltip on its right with the view's name and one line on what it is for,
+so the icons can be learned without trying each one. The tooltips share
+one provider (`<TooltipProvider>` from `src/components/ui/tooltip.tsx`):
+the first opens after 300 ms, and moving to the next one shows it at once.
+Each button's accessible name stays its `aria-label`, which also carries
+the terminal count and Git Sync's pending-changes state.
+
 ## Title Bar
 
 SSIX renders its own draggable title bar so it can host a Settings shortcut
@@ -173,12 +307,35 @@ and (on Windows / Linux) the minimize / maximize / close window controls.
   title bar, after OS-level shortcuts (Win+Up, F11, Super+Up), and after
   window-snapping behaviour that bypasses our toggleMaximize handler.
 
+## Side Panel
+
+Nothing in SSIX opens a floating window. Editors (connection,
+credential and script forms), SCP and bulk SCP, key generation and key install open
+in a panel column on the right of the app, beside the current view, so
+the list you came from stays visible and usable. Confirmations appear as
+a compact card at the top of that column, above the panel they are about.
+The column only takes room while something is open in it.
+
+- A panel stays open while you click or tab around the view beside it;
+  Escape, **Cancel** or its close button close it.
+- Opening another editor from the list (Edit on another row, **New
+  Connection**) replaces the open one at once if it is unchanged, and
+  asks first if it has unsaved changes (see
+  [Unsaved-changes guard](#unsaved-changes-guard)).
+- The quick-connect picker (Cmd/Ctrl+K) is the exception: it stays a
+  centred palette.
+
+`<DialogContent>` portals into the column (`src/components/ui/panel-slot.tsx`,
+mounted by `App`), and its `kind` prop picks `panel`, `confirm` or
+`palette`.
+
 ## Destructive-Action Confirmations
 
-SSIX shows an in-app confirmation panel before any destructive action:
+SSIX shows an in-app confirmation before any destructive action:
 
 - deleting a connection
 - deleting a credential
+- deleting a script
 - closing a live terminal pane
 - closing a tab whose panes still hold a live SSH session
 
@@ -187,9 +344,8 @@ accidental Enter press never destroys data. Failed/never-opened
 sessions can be dismissed without confirmation since there is nothing
 to lose.
 
-When a panel closes — whether through Cancel, Confirm, the Escape
-key, or clicking outside — focus returns to the control that opened
-it. This holds even when the panel is opened from React state rather
+When a panel closes — whether through Cancel, Confirm or the Escape
+key — focus returns to the control that opened it. This holds even when the panel is opened from React state rather
 than via `<DialogTrigger>` (the pattern used everywhere in SSIX), which
 the stock Radix focus-restore can't always handle on its own. The
 shared `<DialogContent>` primitive in `src/components/ui/dialog.tsx`
@@ -205,16 +361,16 @@ readers announce the error as soon as it appears. The submit button is
 wired to that error via `aria-describedby`, giving keyboard users
 context as they re-focus the action.
 
-The Connection and Credential editors open inline inside their
-respective views instead of in floating dialogs. Both use a sticky
-footer layout: the form body scrolls inside the in-app panel while the
+The Connection and Credential editors open in the side panel next to
+their lists. Both use a sticky footer layout: the form body scrolls
+inside the panel while the
 **Cancel** / **Save** action row stays pinned to the bottom and never
 disappears, regardless of viewport height or expanded panels (Advanced
 options, inline credentials, etc.).
 
 ### Port validation
 
-Port inputs (direct port, gateway port, destination port, local port)
+Port inputs (direct port, jump host / SSH server port, target / remote port, local port)
 parse strictly via the `parsePort` helper in `src/lib/port.ts`:
 
 - Empty input is treated as "missing" so callers can decide whether the
@@ -234,13 +390,14 @@ Required text fields use the same per-field inline-error pattern as
 ports. On submit the form collects every problem at once and surfaces
 each one next to its input:
 
-- ConnectionForm: **Connection Name**, **Host** (direct), **Gateway
-  Host** + **Gateway Credential** + **Destination Host** (tunnels),
-  and the destination authentication for Direct and Jump Shell (a
-  Port Forward only authenticates to its gateway):
+- ConnectionForm: **Connection Name**, **Host** (direct), **Jump Host**
+  + **Jump Host Credential** + **Target Host** (jump host), **SSH Server
+  Host** + **SSH Server Credential** + **Remote Host** (local forward),
+  and the target authentication for Direct and Jump host (a local
+  forward only authenticates to its SSH server):
   - **Saved Credential**: a credential must be picked; "None" shows
-    *"Credential is required"* (*"Destination credential is required"*
-    on a jump shell).
+    *"Credential is required"* (*"Target credential is required"*
+    on a jump host connection).
   - **Password** / **SSH Key**: the inline fields get the same checks
     as the credential form (`credentialFieldErrors` in
     `src/lib/credentialValidation.ts`): **Username**, **Password** or
@@ -260,8 +417,9 @@ into the input clears the error immediately so the validation feels
 responsive instead of nagging.
 
 The backend enforces the credential rule too: `add_connection`,
-`update_connection` and `clone_connection` refuse a Direct or Jump Shell
-connection without a credential, a tunnel without a gateway credential,
+`update_connection` and `clone_connection` refuse a Direct or Jump host
+connection without a credential, a jump host or local forward without a
+credential for its jump host or SSH server,
 and any credential id that no longer exists. A connection never points
 at a deleted credential: deleting a credential that connections still
 use is refused with their names, and references that older builds left
@@ -284,7 +442,7 @@ discoverable on the very first visit. Secondary actions (Transfer
 files, Clone, Edit, Delete) are likewise rendered in their resting
 state at all times: the v2 redesign deliberately removed the
 hover-reveal pattern so users know up-front exactly what is available
-on each row without any discovery cost. Port-forward connections
+on each row without any discovery cost. Local forwards
 render the Transfer-files (SCP) icon in a disabled state with an
 explanatory `title` tooltip rather than hiding it, so the affordance
 remains predictable across connection kinds.
@@ -342,7 +500,7 @@ primitive is keyboard-navigable end-to-end:
 Wired surfaces today:
 
 - **Connection rows / tiles** — Connect, Edit, Clone, Transfer files
-  (hidden for tunnels), separator, Copy SSH command, separator, Delete
+  (hidden for local forwards), separator, Copy SSH command, separator, Delete
   (destructive). "Copy SSH command" builds a portable `ssh` invocation
   from the connection + selected credential via `buildSshCommand` in
   `src/lib/ssh-command.ts` and writes it to the clipboard.
@@ -374,19 +532,29 @@ return (
 
 ## Unsaved-changes guard
 
-`ConnectionForm` and `CredentialForm` snapshot their initial state when
+`ConnectionForm`, `CredentialForm` and `ScriptForm` snapshot their initial state when
 the app panel opens and watch for changes via the `useUnsavedChangesGuard`
 hook (`src/hooks/useUnsavedChangesGuard.ts`). When the user attempts to
-close the panel (Cancel button, `Esc`, or click-outside) and the form
-state differs from the baseline, a destructive `<ConfirmDialog>`
-prompts:
+close the panel (Cancel button or `Esc`), to open another editor from
+the list beside it, or to switch to another view, and the form state
+differs from the baseline, a
+destructive `<ConfirmDialog>` prompts:
 
 > **Discard unsaved changes?** You have unsaved changes to this
 > connection/credential. Discard them and close the form?
 > [ Keep editing ]   [ Discard ]
 
 Choosing **Keep editing** dismisses the prompt and returns focus to the
-form; **Discard** confirms and closes the panel.
+form; **Discard** confirms and closes the panel (or opens the editor
+that was asked for). The open form registers this check in
+`useDialogsStore` (`connFormGuard` / `credFormGuard`), which runs it
+before `openEditConnection`, `openNewConnection`, `openCloneConnection`
+and their credential counterparts swap the form; the Scripts view keeps
+the same check for its editor. Each form also registers it as the
+`useViewStore` leave guard (`useLeaveViewGuard`): `setView` to another
+view, from the sidebar, a shortcut or a store, runs it first. A clean
+form closes and the view changes at once; on **Keep editing** the app
+stays on the form's view.
 
 The guard self-disables for the close that immediately follows a
 successful save: submit handlers call `guard.markSaved()` before
@@ -473,7 +641,7 @@ hosts that carry no tags) and offers two bulk actions:
   - Connections that have multiple tags appear under each of their
     tags so bulk actions on `prod` really do hit every prod host
     even when some are also in `db`.
-  - Port-forward entries are listed but greyed out — they can't
+  - Local forwards are listed but greyed out — they can't
     do SCP and the SCP commands reject them server-side.
 - The search bar in tag-groups mode filters tag labels only
   (case-insensitive substring), since the whole point of this view

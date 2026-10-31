@@ -85,7 +85,7 @@ export function GenerateKeyDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-[460px]" data-testid="generate-key-dialog">
+      <DialogContent data-testid="generate-key-dialog">
         <DialogHeader>
           <DialogTitle>Generate SSH Key</DialogTitle>
           {/* P1#5: sr-only description so the dialog has a wired aria-describedby. */}

@@ -35,4 +35,16 @@ git_sync_remote: string,
 /**
  * Optional branch override. When omitted, SSIX uses the current branch.
  */
-git_sync_branch: string | null, };
+git_sync_branch: string | null, 
+/**
+ * Take automatic local backups of the data directory (see `backup.rs`).
+ */
+backup_enabled: boolean, 
+/**
+ * Hours between automatic backups.
+ */
+backup_interval_hours: number, 
+/**
+ * How many automatic backups to keep; manual ones are kept until deleted.
+ */
+backup_keep: number, };

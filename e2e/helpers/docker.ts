@@ -37,10 +37,10 @@ export interface SshTarget {
  * machine as the test runner in both modes, so we keep `host` and
  * `probeHost` aligned.
  *
- * jump_shell / port_forward destination targets (server-c, server-d)
- * are still referenced by docker hostname because the gateway (server
- * -a) IS on the docker network and CAN resolve them — the destination
- * is dialled from the gateway, not the test runner. See specs 04+05
+ * jump host / local forward targets (server-c, server-d) are still
+ * referenced by docker hostname because the jump host / SSH server
+ * (server-a) IS on the docker network and CAN resolve them — the target
+ * is dialled from server-a, not the test runner. See specs 04+05
  * which use the explicit private hostname `server-c` for the dest.
  *
  * Detection: presence of `E2E_INSIDE_DOCKER=1`.
@@ -69,7 +69,7 @@ export const TARGETS: Record<"a" | "b" | "c" | "d", SshTarget> = {
     // on the host. It's only reachable through a jump host (server-a),
     // so `host` stays as the docker hostname even outside docker. The
     // probe checks the published 2203 port, which proves only that the
-    // server is up; actual dialling happens via the gateway.
+    // server is up; actual dialling happens via server-a.
     host: "server-c",
     probeHost: inside ? "server-c" : "127.0.0.1",
     probePort: inside ? 22 : 2203,

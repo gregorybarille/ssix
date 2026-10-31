@@ -80,10 +80,15 @@ interface ConnectionBase {
    * For `port_forward` this is unused (the gateway credential lives on the kind fields).
    */
   credential_id?: string;
-  /** SSH verbosity level: 0 = silent, 1 = info, 2 = debug (libssh2 trace). */
+  /** SSH verbosity, like `ssh -v`: 0 = quiet, 1-3 = `-v` to `-vvv` debug lines in the Logs view. */
   verbosity?: number;
   /** Additional SSH flags, e.g. "-C" for compression. */
   extra_args?: string;
+  /**
+   * Local command that carries the connection to the first hop, like
+   * OpenSSH's `ProxyCommand` (`%h`, `%p`, `%r`, `%%`).
+   */
+  proxy_command?: string;
   /** Command to run after login, e.g. `sudo su - deploy`. */
   login_command?: string;
   /** Preferred starting directory on the remote host. */
@@ -163,6 +168,7 @@ export type ConnectionDraft = {
   type: ConnectionType;
   verbosity?: number;
   extra_args?: string;
+  proxy_command?: string;
   login_command?: string;
   remote_path?: string;
   tags?: string[];
@@ -176,7 +182,7 @@ export type ConnectionDraft = {
 };
 
 /**
- * Display mode for the connection / credential / tunnel lists.
+ * Display mode for the connection / credential / port forward lists.
  *
  * - `"list"`: a vertical stack of full-width rows.
  * - `"tile"`: a CSS grid of fixed-width cards, one per item.
@@ -210,6 +216,75 @@ export interface AppSettings {
   git_sync_repo_path?: string;
   git_sync_remote: string;
   git_sync_branch?: string;
+  /** Take automatic local backups of `~/.ssix`. */
+  backup_enabled: boolean;
+  /** Hours between automatic backups (1-720). */
+  backup_interval_hours: number;
+  /** Automatic backups kept (1-100); manual ones stay until deleted. */
+  backup_keep: number;
+}
+
+export type BackupReason = "manual" | "automatic" | "before_restore";
+
+/** One archive in `~/.ssix/backups` (see `src-tauri/src/backup.rs`). */
+export interface BackupInfo {
+  /** File name; also the id passed to restore and delete. */
+  name: string;
+  /** Unix time in milliseconds. */
+  created_at: number;
+  size: number;
+  reason?: BackupReason | null;
+  files: string[];
+  /** Why the archive cannot be restored, when it cannot. */
+  error?: string | null;
+}
+
+export interface BackupList {
+  dir: string;
+  /** Newest first. */
+  backups: BackupInfo[];
+}
+
+/** The kind of host a script is written for. */
+export type ScriptPlatform = "posix" | "windows";
+
+/** A saved script (see `src-tauri/src/commands/scripts.rs`). */
+export interface Script {
+  id: string;
+  name: string;
+  body: string;
+  platform: ScriptPlatform;
+  /**
+   * POSIX: the remote command that reads the body on stdin, e.g. `sh -s`.
+   * Windows: the PowerShell that runs it, `powershell` or `pwsh`.
+   */
+  interpreter: string;
+}
+
+export interface ScriptInput {
+  name: string;
+  body: string;
+  platform: ScriptPlatform;
+  /** Blank means the platform's default: `sh -s` or `powershell`. */
+  interpreter: string;
+}
+
+/** What one run of a script on one host produced. */
+export interface ScriptResult {
+  stdout: string;
+  stderr: string;
+  /** Absent when the script was killed by a signal, cancelled or stopped at the time limit. */
+  exit_code?: number | null;
+  /** Signal name without the `SIG` prefix. */
+  exit_signal?: string | null;
+  duration_ms: number;
+  /** A stream went past 1 MiB and was cut there. */
+  truncated: boolean;
+  timed_out: boolean;
+  /** The user cancelled the run before the script finished. */
+  cancelled: boolean;
+  /** How the script ended, for the result card and the log: `exit 3`, `killed by SIGTERM`, `cancelled`... */
+  end: string;
 }
 
 export interface GitSyncStatus {

@@ -2,9 +2,10 @@
 
 export type Connection = { id: string, name: string, host: string, port: number, credential_id: string | null, 
 /**
- * SSH verbosity level: 0 = silent, 1 = standard SSH debug output,
- * 2 = enables libssh2 trace (verbose). Output is written to the terminal
- * pane before the shell prompt appears.
+ * SSH verbosity, like OpenSSH's `-v` flags: 0 = quiet, 1 = `-v`
+ * (connection steps), 2 = `-vv` (negotiated algorithms), 3 = `-vvv`
+ * (local proposals and timings). Lines go to the Logs view; from 1 the
+ * terminal also shows a "Connected" banner.
  */
 verbosity: number, 
 /**
@@ -12,6 +13,13 @@ verbosity: number,
  * compression). Parsed and applied before the handshake.
  */
 extra_args?: string | null, 
+/**
+ * Local command whose stdin/stdout carry the SSH connection to the
+ * first hop, like OpenSSH's `ProxyCommand` (`%h`, `%p`, `%r`, `%%`).
+ * The first hop is the host of a direct connection, the jump host or
+ * the SSH server of a local forward.
+ */
+proxy_command?: string | null, 
 /**
  * Command to run after the shell session opens, e.g. `sudo su - deploy`.
  */

@@ -23,10 +23,19 @@ export const sel = {
   sidebar: '[data-testid="sidebar"]',
   navConnections: '[data-testid="nav-connections"]',
   navCredentials: '[data-testid="nav-credentials"]',
-  navTunnels: '[data-testid="nav-tunnels"]',
+  navForwards: '[data-testid="nav-forwards"]',
   navSettings: '[data-testid="nav-settings"]',
   navGitSync: '[data-testid="nav-git-sync"]',
   navLogs: '[data-testid="nav-logs"]',
+  navScripts: '[data-testid="nav-scripts"]',
+  // Each sidebar button's tooltip is `${its testid}-tooltip`.
+  navTooltip: (navTestId: string) => `[data-testid="${navTestId}-tooltip"]`,
+
+  // The right-hand column every editor, SCP panel and confirmation opens in.
+  appPanelSlot: '[data-testid="app-panel-slot"]',
+
+  // Logs view: one row per entry, with `data-level` (info, warn, debug…).
+  logEntry: '[data-testid="log-entry"]',
 
   // Connection list (renders as either `connection-grid` or
   // `connection-list-rows`; specs use the row testid pattern).
@@ -56,18 +65,22 @@ export const sel = {
   // Form-level error shown when a save is refused.
   connectionFormError: '[data-testid="connection-form-error"]',
   connectionFormKindDirect: '[data-testid="connection-form-kind-direct"]',
-  connectionFormKindJumpShell: '[data-testid="connection-form-kind-jumpshell"]',
-  connectionFormKindPortForward: '[data-testid="connection-form-kind-portforward"]',
-  connectionFormGateway: '[data-testid="connection-form-gateway"]',
-  connectionFormGatewayPort: '[data-testid="connection-form-gateway-port"]',
-  connectionFormGatewayCredential: '[data-testid="connection-form-gateway-credential"]',
-  connectionFormDestHost: '[data-testid="connection-form-dest-host"]',
-  connectionFormDestPort: '[data-testid="connection-form-dest-port"]',
+  connectionFormKindJumpHost: '[data-testid="connection-form-kind-jumphost"]',
+  connectionFormKindLocalForward: '[data-testid="connection-form-kind-localforward"]',
+  connectionFormHopHost: '[data-testid="connection-form-hop-host"]',
+  connectionFormHopPort: '[data-testid="connection-form-hop-port"]',
+  connectionFormHopCredential: '[data-testid="connection-form-hop-credential"]',
+  connectionFormTargetHost: '[data-testid="connection-form-target-host"]',
+  connectionFormTargetPort: '[data-testid="connection-form-target-port"]',
   // The auth-section credential picker. In Direct mode it's *the*
-  // credential. In JumpShell mode it represents the destination
-  // credential (the gateway has its own picker, see GatewayCredential).
-  connectionFormDestCredential: '[data-testid="connection-form-credential"]',
+  // credential. In jump host mode it is the target's credential (the
+  // jump host has its own picker, see HopCredential).
+  connectionFormTargetCredential: '[data-testid="connection-form-credential"]',
   connectionFormLocalPort: '[data-testid="connection-form-local-port"]',
+  connectionFormVerbosity: '[data-testid="connection-form-verbosity"]',
+  connectionFormProxyCommand: '[data-testid="connection-form-proxy-command"]',
+  // Only rendered on Windows.
+  connectionFormProxyWsl: '[data-testid="connection-form-proxy-wsl"]',
   connectionFormSubmit: '[data-testid="connection-form-submit"]',
   connectionFormCancel: '[data-testid="connection-form-cancel"]',
 
@@ -118,14 +131,14 @@ export const sel = {
   scpDownloadButton: '[data-testid="scp-download"]',
   scpStatus: '[data-testid="scp-status"]',
 
-  // Tunnels
-  // "Start" a tunnel = clicking Connect on its port-forward connection
+  // Port forwards
+  // "Start" a forward = clicking Connect on its local forward connection
   // row, so the button is the same as the generic connect button.
-  tunnelRowByName: (name: string) =>
-    `[data-testid^="tunnel-row-"][data-name="${name}"]`,
-  tunnelStartButton: (id: string) => `[data-testid="connect-button-${id}"]`,
-  tunnelStopButton: (id: string) => `[data-testid="tunnel-stop-${id}"]`,
-  tunnelStatus: (id: string) => `[data-testid="tunnel-status-${id}"]`,
+  forwardRowByName: (name: string) =>
+    `[data-testid^="forward-row-"][data-name="${name}"]`,
+  forwardStartButton: (id: string) => `[data-testid="connect-button-${id}"]`,
+  forwardStopButton: (id: string) => `[data-testid="forward-stop-${id}"]`,
+  forwardStatus: (id: string) => `[data-testid="forward-status-${id}"]`,
 
   // Git sync
   gitSyncRepoPath: '[data-testid="git-sync-repo-path"]',
@@ -148,6 +161,46 @@ export const sel = {
   // Settings panel
   settingsGitSyncRepoPath: '[data-testid="settings-git-sync-repo-path"]',
   settingsSavedStatus: '[data-testid="settings-saved-status"]',
+
+  // Settings → Backups. Rows carry `data-name` (archive file name) and
+  // `data-reason` (manual, automatic, before_restore), newest first.
+  backupCreate: '[data-testid="backup-create"]',
+  backupNotice: '[data-testid="backup-notice"]',
+  backupRow: '[data-testid="backup-row"]',
+  backupRowByReason: (reason: string) => `[data-testid="backup-row"][data-reason="${reason}"]`,
+  // Scoped under a backup row.
+  backupRestoreButton: '[data-testid="backup-restore"]',
+  backupRestoreConfirm: '[data-testid="backup-restore-dialog-confirm"]',
+  backupRestoreDialog: '[data-testid="backup-restore-dialog"]',
+
+  // Scripts view. Script rows, host checkboxes and result cards carry
+  // `data-name` (script or connection name); results also carry
+  // `data-status` (running, success, error, cancelled) and `data-exit-code`.
+  addScriptButton: '[data-testid="add-script-button"]',
+  scriptForm: '[data-testid="script-form"]',
+  scriptFormName: '[data-testid="script-form-name"]',
+  scriptFormPlatformPosix: '[data-testid="script-form-platform-posix"]',
+  scriptFormPlatformWindows: '[data-testid="script-form-platform-windows"]',
+  scriptFormInterpreter: '[data-testid="script-form-interpreter"]',
+  scriptFormBody: '[data-testid="script-form-body"]',
+  scriptFormSubmit: '[data-testid="script-form-submit"]',
+  scriptFormCancel: '[data-testid="script-form-cancel"]',
+  // "Discard unsaved changes?" for the script editor.
+  scriptDiscard: '[data-testid="script-discard"]',
+  scriptDiscardConfirm: '[data-testid="script-discard-confirm"]',
+  scriptDiscardCancel: '[data-testid="script-discard-cancel"]',
+  scriptRowByName: (name: string) => `[data-testid="script-row"][data-name="${name}"]`,
+  // Scoped under a script row.
+  scriptRowSelect: '[data-testid="script-row-select"]',
+  scriptHostByName: (name: string) => `[data-testid="script-host"][data-name="${name}"]`,
+  // The selected script's platform badge.
+  scriptPlatform: '[data-testid="script-platform"]',
+  scriptRun: '[data-testid="script-run"]',
+  scriptCancel: '[data-testid="script-cancel"]',
+  scriptResultByName: (name: string) => `[data-testid="script-result"][data-name="${name}"]`,
+  // Scoped under a result card.
+  scriptResultStdout: '[data-testid="script-result-stdout"]',
+  scriptResultStderr: '[data-testid="script-result-stderr"]',
 
   // Layout toggle (list / tile / tags)
   layoutToggleList: '[data-testid="layout-toggle-list"]',
@@ -191,4 +244,5 @@ export const sel = {
   credentialsLoadErrorRetry: '[data-testid="credentials-load-error-retry"]',
   settingsLoadError: '[data-testid="settings-load-error"]',
   settingsLoadErrorRetry: '[data-testid="settings-load-error-retry"]',
+  scriptsLoadError: '[data-testid="scripts-load-error"]',
 } as const;

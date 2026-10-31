@@ -143,9 +143,10 @@ pub struct Connection {
     #[serde(flatten)]
     #[cfg_attr(test, ts(flatten))]
     pub kind: ConnectionKind,
-    /// SSH verbosity level: 0 = silent, 1 = standard SSH debug output,
-    /// 2 = enables libssh2 trace (verbose). Output is written to the terminal
-    /// pane before the shell prompt appears.
+    /// SSH verbosity, like OpenSSH's `-v` flags: 0 = quiet, 1 = `-v`
+    /// (connection steps), 2 = `-vv` (negotiated algorithms), 3 = `-vvv`
+    /// (local proposals and timings). Lines go to the Logs view; from 1 the
+    /// terminal also shows a "Connected" banner.
     #[serde(default)]
     pub verbosity: u8,
     /// Additional CLI-style flags passed to the SSH subsystem (e.g. `-C` for
@@ -156,6 +157,12 @@ pub struct Connection {
     // these unset). Mirrors the existing treatment of `color`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub extra_args: Option<String>,
+    /// Local command whose stdin/stdout carry the SSH connection to the
+    /// first hop, like OpenSSH's `ProxyCommand` (`%h`, `%p`, `%r`, `%%`).
+    /// The first hop is the host of a direct connection, the jump host or
+    /// the SSH server of a local forward.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub proxy_command: Option<String>,
     /// Command to run after the shell session opens, e.g. `sudo su - deploy`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub login_command: Option<String>,
@@ -187,6 +194,7 @@ impl Connection {
             kind,
             verbosity: 0,
             extra_args: None,
+            proxy_command: None,
             login_command: None,
             remote_path: None,
             tags: Vec::new(),
@@ -282,6 +290,15 @@ pub struct AppSettings {
     /// Optional branch override. When omitted, SSIX uses the current branch.
     #[serde(default)]
     pub git_sync_branch: Option<String>,
+    /// Take automatic local backups of the data directory (see `backup.rs`).
+    #[serde(default = "default_true")]
+    pub backup_enabled: bool,
+    /// Hours between automatic backups.
+    #[serde(default = "default_backup_interval_hours")]
+    pub backup_interval_hours: u32,
+    /// How many automatic backups to keep; manual ones are kept until deleted.
+    #[serde(default = "default_backup_keep")]
+    pub backup_keep: u32,
 }
 
 fn default_font_size() -> u8 {
@@ -305,6 +322,15 @@ fn default_open_mode() -> String {
 fn default_git_remote() -> String {
     "origin".to_string()
 }
+fn default_true() -> bool {
+    true
+}
+fn default_backup_interval_hours() -> u32 {
+    24
+}
+fn default_backup_keep() -> u32 {
+    10
+}
 
 impl Default for AppSettings {
     fn default() -> Self {
@@ -321,6 +347,9 @@ impl Default for AppSettings {
             git_sync_repo_path: None,
             git_sync_remote: default_git_remote(),
             git_sync_branch: None,
+            backup_enabled: true,
+            backup_interval_hours: default_backup_interval_hours(),
+            backup_keep: default_backup_keep(),
         }
     }
 }
@@ -341,6 +370,9 @@ pub struct AppData {
     pub credentials: Vec<Credential>,
     pub connections: Vec<Connection>,
     pub settings: AppSettings,
+    /// Saved scripts. Files from before scripts existed have none.
+    #[serde(default)]
+    pub scripts: Vec<Script>,
 }
 
 /// Current `AppData.schema_version` written by this build.
@@ -362,6 +394,67 @@ impl Default for AppData {
             credentials: Vec::new(),
             connections: Vec::new(),
             settings: AppSettings::default(),
+            scripts: Vec::new(),
+        }
+    }
+}
+
+pub const DEFAULT_SCRIPT_INTERPRETER: &str = "sh -s";
+
+/// The PowerShell a Windows script runs in when none is given.
+pub const DEFAULT_WINDOWS_INTERPRETER: &str = "powershell";
+
+fn default_script_interpreter() -> String {
+    DEFAULT_SCRIPT_INTERPRETER.to_string()
+}
+
+/// The kind of host a script is written for.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
+#[serde(rename_all = "snake_case")]
+pub enum ScriptPlatform {
+    /// Linux, macOS, BSD: any host with a POSIX `sh`.
+    #[default]
+    Posix,
+    /// Windows OpenSSH: the body is a PowerShell script.
+    Windows,
+}
+
+impl ScriptPlatform {
+    pub fn default_interpreter(self) -> &'static str {
+        match self {
+            ScriptPlatform::Posix => DEFAULT_SCRIPT_INTERPRETER,
+            ScriptPlatform::Windows => DEFAULT_WINDOWS_INTERPRETER,
+        }
+    }
+}
+
+/// A script the user runs on one or more hosts. On POSIX hosts
+/// `interpreter` is the remote command that receives `body` on its standard
+/// input (`sh -s`, `bash -s`, `python3 -`); on Windows it is the PowerShell
+/// that runs it (`powershell`, `pwsh`).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(test, derive(TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
+pub struct Script {
+    pub id: String,
+    pub name: String,
+    pub body: String,
+    #[serde(default)]
+    pub platform: ScriptPlatform,
+    #[serde(default = "default_script_interpreter")]
+    pub interpreter: String,
+}
+
+impl Script {
+    pub fn new(name: String, body: String, platform: ScriptPlatform, interpreter: String) -> Self {
+        Self {
+            id: Uuid::new_v4().to_string(),
+            name,
+            body,
+            platform,
+            interpreter,
         }
     }
 }
@@ -600,6 +693,7 @@ mod tests {
             credential_id: Some("dest-cred".into()),
             verbosity: 0,
             extra_args: None,
+            proxy_command: None,
             login_command: None,
             remote_path: None,
             tags: Vec::new(),
@@ -639,6 +733,7 @@ mod tests {
             credential_id: None,
             verbosity: 0,
             extra_args: None,
+            proxy_command: None,
             login_command: None,
             remote_path: None,
             tags: Vec::new(),
@@ -676,6 +771,7 @@ mod tests {
             credential_id: None,
             verbosity: 0,
             extra_args: None,
+            proxy_command: None,
             login_command: None,
             remote_path: None,
             tags: Vec::new(),
@@ -896,6 +992,7 @@ mod tests {
                 credential_id: None,
                 verbosity: 0,
                 extra_args: None,
+                proxy_command: None,
                 login_command: None,
                 remote_path: None,
                 tags: Vec::new(),
@@ -909,6 +1006,7 @@ mod tests {
                 },
             }],
             settings: AppSettings::default(),
+            scripts: Vec::new(),
         };
 
         data.migrate_to_current();

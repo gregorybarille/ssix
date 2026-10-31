@@ -4,9 +4,10 @@ import React, { Suspense, useEffect, lazy } from "react";
 import { Sidebar } from "./components/Sidebar";
 import { TitleBar } from "./components/TitleBar";
 import { TerminalTabs } from "./components/TerminalTabs";
-import { TunnelsView } from "./components/TunnelsView";
+import { PortForwardsView } from "./components/PortForwardsView";
 import { ConnectionsView } from "./components/views/ConnectionsView";
 import { CredentialsView } from "./components/views/CredentialsView";
+import { PanelSlot, PanelSlotProvider } from "./components/ui/panel-slot";
 import { ConnectPicker } from "./components/ConnectPicker";
 import { ContextMenu } from "./components/ContextMenu";
 import { ConfirmDialog } from "./components/ConfirmDialog";
@@ -28,7 +29,7 @@ import { useGitSyncStore } from "./store/useGitSyncStore";
 import { useViewStore } from "./store/useViewStore";
 import { useDialogsStore } from "./store/useDialogsStore";
 import { useTerminalsStore } from "./store/useTerminalsStore";
-import { useTunnelsStore } from "./store/useTunnelsStore";
+import { usePortForwardsStore } from "./store/usePortForwardsStore";
 import { useApplySettings } from "./hooks/useApplySettings";
 import { useGlobalShortcuts } from "./hooks/useGlobalShortcuts";
 import { useScreenshotToast } from "./hooks/useScreenshotToast";
@@ -39,7 +40,7 @@ import { connectMany } from "./lib/bulk-actions";
 import type { TagGroup } from "./lib/tags";
 
 /**
- * Settings, Git-Sync, Logs and the SCP dialogs are leaf views the user
+ * Settings, Git-Sync, Logs, Scripts and the SCP dialogs are leaf views the user
  * opens infrequently and that pull in sizeable component trees.
  * Lazy-loading them keeps the initial bundle small and shifts their
  * cost to first use.
@@ -53,6 +54,9 @@ const GitSyncView = lazy(() =>
 const LogsView = lazy(() =>
   import("./components/LogsView").then((m) => ({ default: m.LogsView })),
 );
+const ScriptsView = lazy(() =>
+  import("./components/views/ScriptsView").then((m) => ({ default: m.ScriptsView })),
+);
 const ScpDialog = lazy(() =>
   import("./components/ScpDialog").then((m) => ({ default: m.ScpDialog })),
 );
@@ -61,7 +65,7 @@ const BulkScpDialog = lazy(() =>
 );
 
 /**
- * App is the composition layer. Terminal pane lifecycle, tunnel session
+ * App is the composition layer. Terminal pane lifecycle, port forward session
  * lifecycle, dialog UI state and the current view live in dedicated
  * Zustand stores; the Connections and Credentials tabs are their own
  * components under `components/views/`. App owns only:
@@ -136,7 +140,7 @@ function App() {
   );
   const captureScreenshot = useScreenshotToast();
 
-  // Terminal & tunnel session state
+  // Terminal & port forward session state
   const tabs = useTerminalsStore((s) => s.tabs);
   const activeTabId = useTerminalsStore((s) => s.activeTabId);
   const setActiveTabId = useTerminalsStore((s) => s.setActiveTabId);
@@ -144,8 +148,8 @@ function App() {
   const closePane = useTerminalsStore((s) => s.closePane);
   const closeTab = useTerminalsStore((s) => s.closeTab);
   const selectTabByIndex = useTerminalsStore((s) => s.selectTabByIndex);
-  const tunnelSessions = useTunnelsStore((s) => s.sessions);
-  const closeTunnel = useTunnelsStore((s) => s.closeTunnel);
+  const forwardSessions = usePortForwardsStore((s) => s.sessions);
+  const stopForward = usePortForwardsStore((s) => s.stopForward);
 
   useApplySettings(previewSettings ?? settings);
 
@@ -281,7 +285,7 @@ function App() {
   };
 
   // The clone form submits a whole new connection; every field it shows
-  // (kind, gateway, tags, …) is saved, not only name, host and port.
+  // (kind, jump host, tags, …) is saved, not only name, host and port.
   const handleCloneSubmit = async (data: ConnectionInput | Connection) => {
     if (dialogs.cloningConn) {
       await cloneConnection(dialogs.cloningConn.id, data);
@@ -413,314 +417,322 @@ function App() {
   });
 
   return (
-    <div className="flex flex-col h-screen bg-background text-foreground overflow-hidden">
-      <TitleBar
-        onSettings={() => setView("settings")}
-        settingsActive={view === "settings"}
-      />
-      <div className="flex flex-1 overflow-hidden">
-        <Sidebar
-          active={view}
-          onNavigate={(v) => setView(v)}
-          terminalCount={totalShellSessions}
-          tunnelCount={tunnelSessions.length}
-          gitPending={gitPending}
+    <PanelSlotProvider>
+      <div className="flex flex-col h-screen bg-background text-foreground overflow-hidden">
+        <TitleBar
+          onSettings={() => setView("settings")}
+          settingsActive={view === "settings"}
+        />
+        <div className="flex flex-1 overflow-hidden">
+          <Sidebar
+            active={view}
+            onNavigate={(v) => setView(v)}
+            terminalCount={totalShellSessions}
+            forwardCount={forwardSessions.length}
+            gitPending={gitPending}
+          />
+
+          <main className="flex-1 flex flex-col overflow-hidden min-w-0 min-h-0">
+            {view === "terminals" && tabs.length > 0 ? (
+              <TerminalTabs
+                tabs={tabs}
+                activeTabId={activeTabId}
+                onSelectTab={setActiveTabId}
+                onCloseTab={handleCloseTabRequest}
+                onClosePane={(_tabId, sessionId) => handleClosePaneRequest(sessionId)}
+                onNewTab={(mode) => dialogs.openPicker(mode)}
+                onRetry={(conn, replaceSessionId) => void connect(conn, { replaceSessionId })}
+                onEdit={handleEditFromTerminal}
+                settings={settings}
+              />
+            ) : (
+              <>
+                {view === "connections" && (
+                  <ConnectionsView
+                    connections={connections}
+                    credentials={credentials}
+                    settings={settings}
+                    onLayoutChange={(v) => updateLayout("connection_layout", v)}
+                    onSubmit={handleConnSubmit}
+                    onCloneSubmit={handleCloneSubmit}
+                    onCreateCredential={handleCreateCredential}
+                    onDiscardCredential={deleteCredential}
+                    onDelete={handleDeleteConnection}
+                    onConnect={(c) => void connect(c)}
+                    onConnectAllInTag={handleConnectAllInTag}
+                    onScpAllInTag={handleScpAllInTag}
+                  />
+                )}
+
+                {view === "credentials" && (
+                  <CredentialsView
+                    credentials={credentials}
+                    settings={settings}
+                    onLayoutChange={(v) => updateLayout("credential_layout", v)}
+                    onSubmit={handleCredSubmit}
+                  />
+                )}
+
+                {view === "forwards" && (
+                  <PortForwardsView
+                    sessions={forwardSessions}
+                    connections={connections}
+                    credentials={credentials}
+                    onCloseSession={stopForward}
+                    onConnect={(c) => void connect(c)}
+                    onEdit={(conn) => {
+                      dialogs.openEditConnection(conn);
+                      setView("connections");
+                    }}
+                    onDelete={handleDeleteConnection}
+                    onClone={(conn) => {
+                      dialogs.openCloneConnection(conn);
+                      setView("connections");
+                    }}
+                  />
+                )}
+
+                {view === "scripts" && (
+                  <Suspense fallback={<ViewFallback label="Loading scripts…" />}>
+                    <ScriptsView />
+                  </Suspense>
+                )}
+                {view === "logs" && (
+                  <Suspense fallback={<ViewFallback label="Loading logs…" />}>
+                    <LogsView />
+                  </Suspense>
+                )}
+                {view === "git_sync" && (
+                  <Suspense fallback={<ViewFallback label="Loading git sync…" />}>
+                    <GitSyncView />
+                  </Suspense>
+                )}
+                {view === "settings" && (
+                  <Suspense fallback={<ViewFallback label="Loading settings…" />}>
+                    <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain">
+                      {settingsLoadError && (
+                        <div className="px-6 pt-6 max-w-lg">
+                          <ErrorBanner
+                            message={`Could not load settings, showing defaults: ${settingsLoadError}`}
+                            onRetry={() => void fetchSettings()}
+                            testId="settings-load-error"
+                          />
+                        </div>
+                      )}
+                      <SettingsPanel
+                        settings={settings}
+                        onSave={async (next) => {
+                          await saveSettings(next);
+                          setPreviewSettings(null);
+                        }}
+                        onPreview={setPreviewSettings}
+                      />
+                    </div>
+                  </Suspense>
+                )}
+              </>
+            )}
+          </main>
+          <PanelSlot />
+        </div>
+
+        {/* Quick connect picker (Cmd+K, "+ tab") */}
+        <ConnectPicker
+          open={dialogs.pickerOpen}
+          onOpenChange={dialogs.setPickerOpen}
+          connections={connections}
+          credentials={credentials}
+          onConnect={(conn) => void connect(conn, { mode: dialogs.pickerMode })}
         />
 
-        <main className="flex-1 flex flex-col overflow-hidden min-w-0 min-h-0">
-          {view === "terminals" && tabs.length > 0 ? (
-            <TerminalTabs
-              tabs={tabs}
-              activeTabId={activeTabId}
-              onSelectTab={setActiveTabId}
-              onCloseTab={handleCloseTabRequest}
-              onClosePane={(_tabId, sessionId) => handleClosePaneRequest(sessionId)}
-              onNewTab={(mode) => dialogs.openPicker(mode)}
-              onRetry={(conn, replaceSessionId) => void connect(conn, { replaceSessionId })}
-              onEdit={handleEditFromTerminal}
-              settings={settings}
-            />
-          ) : (
-            <>
-              {view === "connections" && (
-                <ConnectionsView
-                  connections={connections}
-                  credentials={credentials}
-                  settings={settings}
-                  onLayoutChange={(v) => updateLayout("connection_layout", v)}
-                  onSubmit={handleConnSubmit}
-                  onCloneSubmit={handleCloneSubmit}
-                  onCreateCredential={handleCreateCredential}
-                  onDiscardCredential={deleteCredential}
-                  onDelete={handleDeleteConnection}
-                  onConnect={(c) => void connect(c)}
-                  onConnectAllInTag={handleConnectAllInTag}
-                  onScpAllInTag={handleScpAllInTag}
-                />
-              )}
+        <Suspense fallback={null}>
+          <ScpDialog
+            open={dialogs.scpOpen}
+            onOpenChange={dialogs.setScpOpen}
+            connection={dialogs.scpConnection}
+          />
+        </Suspense>
 
-              {view === "credentials" && (
-                <CredentialsView
-                  credentials={credentials}
-                  settings={settings}
-                  onLayoutChange={(v) => updateLayout("credential_layout", v)}
-                  onSubmit={handleCredSubmit}
-                />
-              )}
+        <Suspense fallback={null}>
+          <BulkScpDialog
+            open={dialogs.bulkScpOpen}
+            onOpenChange={dialogs.setBulkScpOpen}
+            connections={dialogs.bulkScpConnections}
+            groupLabel={dialogs.bulkScpLabel}
+          />
+        </Suspense>
 
-              {view === "tunnels" && (
-                <TunnelsView
-                  sessions={tunnelSessions}
-                  connections={connections}
-                  credentials={credentials}
-                  onCloseSession={closeTunnel}
-                  onConnect={(c) => void connect(c)}
-                  onEdit={(conn) => {
-                    dialogs.openEditConnection(conn);
-                    setView("connections");
-                  }}
-                  onDelete={handleDeleteConnection}
-                  onClone={(conn) => {
-                    dialogs.openCloneConnection(conn);
-                    setView("connections");
-                  }}
-                />
-              )}
+        {/* Custom context menu */}
+        {dialogs.contextMenu && (
+          <ContextMenu
+            position={dialogs.contextMenu}
+            onClose={() => dialogs.setContextMenu(null)}
+            ariaLabel="Window actions"
+            items={[
+              {
+                label: "Take screenshot",
+                onClick: () => void captureScreenshot(),
+              },
+            ]}
+          />
+        )}
 
-              {view === "logs" && (
-                <Suspense fallback={<ViewFallback label="Loading logs…" />}>
-                  <LogsView />
-                </Suspense>
-              )}
-              {view === "git_sync" && (
-                <Suspense fallback={<ViewFallback label="Loading git sync…" />}>
-                  <GitSyncView />
-                </Suspense>
-              )}
-              {view === "settings" && (
-                <Suspense fallback={<ViewFallback label="Loading settings…" />}>
-                  <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain">
-                    {settingsLoadError && (
-                      <div className="px-6 pt-6 max-w-lg">
-                        <ErrorBanner
-                          message={`Could not load settings, showing defaults: ${settingsLoadError}`}
-                          onRetry={() => void fetchSettings()}
-                          testId="settings-load-error"
-                        />
-                      </div>
-                    )}
-                    <SettingsPanel
-                      settings={settings}
-                      onSave={async (next) => {
-                        await saveSettings(next);
-                        setPreviewSettings(null);
-                      }}
-                      onPreview={setPreviewSettings}
-                    />
-                  </div>
-                </Suspense>
-              )}
-            </>
-          )}
-        </main>
+        <ScreenshotToast />
+
+        <ConfirmDialog
+          open={!!dialogs.confirmDeleteConn}
+          onOpenChange={(o) => !o && dialogs.setConfirmDeleteConn(null)}
+          title="Delete connection?"
+          description={
+            dialogs.confirmDeleteConn ? (
+              <>
+                Permanently delete <strong>{dialogs.confirmDeleteConn.name}</strong>?
+                This cannot be undone.
+              </>
+            ) : null
+          }
+          confirmLabel="Delete connection"
+          variant="destructive"
+          onConfirm={async () => {
+            if (dialogs.confirmDeleteConn) {
+              await performDeleteConnection(dialogs.confirmDeleteConn.id);
+            }
+          }}
+        />
+
+        <ConfirmDialog
+          open={!!dialogs.confirmDeleteCred}
+          onOpenChange={(o) => !o && dialogs.setConfirmDeleteCred(null)}
+          title="Delete credential?"
+          description={
+            dialogs.confirmDeleteCred ? (
+              <>
+                Delete credential <strong>{dialogs.confirmDeleteCred.name}</strong>?
+                A credential that connections still use cannot be deleted
+                until they use another one.
+              </>
+            ) : null
+          }
+          confirmLabel="Delete credential"
+          variant="destructive"
+          testId="confirm-delete-credential"
+          onConfirm={async () => {
+            if (dialogs.confirmDeleteCred) {
+              await deleteCredential(dialogs.confirmDeleteCred.id);
+            }
+          }}
+        />
+
+        <ConfirmDialog
+          open={!!dialogs.confirmClosePane}
+          onOpenChange={(o) => !o && dialogs.setConfirmClosePane(null)}
+          title="Close terminal?"
+          description={
+            dialogs.confirmClosePane ? (
+              <>
+                The session for <strong>{dialogs.confirmClosePane.name}</strong> will
+                be disconnected. Any unsaved work in the shell will be lost.
+              </>
+            ) : null
+          }
+          confirmLabel="Close"
+          variant="destructive"
+          onConfirm={async () => {
+            const target = dialogs.confirmClosePane;
+            if (!target) return;
+            if (target.kind === "tab") await closeTab(target.tabId);
+            else await closePane(target.sessionId);
+          }}
+        />
+
+        {/* Tag-group bulk action confirm (see handleConnectAllInTag). */}
+        <ConfirmDialog
+          open={!!dialogs.confirmTagAction}
+          onOpenChange={(o) => !o && dialogs.setConfirmTagAction(null)}
+          title={
+            dialogs.confirmTagAction?.kind === "scp"
+              ? "Transfer files to all?"
+              : "Connect to all?"
+          }
+          description={
+            dialogs.confirmTagAction ? (
+              <>
+                {dialogs.confirmTagAction.kind === "scp" ? (
+                  <>
+                    Open a bulk file transfer dialog for{" "}
+                    <strong>{dialogs.confirmTagAction.connections.length}</strong>{" "}
+                    connection
+                    {dialogs.confirmTagAction.connections.length === 1 ? "" : "s"}{" "}
+                    tagged{" "}
+                    <strong>{dialogs.confirmTagAction.label}</strong>?
+                  </>
+                ) : (
+                  <>
+                    Open SSH sessions for{" "}
+                    <strong>{dialogs.confirmTagAction.connections.length}</strong>{" "}
+                    connection
+                    {dialogs.confirmTagAction.connections.length === 1 ? "" : "s"}{" "}
+                    tagged{" "}
+                    <strong>{dialogs.confirmTagAction.label}</strong>?
+                    Local forwards will be skipped.
+                  </>
+                )}
+              </>
+            ) : null
+          }
+          confirmLabel={
+            dialogs.confirmTagAction?.kind === "scp"
+              ? "Open transfer dialog"
+              : "Connect all"
+          }
+          testId="confirm-tag-action"
+          onConfirm={async () => {
+            const payload = dialogs.confirmTagAction;
+            if (!payload) return;
+            if (payload.kind === "connect") {
+              await connectMany(payload.connections);
+            } else {
+              dialogs.openBulkScp(payload.label, payload.connections);
+            }
+          }}
+        />
+
+        {/* Orphaned private credential prompt */}
+        <Dialog
+          open={!!dialogs.orphanCredDialog}
+          onOpenChange={(open) => {
+            if (!open) dialogs.setOrphanCredDialog(null);
+          }}
+        >
+          <DialogContent kind="confirm">
+            <DialogHeader>
+              <DialogTitle>Delete private credential?</DialogTitle>
+              <DialogDescription>
+                This connection has a private credential that is not used by any
+                other connection. Do you want to delete it as well?
+              </DialogDescription>
+            </DialogHeader>
+            <DialogFooter className="flex-col-reverse sm:flex-col-reverse sm:space-x-0 gap-2">
+              <Button variant="ghost" onClick={() => dialogs.setOrphanCredDialog(null)}>
+                Cancel
+              </Button>
+              <Button
+                variant="secondary"
+                onClick={() => void handleOrphanCredDialogConfirm(false)}
+              >
+                Delete connection only
+              </Button>
+              <Button
+                variant="destructive"
+                onClick={() => void handleOrphanCredDialogConfirm(true)}
+              >
+                Delete connection and credential
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
       </div>
-
-      {/* Quick connect picker (Cmd+K, "+ tab") */}
-      <ConnectPicker
-        open={dialogs.pickerOpen}
-        onOpenChange={dialogs.setPickerOpen}
-        connections={connections}
-        credentials={credentials}
-        onConnect={(conn) => void connect(conn, { mode: dialogs.pickerMode })}
-      />
-
-      <Suspense fallback={null}>
-        <ScpDialog
-          open={dialogs.scpOpen}
-          onOpenChange={dialogs.setScpOpen}
-          connection={dialogs.scpConnection}
-        />
-      </Suspense>
-
-      <Suspense fallback={null}>
-        <BulkScpDialog
-          open={dialogs.bulkScpOpen}
-          onOpenChange={dialogs.setBulkScpOpen}
-          connections={dialogs.bulkScpConnections}
-          groupLabel={dialogs.bulkScpLabel}
-        />
-      </Suspense>
-
-      {/* Custom context menu */}
-      {dialogs.contextMenu && (
-        <ContextMenu
-          position={dialogs.contextMenu}
-          onClose={() => dialogs.setContextMenu(null)}
-          ariaLabel="Window actions"
-          items={[
-            {
-              label: "Take screenshot",
-              onClick: () => void captureScreenshot(),
-            },
-          ]}
-        />
-      )}
-
-      <ScreenshotToast />
-
-      <ConfirmDialog
-        open={!!dialogs.confirmDeleteConn}
-        onOpenChange={(o) => !o && dialogs.setConfirmDeleteConn(null)}
-        title="Delete connection?"
-        description={
-          dialogs.confirmDeleteConn ? (
-            <>
-              Permanently delete <strong>{dialogs.confirmDeleteConn.name}</strong>?
-              This cannot be undone.
-            </>
-          ) : null
-        }
-        confirmLabel="Delete connection"
-        variant="destructive"
-        onConfirm={async () => {
-          if (dialogs.confirmDeleteConn) {
-            await performDeleteConnection(dialogs.confirmDeleteConn.id);
-          }
-        }}
-      />
-
-      <ConfirmDialog
-        open={!!dialogs.confirmDeleteCred}
-        onOpenChange={(o) => !o && dialogs.setConfirmDeleteCred(null)}
-        title="Delete credential?"
-        description={
-          dialogs.confirmDeleteCred ? (
-            <>
-              Delete credential <strong>{dialogs.confirmDeleteCred.name}</strong>?
-              A credential that connections still use cannot be deleted
-              until they use another one.
-            </>
-          ) : null
-        }
-        confirmLabel="Delete credential"
-        variant="destructive"
-        testId="confirm-delete-credential"
-        onConfirm={async () => {
-          if (dialogs.confirmDeleteCred) {
-            await deleteCredential(dialogs.confirmDeleteCred.id);
-          }
-        }}
-      />
-
-      <ConfirmDialog
-        open={!!dialogs.confirmClosePane}
-        onOpenChange={(o) => !o && dialogs.setConfirmClosePane(null)}
-        title="Close terminal?"
-        description={
-          dialogs.confirmClosePane ? (
-            <>
-              The session for <strong>{dialogs.confirmClosePane.name}</strong> will
-              be disconnected. Any unsaved work in the shell will be lost.
-            </>
-          ) : null
-        }
-        confirmLabel="Close"
-        variant="destructive"
-        onConfirm={async () => {
-          const target = dialogs.confirmClosePane;
-          if (!target) return;
-          if (target.kind === "tab") await closeTab(target.tabId);
-          else await closePane(target.sessionId);
-        }}
-      />
-
-      {/* Tag-group bulk action confirm (see handleConnectAllInTag). */}
-      <ConfirmDialog
-        open={!!dialogs.confirmTagAction}
-        onOpenChange={(o) => !o && dialogs.setConfirmTagAction(null)}
-        title={
-          dialogs.confirmTagAction?.kind === "scp"
-            ? "Transfer files to all?"
-            : "Connect to all?"
-        }
-        description={
-          dialogs.confirmTagAction ? (
-            <>
-              {dialogs.confirmTagAction.kind === "scp" ? (
-                <>
-                  Open a bulk file transfer dialog for{" "}
-                  <strong>{dialogs.confirmTagAction.connections.length}</strong>{" "}
-                  connection
-                  {dialogs.confirmTagAction.connections.length === 1 ? "" : "s"}{" "}
-                  tagged{" "}
-                  <strong>{dialogs.confirmTagAction.label}</strong>?
-                </>
-              ) : (
-                <>
-                  Open SSH sessions for{" "}
-                  <strong>{dialogs.confirmTagAction.connections.length}</strong>{" "}
-                  connection
-                  {dialogs.confirmTagAction.connections.length === 1 ? "" : "s"}{" "}
-                  tagged{" "}
-                  <strong>{dialogs.confirmTagAction.label}</strong>?
-                  Port-forward connections will be skipped.
-                </>
-              )}
-            </>
-          ) : null
-        }
-        confirmLabel={
-          dialogs.confirmTagAction?.kind === "scp"
-            ? "Open transfer dialog"
-            : "Connect all"
-        }
-        testId="confirm-tag-action"
-        onConfirm={async () => {
-          const payload = dialogs.confirmTagAction;
-          if (!payload) return;
-          if (payload.kind === "connect") {
-            await connectMany(payload.connections);
-          } else {
-            dialogs.openBulkScp(payload.label, payload.connections);
-          }
-        }}
-      />
-
-      {/* Orphaned private credential prompt */}
-      <Dialog
-        open={!!dialogs.orphanCredDialog}
-        onOpenChange={(open) => {
-          if (!open) dialogs.setOrphanCredDialog(null);
-        }}
-      >
-        <DialogContent className="sm:max-w-sm">
-          <DialogHeader>
-            <DialogTitle>Delete private credential?</DialogTitle>
-            <DialogDescription>
-              This connection has a private credential that is not used by any
-              other connection. Do you want to delete it as well?
-            </DialogDescription>
-          </DialogHeader>
-          <DialogFooter className="flex-col-reverse sm:flex-col-reverse sm:space-x-0 gap-2">
-            <Button variant="ghost" onClick={() => dialogs.setOrphanCredDialog(null)}>
-              Cancel
-            </Button>
-            <Button
-              variant="secondary"
-              onClick={() => void handleOrphanCredDialogConfirm(false)}
-            >
-              Delete connection only
-            </Button>
-            <Button
-              variant="destructive"
-              onClick={() => void handleOrphanCredDialogConfirm(true)}
-            >
-              Delete connection and credential
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-    </div>
+    </PanelSlotProvider>
   );
 }
 

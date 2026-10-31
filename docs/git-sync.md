@@ -6,7 +6,8 @@ Git Sync exports a sanitized snapshot of SSIX configuration into a local git rep
 
 Files are written under:
 
-- `.ssix-sync/data.json`
+- `.ssix-sync/data.json`: connections, credentials (without secrets),
+  settings and saved scripts
 - `.ssix-sync/README.md`
 
 ## What Does Not Get Exported
@@ -16,6 +17,8 @@ Files are written under:
 - raw secret storage from `~/.ssix/secrets.json`
 
 Passphrases are represented as redacted markers when present, not as the original values.
+
+For a full local copy that includes the secrets, use [Local Backups](features.md#local-backups) instead.
 
 ## Manual Actions
 

@@ -30,10 +30,10 @@ export interface ConfirmDialogProps {
 }
 
 /**
- * Generic Yes/No confirmation panel. Built on Radix so it gets
- * Escape-to-close and aria-labelledby/aria-describedby for free.
- * The shared Dialog primitive is intentionally non-modal so this
- * appears as an in-app panel rather than a blocking overlay.
+ * Generic Yes/No confirmation. Built on Radix so it gets Escape-to-close
+ * and aria-labelledby/aria-describedby for free. It shows as a compact
+ * card at the top of the right-hand panel column, above the panel it is
+ * about, never as a blocking overlay.
  *
  * Default focus lands on the cancel button — never on the destructive
  * action — so a careless Enter press cannot delete data.
@@ -79,7 +79,7 @@ export function ConfirmDialog({
 
   return (
     <Dialog open={open} onOpenChange={(o) => !busy && onOpenChange(o)}>
-      <DialogContent className="sm:max-w-sm" data-testid={testId}>
+      <DialogContent kind="confirm" data-testid={testId}>
         <DialogHeader>
           <DialogTitle>{title}</DialogTitle>
           <DialogDescription>{description}</DialogDescription>

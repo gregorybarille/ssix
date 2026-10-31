@@ -41,7 +41,7 @@ describe("search", () => {
     expect(connectionMatches(conns[1], ["10.0.0.2"])).toBe(true);
   });
 
-  it("searches gateway and destination hosts for tunnels and jump hosts", () => {
+  it("searches the first hop and far-end hosts of forwards and jump hosts", () => {
     expect(connectionMatches(conns[2], ["pg.internal"])).toBe(true);
     expect(connectionMatches(conns[2], ["gw"])).toBe(true);
   });

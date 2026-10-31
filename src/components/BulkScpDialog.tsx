@@ -22,7 +22,7 @@ import {
   runBulkScp,
   type BulkScpStep,
 } from "@/lib/bulk-actions";
-import { CheckCircle2, Circle, Loader2, MinusCircle, XCircle } from "lucide-react";
+import { StatusIcon } from "./ui/status-icon";
 
 interface BulkScpDialogProps {
   open: boolean;
@@ -48,7 +48,7 @@ interface BulkScpDialogProps {
  *    don't collide.
  *  - Recursive transfers are honoured; for downloads the suffix
  *    applies to the top-level directory name only.
- *  - Port-forward members are listed but greyed out — they can't
+ *  - Local forward members are listed but greyed out — they can't
  *    do SCP and the SCP commands reject them server-side anyway.
  *  - Transfers run sequentially with a live per-host progress
  *    list. The dialog never closes itself; the user dismisses it
@@ -129,14 +129,12 @@ export function BulkScpDialog({
   return (
     <Dialog
       open={open}
-      modal
       onOpenChange={(next) => {
         if (running) return;
         onOpenChange(next);
       }}
     >
       <DialogContent
-        className="sm:max-w-[640px]"
         data-testid="bulk-scp-dialog"
       >
         <DialogHeader>
@@ -352,42 +350,4 @@ export function BulkScpDialog({
       </DialogContent>
     </Dialog>
   );
-}
-
-function StatusIcon({ status }: { status: BulkScpStep["status"] }) {
-  const cls = "h-4 w-4 mt-0.5 shrink-0";
-  switch (status) {
-    case "pending":
-      return (
-        <Circle
-          className={cn(cls, "text-muted-foreground-soft")}
-          aria-label="Pending"
-        />
-      );
-    case "running":
-      return (
-        <Loader2
-          className={cn(cls, "text-foreground animate-spin")}
-          aria-label="Running"
-        />
-      );
-    case "success":
-      return (
-        <CheckCircle2
-          className={cn(cls, "text-green-500")}
-          aria-label="Success"
-        />
-      );
-    case "error":
-      return (
-        <XCircle className={cn(cls, "text-destructive")} aria-label="Error" />
-      );
-    case "skipped":
-      return (
-        <MinusCircle
-          className={cn(cls, "text-muted-foreground-soft")}
-          aria-label="Skipped"
-        />
-      );
-  }
 }

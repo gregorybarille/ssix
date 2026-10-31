@@ -1,6 +1,6 @@
 import { errorMessage } from "@/lib/errors";
 import { log as appLog } from "@/lib/log";
-import React, { useActionState, useState, useEffect, useRef } from "react";
+import { useActionState, useState, useEffect, useRef } from "react";
 import { Connection, ConnectionDraft, ConnectionInput, Credential, ConnectionType, OPEN_COLORS } from "@/types";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
@@ -31,16 +31,19 @@ import {
 } from "./ConnectionFormFields";
 import { useFieldErrors } from "@/hooks/useFieldErrors";
 import { credentialFieldErrors, type CredentialFieldKey } from "@/lib/credentialValidation";
+import { KIND_FLAGS, KIND_LABELS, hopTerms, titleCase } from "@/lib/sshTerms";
 import { InstallKeyDialog } from "./InstallKeyDialog";
 import { TagInput } from "./ui/tag-input";
 import { RadioGroup, RadioGroupItem } from "./ui/radio-group";
 import { COLOR_VALUES } from "@/lib/colors";
 import { parsePort } from "@/lib/port";
-import { isTextInput } from "@/lib/focus";
+import { detectPlatform, WSL_PROXY_COMMAND } from "@/lib/platform";
 import { UploadCloud } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { submitWithoutReset } from "@/lib/formSubmit";
 import { useUnsavedChangesGuard } from "@/hooks/useUnsavedChangesGuard";
+import { useLeaveViewGuard } from "@/hooks/useLeaveViewGuard";
+import { useDialogsStore } from "@/store/useDialogsStore";
 import { ConfirmDialog } from "./ConfirmDialog";
 
 type AuthMethod = "password" | "ssh_key" | "credential";
@@ -62,7 +65,6 @@ interface ConnectionFormProps {
    */
   onDiscardCredential?: (id: string) => Promise<void>;
   isClone?: boolean;
-  inline?: boolean;
 }
 
 const DEFAULT_FORM: ConnectionDraft = {
@@ -73,6 +75,7 @@ const DEFAULT_FORM: ConnectionDraft = {
   type: "direct",
   verbosity: 0,
   extra_args: "",
+  proxy_command: "",
   login_command: "",
   remote_path: "",
   tags: [],
@@ -129,6 +132,7 @@ function initialFormState(
     type: connection.type,
     verbosity: connection.verbosity ?? 0,
     extra_args: connection.extra_args ?? "",
+    proxy_command: connection.proxy_command ?? "",
     login_command: connection.login_command ?? "",
     remote_path: connection.remote_path ?? "",
     tags: connection.tags ?? [],
@@ -189,6 +193,7 @@ function serializeFormState(s: {
     s.form.type,
     s.form.verbosity ?? 0,
     s.form.extra_args ?? "",
+    s.form.proxy_command ?? "",
     s.form.login_command ?? "",
     s.form.remote_path ?? "",
     s.form.tags ?? [],
@@ -211,6 +216,15 @@ function serializeFormState(s: {
   ]);
 }
 
+/** The verbosity choices, named after the `ssh` flags they match. */
+const VERBOSITY_LEVELS = [
+  { value: 0, label: "Quiet (default)" },
+  { value: 1, label: "-v (connection steps)" },
+  { value: 2, label: "-vv (negotiated algorithms)" },
+  { value: 3, label: "-vvv (everything)" },
+] as const;
+
+
 export function ConnectionForm({
   open,
   onOpenChange,
@@ -220,7 +234,6 @@ export function ConnectionForm({
   onCreateCredential,
   onDiscardCredential,
   isClone = false,
-  inline = false,
 }: ConnectionFormProps) {
   const [form, setForm] = useState<ConnectionDraft>(DEFAULT_FORM);
   const [connectionType, setConnectionType] = useState<ConnectionType>("direct");
@@ -231,8 +244,6 @@ export function ConnectionForm({
   const [inlinePassphrase, setInlinePassphrase] = useState("");
   const [inlineCredentialName, setInlineCredentialName] = useState("");
   const [saveCredential, setSaveCredential] = useState(false);
-  const inlineTitleId = React.useId();
-  const inlineDescriptionId = React.useId();
   const firstFieldRef = useRef<HTMLInputElement | null>(null);
 
   // Port inputs are managed as raw strings so we can validate without
@@ -305,32 +316,22 @@ export function ConnectionForm({
   const guard = useUnsavedChangesGuard(dirty);
   const requestCloseDialog = () => guard.requestClose(() => onOpenChange(false));
 
+  // The list stays visible beside this panel; opening another editor from
+  // it asks before replacing unsaved changes.
+  const setConnFormGuard = useDialogsStore((s) => s.setConnFormGuard);
+  const { requestClose } = guard;
   useEffect(() => {
-    if (!inline || !open) return;
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key !== "Escape" || event.defaultPrevented) return;
-      if (document.querySelector("[role='dialog']")) return;
-      event.preventDefault();
-      requestCloseDialog();
-    };
-    window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [inline, open, requestCloseDialog]);
+    if (!open) return;
+    setConnFormGuard((proceed) => requestClose(proceed));
+    return () => setConnFormGuard(null);
+  }, [open, requestClose, setConnFormGuard]);
+  useLeaveViewGuard(open, requestClose, () => onOpenChange(false));
 
-  useEffect(() => {
-    if (!inline || !open) return;
-    if (document.querySelector("[role='dialog']")) return;
-    const id = window.requestAnimationFrame(() => {
-      // The frame can land after the user (or a test) has already moved
-      // into another field; never pull focus away from a text input.
-      if (isTextInput(document.activeElement)) return;
-      firstFieldRef.current?.focus();
-    });
-    return () => window.cancelAnimationFrame(id);
-  }, [inline, open, connection?.id, isClone]);
-
-  const isTunnel = connectionType !== "direct";
-  const needsDestinationAuth = connectionType !== "port_forward";
+  const isTwoHop = connectionType !== "direct";
+  const isWindows = detectPlatform() === "windows";
+  // OpenSSH's names for the two hosts of the current kind (direct has none).
+  const terms = hopTerms(connectionType === "port_forward" ? "port_forward" : "jump_shell");
+  const needsTargetAuth = connectionType !== "port_forward";
 
   const defaultCredentialName = (method: AuthMethod) => {
     const base = form.name.trim() || "connection";
@@ -338,7 +339,7 @@ export function ConnectionForm({
   };
 
   /**
-   * Required-field errors for the destination authentication: a saved
+   * Required-field errors for the target authentication: a saved
    * credential must be picked, and an inline one must pass the same checks
    * as the credential form.
    */
@@ -348,7 +349,7 @@ export function ConnectionForm({
       return {
         credential_id:
           connectionType === "jump_shell"
-            ? "Destination credential is required"
+            ? "Target credential is required"
             : "Credential is required",
       };
     }
@@ -387,9 +388,9 @@ export function ConnectionForm({
         if (connectionType === "direct") {
           portChecks.push({ key: "port", required: true, label: "Port" });
         }
-        if (isTunnel) {
-          portChecks.push({ key: "gateway_port", required: true, label: "Gateway port" });
-          portChecks.push({ key: "destination_port", required: true, label: "Destination port" });
+        if (isTwoHop) {
+          portChecks.push({ key: "gateway_port", required: true, label: terms.hopPort });
+          portChecks.push({ key: "destination_port", required: true, label: terms.targetPort });
         }
         if (connectionType === "port_forward") {
           portChecks.push({ key: "local_port", required: true, label: "Local port" });
@@ -437,18 +438,18 @@ export function ConnectionForm({
         if (connectionType === "direct" && !formWithPorts.host.trim()) {
           newFieldErrors.host = "Host is required";
         }
-        if (isTunnel) {
+        if (isTwoHop) {
           if (!formWithPorts.gateway_host || !formWithPorts.gateway_host.trim()) {
-            newFieldErrors.gateway_host = "Gateway host is required";
+            newFieldErrors.gateway_host = `${terms.hopHost} is required`;
           }
           if (!formWithPorts.gateway_credential_id) {
-            newFieldErrors.gateway_credential_id = "Gateway credential is required";
+            newFieldErrors.gateway_credential_id = `${terms.hopCredential} is required`;
           }
           if (!formWithPorts.destination_host || !formWithPorts.destination_host.trim()) {
-            newFieldErrors.destination_host = "Destination host is required";
+            newFieldErrors.destination_host = `${terms.targetHost} is required`;
           }
         }
-        if (needsDestinationAuth) {
+        if (needsTargetAuth) {
           Object.assign(newFieldErrors, authFieldErrors(formWithPorts.credential_id));
         }
         if (Object.keys(newFieldErrors).length > 0) {
@@ -456,10 +457,10 @@ export function ConnectionForm({
           throw new Error("Please fix the highlighted fields");
         }
 
-        // PortForward has no destination credential.
-        let credentialId = needsDestinationAuth ? formWithPorts.credential_id : undefined;
+        // A local forward has no target credential.
+        let credentialId = needsTargetAuth ? formWithPorts.credential_id : undefined;
         let createdCredentialId: string | null = null;
-        if (needsDestinationAuth && authMethod !== "credential") {
+        if (needsTargetAuth && authMethod !== "credential") {
           if (!onCreateCredential) throw new Error("Inline credentials are not available here");
           const cred = await onCreateCredential({
             name: saveCredential ? inlineCredentialName.trim() : `inline-${crypto.randomUUID()}`,
@@ -477,10 +478,10 @@ export function ConnectionForm({
           createdCredentialId = cred.id;
         }
 
-        // Mirror destination_host/port into top-level host/port for tunnel kinds so
+        // Mirror destination_host/port into top-level host/port for two-hop kinds so
         // list views can keep displaying a meaningful "host" label.
-        const effectiveHost = isTunnel ? (formWithPorts.destination_host ?? "") : formWithPorts.host;
-        const effectivePort = isTunnel
+        const effectiveHost = isTwoHop ? (formWithPorts.destination_host ?? "") : formWithPorts.host;
+        const effectivePort = isTwoHop
           ? (formWithPorts.destination_port ?? 22)
           : formWithPorts.port;
 
@@ -495,6 +496,7 @@ export function ConnectionForm({
           credential_id: credentialId,
           verbosity: formWithPorts.verbosity ?? 0,
           extra_args: formWithPorts.extra_args || undefined,
+          proxy_command: formWithPorts.proxy_command?.trim() || undefined,
           login_command: formWithPorts.login_command || undefined,
           remote_path: formWithPorts.remote_path || undefined,
           tags: formWithPorts.tags ?? [],
@@ -622,7 +624,7 @@ export function ConnectionForm({
     <div className="space-y-2">
       <CredentialSelect
         id="credential"
-        aria-label={connectionType === "jump_shell" ? "Destination credential" : "Credential"}
+        aria-label={connectionType === "jump_shell" ? "Target credential" : "Credential"}
         required
         credentials={credentials}
         value={form.credential_id}
@@ -663,36 +665,36 @@ export function ConnectionForm({
     </div>
   );
 
-  const gatewayBlock = (
+  const hopBlock = (
     <div className="rounded-lg border p-4 space-y-4">
-      <p className="text-sm font-medium text-muted-foreground">Gateway</p>
+      <p className="text-sm font-medium text-muted-foreground">{terms.hop}</p>
       <div className="grid grid-cols-2 gap-4">
         <div className="space-y-2">
-          <Label htmlFor="gateway_host">Gateway Host *</Label>
+          <Label htmlFor="gateway_host">{titleCase(terms.hopHost)} *</Label>
           <Input
             id="gateway_host"
-            placeholder="gateway.example.com"
+            placeholder={connectionType === "jump_shell" ? "bastion.example.com" : "ssh.example.com"}
             value={form.gateway_host ?? ""}
             onChange={(e) => {
               setForm({ ...form, gateway_host: e.target.value });
               clearFieldError("gateway_host");
             }}
-            data-testid="connection-form-gateway"
+            data-testid="connection-form-hop-host"
             {...invalidAria(fieldErrors.gateway_host, "gateway_host-error")}
           />
           <FieldError id="gateway_host-error" message={fieldErrors.gateway_host} />
         </div>
         <PortField
           id="gateway_port"
-          label="Gateway Port"
+          label={titleCase(terms.hopPort)}
           value={portInputs.gateway_port}
           onChange={(raw) => updatePort("gateway_port", raw)}
           error={portErrors.gateway_port}
-          testId="connection-form-gateway-port"
+          testId="connection-form-hop-port"
         />
       </div>
       <div className="space-y-2">
-        <Label htmlFor="gateway_credential">Gateway Credential *</Label>
+        <Label htmlFor="gateway_credential">{titleCase(terms.hopCredential)} *</Label>
         <CredentialSelect
           id="gateway_credential"
           credentials={credentials}
@@ -702,7 +704,7 @@ export function ConnectionForm({
             clearFieldError("gateway_credential_id");
           }}
           required
-          testId="connection-form-gateway-credential"
+          testId="connection-form-hop-credential"
           error={fieldErrors.gateway_credential_id}
           errorId="gateway_credential-error"
         />
@@ -711,12 +713,12 @@ export function ConnectionForm({
     </div>
   );
 
-  const destinationBlock = (
+  const targetBlock = (
     <div className="rounded-lg border p-4 space-y-4">
-      <p className="text-sm font-medium text-muted-foreground">Destination</p>
+      <p className="text-sm font-medium text-muted-foreground">{terms.target}</p>
       <div className="grid grid-cols-2 gap-4">
         <div className="space-y-2">
-          <Label htmlFor="destination_host">Destination Host *</Label>
+          <Label htmlFor="destination_host">{titleCase(terms.targetHost)} *</Label>
           <Input
             id="destination_host"
             placeholder={
@@ -729,19 +731,19 @@ export function ConnectionForm({
               setForm({ ...form, destination_host: e.target.value });
               clearFieldError("destination_host");
             }}
-            data-testid="connection-form-dest-host"
+            data-testid="connection-form-target-host"
             {...invalidAria(fieldErrors.destination_host, "destination_host-error")}
           />
           <FieldError id="destination_host-error" message={fieldErrors.destination_host} />
         </div>
         <PortField
           id="destination_port"
-          label="Destination Port"
+          label={titleCase(terms.targetPort)}
           placeholder={connectionType === "port_forward" ? "80" : "22"}
           value={portInputs.destination_port}
           onChange={(raw) => updatePort("destination_port", raw)}
           error={portErrors.destination_port}
-          testId="connection-form-dest-port"
+          testId="connection-form-target-port"
         />
       </div>
     </div>
@@ -758,8 +760,9 @@ export function ConnectionForm({
       testId="connection-form-local-port"
       help={
         <>
-          SSIX will listen on <code>127.0.0.1:&lt;local_port&gt;</code> and forward
-          connections through the gateway to the destination.
+          SSIX listens on <code>127.0.0.1:&lt;local port&gt;</code> and forwards each
+          connection through the SSH server to the remote host, like{" "}
+          <code>ssh -L</code>. The remote host is resolved by the SSH server.
         </>
       }
     />
@@ -782,21 +785,27 @@ export function ConnectionForm({
           className="flex-1 data-[state=inactive]:bg-transparent data-[state=inactive]:hover:bg-background/70 data-[state=inactive]:hover:text-foreground data-[state=active]:bg-background data-[state=active]:shadow-sm"
           data-testid="connection-form-kind-direct"
         >
-          Direct
+          {KIND_LABELS.direct}
         </TabsTrigger>
         <TabsTrigger
           value="port_forward"
           className="flex-1 data-[state=inactive]:bg-transparent data-[state=inactive]:hover:bg-background/70 data-[state=inactive]:hover:text-foreground data-[state=active]:bg-background data-[state=active]:shadow-sm"
-          data-testid="connection-form-kind-portforward"
+          data-testid="connection-form-kind-localforward"
         >
-          Port Forward
+          {KIND_LABELS.port_forward}
+          <span aria-hidden="true" className="ml-1 font-mono text-xs text-muted-foreground-soft">
+            {KIND_FLAGS.port_forward}
+          </span>
         </TabsTrigger>
         <TabsTrigger
           value="jump_shell"
           className="flex-1 data-[state=inactive]:bg-transparent data-[state=inactive]:hover:bg-background/70 data-[state=inactive]:hover:text-foreground data-[state=active]:bg-background data-[state=active]:shadow-sm"
-          data-testid="connection-form-kind-jumpshell"
+          data-testid="connection-form-kind-jumphost"
         >
-          Jump Shell
+          {KIND_LABELS.jump_shell}
+          <span aria-hidden="true" className="ml-1 font-mono text-xs text-muted-foreground-soft">
+            {KIND_FLAGS.jump_shell}
+          </span>
         </TabsTrigger>
       </TabsList>
     </Tabs>
@@ -853,19 +862,19 @@ export function ConnectionForm({
         </div>
       )}
 
-      {isTunnel && (
+      {isTwoHop && (
         <>
-          {gatewayBlock}
-          {destinationBlock}
+          {hopBlock}
+          {targetBlock}
           {connectionType === "port_forward" && localPortBlock}
         </>
       )}
 
-      {needsDestinationAuth && (
+      {needsTargetAuth && (
         <div className="space-y-3">
           <Label>
             {connectionType === "jump_shell"
-              ? "Destination Authentication"
+              ? "Target Authentication"
               : "Authentication"}
           </Label>
           <Tabs
@@ -1057,6 +1066,45 @@ export function ConnectionForm({
       </div>
 
       <div className="space-y-2">
+        <div className="flex items-center justify-between gap-2">
+          <Label htmlFor="proxy_command">Proxy Command</Label>
+          {isWindows && (
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              data-testid="connection-form-proxy-wsl"
+              onClick={() => setForm({ ...form, proxy_command: WSL_PROXY_COMMAND })}
+            >
+              Through WSL
+            </Button>
+          )}
+        </div>
+        <Input
+          id="proxy_command"
+          data-testid="connection-form-proxy-command"
+          placeholder="nc %h %p"
+          value={form.proxy_command ?? ""}
+          onChange={(e) => setForm({ ...form, proxy_command: e.target.value })}
+          aria-describedby="proxy_command-hint"
+        />
+        <p id="proxy_command-hint" className="text-xs text-muted-foreground">
+          Like <code>ProxyCommand</code> in <code>ssh_config</code>: SSIX runs this
+          command and talks SSH over its input and output instead of opening a
+          TCP connection to the {isTwoHop ? terms.hop.toLowerCase() : "host"}.{" "}
+          <code>%h</code>, <code>%p</code> and <code>%r</code> stand for its host,
+          port and user.
+          {isWindows && (
+            <>
+              {" "}
+              <strong>Through WSL</strong> connects from inside your WSL
+              distribution (it needs <code>nc</code> there).
+            </>
+          )}
+        </p>
+      </div>
+
+      <div className="space-y-2">
         <Label htmlFor="login_command">Login Command</Label>
         <Input
           id="login_command"
@@ -1090,20 +1138,26 @@ export function ConnectionForm({
           value={String(form.verbosity ?? 0)}
           onValueChange={(v) => setForm({ ...form, verbosity: Number(v) })}
         >
-          <SelectTrigger id="verbosity" aria-describedby="verbosity-hint">
+          <SelectTrigger
+            id="verbosity"
+            aria-describedby="verbosity-hint"
+            data-testid="connection-form-verbosity"
+          >
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
-            <SelectItem value="0">0 — Silent (default)</SelectItem>
-            <SelectItem value="1">1 — Info (connection events)</SelectItem>
-            <SelectItem value="2">2 — Debug (full SSH protocol trace)</SelectItem>
+            {VERBOSITY_LEVELS.map((level) => (
+              <SelectItem key={level.value} value={String(level.value)} data-name={level.label}>
+                {level.label}
+              </SelectItem>
+            ))}
           </SelectContent>
         </Select>
         <p id="verbosity-hint" className="text-xs text-muted-foreground">
-          Level 1 prints connection lifecycle messages (handshake, authentication,
-          channel open) to the terminal. Level 2 also emits a low-level SSH
-          protocol trace — useful for diagnosing auth or transport failures, but
-          very noisy.
+          Like <code>ssh -v</code>: each level adds debug lines to the Logs view.
+          -v shows the connection steps (key exchange, host key, authentication,
+          channels), -vv adds the negotiated ciphers, MACs and compression, and
+          -vvv the algorithms SSIX offers and how long each step took.
         </p>
       </div>
 
@@ -1153,30 +1207,15 @@ export function ConnectionForm({
   const renderedForm = (
     <>
       <DialogHeader className="px-6 pt-6 pb-3 shrink-0 border-b">
-        {inline ? (
-          <>
-            <h2 id={inlineTitleId} className="text-lg leading-none font-semibold">
-              {title}
-            </h2>
-            <p id={inlineDescriptionId} className="sr-only">
-              {formDescription}
-            </p>
-          </>
-        ) : (
-          <>
-            <DialogTitle>{title}</DialogTitle>
-            <DialogDescription className="sr-only">
-              {formDescription}
-            </DialogDescription>
-          </>
-        )}
+        <DialogTitle>{title}</DialogTitle>
+        <DialogDescription className="sr-only">
+          {formDescription}
+        </DialogDescription>
       </DialogHeader>
       <form
         onSubmit={submitWithoutReset(submitAction)}
         className="flex flex-col flex-1 min-h-0"
         data-testid="connection-form"
-        aria-labelledby={inline ? inlineTitleId : undefined}
-        aria-describedby={inline ? inlineDescriptionId : undefined}
       >
         <div className="flex-1 min-h-0 overflow-y-auto px-6 py-4 space-y-4">
           {formFields}
@@ -1188,35 +1227,26 @@ export function ConnectionForm({
 
   return (
     <>
-      {inline ? (
-        open ? (
-          <section
-            className="flex-1 overflow-y-auto px-4 py-4"
-            role="region"
-            aria-labelledby={inlineTitleId}
-            aria-describedby={inlineDescriptionId}
-          >
-            <div className="mx-auto flex min-h-full max-w-3xl flex-col overflow-hidden rounded-xl border border-border/80 bg-card shadow-lg">
-              {renderedForm}
-            </div>
-          </section>
-        ) : null
-      ) : (
-        <Dialog
-          open={open}
-          onOpenChange={(o) => {
-            if (o) {
-              onOpenChange(true);
-              return;
-            }
-            requestCloseDialog();
+      <Dialog
+        open={open}
+        onOpenChange={(o) => {
+          if (o) {
+            onOpenChange(true);
+            return;
+          }
+          requestCloseDialog();
+        }}
+      >
+        <DialogContent
+          className="p-0 gap-0 overflow-hidden"
+          onOpenAutoFocus={(event) => {
+            event.preventDefault();
+            firstFieldRef.current?.focus();
           }}
         >
-          <DialogContent className="sm:max-w-[560px] max-h-[90vh] flex flex-col p-0 gap-0">
-            {renderedForm}
-          </DialogContent>
-        </Dialog>
-      )}
+          {renderedForm}
+        </DialogContent>
+      </Dialog>
       <ConfirmDialog
         open={guard.confirmOpen}
         onOpenChange={(o) => {
