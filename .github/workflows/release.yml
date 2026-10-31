@@ -197,7 +197,11 @@ jobs:
       - linux-build
 
     steps:
+      # Full history and tags: the notes list the commits since the
+      # previous tag.
       - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
 
       - name: Download Windows artifact
         uses: actions/download-artifact@v4
@@ -219,6 +223,9 @@ jobs:
           name: linux-x86_64-packages
           path: release-assets
 
+      - name: Write release notes
+        run: node scripts/release-notes.mjs "$RELEASE_TAG" > release-notes.md
+
       - name: Publish tagged prerelease
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -227,7 +234,7 @@ jobs:
           || gh release create "$RELEASE_TAG"
           --verify-tag
           --title "SSIX $RELEASE_TAG"
-          --notes-file .github/release-notes.md
+          --notes-file release-notes.md
           --prerelease
           && gh release upload "$RELEASE_TAG" release-assets/ssix.exe release-assets/*.dmg
           release-assets/deb/*.deb release-assets/rpm/*.rpm release-assets/appimage/*.AppImage --clobber

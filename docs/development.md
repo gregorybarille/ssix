@@ -52,8 +52,22 @@ producing optimized binaries.
 
 The workflow publishes against the actual Git tag (for example
 `v1.0.0-beta.11`) using `gh release --verify-tag`, so the assets appear on the
-tagged release page. The release notes, with install steps per platform, come
-from `.github/release-notes.md`.
+tagged release page. The release notes are written by
+`scripts/release-notes.mjs` (`node scripts/release-notes.mjs <tag>` prints
+them locally):
+
+- "What's changed since <previous tag>": one line per commit since the
+  previous tag, oldest first. Commits from a merged pull request are marked
+  with its number. Commits that touch only `.github/`, `e2e/`, `docker/`,
+  `docs/`, `scripts/`, `src/test/`, `AGENTS.md` or `README.md` are listed
+  apart under "Build, tests and docs".
+- A compare link to the previous tag.
+- The install steps per platform, from `.github/release-notes.md`.
+
+So commit subjects are what users read: write them as the change a user
+would notice. Edit the notes on the release page afterwards if a release
+needs a summary on top. The workflow creates the release only if it does
+not exist yet, so a re-run never overwrites edited notes.
 
 The package version remains semver (`1.0.0`) in `src-tauri/tauri.conf.json`.
 Use prerelease labels on the Git tag and GitHub release name.
