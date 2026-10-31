@@ -2,6 +2,10 @@
 //!
 //! `run_script` runs one saved script on one connection; the frontend calls
 //! it once per selected host, in parallel, the way bulk SCP does.
+//!
+//! A run is numbered by `begin_script_run` and every host of it passes that
+//! number; `cancel_script_run` moves the counter on, so each host of the
+//! run, even one whose call arrives after the cancel, sees it is cancelled.
 
 use crate::commands::blocking;
 use crate::commands::ssh::{connect_session, find_connection};
@@ -10,10 +14,14 @@ use crate::models::{Script, DEFAULT_SCRIPT_INTERPRETER};
 use crate::remote_script::{self, ScriptResult, RUN_TIMEOUT};
 use crate::storage::{load_data, with_data_mut};
 use serde::Deserialize;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 const NAME_MAX_CHARS: usize = 128;
 const INTERPRETER_MAX_CHARS: usize = 256;
 const BODY_MAX_BYTES: usize = 256 * 1024;
+
+/// The number of the current script run; cancelling moves it on.
+static CURRENT_RUN: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Debug, Deserialize)]
 pub struct ScriptInput {
@@ -130,12 +138,33 @@ pub async fn delete_script(id: String) -> Result<(), String> {
     .await
 }
 
+/// Number a new run, to pass to `run_script` for each of its hosts.
 #[tauri::command]
-pub async fn run_script(script_id: String, connection_id: String) -> Result<ScriptResult, String> {
-    blocking(move || run_script_sync(&script_id, &connection_id)).await
+pub fn begin_script_run() -> u64 {
+    CURRENT_RUN.load(Ordering::SeqCst)
 }
 
-fn run_script_sync(script_id: &str, connection_id: &str) -> Result<ScriptResult, String> {
+/// Stop every host of run `run` that is still going. A stale number (a run
+/// already cancelled) changes nothing.
+#[tauri::command]
+pub fn cancel_script_run(run: u64) {
+    let _ = CURRENT_RUN.compare_exchange(run, run + 1, Ordering::SeqCst, Ordering::SeqCst);
+}
+
+fn is_cancelled(run: u64) -> bool {
+    CURRENT_RUN.load(Ordering::SeqCst) != run
+}
+
+#[tauri::command]
+pub async fn run_script(
+    script_id: String,
+    connection_id: String,
+    run: u64,
+) -> Result<ScriptResult, String> {
+    blocking(move || run_script_sync(&script_id, &connection_id, run)).await
+}
+
+fn run_script_sync(script_id: &str, connection_id: &str, run: u64) -> Result<ScriptResult, String> {
     let (data, conn) = find_connection(connection_id)?;
     let script = data
         .scripts
@@ -145,7 +174,13 @@ fn run_script_sync(script_id: &str, connection_id: &str) -> Result<ScriptResult,
         .ok_or_else(|| "Script not found".to_string())?;
 
     let outcome = connect_session(&data, &conn, "Running a script").and_then(|ssh| {
-        remote_script::run(&ssh.session, &script.interpreter, &script.body, RUN_TIMEOUT)
+        remote_script::run(
+            &ssh.session,
+            &script.interpreter,
+            &script.body,
+            RUN_TIMEOUT,
+            &|| is_cancelled(run),
+        )
     });
     match &outcome {
         Ok(result) => log_local(
@@ -173,6 +208,9 @@ fn run_script_sync(script_id: &str, connection_id: &str) -> Result<ScriptResult,
 }
 
 fn describe_end(result: &ScriptResult) -> String {
+    if result.cancelled {
+        return "cancelled".to_string();
+    }
     if result.timed_out {
         return "stopped at the time limit".to_string();
     }
@@ -252,7 +290,7 @@ mod tests {
     #[test]
     fn run_refuses_unknown_scripts_and_local_forwards() {
         with_isolated_data_dir(|| {
-            let err = run_script_sync("s", "missing").unwrap_err();
+            let err = run_script_sync("s", "missing", 0).unwrap_err();
             assert_eq!(err, "Connection not found");
 
             let forward = crate::models::Connection::new(
@@ -275,11 +313,11 @@ mod tests {
                 Ok(())
             })
             .unwrap();
-            let err = run_script_sync("missing", &conn_id).unwrap_err();
+            let err = run_script_sync("missing", &conn_id, 0).unwrap_err();
             assert_eq!(err, "Script not found");
 
             let script = add_script_sync(input("x", "true", "")).unwrap();
-            let err = run_script_sync(&script.id, &conn_id).unwrap_err();
+            let err = run_script_sync(&script.id, &conn_id, 0).unwrap_err();
             assert!(err.contains("only available for direct"), "got: {}", err);
         });
     }
@@ -294,6 +332,7 @@ mod tests {
             duration_ms: 1,
             truncated: false,
             timed_out: false,
+            cancelled: false,
         };
         assert_eq!(describe_end(&base), "exit 3");
         let killed = ScriptResult {
@@ -308,5 +347,30 @@ mod tests {
             ..base.clone()
         };
         assert_eq!(describe_end(&stopped), "stopped at the time limit");
+        let cancelled = ScriptResult {
+            exit_code: None,
+            exit_signal: Some("TERM".into()),
+            cancelled: true,
+            ..base.clone()
+        };
+        assert_eq!(describe_end(&cancelled), "cancelled");
+    }
+
+    /// Cancelling reaches every host of the run, including one that starts
+    /// after the cancel, and never a later run.
+    #[test]
+    fn cancel_stops_only_its_own_run() {
+        let run = begin_script_run();
+        assert!(!is_cancelled(run));
+        cancel_script_run(run);
+        assert!(is_cancelled(run));
+        let next = begin_script_run();
+        assert!(!is_cancelled(next));
+        cancel_script_run(run);
+        assert!(
+            !is_cancelled(next),
+            "a stale cancel must not stop the next run"
+        );
+        cancel_script_run(next);
     }
 }

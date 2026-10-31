@@ -16,13 +16,15 @@ export interface ScriptRunStep {
   error?: string;
 }
 
-/** A run that exited 0 succeeded; any other ending is a failure. */
+/** A run that exited 0 succeeded; a cancelled one is neither; anything else failed. */
 export function scriptStatus(result: ScriptResult): StepStatus {
+  if (result.cancelled) return "cancelled";
   return result.exit_code === 0 ? "success" : "error";
 }
 
 /** How the script ended, for the result header and the log. */
 export function describeScriptEnd(result: ScriptResult): string {
+  if (result.cancelled) return "cancelled";
   if (result.timed_out) return "stopped at the time limit";
   if (result.exit_signal) return `killed by SIG${result.exit_signal}`;
   if (result.exit_code == null) return "no exit status";

@@ -265,7 +265,7 @@ export interface ScriptInput {
 export interface ScriptResult {
   stdout: string;
   stderr: string;
-  /** Absent when the script was killed by a signal or stopped at the time limit. */
+  /** Absent when the script was killed by a signal, cancelled or stopped at the time limit. */
   exit_code?: number | null;
   /** Signal name without the `SIG` prefix. */
   exit_signal?: string | null;
@@ -273,6 +273,8 @@ export interface ScriptResult {
   /** A stream went past 1 MiB and was cut there. */
   truncated: boolean;
   timed_out: boolean;
+  /** The user cancelled the run before the script finished. */
+  cancelled: boolean;
 }
 
 export interface GitSyncStatus {

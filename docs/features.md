@@ -142,7 +142,10 @@ once.
   the server runs; it reads the script on its standard input, so nothing
   is copied to the host first. Presets cover `sh -s` (the default),
   `bash -s` and `python3 -`; any other command that reads a program from
-  stdin works too. Names are unique; a script can be up to 256 KiB.
+  stdin works too. Names are unique; a script can be up to 256 KiB. The
+  interpreter is started through the host's POSIX `sh`, so hosts need one
+  (every Linux, macOS and BSD server has it; Windows OpenSSH servers do
+  not).
 - Select a script to see its body and the hosts it can run on: every
   direct and jump host connection (local forwards cannot run scripts).
   Tick hosts, or **All hosts**, and **Run on N hosts**.
@@ -150,8 +153,13 @@ once.
   gets its own card as it finishes: success when it exits 0, otherwise
   the exit code, the signal that killed it, or the connection error, plus
   how long it took, its standard output and its standard error.
+- **Cancel** (shown while a run is going) stops every host that has not
+  finished: the script and everything it started get SIGTERM, and the
+  card shows **cancelled** with the output printed so far. Hosts that had
+  already finished keep their result.
 - Each stream keeps the first 1 MiB of output; the card says when output
-  was cut. A script still running after 10 minutes is stopped.
+  was cut. A script still running after 10 minutes is stopped the same way
+  as a cancel.
 - The last run's results stay while you visit other views, and running
   again starts from the hosts you picked last time.
 - Each run is also logged (source `script`) in the Logs view, and a

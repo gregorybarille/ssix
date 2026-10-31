@@ -41,6 +41,7 @@ const ok = (stdout: string): ScriptResult => ({
   duration_ms: 42,
   truncated: false,
   timed_out: false,
+  cancelled: false,
 });
 
 function respond(handlers: Record<string, (args?: Record<string, unknown>) => unknown>) {
@@ -54,7 +55,14 @@ function respond(handlers: Record<string, (args?: Record<string, unknown>) => un
 describe("ScriptsView", () => {
   beforeEach(() => {
     mockInvoke.mockReset();
-    useScriptsStore.setState({ scripts: [], error: null, isLoading: false, run: null, running: false });
+    useScriptsStore.setState({
+      scripts: [],
+      error: null,
+      isLoading: false,
+      run: null,
+      running: false,
+      cancelling: false,
+    });
     useConnectionsStore.setState({ connections });
   });
 
@@ -102,8 +110,10 @@ describe("ScriptsView", () => {
     const pending: Record<string, { resolve: (r: ScriptResult) => void; reject: (e: unknown) => void }> = {};
     respond({
       get_scripts: () => [script],
+      begin_script_run: () => 7,
       run_script: (args) =>
         new Promise((resolve, reject) => {
+          expect(args!.run).toBe(7);
           pending[args!.connectionId as string] = { resolve, reject };
         }),
     });
@@ -134,6 +144,38 @@ describe("ScriptsView", () => {
     expect(within(web).getByText("exit 0 · 42 ms")).toBeInTheDocument();
     expect(within(db).getByText("Authentication failed")).toBeInTheDocument();
     expect(screen.getByTestId("script-run")).toHaveTextContent("Run on 2 hosts");
+  });
+
+  it("cancels the hosts still running and keeps what finished", async () => {
+    const pending: Record<string, (r: ScriptResult) => void> = {};
+    respond({
+      get_scripts: () => [script],
+      begin_script_run: () => 3,
+      cancel_script_run: () => null,
+      run_script: (args) =>
+        new Promise((resolve) => {
+          pending[args!.connectionId as string] = resolve;
+        }),
+    });
+    renderInPanel(<ScriptsView />);
+    expect(await screen.findByTestId("script-run-area")).toBeInTheDocument();
+    expect(screen.queryByTestId("script-cancel")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByTestId("script-hosts-all"));
+    fireEvent.click(screen.getByTestId("script-run"));
+    await waitFor(() => expect(Object.keys(pending)).toHaveLength(2));
+
+    pending.a(ok("done\n"));
+    fireEvent.click(screen.getByTestId("script-cancel"));
+    await waitFor(() => expect(mockInvoke).toHaveBeenCalledWith("cancel_script_run", { run: 3 }));
+    expect(screen.getByTestId("script-cancel")).toHaveTextContent("Cancelling...");
+    pending.b({ ...ok("partial\n"), exit_code: null, exit_signal: "TERM", cancelled: true });
+
+    await waitFor(() => expect(screen.queryByTestId("script-cancel")).not.toBeInTheDocument());
+    const [web, db] = screen.getAllByTestId("script-result");
+    expect(web).toHaveAttribute("data-status", "success");
+    expect(db).toHaveAttribute("data-status", "cancelled");
+    expect(within(db).getByText(/^cancelled ·/)).toBeInTheDocument();
+    expect(within(db).getByTestId("script-result-stdout")).toHaveTextContent("partial");
   });
 
   it("deletes a script only after confirming", async () => {

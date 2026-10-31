@@ -1,4 +1,4 @@
-import { CheckCircle2, Circle, Loader2, MinusCircle, XCircle } from "lucide-react";
+import { Ban, CheckCircle2, Circle, Loader2, MinusCircle, XCircle } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { StepStatus } from "@/lib/bulk-actions";
 
@@ -16,5 +16,7 @@ export function StatusIcon({ status }: { status: StepStatus }) {
       return <XCircle className={cn(cls, "text-destructive")} aria-label="Error" />;
     case "skipped":
       return <MinusCircle className={cn(cls, "text-muted-foreground-soft")} aria-label="Skipped" />;
+    case "cancelled":
+      return <Ban className={cn(cls, "text-muted-foreground")} aria-label="Cancelled" />;
   }
 }

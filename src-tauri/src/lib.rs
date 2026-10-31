@@ -70,6 +70,8 @@ pub fn run() {
             commands::scripts::add_script,
             commands::scripts::update_script,
             commands::scripts::delete_script,
+            commands::scripts::begin_script_run,
+            commands::scripts::cancel_script_run,
             commands::scripts::run_script,
             commands::ssh_keygen::generate_ssh_key,
             commands::ssh_keygen::ssh_install_public_key_by_credential,

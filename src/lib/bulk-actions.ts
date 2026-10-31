@@ -52,7 +52,7 @@ export async function connectMany(
 }
 
 /** Progress of one host in a batch operation (bulk SCP, script runs). */
-export type StepStatus = "pending" | "running" | "success" | "error" | "skipped";
+export type StepStatus = "pending" | "running" | "success" | "error" | "skipped" | "cancelled";
 
 /** Per-host outcome for a bulk SCP operation. */
 export interface BulkScpStep {

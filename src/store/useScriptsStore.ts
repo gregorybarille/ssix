@@ -7,6 +7,8 @@ import { scriptStatus, type ScriptRunStep } from "@/lib/scripts";
 
 interface ScriptRun {
   scriptId: string;
+  /** The backend's number for this run, which `cancel_script_run` takes. */
+  runNumber: number | null;
   steps: ScriptRunStep[];
 }
 
@@ -18,12 +20,19 @@ interface ScriptsState {
   /** The latest run, kept while the user is on another view. */
   run: ScriptRun | null;
   running: boolean;
+  /** Cancel was asked for and hosts are still stopping. */
+  cancelling: boolean;
   fetchScripts: () => Promise<void>;
   addScript: (input: ScriptInput) => Promise<Script>;
   updateScript: (id: string, input: ScriptInput) => Promise<Script>;
   deleteScript: (id: string) => Promise<void>;
   /** Run the script on every step's host at once; resolves when all finish. */
   runScript: (scriptId: string, steps: ScriptRunStep[]) => Promise<void>;
+  /**
+   * Stop every host of the current run that is still going: each gets
+   * SIGTERM and comes back as cancelled. Hosts already done keep their result.
+   */
+  cancelRun: () => Promise<void>;
 }
 
 export const useScriptsStore = create<ScriptsState>((set, get) => ({
@@ -32,6 +41,7 @@ export const useScriptsStore = create<ScriptsState>((set, get) => ({
   error: null,
   run: null,
   running: false,
+  cancelling: false,
 
   fetchScripts: () =>
     runAsync(set, async () => {
@@ -69,7 +79,7 @@ export const useScriptsStore = create<ScriptsState>((set, get) => ({
         state.run?.scriptId === scriptId
           ? {
               run: {
-                scriptId,
+                ...state.run,
                 steps: state.run.steps.map((s) =>
                   s.connectionId === connectionId ? { ...s, ...patch } : s,
                 ),
@@ -79,21 +89,39 @@ export const useScriptsStore = create<ScriptsState>((set, get) => ({
       );
     set({
       running: true,
-      run: { scriptId, steps: steps.map((s) => ({ ...s, status: "running" })) },
+      cancelling: false,
+      run: { scriptId, runNumber: null, steps: steps.map((s) => ({ ...s, status: "running" })) },
     });
     try {
+      const run = await invoke<number>("begin_script_run");
+      set((state) => (state.run?.scriptId === scriptId ? { run: { ...state.run, runNumber: run } } : {}));
       await Promise.all(
         steps.map(async ({ connectionId }) => {
           try {
-            const result = await invoke<ScriptResult>("run_script", { scriptId, connectionId });
+            const result = await invoke<ScriptResult>("run_script", { scriptId, connectionId, run });
             update(connectionId, { status: scriptStatus(result), result });
           } catch (err) {
             update(connectionId, { status: "error", error: errorMessage(err) });
           }
         }),
       );
+    } catch (err) {
+      // Numbering the run failed, so no host started.
+      const error = errorMessage(err);
+      for (const { connectionId } of steps) update(connectionId, { status: "error", error });
     } finally {
-      set({ running: false });
+      set({ running: false, cancelling: false });
+    }
+  },
+
+  cancelRun: async () => {
+    const runNumber = get().run?.runNumber;
+    if (!get().running || runNumber == null) return;
+    set({ cancelling: true });
+    try {
+      await invoke("cancel_script_run", { run: runNumber });
+    } catch {
+      set({ cancelling: false });
     }
   },
 }));

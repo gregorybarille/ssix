@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useShallow } from "zustand/react/shallow";
-import { FileCode, Pencil, Play, Plus, Trash2 } from "lucide-react";
+import { FileCode, Pencil, Play, Plus, Square, Trash2 } from "lucide-react";
 import type { Connection, Script, ScriptInput } from "@/types";
 import { Button } from "../ui/button";
 import { Badge } from "../ui/badge";
@@ -31,7 +31,19 @@ type Editing = { script: Script | null; key: number } | null;
  * editor opens in the side panel.
  */
 export function ScriptsView() {
-  const { scripts, loadError, fetchScripts, addScript, updateScript, deleteScript, run, running, runScript } =
+  const {
+    scripts,
+    loadError,
+    fetchScripts,
+    addScript,
+    updateScript,
+    deleteScript,
+    run,
+    running,
+    cancelling,
+    runScript,
+    cancelRun,
+  } =
     useScriptsStore(
       useShallow((s) => ({
         scripts: s.scripts,
@@ -42,7 +54,9 @@ export function ScriptsView() {
         deleteScript: s.deleteScript,
         run: s.run,
         running: s.running,
+        cancelling: s.cancelling,
         runScript: s.runScript,
+        cancelRun: s.cancelRun,
       })),
     );
   const connections = useConnectionsStore((s) => s.connections);
@@ -160,7 +174,9 @@ export function ScriptsView() {
               hosts={hosts}
               steps={run?.scriptId === selected.id ? run.steps : null}
               running={running}
+              cancelling={cancelling}
               onRun={(steps) => void runScript(selected.id, steps)}
+              onCancel={() => void cancelRun()}
             />
           )}
         </div>
@@ -204,10 +220,20 @@ interface ScriptRunAreaProps {
   /** This script's latest run, if it has one. */
   steps: ScriptRunStep[] | null;
   running: boolean;
+  cancelling: boolean;
   onRun: (steps: ScriptRunStep[]) => void;
+  onCancel: () => void;
 }
 
-function ScriptRunArea({ script, hosts, steps, running, onRun }: ScriptRunAreaProps) {
+function ScriptRunArea({
+  script,
+  hosts,
+  steps,
+  running,
+  cancelling,
+  onRun,
+  onCancel,
+}: ScriptRunAreaProps) {
   // Start from the hosts of the last run, so running again is one click.
   const [picked, setPicked] = useState<Set<string>>(
     () => new Set(steps?.map((s) => s.connectionId) ?? []),
@@ -276,17 +302,31 @@ function ScriptRunArea({ script, hosts, steps, running, onRun }: ScriptRunAreaPr
         )}
       </fieldset>
 
-      <Button
-        onClick={() => onRun(plan)}
-        disabled={running || plan.length === 0}
-        aria-busy={running}
-        data-testid="script-run"
-      >
-        <Play className="h-4 w-4 mr-1" aria-hidden="true" />
-        {running
-          ? "Running..."
-          : `Run on ${plan.length} host${plan.length === 1 ? "" : "s"}`}
-      </Button>
+      <div className="flex items-center gap-2">
+        <Button
+          onClick={() => onRun(plan)}
+          disabled={running || plan.length === 0}
+          aria-busy={running}
+          data-testid="script-run"
+        >
+          <Play className="h-4 w-4 mr-1" aria-hidden="true" />
+          {running
+            ? "Running..."
+            : `Run on ${plan.length} host${plan.length === 1 ? "" : "s"}`}
+        </Button>
+        {running && (
+          <Button
+            variant="outline"
+            onClick={onCancel}
+            disabled={cancelling}
+            aria-busy={cancelling}
+            data-testid="script-cancel"
+          >
+            <Square className="h-4 w-4 mr-1" aria-hidden="true" />
+            {cancelling ? "Cancelling..." : "Cancel"}
+          </Button>
+        )}
+      </div>
 
       {steps && steps.length > 0 && (
         <section

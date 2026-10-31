@@ -105,6 +105,7 @@ const genScriptResult: GenScriptResult = {
   duration_ms: 1,
   truncated: false,
   timed_out: false,
+  cancelled: false,
 };
 
 // Same fields against the hand-written types (with `null` swapped to
@@ -156,6 +157,7 @@ const handScriptResult: HandScriptResult = {
   duration_ms: 1,
   truncated: false,
   timed_out: false,
+  cancelled: false,
 };
 
 /**
