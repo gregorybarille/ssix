@@ -5,10 +5,16 @@
 //! touches the remote filesystem and needs no quoting. Output is collected
 //! from both streams until the remote side closes the channel.
 //!
-//! The interpreter is started through a POSIX `sh` that first prints its
-//! PID on stdout (held back from the output). sshd starts every session in
-//! a new process group led by that process, so the PID names the group the
-//! script and everything it started belong to.
+//! On a POSIX host the interpreter is started through a POSIX `sh` that
+//! first prints its PID on stdout (held back from the output). sshd starts
+//! every session in a new process group led by that process, so the PID
+//! names the group the script and everything it started belong to.
+//!
+//! On Windows the command line is read by cmd or PowerShell, whichever is
+//! the server's default shell, so it carries only plain words: PowerShell
+//! with a fixed `-EncodedCommand` bootstrap that prints its PID, reads the
+//! body from stdin and runs it. Its errors are stripped of the colour codes
+//! PowerShell 7 adds.
 //!
 //! The session runs non-blocking for the whole run: the setup timeout of a
 //! blocking session would cut off any script that is quiet for 15 s, and
@@ -16,12 +22,16 @@
 //! it has read all of its input from stalling on a full window.
 //!
 //! A run that is cancelled or reaches the time limit runs
-//! `kill -s TERM -<group>` on a second channel of the same session, waits
-//! briefly for the script to exit, and then closes the channel. Closing the
-//! channel alone would leave the script running, and libssh2 cannot send
-//! the SSH `signal` request on a channel that has already started.
+//! `kill -s TERM -<group>` (or `taskkill /T /F /PID <pid>` on Windows) on a
+//! second channel of the same session, waits briefly for the script to
+//! exit, and then closes the channel. Closing the channel alone would leave
+//! the script running, and libssh2 cannot send the SSH `signal` request on
+//! a channel that has already started.
 
+use crate::models::ScriptPlatform;
 use crate::ssh::{close_channel, is_eagain, wake};
+use base64::engine::general_purpose::STANDARD;
+use base64::Engine;
 use serde::Serialize;
 use ssh2::{Channel, Session};
 use std::io::{self, Read, Write};
@@ -76,13 +86,74 @@ pub struct ScriptResult {
 /// Longest first line still taken for a PID.
 const PID_LINE_MAX: usize = 20;
 
-/// The command that starts `interpreter`: `sh` prints its PID, which leads
-/// the session's process group, then runs the interpreter.
-fn wrapped_command(interpreter: &str) -> String {
-    format!(
-        "exec sh -c 'echo $$; {}'",
-        interpreter.replace('\'', r"'\''")
-    )
+/// Runs a Windows script: prints PowerShell's PID, then reads the body
+/// from stdin as UTF-8 and runs it. The exit status is the script's `exit`,
+/// else the last program's exit code; an uncaught error exits 1.
+/// Written for Windows PowerShell 5.1 as well as PowerShell 7.
+const POWERSHELL_BOOTSTRAP: &str = r#"$ProgressPreference = 'SilentlyContinue'
+if ($PSStyle) { $PSStyle.OutputRendering = 'PlainText' }
+$utf8 = New-Object Text.UTF8Encoding -ArgumentList $false
+try { [Console]::OutputEncoding = $utf8 } catch {}
+$OutputEncoding = $utf8
+[Console]::Out.WriteLine($PID)
+[Console]::Out.Flush()
+$body = (New-Object IO.StreamReader -ArgumentList ([Console]::OpenStandardInput()), $utf8).ReadToEnd()
+$global:LASTEXITCODE = 0
+& ([ScriptBlock]::Create($body))
+exit $LASTEXITCODE
+"#;
+
+/// The command that starts the script, printing first the PID to stop it
+/// by. On POSIX `sh` prints its PID, which leads the session's process
+/// group, then runs the interpreter.
+fn wrapped_command(platform: ScriptPlatform, interpreter: &str) -> String {
+    match platform {
+        ScriptPlatform::Posix => format!(
+            "exec sh -c 'echo $$; {}'",
+            interpreter.replace('\'', r"'\''")
+        ),
+        ScriptPlatform::Windows => {
+            let utf16: Vec<u8> = POWERSHELL_BOOTSTRAP
+                .encode_utf16()
+                .flat_map(u16::to_le_bytes)
+                .collect();
+            format!(
+                "{} -NoProfile -NonInteractive -InputFormat Text -OutputFormat Text -EncodedCommand {}",
+                interpreter,
+                STANDARD.encode(utf16)
+            )
+        }
+    }
+}
+
+/// The command that stops the script whose wrapper printed `pid`, and
+/// everything it started.
+fn stop_command(platform: ScriptPlatform, pid: u32) -> String {
+    match platform {
+        ScriptPlatform::Posix => format!("kill -s TERM -{}", pid),
+        ScriptPlatform::Windows => format!("taskkill /T /F /PID {}", pid),
+    }
+}
+
+/// `text` without SGR colour sequences (`ESC [ ... m`).
+fn strip_colours(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(start) = rest.find("\x1b[") {
+        out.push_str(&rest[..start]);
+        let after = &rest[start + 2..];
+        let params = after
+            .find(|c: char| !(c.is_ascii_digit() || c == ';'))
+            .unwrap_or(after.len());
+        if after[params..].starts_with('m') {
+            rest = &after[params + 1..];
+        } else {
+            out.push('\x1b');
+            rest = &rest[start + 1..];
+        }
+    }
+    out.push_str(rest);
+    out
 }
 
 /// One output stream, kept up to `OUTPUT_CAP` bytes.
@@ -174,6 +245,7 @@ fn drain(stream: &mut impl Read, capture: &mut Capture, buf: &mut [u8]) -> Resul
 /// `timeout`, or as soon as `cancelled` returns true.
 pub fn run(
     session: &Session,
+    platform: ScriptPlatform,
     interpreter: &str,
     body: &str,
     timeout: Duration,
@@ -197,12 +269,13 @@ pub fn run(
         .channel_session()
         .map_err(|e| format!("Failed to open a channel: {}", e))?;
     channel
-        .exec(&wrapped_command(interpreter))
+        .exec(&wrapped_command(platform, interpreter))
         .map_err(|e| format!("Failed to start {}: {}", interpreter, e))?;
 
     session.set_blocking(false);
     let pumped = pump(
         session,
+        platform,
         &mut channel,
         body.as_bytes(),
         started + timeout,
@@ -222,9 +295,14 @@ pub fn run(
     } else {
         channel.exit_status().ok()
     };
+    let (mut stdout_text, mut stderr_text) = (stdout.text(), stderr.text());
+    if platform == ScriptPlatform::Windows {
+        stdout_text = strip_colours(&stdout_text);
+        stderr_text = strip_colours(&stderr_text);
+    }
     Ok(ScriptResult {
-        stdout: stdout.text(),
-        stderr: stderr.text(),
+        stdout: stdout_text,
+        stderr: stderr_text,
         exit_code,
         exit_signal,
         duration_ms: started.elapsed().as_millis() as u64,
@@ -234,13 +312,13 @@ pub fn run(
     })
 }
 
-/// Send SIGTERM to process group `group` from a second channel. Best
-/// effort: if it fails, the script's channel is closed on it anyway.
-fn kill_group(session: &Session, group: u32) {
+/// Run `command` on a second channel to stop the script. Best effort: if
+/// it fails, the script's channel is closed on it anyway.
+fn stop_script(session: &Session, command: &str) {
     session.set_blocking(true);
     let _ = (|| -> Result<(), ssh2::Error> {
         let mut channel = session.channel_session()?;
-        channel.exec(&format!("kill -s TERM -{}", group))?;
+        channel.exec(command)?;
         channel.send_eof()?;
         channel.wait_close()
     })();
@@ -249,10 +327,11 @@ fn kill_group(session: &Session, group: u32) {
 
 /// Feed `input` to the channel and collect both output streams until the
 /// remote side sends EOF. At `deadline`, or once `cancelled` returns true,
-/// the script's process group gets SIGTERM and `STOP_GRACE` to exit.
+/// the script is stopped (`stop_command`) and gets `STOP_GRACE` to exit.
 /// Returns stdout, stderr and why the run was stopped, if it was.
 fn pump(
     session: &Session,
+    platform: ScriptPlatform,
     channel: &mut Channel,
     mut input: &[u8],
     deadline: Instant,
@@ -315,10 +394,10 @@ fn pump(
                 None
             };
             if stop.is_some() {
-                // Without the group there is nothing to signal: close now.
+                // Without the PID there is nothing to stop: close now.
                 give_up = now;
-                if let Some(group) = stdout.pid {
-                    kill_group(session, group);
+                if let Some(pid) = stdout.pid {
+                    stop_script(session, &stop_command(platform, pid));
                     give_up = Instant::now() + STOP_GRACE;
                 }
                 continue;
@@ -375,11 +454,52 @@ mod tests {
 
     #[test]
     fn wrapped_command_quotes_the_interpreter() {
-        assert_eq!(wrapped_command("sh -s"), "exec sh -c 'echo $$; sh -s'");
+        let posix = |i| wrapped_command(ScriptPlatform::Posix, i);
+        assert_eq!(posix("sh -s"), "exec sh -c 'echo $$; sh -s'");
         assert_eq!(
-            wrapped_command("sudo -u 'app user' sh -s"),
+            posix("sudo -u 'app user' sh -s"),
             r"exec sh -c 'echo $$; sudo -u '\''app user'\'' sh -s'"
         );
+    }
+
+    /// The Windows command is plain words, short enough for cmd's 8191
+    /// character limit, and carries the bootstrap as UTF-16LE base64.
+    #[test]
+    fn windows_command_encodes_the_bootstrap() {
+        let command = wrapped_command(ScriptPlatform::Windows, "pwsh");
+        let (head, encoded) = command.rsplit_once(' ').unwrap();
+        assert_eq!(
+            head,
+            "pwsh -NoProfile -NonInteractive -InputFormat Text -OutputFormat Text -EncodedCommand"
+        );
+        assert!(command.len() < 8191, "{} characters", command.len());
+        assert!(!command.contains(['"', '\'', '&', '|', '<', '>', '^', '%']));
+        let bytes = STANDARD.decode(encoded).unwrap();
+        let units: Vec<u16> = bytes
+            .chunks(2)
+            .map(|p| u16::from_le_bytes([p[0], p[1]]))
+            .collect();
+        assert_eq!(String::from_utf16(&units).unwrap(), POWERSHELL_BOOTSTRAP);
+    }
+
+    #[test]
+    fn stop_command_fits_the_platform() {
+        assert_eq!(stop_command(ScriptPlatform::Posix, 42), "kill -s TERM -42");
+        assert_eq!(
+            stop_command(ScriptPlatform::Windows, 42),
+            "taskkill /T /F /PID 42"
+        );
+    }
+
+    #[test]
+    fn strip_colours_removes_sgr_only() {
+        assert_eq!(
+            strip_colours("\x1b[31;1mGet-Item: \x1b[31;1mnope\x1b[0m\n"),
+            "Get-Item: nope\n"
+        );
+        // Other escapes, and a lone ESC, are left alone.
+        assert_eq!(strip_colours("a\x1b[2Jb\x1b"), "a\x1b[2Jb\x1b");
+        assert_eq!(strip_colours("plain"), "plain");
     }
 
     #[test]

@@ -54,7 +54,8 @@ Older builds showed this as `TypeError: ... window.__TAURI_INTERNALS__ is undefi
 - Exit 127 usually means the interpreter (or a command the script calls) is not installed on that host, for example `bash` on a minimal Alpine image. Pick `sh -s` or install it.
 - The script runs without a terminal and with the remote user's non-login environment, so `PATH` additions from `.bash_profile` and commands that prompt (`sudo` asking for a password) do not work; use full paths and `sudo -n`.
 - "only available for direct and jump host connections" means the host is a local forward.
-- Scripts are started through `sh`, so a host without a POSIX shell (a Windows OpenSSH server) fails every script with a shell error.
+- On a Windows OpenSSH server, save the script with **Runs on: Windows** and write it in PowerShell; a Linux, macOS, BSD script is started through `sh` and fails there with a shell error. The other way round, a Windows script on a Linux host fails with "powershell: not found" (exit 127).
+- A Windows script that shows errors but succeeds: errors that don't stop a PowerShell script keep its exit code at 0. End with `exit 1` on failure, or set `$ErrorActionPreference = 'Stop'` at the top.
 - Connection errors appear on the card; raise the connection's verbosity to see the `ssh -v` lines in the Logs view.
 
 ## Git Sync Fails

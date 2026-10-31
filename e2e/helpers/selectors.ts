@@ -177,6 +177,8 @@ export const sel = {
   addScriptButton: '[data-testid="add-script-button"]',
   scriptForm: '[data-testid="script-form"]',
   scriptFormName: '[data-testid="script-form-name"]',
+  scriptFormPlatformPosix: '[data-testid="script-form-platform-posix"]',
+  scriptFormPlatformWindows: '[data-testid="script-form-platform-windows"]',
   scriptFormInterpreter: '[data-testid="script-form-interpreter"]',
   scriptFormBody: '[data-testid="script-form-body"]',
   scriptFormSubmit: '[data-testid="script-form-submit"]',
@@ -185,6 +187,8 @@ export const sel = {
   // Scoped under a script row.
   scriptRowSelect: '[data-testid="script-row-select"]',
   scriptHostByName: (name: string) => `[data-testid="script-host"][data-name="${name}"]`,
+  // The selected script's platform badge.
+  scriptPlatform: '[data-testid="script-platform"]',
   scriptRun: '[data-testid="script-run"]',
   scriptCancel: '[data-testid="script-cancel"]',
   scriptResultByName: (name: string) => `[data-testid="script-result"][data-name="${name}"]`,

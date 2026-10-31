@@ -401,13 +401,39 @@ impl Default for AppData {
 
 pub const DEFAULT_SCRIPT_INTERPRETER: &str = "sh -s";
 
+/// The PowerShell a Windows script runs in when none is given.
+pub const DEFAULT_WINDOWS_INTERPRETER: &str = "powershell";
+
 fn default_script_interpreter() -> String {
     DEFAULT_SCRIPT_INTERPRETER.to_string()
 }
 
-/// A script the user runs on one or more hosts. `interpreter` is the remote
-/// command that receives `body` on its standard input (`sh -s`,
-/// `bash -s`, `python3 -`).
+/// The kind of host a script is written for.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
+#[serde(rename_all = "snake_case")]
+pub enum ScriptPlatform {
+    /// Linux, macOS, BSD: any host with a POSIX `sh`.
+    #[default]
+    Posix,
+    /// Windows OpenSSH: the body is a PowerShell script.
+    Windows,
+}
+
+impl ScriptPlatform {
+    pub fn default_interpreter(self) -> &'static str {
+        match self {
+            ScriptPlatform::Posix => DEFAULT_SCRIPT_INTERPRETER,
+            ScriptPlatform::Windows => DEFAULT_WINDOWS_INTERPRETER,
+        }
+    }
+}
+
+/// A script the user runs on one or more hosts. On POSIX hosts
+/// `interpreter` is the remote command that receives `body` on its standard
+/// input (`sh -s`, `bash -s`, `python3 -`); on Windows it is the PowerShell
+/// that runs it (`powershell`, `pwsh`).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[cfg_attr(test, derive(TS))]
 #[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
@@ -415,16 +441,19 @@ pub struct Script {
     pub id: String,
     pub name: String,
     pub body: String,
+    #[serde(default)]
+    pub platform: ScriptPlatform,
     #[serde(default = "default_script_interpreter")]
     pub interpreter: String,
 }
 
 impl Script {
-    pub fn new(name: String, body: String, interpreter: String) -> Self {
+    pub fn new(name: String, body: String, platform: ScriptPlatform, interpreter: String) -> Self {
         Self {
             id: Uuid::new_v4().to_string(),
             name,
             body,
+            platform,
             interpreter,
         }
     }

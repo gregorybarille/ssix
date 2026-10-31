@@ -13,7 +13,13 @@ vi.mock("@/lib/tauri", () => ({
 
 const mockInvoke = vi.mocked(invoke);
 
-const script: Script = { id: "s1", name: "uptime", body: "uptime\n", interpreter: "sh -s" };
+const script: Script = {
+  id: "s1",
+  name: "uptime",
+  body: "uptime\n",
+  platform: "posix",
+  interpreter: "sh -s",
+};
 
 const connections: Connection[] = [
   { id: "a", name: "web", host: "web", port: 22, type: "direct", credential_id: "c" },
@@ -85,13 +91,49 @@ describe("ScriptsView", () => {
 
     await waitFor(() =>
       expect(mockInvoke).toHaveBeenCalledWith("add_script", {
-        input: { name: "disk", interpreter: "bash -s", body: "df -h" },
+        input: { name: "disk", platform: "posix", interpreter: "bash -s", body: "df -h" },
       }),
     );
     await waitFor(() => expect(screen.queryByTestId("script-form")).not.toBeInTheDocument());
     const row = await screen.findByTestId("script-row");
     expect(row).toHaveAttribute("data-name", "disk");
     expect(within(screen.getByTestId("script-run-area")).getByText("df -h")).toBeInTheDocument();
+  });
+
+  it("saves a Windows script with PowerShell and keeps a typed interpreter", async () => {
+    respond({
+      get_scripts: () => [],
+      add_script: (args) => ({ id: "new", ...(args!.input as object) }),
+    });
+    renderInPanel(<ScriptsView />);
+    fireEvent.click(await screen.findByTestId("add-script-button"));
+    const interpreter = await screen.findByTestId("script-form-interpreter");
+    expect(interpreter).toHaveValue("sh -s");
+
+    fireEvent.click(screen.getByTestId("script-form-platform-windows"));
+    expect(interpreter).toHaveValue("powershell");
+    expect(screen.getByLabelText("PowerShell")).toBe(interpreter);
+    expect(screen.queryByRole("button", { name: "bash -s" })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "pwsh" }));
+
+    // Back and forth: a preset follows the platform, a typed command stays.
+    fireEvent.click(screen.getByTestId("script-form-platform-posix"));
+    expect(interpreter).toHaveValue("sh -s");
+    fireEvent.change(interpreter, { target: { value: "sudo sh -s" } });
+    fireEvent.click(screen.getByTestId("script-form-platform-windows"));
+    expect(interpreter).toHaveValue("sudo sh -s");
+    fireEvent.change(interpreter, { target: { value: "pwsh" } });
+
+    fireEvent.change(screen.getByTestId("script-form-name"), { target: { value: "disk" } });
+    fireEvent.change(screen.getByTestId("script-form-body"), { target: { value: "Get-PSDrive C" } });
+    fireEvent.click(screen.getByTestId("script-form-submit"));
+    await waitFor(() =>
+      expect(mockInvoke).toHaveBeenCalledWith("add_script", {
+        input: { name: "disk", platform: "windows", interpreter: "pwsh", body: "Get-PSDrive C" },
+      }),
+    );
+    expect(await screen.findByTestId("script-platform")).toHaveTextContent("Windows");
+    expect(screen.getByTestId("script-row")).toHaveTextContent("Windows · pwsh");
   });
 
   it("flags the empty fields instead of saving", async () => {

@@ -1,6 +1,12 @@
 import { describe, it, expect } from "vitest";
 import type { Connection, ScriptResult } from "@/types";
-import { describeScriptEnd, formatDuration, planScriptRun, scriptStatus } from "@/lib/scripts";
+import {
+  describeScriptEnd,
+  formatDuration,
+  interpreterForPlatform,
+  planScriptRun,
+  scriptStatus,
+} from "@/lib/scripts";
 
 const result = (overrides: Partial<ScriptResult> = {}): ScriptResult => ({
   stdout: "",
@@ -36,6 +42,15 @@ describe("scripts helpers", () => {
     expect(formatDuration(250)).toBe("250 ms");
     expect(formatDuration(2500)).toBe("2.5 s");
     expect(formatDuration(125_000)).toBe("2 min 5 s");
+  });
+
+  it("swaps the interpreter to the new platform's default unless it was typed", () => {
+    expect(interpreterForPlatform("windows", "sh -s")).toBe("powershell");
+    expect(interpreterForPlatform("windows", "python3 -")).toBe("powershell");
+    expect(interpreterForPlatform("windows", "  ")).toBe("powershell");
+    expect(interpreterForPlatform("posix", "pwsh")).toBe("sh -s");
+    expect(interpreterForPlatform("windows", "pwsh")).toBe("pwsh");
+    expect(interpreterForPlatform("windows", "sudo sh -s")).toBe("sudo sh -s");
   });
 
   it("plans the picked hosts in list order", () => {

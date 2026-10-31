@@ -137,15 +137,24 @@ See [File Transfer](file-transfer.md) for behavior and limitations.
 The **Scripts** view (sidebar) keeps scripts you run on several hosts at
 once.
 
-- **New Script** opens the editor in the side panel: a name, the remote
-  **interpreter** and the script itself. The interpreter is the command
-  the server runs; it reads the script on its standard input, so nothing
-  is copied to the host first. Presets cover `sh -s` (the default),
-  `bash -s` and `python3 -`; any other command that reads a program from
-  stdin works too. Names are unique; a script can be up to 256 KiB. The
-  interpreter is started through the host's POSIX `sh`, so hosts need one
-  (every Linux, macOS and BSD server has it; Windows OpenSSH servers do
-  not).
+- **New Script** opens the editor in the side panel: a name, what it
+  **runs on**, the **interpreter** and the script itself. Names are
+  unique; a script can be up to 256 KiB.
+- **Linux, macOS, BSD** (the default): the interpreter is the command the
+  server runs; it reads the script on its standard input, so nothing is
+  copied to the host first. Presets cover `sh -s` (the default), `bash -s`
+  and `python3 -`; any other command that reads a program from stdin works
+  too. The interpreter is started through the host's POSIX `sh`.
+- **Windows** (Windows OpenSSH servers): the script is PowerShell, run by
+  `powershell` (Windows PowerShell, built in; the default) or `pwsh`
+  (PowerShell 7), or a path to either without spaces. It works with
+  either cmd or PowerShell as the server's default shell. The exit code
+  is the script's `exit`, else the last program's exit code; an uncaught
+  error exits 1. Errors that don't stop the script (`Write-Error`, a
+  missing path in `Get-Item`) leave it at 0: use `exit 1`, or set
+  `$ErrorActionPreference = 'Stop'`, to make them fail the host.
+  Switching platform swaps a preset interpreter for the other platform's
+  default; a command you typed stays.
 - Select a script to see its body and the hosts it can run on: every
   direct and jump host connection (local forwards cannot run scripts).
   Tick hosts, or **All hosts**, and **Run on N hosts**.
@@ -154,7 +163,8 @@ once.
   the exit code, the signal that killed it, or the connection error, plus
   how long it took, its standard output and its standard error.
 - **Cancel** (shown while a run is going) stops every host that has not
-  finished: the script and everything it started get SIGTERM, and the
+  finished: the script and everything it started get SIGTERM (on Windows,
+  `taskkill /T /F`), and the
   card shows **cancelled** with the output printed so far. Hosts that had
   already finished keep their result.
 - Each stream keeps the first 1 MiB of output; the card says when output

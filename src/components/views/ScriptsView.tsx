@@ -18,6 +18,7 @@ import {
   describeScriptEnd,
   formatDuration,
   planScriptRun,
+  PLATFORM_LABELS,
   type ScriptRunStep,
 } from "@/lib/scripts";
 import { cn } from "@/lib/utils";
@@ -141,6 +142,7 @@ export function ScriptsView() {
                 >
                   <span className="block text-sm font-medium truncate">{script.name}</span>
                   <span className="block text-xs font-mono text-muted-foreground-soft truncate">
+                    {script.platform === "windows" && "Windows · "}
                     {script.interpreter}
                   </span>
                 </button>
@@ -253,6 +255,9 @@ function ScriptRunArea({
       <div className="space-y-2">
         <div className="flex items-center gap-2">
           <h2 className="text-base font-semibold truncate">{script.name}</h2>
+          <Badge variant="outline" data-testid="script-platform">
+            {PLATFORM_LABELS[script.platform]}
+          </Badge>
           <Badge variant="secondary" className="font-mono">
             {script.interpreter}
           </Badge>

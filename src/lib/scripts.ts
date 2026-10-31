@@ -1,10 +1,34 @@
-import type { Connection, ScriptResult } from "@/types";
+import type { Connection, ScriptPlatform, ScriptResult } from "@/types";
 import type { StepStatus } from "./bulk-actions";
 
-/** Interpreters offered in the script editor; any remote command works. */
-export const INTERPRETER_PRESETS = ["sh -s", "bash -s", "python3 -"] as const;
+/**
+ * Interpreters offered in the script editor, default first. On POSIX any
+ * remote command works; on Windows any PowerShell named without spaces.
+ */
+export const INTERPRETER_PRESETS: Record<ScriptPlatform, readonly string[]> = {
+  posix: ["sh -s", "bash -s", "python3 -"],
+  windows: ["powershell", "pwsh"],
+};
 
-export const DEFAULT_INTERPRETER = INTERPRETER_PRESETS[0];
+export function defaultInterpreter(platform: ScriptPlatform): string {
+  return INTERPRETER_PRESETS[platform][0];
+}
+
+export const PLATFORM_LABELS: Record<ScriptPlatform, string> = {
+  posix: "Linux, macOS, BSD",
+  windows: "Windows",
+};
+
+/**
+ * The interpreter to show after switching to `platform`: a blank field or
+ * one of the other platform's presets becomes the new default, anything the
+ * user typed stays.
+ */
+export function interpreterForPlatform(platform: ScriptPlatform, current: string): string {
+  const other: ScriptPlatform = platform === "posix" ? "windows" : "posix";
+  const value = current.trim();
+  return !value || INTERPRETER_PRESETS[other].includes(value) ? defaultInterpreter(platform) : current;
+}
 
 /** One host of a script run. */
 export interface ScriptRunStep {

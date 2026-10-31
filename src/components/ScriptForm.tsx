@@ -1,9 +1,10 @@
 import { useActionState, useEffect, useRef, useState } from "react";
-import type { Script, ScriptInput } from "@/types";
+import type { Script, ScriptInput, ScriptPlatform } from "@/types";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
 import { Label } from "./ui/label";
 import { Textarea } from "./ui/textarea";
+import { RadioGroup, RadioGroupItem } from "./ui/radio-group";
 import {
   Dialog,
   DialogContent,
@@ -17,7 +18,13 @@ import { useUnsavedChangesGuard } from "@/hooks/useUnsavedChangesGuard";
 import { useFieldErrors } from "@/hooks/useFieldErrors";
 import { submitWithoutReset } from "@/lib/formSubmit";
 import { errorMessage } from "@/lib/errors";
-import { DEFAULT_INTERPRETER, INTERPRETER_PRESETS } from "@/lib/scripts";
+import {
+  defaultInterpreter,
+  INTERPRETER_PRESETS,
+  interpreterForPlatform,
+  PLATFORM_LABELS,
+} from "@/lib/scripts";
+import { cn } from "@/lib/utils";
 import type { FormSwitchGuard } from "@/store/useDialogsStore";
 
 interface ScriptFormProps {
@@ -38,13 +45,14 @@ type FieldKey = "name" | "body";
  */
 export function ScriptForm({ script, onSubmit, onClose, onGuardChange }: ScriptFormProps) {
   const [name, setName] = useState(script?.name ?? "");
-  const [interpreter, setInterpreter] = useState(script?.interpreter ?? DEFAULT_INTERPRETER);
+  const [platform, setPlatform] = useState<ScriptPlatform>(script?.platform ?? "posix");
+  const [interpreter, setInterpreter] = useState(script?.interpreter ?? defaultInterpreter("posix"));
   const [body, setBody] = useState(script?.body ?? "");
   const { fieldErrors, setFieldErrors, clearFieldError } = useFieldErrors<FieldKey>();
   const firstFieldRef = useRef<HTMLInputElement | null>(null);
 
-  const baseline = useRef(JSON.stringify([name, interpreter, body]));
-  const dirty = JSON.stringify([name, interpreter, body]) !== baseline.current;
+  const baseline = useRef(JSON.stringify([name, platform, interpreter, body]));
+  const dirty = JSON.stringify([name, platform, interpreter, body]) !== baseline.current;
   const guard = useUnsavedChangesGuard(dirty);
   const requestClose = () => guard.requestClose(onClose);
 
@@ -64,7 +72,7 @@ export function ScriptForm({ script, onSubmit, onClose, onGuardChange }: ScriptF
         return { error: "Please fix the highlighted fields" };
       }
       try {
-        await onSubmit({ name, interpreter, body });
+        await onSubmit({ name, platform, interpreter, body });
         guard.markSaved();
         onClose();
         return { error: null };
@@ -88,7 +96,7 @@ export function ScriptForm({ script, onSubmit, onClose, onGuardChange }: ScriptF
           <DialogHeader className="px-6 pt-6 pb-3 shrink-0 border-b">
             <DialogTitle>{script ? "Edit Script" : "New Script"}</DialogTitle>
             <DialogDescription className="sr-only">
-              Name the script, choose the remote interpreter that reads it, and write its body.
+              Name the script, choose the kind of host and the interpreter that runs it, and write its body.
             </DialogDescription>
           </DialogHeader>
           <form
@@ -121,18 +129,48 @@ export function ScriptForm({ script, onSubmit, onClose, onGuardChange }: ScriptF
                 )}
               </div>
               <div className="space-y-2">
-                <Label htmlFor="script-interpreter">Interpreter</Label>
+                <Label id="script-platform-heading">Runs on</Label>
+                <RadioGroup
+                  aria-labelledby="script-platform-heading"
+                  value={platform}
+                  onValueChange={(v) => {
+                    const next = v as ScriptPlatform;
+                    setPlatform(next);
+                    setInterpreter((current) => interpreterForPlatform(next, current));
+                  }}
+                  className="flex flex-wrap gap-2"
+                >
+                  {(Object.keys(PLATFORM_LABELS) as ScriptPlatform[]).map((value) => (
+                    <RadioGroupItem
+                      key={value}
+                      value={value}
+                      className={cn(
+                        "px-3 py-1 text-sm rounded-md border transition-colors",
+                        "data-[state=checked]:border-primary data-[state=checked]:bg-accent",
+                        "data-[state=unchecked]:border-input data-[state=unchecked]:text-muted-foreground data-[state=unchecked]:hover:text-foreground",
+                      )}
+                      data-testid={`script-form-platform-${value}`}
+                    >
+                      {PLATFORM_LABELS[value]}
+                    </RadioGroupItem>
+                  ))}
+                </RadioGroup>
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="script-interpreter">
+                  {platform === "windows" ? "PowerShell" : "Interpreter"}
+                </Label>
                 <Input
                   id="script-interpreter"
                   className="font-mono"
-                  placeholder={DEFAULT_INTERPRETER}
+                  placeholder={defaultInterpreter(platform)}
                   value={interpreter}
                   onChange={(e) => setInterpreter(e.target.value)}
                   data-testid="script-form-interpreter"
                   aria-describedby="script-interpreter-hint"
                 />
                 <div className="flex flex-wrap items-center gap-1.5">
-                  {INTERPRETER_PRESETS.map((preset) => (
+                  {INTERPRETER_PRESETS[platform].map((preset) => (
                     <Button
                       key={preset}
                       type="button"
@@ -147,8 +185,17 @@ export function ScriptForm({ script, onSubmit, onClose, onGuardChange }: ScriptF
                   ))}
                 </div>
                 <p id="script-interpreter-hint" className="text-xs text-muted-foreground">
-                  The remote command that reads the script on its standard input. Blank means{" "}
-                  <code>{DEFAULT_INTERPRETER}</code>.
+                  {platform === "windows" ? (
+                    <>
+                      The script is PowerShell. <code>powershell</code> is built into Windows;{" "}
+                      <code>pwsh</code> is PowerShell 7. Blank means <code>powershell</code>.
+                    </>
+                  ) : (
+                    <>
+                      The remote command that reads the script on its standard input. Blank means{" "}
+                      <code>{defaultInterpreter("posix")}</code>.
+                    </>
+                  )}
                 </p>
               </div>
               <div className="space-y-2">
@@ -157,7 +204,7 @@ export function ScriptForm({ script, onSubmit, onClose, onGuardChange }: ScriptF
                   id="script-body"
                   className="min-h-64 text-xs"
                   spellCheck={false}
-                  placeholder={"df -h /\nuptime"}
+                  placeholder={platform === "windows" ? "Get-PSDrive C\nGet-Date" : "df -h /\nuptime"}
                   value={body}
                   onChange={(e) => {
                     setBody(e.target.value);

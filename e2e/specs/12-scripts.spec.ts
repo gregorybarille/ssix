@@ -10,6 +10,10 @@
  * cancelled with the output printed so far, and the script's `sleep` must
  * be gone from the server (the cancel sends SIGTERM, not just a hang-up).
  *
+ * A third test saves a Windows script. The servers are Linux, so it can
+ * only check that the editor swaps in PowerShell and that the run starts
+ * PowerShell rather than `sh`: the host answers "not found", exit 127.
+ *
  * Exercises `run_script` (exec of `sh -s` with the body on stdin, both
  * streams collected) and `cancel_script_run` against real OpenSSH servers.
  */
@@ -44,12 +48,17 @@ async function typeLines(selector: string, lines: string[]): Promise<void> {
 }
 
 /** Save a script from the side panel editor and select it. */
-async function createScript(name: string, lines: string[]): Promise<void> {
+async function createScript(name: string, lines: string[], windows = false): Promise<void> {
   await navigateTo("scripts");
   await click(sel.addScriptButton);
   const form = await browser.$(sel.scriptForm);
   await form.waitForExist({ timeout: 10_000 });
   await fill(sel.scriptFormName, name);
+  if (windows) {
+    await click(sel.scriptFormPlatformWindows);
+    const interpreter = await browser.$(sel.scriptFormInterpreter);
+    expect(await interpreter.getValue()).toBe("powershell");
+  }
   await typeLines(sel.scriptFormBody, lines);
   await click(sel.scriptFormSubmit);
   await form.waitForExist({ reverse: true, timeout: 10_000 });
@@ -135,5 +144,18 @@ describe("Scripts", () => {
     await createScript("script-12-check", ['ps | grep -q "[s]leep 30" && exit 1', "exit 0"]);
     await runOn(["conn-12-a"]);
     await resultCard("conn-12-a", "success");
+  });
+
+  it("runs a Windows script through PowerShell", async () => {
+    await createScript("script-12-windows", ["Get-Date"], true);
+    expect(await textContentOf(await browser.$(sel.scriptPlatform))).toContain("Windows");
+    expect(await textContentOf(await browser.$(sel.scriptRowByName("script-12-windows")))).toContain(
+      "Windows · powershell",
+    );
+    await runOn(["conn-12-a"]);
+
+    const card = await resultCard("conn-12-a", "error");
+    expect(await card.getAttribute("data-exit-code")).toBe("127");
+    expect(await textContentOf(await card.$(sel.scriptResultStderr))).toContain("powershell");
   });
 });

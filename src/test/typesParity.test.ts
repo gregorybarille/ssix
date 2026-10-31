@@ -95,7 +95,7 @@ const genSettings: GenAppSettings = {
   backup_keep: 10,
 };
 
-const genScript: GenScript = { id: "id", name: "n", body: "b", interpreter: "sh -s" };
+const genScript: GenScript = { id: "id", name: "n", body: "b", platform: "posix", interpreter: "sh -s" };
 
 const genScriptResult: GenScriptResult = {
   stdout: "",
@@ -149,7 +149,7 @@ const handSettings: HandAppSettings = {
   backup_keep: 10,
 };
 
-const handScript: HandScript = { id: "id", name: "n", body: "b", interpreter: "sh -s" };
+const handScript: HandScript = { id: "id", name: "n", body: "b", platform: "posix", interpreter: "sh -s" };
 
 const handScriptResult: HandScriptResult = {
   stdout: "",

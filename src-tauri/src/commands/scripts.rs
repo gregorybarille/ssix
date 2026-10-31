@@ -10,7 +10,7 @@
 use crate::commands::blocking;
 use crate::commands::ssh::{connect_session, find_connection};
 use crate::logs::log_local;
-use crate::models::{Script, DEFAULT_SCRIPT_INTERPRETER};
+use crate::models::{Script, ScriptPlatform};
 use crate::remote_script::{self, ScriptResult, RUN_TIMEOUT};
 use crate::storage::{load_data, with_data_mut};
 use serde::Deserialize;
@@ -27,14 +27,16 @@ static CURRENT_RUN: AtomicU64 = AtomicU64::new(0);
 pub struct ScriptInput {
     pub name: String,
     pub body: String,
-    /// Blank means the default, `sh -s`.
+    #[serde(default)]
+    pub platform: ScriptPlatform,
+    /// Blank means the platform's default: `sh -s` or `powershell`.
     #[serde(default)]
     pub interpreter: String,
 }
 
 /// Check `input` against the saved scripts (other than `own_id`) and
-/// return it normalized: name and interpreter trimmed, the default
-/// interpreter filled in.
+/// return it normalized: name and interpreter trimmed, the platform's
+/// default interpreter filled in.
 fn check_script(
     scripts: &[Script],
     own_id: Option<&str>,
@@ -58,7 +60,7 @@ fn check_script(
     }
 
     let interpreter = match input.interpreter.trim() {
-        "" => DEFAULT_SCRIPT_INTERPRETER.to_string(),
+        "" => input.platform.default_interpreter().to_string(),
         other => other.to_string(),
     };
     if interpreter.chars().count() > INTERPRETER_MAX_CHARS {
@@ -69,6 +71,16 @@ fn check_script(
     }
     if interpreter.chars().any(char::is_control) {
         return Err("Interpreter must be a single line".to_string());
+    }
+    // A Windows command line is read by cmd or PowerShell, depending on
+    // the server's default shell, and they quote differently: allow only
+    // what both read as one plain word.
+    if input.platform == ScriptPlatform::Windows
+        && !interpreter
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || "_.-:\\/".contains(c))
+    {
+        return Err("PowerShell must be a program name or a path without spaces".to_string());
     }
 
     if input.body.trim().is_empty() {
@@ -84,6 +96,7 @@ fn check_script(
     Ok(ScriptInput {
         name,
         body: input.body,
+        platform: input.platform,
         interpreter,
     })
 }
@@ -101,7 +114,7 @@ pub async fn add_script(input: ScriptInput) -> Result<Script, String> {
 fn add_script_sync(input: ScriptInput) -> Result<Script, String> {
     with_data_mut(|data| {
         let input = check_script(&data.scripts, None, input)?;
-        let script = Script::new(input.name, input.body, input.interpreter);
+        let script = Script::new(input.name, input.body, input.platform, input.interpreter);
         data.scripts.push(script.clone());
         Ok(script)
     })
@@ -122,6 +135,7 @@ fn update_script_sync(id: String, input: ScriptInput) -> Result<Script, String> 
             .ok_or_else(|| "Script not found".to_string())?;
         script.name = input.name;
         script.body = input.body;
+        script.platform = input.platform;
         script.interpreter = input.interpreter;
         Ok(script.clone())
     })
@@ -176,6 +190,7 @@ fn run_script_sync(script_id: &str, connection_id: &str, run: u64) -> Result<Scr
     let outcome = connect_session(&data, &conn, "Running a script").and_then(|ssh| {
         remote_script::run(
             &ssh.session,
+            script.platform,
             &script.interpreter,
             &script.body,
             RUN_TIMEOUT,
@@ -230,7 +245,15 @@ mod tests {
         ScriptInput {
             name: name.to_string(),
             body: body.to_string(),
+            platform: ScriptPlatform::Posix,
             interpreter: interpreter.to_string(),
+        }
+    }
+
+    fn windows(interpreter: &str) -> ScriptInput {
+        ScriptInput {
+            platform: ScriptPlatform::Windows,
+            ..input("w", "Get-Date", interpreter)
         }
     }
 
@@ -274,6 +297,27 @@ mod tests {
             let err = check_script(&[], None, case).err().unwrap();
             assert!(err.contains(needle), "{} not in {}", needle, err);
         }
+    }
+
+    #[test]
+    fn windows_scripts_default_to_powershell_and_take_one_word() {
+        let s = check_script(&[], None, windows("")).unwrap();
+        assert_eq!(s.interpreter, "powershell");
+        assert_eq!(s.platform, ScriptPlatform::Windows);
+        for ok in ["pwsh", r"C:\tools\pwsh.exe", "C:/PS7/pwsh.exe"] {
+            assert!(check_script(&[], None, windows(ok)).is_ok(), "{}", ok);
+        }
+        for bad in [
+            r"C:\Program Files\PowerShell\7\pwsh.exe",
+            "pwsh & calc",
+            "\"pwsh\"",
+            "pwsh;calc",
+        ] {
+            let err = check_script(&[], None, windows(bad)).unwrap_err();
+            assert!(err.contains("without spaces"), "{}: {}", bad, err);
+        }
+        // A POSIX interpreter may still be any command line.
+        assert!(check_script(&[], None, input("p", "true", "sudo -u 'a b' sh -s")).is_ok());
     }
 
     #[test]

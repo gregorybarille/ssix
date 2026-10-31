@@ -245,19 +245,27 @@ export interface BackupList {
   backups: BackupInfo[];
 }
 
+/** The kind of host a script is written for. */
+export type ScriptPlatform = "posix" | "windows";
+
 /** A saved script (see `src-tauri/src/commands/scripts.rs`). */
 export interface Script {
   id: string;
   name: string;
   body: string;
-  /** Remote command that reads the body on stdin, e.g. `sh -s`. */
+  platform: ScriptPlatform;
+  /**
+   * POSIX: the remote command that reads the body on stdin, e.g. `sh -s`.
+   * Windows: the PowerShell that runs it, `powershell` or `pwsh`.
+   */
   interpreter: string;
 }
 
 export interface ScriptInput {
   name: string;
   body: string;
-  /** Blank means `sh -s`. */
+  platform: ScriptPlatform;
+  /** Blank means the platform's default: `sh -s` or `powershell`. */
   interpreter: string;
 }
 
