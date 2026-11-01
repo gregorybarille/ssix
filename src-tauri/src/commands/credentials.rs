@@ -54,6 +54,8 @@ fn merge_previous_secrets(kind: CredentialKind, previous: &CredentialSecrets) ->
                 passphrase: previous.passphrase.clone(),
             }
         }
+        // The agent holds the keys; there is nothing stored to merge.
+        CredentialKind::Agent {} => CredentialKind::Agent {},
     }
 }
 
@@ -110,6 +112,7 @@ fn split_secrets(kind: &CredentialKind) -> Result<(CredentialKind, CredentialSec
                 },
             ))
         }
+        CredentialKind::Agent {} => Ok((CredentialKind::Agent {}, CredentialSecrets::default())),
     }
 }
 
@@ -159,6 +162,7 @@ pub(crate) fn redact_secrets(cred: &mut Credential) {
             private_key: None,
             passphrase: None,
         },
+        CredentialKind::Agent {} => CredentialKind::Agent {},
     };
 }
 

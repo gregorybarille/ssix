@@ -4,6 +4,8 @@
  * both reject the same drafts with the same messages.
  */
 
+import type { CredentialType } from "@/types";
+
 export type CredentialFieldKey = "name" | "username" | "password" | "key_path" | "key_inline";
 
 export type CredentialFieldErrors = Partial<Record<CredentialFieldKey, string>>;
@@ -12,7 +14,7 @@ export interface CredentialDraft {
   /** `null` for an unnamed (private) credential, which needs no name. */
   name: string | null;
   username: string;
-  type: "password" | "ssh_key";
+  type: CredentialType;
   password?: string;
   /** Where an SSH key comes from; the inline connection form only takes a path. */
   keySource?: "path" | "inline";
@@ -48,6 +50,8 @@ export function credentialFieldErrors(
   if (!draft.username.trim()) errors.username = "Username is required";
   if (draft.type === "password") {
     if (rules.requirePassword && !draft.password) errors.password = "Password is required";
+  } else if (draft.type === "agent") {
+    // The agent holds the key; nothing beyond the username is needed.
   } else if ((draft.keySource ?? "path") === "path") {
     if (!draft.privateKeyPath?.trim()) errors.key_path = "Private key path is required";
   } else if (!draft.privateKey?.trim() && !rules.keepSecrets) {

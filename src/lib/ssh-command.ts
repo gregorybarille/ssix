@@ -1,4 +1,5 @@
 import type { Connection, Credential } from "@/types";
+import { isForwardConnection } from "@/lib/sshTerms";
 
 /**
  * Build a portable `ssh` CLI command for the given connection.
@@ -10,6 +11,8 @@ import type { Connection, Credential } from "@/types";
  * - `port_forward` (local forward): `ssh -L LOCAL:REMOTE:REMOTE_PORT [-i KEY] user@server[:port]`
  *   (the SSH server is the host you actually connect to; it reaches the
  *   remote host on your behalf.)
+ * - `remote_forward`: `ssh -R REMOTE:DEST:DEST_PORT [-i KEY] user@server[:port]`
+ * - `dynamic_forward`: `ssh -D LOCAL [-i KEY] user@server[:port]`
  *
  * The username is resolved from the target credential when present, and
  * falls back to the SSH server's credential for `port_forward`. If no credential
@@ -52,11 +55,18 @@ export function buildSshCommand(
   const proxy = connection.proxy_command?.trim() || undefined;
   if (proxy && connection.type !== "jump_shell") push("-o", q(`ProxyCommand=${proxy}`));
 
-  if (connection.type === "port_forward") {
+  if (isForwardConnection(connection)) {
+    // Every forward authenticates to its SSH server; only the flag differs.
     const gwCred = find(connection.gateway_credential_id);
-    const local = connection.local_port;
-    const dest = `${connection.destination_host}:${connection.destination_port}`;
-    push("-L", q(`${local}:${dest}`));
+    if (connection.type === "port_forward") {
+      const dest = `${connection.destination_host}:${connection.destination_port}`;
+      push("-L", q(`${connection.local_port}:${dest}`));
+    } else if (connection.type === "remote_forward") {
+      const dest = `${connection.destination_host}:${connection.destination_port}`;
+      push("-R", q(`${connection.remote_port}:${dest}`));
+    } else {
+      push("-D", String(connection.local_port));
+    }
     const idFile = identity(gwCred);
     if (idFile) push("-i", q(idFile));
     const gwPort = connection.gateway_port;

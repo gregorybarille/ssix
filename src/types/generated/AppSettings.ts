@@ -47,4 +47,25 @@ backup_interval_hours: number,
 /**
  * How many automatic backups to keep; manual ones are kept until deleted.
  */
-backup_keep: number, };
+backup_keep: number, 
+/**
+ * Seconds between SSH keepalive requests on a shell session
+ * (roadmap: resilience; stored only for now).
+ */
+keepalive_interval: number, 
+/**
+ * Reconnect a dropped shell session automatically.
+ */
+auto_reconnect: boolean, 
+/**
+ * How many reconnect attempts before giving up.
+ */
+reconnect_max_attempts: number, 
+/**
+ * Write every shell session's output to a log file.
+ */
+session_log_enabled: boolean, 
+/**
+ * Where session logs go; `None` is `<data_dir>/session-logs`.
+ */
+session_log_dir?: string | null, };

@@ -1,7 +1,15 @@
 import { errorMessage } from "@/lib/errors";
 import { log as appLog } from "@/lib/log";
 import { useActionState, useState, useEffect, useRef } from "react";
-import { Connection, ConnectionDraft, ConnectionInput, Credential, ConnectionType, OPEN_COLORS } from "@/types";
+import {
+  Connection,
+  ConnectionAdvanced,
+  ConnectionDraft,
+  ConnectionInput,
+  Credential,
+  ConnectionType,
+  OPEN_COLORS,
+} from "@/types";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
 import { PasswordInput } from "./ui/password-input";
@@ -31,7 +39,17 @@ import {
 } from "./ConnectionFormFields";
 import { useFieldErrors } from "@/hooks/useFieldErrors";
 import { credentialFieldErrors, type CredentialFieldKey } from "@/lib/credentialValidation";
-import { KIND_FLAGS, KIND_LABELS, hopTerms, titleCase } from "@/lib/sshTerms";
+import { KIND_FLAGS, KIND_LABELS, hopTerms, isForwardType, titleCase } from "@/lib/sshTerms";
+import { CONNECTION_KIND_TABS, ForwardKinds } from "./connection-form/ForwardKinds";
+import { AuthOptions } from "./connection-form/AuthOptions";
+import { SessionOptions } from "./connection-form/SessionOptions";
+import { TerminalOptions } from "./connection-form/TerminalOptions";
+import {
+  DEFAULT_CONNECTION_ADVANCED,
+  advancedFromConnection,
+  advancedPayload,
+  serializeAdvanced,
+} from "./connection-form/advanced";
 import { InstallKeyDialog } from "./InstallKeyDialog";
 import { TagInput } from "./ui/tag-input";
 import { RadioGroup, RadioGroupItem } from "./ui/radio-group";
@@ -91,13 +109,17 @@ const EMPTY_INLINE = {
   saveCredential: false,
 };
 
-type PortInputs = Record<"port" | "gateway_port" | "destination_port" | "local_port", string>;
+type PortInputs = Record<
+  "port" | "gateway_port" | "destination_port" | "local_port" | "remote_port",
+  string
+>;
 
 const DEFAULT_PORT_INPUTS: PortInputs = {
   port: "22",
   gateway_port: "22",
   destination_port: "22",
   local_port: "",
+  remote_port: "",
 };
 
 /**
@@ -113,6 +135,7 @@ function initialFormState(
   portInputs: PortInputs;
   connectionType: ConnectionType;
   authMethod: AuthMethod;
+  advanced: ConnectionAdvanced;
 } {
   if (!connection) {
     return {
@@ -120,10 +143,11 @@ function initialFormState(
       portInputs: DEFAULT_PORT_INPUTS,
       connectionType: "direct",
       authMethod: "credential",
+      advanced: DEFAULT_CONNECTION_ADVANCED,
     };
   }
-  // Gateway/destination fields only exist on port_forward and jump_shell
-  // variants; a narrowing switch keeps TS from poking DirectConnection.
+  // Gateway fields exist on every two-hop kind; destination, local and
+  // remote ports only on some. `in` narrows the union per field.
   const form: ConnectionDraft = {
     name: isClone ? `${connection.name} (copy)` : connection.name,
     host: connection.host,
@@ -137,35 +161,36 @@ function initialFormState(
     remote_path: connection.remote_path ?? "",
     tags: connection.tags ?? [],
     color: connection.color,
-    ...(connection.type === "port_forward"
+    ...(connection.type !== "direct"
       ? {
           gateway_host: connection.gateway_host,
           gateway_port: connection.gateway_port,
           gateway_credential_id: connection.gateway_credential_id,
-          local_port: connection.local_port,
+        }
+      : {}),
+    ...("destination_host" in connection
+      ? {
           destination_host: connection.destination_host,
           destination_port: connection.destination_port,
         }
-      : connection.type === "jump_shell"
-        ? {
-            gateway_host: connection.gateway_host,
-            gateway_port: connection.gateway_port,
-            gateway_credential_id: connection.gateway_credential_id,
-            destination_host: connection.destination_host,
-            destination_port: connection.destination_port,
-          }
-        : {}),
+      : {}),
+    ...("local_port" in connection ? { local_port: connection.local_port } : {}),
+    ...("remote_port" in connection ? { remote_port: connection.remote_port } : {}),
   };
   return {
     form,
     portInputs: {
       port: String(connection.port ?? 22),
       gateway_port: String(connection.type !== "direct" ? connection.gateway_port : 22),
-      destination_port: String(connection.type !== "direct" ? connection.destination_port : 22),
-      local_port: connection.type === "port_forward" ? String(connection.local_port) : "",
+      destination_port: String(
+        "destination_port" in connection ? connection.destination_port : 22,
+      ),
+      local_port: "local_port" in connection ? String(connection.local_port) : "",
+      remote_port: "remote_port" in connection ? String(connection.remote_port) : "",
     },
     connectionType: connection.type,
     authMethod: "credential",
+    advanced: advancedFromConnection(connection),
   };
 }
 
@@ -179,6 +204,7 @@ function serializeFormState(s: {
   portInputs: Record<string, string>;
   connectionType: ConnectionType;
   authMethod: AuthMethod;
+  advanced: ConnectionAdvanced;
   inlineUsername: string;
   inlinePassword: string;
   inlineKeyPath: string;
@@ -202,9 +228,11 @@ function serializeFormState(s: {
     s.form.gateway_credential_id ?? null,
     s.form.destination_host ?? null,
     s.form.local_port ?? null,
+    s.form.remote_port ?? null,
     s.portInputs,
     s.connectionType,
     s.authMethod,
+    serializeAdvanced(s.advanced),
     s.inlineUsername,
     // We deliberately track inline secrets so typing a password and
     // closing the dialog still warns the user.
@@ -244,6 +272,11 @@ export function ConnectionForm({
   const [inlinePassphrase, setInlinePassphrase] = useState("");
   const [inlineCredentialName, setInlineCredentialName] = useState("");
   const [saveCredential, setSaveCredential] = useState(false);
+  // The per-connection options the section files under `connection-form/`
+  // edit; carried as one object through load, dirty-tracking and submit.
+  const [advanced, setAdvanced] = useState<ConnectionAdvanced>(DEFAULT_CONNECTION_ADVANCED);
+  const updateAdvanced = (partial: Partial<ConnectionAdvanced>) =>
+    setAdvanced((current) => ({ ...current, ...partial }));
   const firstFieldRef = useRef<HTMLInputElement | null>(null);
 
   // Port inputs are managed as raw strings so we can validate without
@@ -288,6 +321,7 @@ export function ConnectionForm({
     setPortInputs(init.portInputs);
     setConnectionType(init.connectionType);
     setAuthMethod(init.authMethod);
+    setAdvanced(init.advanced);
     setPortErrors({});
     setFieldErrors({});
     setInlineUsername(EMPTY_INLINE.inlineUsername);
@@ -304,6 +338,7 @@ export function ConnectionForm({
     portInputs,
     connectionType,
     authMethod,
+    advanced,
     inlineUsername,
     inlinePassword,
     inlineKeyPath,
@@ -328,10 +363,13 @@ export function ConnectionForm({
   useLeaveViewGuard(open, requestClose, () => onOpenChange(false));
 
   const isTwoHop = connectionType !== "direct";
+  // A dynamic forward (`ssh -D`) has no fixed far end: the SOCKS client names it.
+  const hasDestination = isTwoHop && connectionType !== "dynamic_forward";
   const isWindows = detectPlatform() === "windows";
   // OpenSSH's names for the two hosts of the current kind (direct has none).
-  const terms = hopTerms(connectionType === "port_forward" ? "port_forward" : "jump_shell");
-  const needsTargetAuth = connectionType !== "port_forward";
+  const terms = hopTerms(connectionType === "direct" ? "jump_shell" : connectionType);
+  // A forward only authenticates to its SSH server.
+  const needsTargetAuth = !isForwardType(connectionType);
 
   const defaultCredentialName = (method: AuthMethod) => {
     const base = form.name.trim() || "connection";
@@ -390,10 +428,15 @@ export function ConnectionForm({
         }
         if (isTwoHop) {
           portChecks.push({ key: "gateway_port", required: true, label: terms.hopPort });
+        }
+        if (hasDestination) {
           portChecks.push({ key: "destination_port", required: true, label: terms.targetPort });
         }
-        if (connectionType === "port_forward") {
+        if (connectionType === "port_forward" || connectionType === "dynamic_forward") {
           portChecks.push({ key: "local_port", required: true, label: "Local port" });
+        }
+        if (connectionType === "remote_forward") {
+          portChecks.push({ key: "remote_port", required: true, label: "Remote port" });
         }
         const newPortErrors: Partial<Record<PortKey, string>> = {};
         const parsedPorts: Partial<Record<PortKey, number>> = {};
@@ -420,6 +463,7 @@ export function ConnectionForm({
           gateway_port: parsedPorts.gateway_port ?? form.gateway_port,
           destination_port: parsedPorts.destination_port ?? form.destination_port,
           local_port: parsedPorts.local_port ?? form.local_port,
+          remote_port: parsedPorts.remote_port ?? form.remote_port,
         };
         // Mutate `form` reference for the rest of the submit code path
         // (which still reads from the closure) by reassigning via setForm
@@ -445,6 +489,8 @@ export function ConnectionForm({
           if (!formWithPorts.gateway_credential_id) {
             newFieldErrors.gateway_credential_id = `${terms.hopCredential} is required`;
           }
+        }
+        if (hasDestination) {
           if (!formWithPorts.destination_host || !formWithPorts.destination_host.trim()) {
             newFieldErrors.destination_host = `${terms.targetHost} is required`;
           }
@@ -479,10 +525,13 @@ export function ConnectionForm({
         }
 
         // Mirror destination_host/port into top-level host/port for two-hop kinds so
-        // list views can keep displaying a meaningful "host" label.
-        const effectiveHost = isTwoHop ? (formWithPorts.destination_host ?? "") : formWithPorts.host;
+        // list views can keep displaying a meaningful "host" label; a dynamic
+        // forward has no destination, so its SSH server stands in.
+        const effectiveHost = isTwoHop
+          ? (formWithPorts.destination_host ?? formWithPorts.gateway_host ?? "")
+          : formWithPorts.host;
         const effectivePort = isTwoHop
-          ? (formWithPorts.destination_port ?? 22)
+          ? (formWithPorts.destination_port ?? formWithPorts.gateway_port ?? 22)
           : formWithPorts.port;
 
         // Audit-4 Phase 4b: build a flat draft, then narrow on `connectionType`
@@ -501,32 +550,45 @@ export function ConnectionForm({
           remote_path: formWithPorts.remote_path || undefined,
           tags: formWithPorts.tags ?? [],
           color: formWithPorts.color,
+          ...advancedPayload(advanced),
+        };
+        const gateway = {
+          gateway_host: formWithPorts.gateway_host ?? "",
+          gateway_port: formWithPorts.gateway_port ?? 22,
+          gateway_credential_id: formWithPorts.gateway_credential_id ?? "",
+        };
+        const destination = {
+          destination_host: formWithPorts.destination_host ?? "",
+          destination_port: formWithPorts.destination_port ?? 22,
         };
 
         const data: ConnectionInput =
           connectionType === "direct"
             ? { ...baseFields, type: "direct" }
             : connectionType === "port_forward"
-            ? {
-                ...baseFields,
-                type: "port_forward",
-                gateway_host: formWithPorts.gateway_host ?? "",
-                gateway_port: formWithPorts.gateway_port ?? 22,
-                gateway_credential_id: formWithPorts.gateway_credential_id ?? "",
-                local_port: formWithPorts.local_port ?? 0,
-                destination_host: formWithPorts.destination_host ?? "",
-                destination_port: formWithPorts.destination_port ?? 22,
-              }
-            : {
-                // jump_shell
-                ...baseFields,
-                type: "jump_shell",
-                gateway_host: formWithPorts.gateway_host ?? "",
-                gateway_port: formWithPorts.gateway_port ?? 22,
-                gateway_credential_id: formWithPorts.gateway_credential_id ?? "",
-                destination_host: formWithPorts.destination_host ?? "",
-                destination_port: formWithPorts.destination_port ?? 22,
-              };
+              ? {
+                  ...baseFields,
+                  type: "port_forward",
+                  ...gateway,
+                  local_port: formWithPorts.local_port ?? 0,
+                  ...destination,
+                }
+              : connectionType === "remote_forward"
+                ? {
+                    ...baseFields,
+                    type: "remote_forward",
+                    ...gateway,
+                    remote_port: formWithPorts.remote_port ?? 0,
+                    ...destination,
+                  }
+                : connectionType === "dynamic_forward"
+                  ? {
+                      ...baseFields,
+                      type: "dynamic_forward",
+                      ...gateway,
+                      local_port: formWithPorts.local_port ?? 0,
+                    }
+                  : { ...baseFields, type: "jump_shell", ...gateway, ...destination };
 
         try {
           if (connection && !isClone) {
@@ -749,25 +811,6 @@ export function ConnectionForm({
     </div>
   );
 
-  const localPortBlock = (
-    <PortField
-      id="local_port"
-      label="Local Port *"
-      placeholder="9000"
-      value={portInputs.local_port}
-      onChange={(raw) => updatePort("local_port", raw)}
-      error={portErrors.local_port}
-      testId="connection-form-local-port"
-      help={
-        <>
-          SSIX listens on <code>127.0.0.1:&lt;local port&gt;</code> and forwards each
-          connection through the SSH server to the remote host, like{" "}
-          <code>ssh -L</code>. The remote host is resolved by the SSH server.
-        </>
-      }
-    />
-  );
-
   const formDescription = connection
     ? isClone
       ? "Duplicate this connection's settings into a new entry."
@@ -780,33 +823,21 @@ export function ConnectionForm({
       onValueChange={(v) => setConnectionType(v as ConnectionType)}
     >
       <TabsList className="w-full gap-1 rounded-xl bg-muted/70 p-1">
-        <TabsTrigger
-          value="direct"
-          className="flex-1 data-[state=inactive]:bg-transparent data-[state=inactive]:hover:bg-background/70 data-[state=inactive]:hover:text-foreground data-[state=active]:bg-background data-[state=active]:shadow-sm"
-          data-testid="connection-form-kind-direct"
-        >
-          {KIND_LABELS.direct}
-        </TabsTrigger>
-        <TabsTrigger
-          value="port_forward"
-          className="flex-1 data-[state=inactive]:bg-transparent data-[state=inactive]:hover:bg-background/70 data-[state=inactive]:hover:text-foreground data-[state=active]:bg-background data-[state=active]:shadow-sm"
-          data-testid="connection-form-kind-localforward"
-        >
-          {KIND_LABELS.port_forward}
-          <span aria-hidden="true" className="ml-1 font-mono text-xs text-muted-foreground-soft">
-            {KIND_FLAGS.port_forward}
-          </span>
-        </TabsTrigger>
-        <TabsTrigger
-          value="jump_shell"
-          className="flex-1 data-[state=inactive]:bg-transparent data-[state=inactive]:hover:bg-background/70 data-[state=inactive]:hover:text-foreground data-[state=active]:bg-background data-[state=active]:shadow-sm"
-          data-testid="connection-form-kind-jumphost"
-        >
-          {KIND_LABELS.jump_shell}
-          <span aria-hidden="true" className="ml-1 font-mono text-xs text-muted-foreground-soft">
-            {KIND_FLAGS.jump_shell}
-          </span>
-        </TabsTrigger>
+        {CONNECTION_KIND_TABS.map(({ type, testId }) => (
+          <TabsTrigger
+            key={type}
+            value={type}
+            className="flex-1 data-[state=inactive]:bg-transparent data-[state=inactive]:hover:bg-background/70 data-[state=inactive]:hover:text-foreground data-[state=active]:bg-background data-[state=active]:shadow-sm"
+            data-testid={testId}
+          >
+            {KIND_LABELS[type]}
+            {KIND_FLAGS[type] && (
+              <span aria-hidden="true" className="ml-1 font-mono text-xs text-muted-foreground-soft">
+                {KIND_FLAGS[type]}
+              </span>
+            )}
+          </TabsTrigger>
+        ))}
       </TabsList>
     </Tabs>
   );
@@ -865,8 +896,11 @@ export function ConnectionForm({
       {isTwoHop && (
         <>
           {hopBlock}
-          {targetBlock}
-          {connectionType === "port_forward" && localPortBlock}
+          {hasDestination && targetBlock}
+          <ForwardKinds
+            connectionType={connectionType}
+            ports={{ inputs: portInputs, errors: portErrors, onChange: updatePort }}
+          />
         </>
       )}
 
@@ -1160,6 +1194,11 @@ export function ConnectionForm({
           -vvv the algorithms SSIX offers and how long each step took.
         </p>
       </div>
+
+      {/* Per-stream option sections (see connection-form/advanced.ts). */}
+      <AuthOptions advanced={advanced} onChange={updateAdvanced} />
+      <SessionOptions advanced={advanced} onChange={updateAdvanced} />
+      <TerminalOptions advanced={advanced} onChange={updateAdvanced} />
 
       {visibleError && (
         <p

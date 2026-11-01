@@ -15,12 +15,12 @@ export function tokenize(query: string): string[] {
 
 export function connectionMatches(conn: Connection, tokens: string[]): boolean {
   if (tokens.length === 0) return true;
-  // Only port_forward/jump_shell carry destination/gateway hosts; for
-  // direct connections the relevant search fields are name/host.
+  // Two-hop kinds carry a gateway host and, except a dynamic forward, a
+  // destination host; for direct connections the fields are name/host.
   const haystack = [
     conn.name,
     conn.host,
-    conn.type !== "direct" ? conn.destination_host : undefined,
+    "destination_host" in conn ? conn.destination_host : undefined,
     conn.type !== "direct" ? conn.gateway_host : undefined,
     ...(conn.tags ?? []),
   ]

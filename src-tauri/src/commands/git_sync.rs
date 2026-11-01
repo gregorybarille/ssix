@@ -444,6 +444,8 @@ fn sanitize_app_data(data: &AppData) -> Result<AppData, String> {
                         .map(|_| String::from("[redacted]")),
                 };
             }
+            // Nothing secret: the keys live in the agent.
+            CredentialKind::Agent {} => {}
         }
     }
     Ok(sanitized)

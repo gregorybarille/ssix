@@ -1,5 +1,5 @@
 import React from "react";
-import { KIND_LABELS } from "@/lib/sshTerms";
+import { KIND_LABELS, isForwardConnection } from "@/lib/sshTerms";
 import { Connection, Credential, LayoutMode } from "@/types";
 import { Button } from "./ui/button";
 import { Badge } from "./ui/badge";
@@ -109,7 +109,7 @@ interface RowActionsProps {
 
 /** The per-row action cluster, identical in row and tile layouts. */
 function RowActions({ conn, onEdit, onDelete, onClone, onConnect, onScp }: RowActionsProps) {
-  const scpBlocked = conn.type === "port_forward";
+  const scpBlocked = isForwardConnection(conn);
   return (
     <div className="flex items-center gap-1">
       {onConnect && (
@@ -135,7 +135,7 @@ function RowActions({ conn, onEdit, onDelete, onClone, onConnect, onScp }: RowAc
             className={ACTION_BUTTON}
             disabled={scpBlocked}
             onClick={stop((c: Connection) => {
-              if (c.type !== "port_forward") onScp(c);
+              if (!isForwardConnection(c)) onScp(c);
             }, conn)}
             aria-label={
               scpBlocked
@@ -240,7 +240,7 @@ export function ConnectionList({
       icon: <Copy className="h-3.5 w-3.5" />,
       onClick: () => onClone(conn),
     });
-    if (onScp && conn.type !== "port_forward") {
+    if (onScp && !isForwardConnection(conn)) {
       items.push({
         label: "Transfer files",
         icon: <ArrowUpDown className="h-3.5 w-3.5" />,

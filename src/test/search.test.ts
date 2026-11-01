@@ -46,6 +46,23 @@ describe("search", () => {
     expect(connectionMatches(conns[2], ["gw"])).toBe(true);
   });
 
+  it("searches a dynamic forward, which has no far-end host, by its SSH server", () => {
+    const socks: Connection = {
+      id: "4",
+      name: "socks",
+      host: "gw.example",
+      port: 22,
+      type: "dynamic_forward",
+      gateway_host: "gw.example",
+      gateway_port: 22,
+      gateway_credential_id: "gw-cred",
+      local_port: 1080,
+    };
+    expect(connectionMatches(socks, ["gw.example"])).toBe(true);
+    expect(connectionMatches(socks, ["socks"])).toBe(true);
+    expect(connectionMatches(socks, ["pg.internal"])).toBe(false);
+  });
+
   it("filterConnections returns the same array for a blank query", () => {
     expect(filterConnections(conns, "   ")).toBe(conns);
     expect(filterConnections(conns, "staging").map((c) => c.id)).toEqual(["2"]);

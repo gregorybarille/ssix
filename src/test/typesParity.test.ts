@@ -34,6 +34,7 @@ import type { Credential as GenCredential } from "@/types/generated/Credential";
 import type { CredentialSecrets as GenCredentialSecrets } from "@/types/generated/CredentialSecrets";
 import type { Script as GenScript } from "@/types/generated/Script";
 import type { ScriptResult as GenScriptResult } from "@/types/generated/ScriptResult";
+import type { Snippet as GenSnippet } from "@/types/generated/Snippet";
 import type {
   AppSettings as HandAppSettings,
   Connection as HandConnection,
@@ -41,6 +42,7 @@ import type {
   CredentialSecrets as HandCredentialSecrets,
   Script as HandScript,
   ScriptResult as HandScriptResult,
+  Snippet as HandSnippet,
 } from "@/types";
 
 // Build a fully-populated instance of each generated shape. tsc will
@@ -59,7 +61,35 @@ const genConnection: GenConnection = {
   remote_path: null,
   tags: [],
   color: null,
+  agent_forwarding: false,
+  keepalive_interval: null,
+  auto_reconnect: null,
+  log_session: null,
+  font_family: null,
+  font_size: null,
+  color_scheme: null,
+  folder: null,
   type: "direct",
+};
+
+// The two forward kinds added by the foundation: tsc checks their fields.
+const genRemoteForward: GenConnection = {
+  ...genConnection,
+  type: "remote_forward",
+  gateway_host: "gw",
+  gateway_port: 22,
+  gateway_credential_id: "c",
+  remote_port: 8080,
+  destination_host: "127.0.0.1",
+  destination_port: 3000,
+};
+const genDynamicForward: GenConnection = {
+  ...genConnection,
+  type: "dynamic_forward",
+  gateway_host: "gw",
+  gateway_port: 22,
+  gateway_credential_id: "c",
+  local_port: 1080,
 };
 
 const genCredential: GenCredential = {
@@ -93,9 +123,16 @@ const genSettings: GenAppSettings = {
   backup_enabled: true,
   backup_interval_hours: 24,
   backup_keep: 10,
+  keepalive_interval: 30,
+  auto_reconnect: true,
+  reconnect_max_attempts: 5,
+  session_log_enabled: false,
+  session_log_dir: null,
 };
 
 const genScript: GenScript = { id: "id", name: "n", body: "b", platform: "posix", interpreter: "sh -s" };
+
+const genSnippet: GenSnippet = { id: "s", name: "n", command: "ls", tags: [] };
 
 const genScriptResult: GenScriptResult = {
   stdout: "",
@@ -118,6 +155,32 @@ const handConnection: HandConnection = {
   host: "h",
   port: 22,
   type: "direct",
+};
+
+const handRemoteForward: HandConnection = {
+  ...handConnection,
+  type: "remote_forward",
+  gateway_host: "gw",
+  gateway_port: 22,
+  gateway_credential_id: "c",
+  remote_port: 8080,
+  destination_host: "127.0.0.1",
+  destination_port: 3000,
+};
+const handDynamicForward: HandConnection = {
+  ...handConnection,
+  type: "dynamic_forward",
+  gateway_host: "gw",
+  gateway_port: 22,
+  gateway_credential_id: "c",
+  local_port: 1080,
+};
+
+const handAgentCredential: HandCredential = {
+  id: "id",
+  name: "n",
+  username: "u",
+  type: "agent",
 };
 
 const handCredential: HandCredential = {
@@ -148,9 +211,15 @@ const handSettings: HandAppSettings = {
   backup_enabled: true,
   backup_interval_hours: 24,
   backup_keep: 10,
+  keepalive_interval: 30,
+  auto_reconnect: true,
+  reconnect_max_attempts: 5,
+  session_log_enabled: false,
 };
 
 const handScript: HandScript = { id: "id", name: "n", body: "b", platform: "posix", interpreter: "sh -s" };
+
+const handSnippet: HandSnippet = { id: "s", name: "n", command: "ls", tags: [] };
 
 const handScriptResult: HandScriptResult = {
   stdout: "",
@@ -189,16 +258,25 @@ describe("Phase 6a — ts-rs parity (Rust models <-> TS index.ts)", () => {
       "remote_path",
       "tags",
       "color",
-      // PortForward / JumpShell variant fields:
-      "gateway_host",
-      "gateway_port",
-      "gateway_credential_id",
-      "local_port",
-      "destination_host",
-      "destination_port",
+      // Roadmap foundation fields (ConnectionAdvanced):
+      "agent_forwarding",
+      "keepalive_interval",
+      "auto_reconnect",
+      "log_session",
+      "font_family",
+      "font_size",
+      "color_scheme",
+      "folder",
+      // Variant fields: PortForward / JumpShell / RemoteForward / DynamicForward
+      ...Object.keys(handRemoteForward),
+      ...Object.keys(handDynamicForward),
     ]);
 
-    const genFields = fieldSet(genConnection);
+    const genFields = new Set([
+      ...fieldSet(genConnection),
+      ...fieldSet(genRemoteForward),
+      ...fieldSet(genDynamicForward),
+    ]);
     const missing = [...genFields].filter((f) => !handAllFields.has(f));
     expect(missing, `Hand-written Connection is missing: ${missing.join(", ")}`).toEqual([]);
   });
@@ -216,6 +294,9 @@ describe("Phase 6a — ts-rs parity (Rust models <-> TS index.ts)", () => {
     const genFields = fieldSet(genCredential);
     const missing = [...genFields].filter((f) => !handAllFields.has(f));
     expect(missing, `Hand-written Credential is missing: ${missing.join(", ")}`).toEqual([]);
+    // The agent kind carries no fields of its own beyond the discriminator.
+    const agent: GenCredential = { ...genCredential, type: "agent" } as GenCredential;
+    expect(agent.type).toBe(handAgentCredential.type);
   });
 
   it("CredentialSecrets: every generated field exists on the hand-written interface", () => {
@@ -229,6 +310,7 @@ describe("Phase 6a — ts-rs parity (Rust models <-> TS index.ts)", () => {
     const handAllFields = fieldSet(handSettings, [
       "git_sync_repo_path",
       "git_sync_branch",
+      "session_log_dir",
     ]);
 
     const genFields = fieldSet(genSettings);
@@ -244,6 +326,11 @@ describe("Phase 6a — ts-rs parity (Rust models <-> TS index.ts)", () => {
     expect(resultMissing, `Hand-written ScriptResult is missing: ${resultMissing.join(", ")}`).toEqual([]);
   });
 
+  it("Snippet: every generated field exists on the hand-written interface", () => {
+    const missing = [...fieldSet(genSnippet)].filter((f) => !fieldSet(handSnippet).has(f));
+    expect(missing, `Hand-written Snippet is missing: ${missing.join(", ")}`).toEqual([]);
+  });
+
   it("AppData: schema_version is exported by ts-rs and the wire field is snake_case", () => {
     // Light sanity check; AppData isn't mirrored in index.ts as a
     // standalone shape (the frontend reaches into AppData fields
@@ -256,7 +343,9 @@ describe("Phase 6a — ts-rs parity (Rust models <-> TS index.ts)", () => {
       connections: [],
       settings: genSettings,
       scripts: [genScript],
+      snippets: [genSnippet],
     };
     expect(Object.keys(sample)).toContain("schema_version");
+    expect(Object.keys(sample)).toContain("snippets");
   });
 });

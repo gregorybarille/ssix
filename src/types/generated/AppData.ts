@@ -3,6 +3,7 @@ import type { AppSettings } from "./AppSettings";
 import type { Connection } from "./Connection";
 import type { Credential } from "./Credential";
 import type { Script } from "./Script";
+import type { Snippet } from "./Snippet";
 
 export type AppData = { 
 /**
@@ -18,4 +19,8 @@ schema_version: number, credentials: Array<Credential>, connections: Array<Conne
 /**
  * Saved scripts. Files from before scripts existed have none.
  */
-scripts: Array<Script>, };
+scripts: Array<Script>, 
+/**
+ * Saved snippets (roadmap: snippets). Files from before have none.
+ */
+snippets?: Array<Snippet>, };

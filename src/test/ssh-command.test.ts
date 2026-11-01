@@ -88,6 +88,40 @@ describe("buildSshCommand", () => {
     );
   });
 
+  it("builds a remote_forward command with -R against the SSH server", () => {
+    const conn: Connection = {
+      id: "c2r",
+      name: "rfwd",
+      host: "",
+      port: 22,
+      type: "remote_forward",
+      gateway_host: "bastion.example",
+      gateway_port: 2200,
+      gateway_credential_id: keyCred.id,
+      remote_port: 8080,
+      destination_host: "127.0.0.1",
+      destination_port: 3000,
+    };
+    expect(buildSshCommand(conn, [keyCred])).toBe(
+      "ssh -R 8080:127.0.0.1:3000 -i /home/u/.ssh/id_ed25519 -p 2200 deploy@bastion.example",
+    );
+  });
+
+  it("builds a dynamic_forward command with -D", () => {
+    const conn: Connection = {
+      id: "c2d",
+      name: "socks",
+      host: "",
+      port: 22,
+      type: "dynamic_forward",
+      gateway_host: "bastion.example",
+      gateway_port: 22,
+      gateway_credential_id: passCred.id,
+      local_port: 1080,
+    };
+    expect(buildSshCommand(conn, [passCred])).toBe("ssh -D 1080 alice@bastion.example");
+  });
+
   it("builds a jump_shell command with -J", () => {
     const conn: Connection = {
       id: "c3",

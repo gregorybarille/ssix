@@ -1,5 +1,6 @@
 mod backup;
 mod commands;
+mod forwards;
 mod keychain;
 mod known_hosts;
 mod logs;
@@ -78,6 +79,16 @@ pub fn run() {
             commands::screenshot::take_screenshot,
             logs::get_logs,
             logs::clear_logs,
+            // Roadmap streams append their commands under their anchor
+            // (see docs/roadmap.md); keep each block together.
+            // roadmap:auth
+            // roadmap:resilience
+            // roadmap:forwards
+            // roadmap:sftp
+            // roadmap:snippets
+            // roadmap:import
+            // roadmap:terminal-ux
+            // roadmap:folders
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -5,13 +5,17 @@ export type CredentialKind =
       private_key_path?: string;
       private_key?: string;
       passphrase?: string;
-    };
+    }
+  /** Keys held by the SSH agent; the username is the only data (roadmap: auth). */
+  | { type: "agent" };
+
+export type CredentialType = CredentialKind["type"];
 
 export interface Credential {
   id: string;
   name: string;
   username: string;
-  type: "password" | "ssh_key";
+  type: CredentialType;
   password?: string;
   /** Filesystem path to the private key. Mutually exclusive with `private_key`. */
   private_key_path?: string;
@@ -61,9 +65,34 @@ export type ConnectionKind =
       gateway_credential_id: string;
       destination_host: string;
       destination_port: number;
+    }
+  | {
+      type: "remote_forward";
+      gateway_host: string;
+      gateway_port: number;
+      gateway_credential_id: string;
+      remote_port: number;
+      destination_host: string;
+      destination_port: number;
+    }
+  | {
+      type: "dynamic_forward";
+      gateway_host: string;
+      gateway_port: number;
+      gateway_credential_id: string;
+      local_port: number;
     };
 
-export type ConnectionType = "direct" | "port_forward" | "jump_shell";
+export type ConnectionType = ConnectionKind["type"];
+
+/**
+ * The kinds that only authenticate to their SSH server and open no shell:
+ * `ssh -L`, `-R` and `-D`. `remote_forward` and `dynamic_forward` are data
+ * only until the forwards stream lands (`docs/roadmap.md`); the form does
+ * not offer them and `ssh_connect` refuses them.
+ */
+export const FORWARD_TYPES = ["port_forward", "remote_forward", "dynamic_forward"] as const;
+export type ForwardType = (typeof FORWARD_TYPES)[number];
 
 /**
  * Audit-4 Phase 4b: shared fields on every connection regardless of
@@ -97,7 +126,42 @@ interface ConnectionBase {
   tags?: string[];
   /** Optional Open Color name used as the terminal-tab accent. */
   color?: string;
+  /** Forward the local SSH agent to the remote host (`ssh -A`). Stored only (roadmap: auth). */
+  agent_forwarding?: boolean;
+  /** Seconds between keepalives; absent means `AppSettings.keepalive_interval` (roadmap: resilience). */
+  keepalive_interval?: number;
+  /** Reconnect a dropped session; absent means `AppSettings.auto_reconnect`. */
+  auto_reconnect?: boolean;
+  /** Log the session to disk; absent means `AppSettings.session_log_enabled`. */
+  log_session?: boolean;
+  /** Terminal font family override; absent means the setting (roadmap: terminal-ux). */
+  font_family?: string;
+  /** Terminal font size override; absent means the setting. */
+  font_size?: number;
+  /** Terminal colour scheme override; absent means the setting. */
+  color_scheme?: string;
+  /** `/`-separated folder path (`prod/eu`); absent means the root (roadmap: folders). */
+  folder?: string;
 }
+
+/**
+ * The per-connection options the roadmap streams add inputs for, as one
+ * object the connection form carries through load, dirty-tracking and
+ * submit (see `src/components/connection-form/`). Mirrors
+ * `ConnectionAdvanced` in `src-tauri/src/commands/connections.rs`; the
+ * fields are flattened into the connection payload.
+ */
+export type ConnectionAdvanced = Pick<
+  ConnectionBase,
+  | "agent_forwarding"
+  | "keepalive_interval"
+  | "auto_reconnect"
+  | "log_session"
+  | "font_family"
+  | "font_size"
+  | "color_scheme"
+  | "folder"
+>;
 
 export interface DirectConnection extends ConnectionBase {
   type: "direct";
@@ -122,6 +186,26 @@ export interface JumpShellConnection extends ConnectionBase {
   destination_port: number;
 }
 
+/** `ssh -R`: the SSH server listens on `remote_port` and forwards to `destination_*`. */
+export interface RemoteForwardConnection extends ConnectionBase {
+  type: "remote_forward";
+  gateway_host: string;
+  gateway_port: number;
+  gateway_credential_id: string;
+  remote_port: number;
+  destination_host: string;
+  destination_port: number;
+}
+
+/** `ssh -D`: a local SOCKS proxy on `local_port`, dialled through the SSH server. */
+export interface DynamicForwardConnection extends ConnectionBase {
+  type: "dynamic_forward";
+  gateway_host: string;
+  gateway_port: number;
+  gateway_credential_id: string;
+  local_port: number;
+}
+
 /**
  * Discriminated union — narrowing on `conn.type` gives you exactly the
  * fields that variant has, with no `!` non-null assertions or
@@ -134,7 +218,15 @@ export interface JumpShellConnection extends ConnectionBase {
  * assert non-null or guard at every access. Renaming `type` → `kind`
  * was considered and rejected to keep the wire format stable.
  */
-export type Connection = DirectConnection | PortForwardConnection | JumpShellConnection;
+export type Connection =
+  | DirectConnection
+  | PortForwardConnection
+  | JumpShellConnection
+  | RemoteForwardConnection
+  | DynamicForwardConnection;
+
+/** A connection of one of the `FORWARD_TYPES`. */
+export type ForwardConnection = Extract<Connection, { type: ForwardType }>;
 
 /**
  * Distributive Omit. The built-in `Omit<U, K>` over a union `U` collapses
@@ -177,6 +269,7 @@ export type ConnectionDraft = {
   gateway_port?: number;
   gateway_credential_id?: string;
   local_port?: number;
+  remote_port?: number;
   destination_host?: string;
   destination_port?: number;
 };
@@ -222,6 +315,16 @@ export interface AppSettings {
   backup_interval_hours: number;
   /** Automatic backups kept (1-100); manual ones stay until deleted. */
   backup_keep: number;
+  /** Seconds between SSH keepalives on shell sessions (roadmap: resilience; stored only). */
+  keepalive_interval: number;
+  /** Reconnect dropped shell sessions automatically. */
+  auto_reconnect: boolean;
+  /** Reconnect attempts before giving up. */
+  reconnect_max_attempts: number;
+  /** Write every shell session's output to a log file. */
+  session_log_enabled: boolean;
+  /** Session log directory; absent means `<data_dir>/session-logs`. */
+  session_log_dir?: string;
 }
 
 export type BackupReason = "manual" | "automatic" | "before_restore";
@@ -243,6 +346,14 @@ export interface BackupList {
   dir: string;
   /** Newest first. */
   backups: BackupInfo[];
+}
+
+/** A saved command to paste into a terminal (roadmap: snippets; data only so far). */
+export interface Snippet {
+  id: string;
+  name: string;
+  command: string;
+  tags?: string[];
 }
 
 /** The kind of host a script is written for. */

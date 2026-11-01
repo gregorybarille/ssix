@@ -36,6 +36,10 @@ pub enum CredentialKind {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         passphrase: Option<String>,
     },
+    /// Keys held by the SSH agent (`SSH_AUTH_SOCK`). The credential's
+    /// `username` is its only data; it has no secrets of its own.
+    /// Authenticating with it is not implemented yet (roadmap: auth).
+    Agent {},
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -96,6 +100,12 @@ pub struct CredentialSecrets {
 /// without requiring SSH keys on the gateway. The destination credential is the
 /// top-level `Connection.credential_id`. Conceptually `ssh -J gateway destination`.
 ///
+/// `RemoteForward` (`ssh -R`) asks the gateway to listen on `remote_port` and
+/// forwards every connection it accepts back to `destination_host:destination_port`
+/// on this machine's side. `DynamicForward` (`ssh -D`) runs a local SOCKS5 proxy on
+/// `local_port` whose connections are dialled by the gateway. Both are data-only
+/// so far: connecting them is not implemented yet (roadmap: forwards).
+///
 /// Legacy data with `type: "tunnel"` is migrated to `JumpShell` on load.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[cfg_attr(test, derive(TS))]
@@ -117,6 +127,20 @@ pub enum ConnectionKind {
         gateway_credential_id: String,
         destination_host: String,
         destination_port: u16,
+    },
+    RemoteForward {
+        gateway_host: String,
+        gateway_port: u16,
+        gateway_credential_id: String,
+        remote_port: u16,
+        destination_host: String,
+        destination_port: u16,
+    },
+    DynamicForward {
+        gateway_host: String,
+        gateway_port: u16,
+        gateway_credential_id: String,
+        local_port: u16,
     },
     /// Legacy variant retained for backwards compatibility with older `data.json`
     /// files. Migrated to `JumpShell` on load (see `migrate_legacy_kinds`).
@@ -175,6 +199,34 @@ pub struct Connection {
     /// Optional Open Color name (e.g. "blue", "violet") used as the tab accent.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub color: Option<String>,
+    /// Forward the local SSH agent to the remote host (`ssh -A`).
+    /// Stored only for now (roadmap: auth).
+    #[serde(default)]
+    pub agent_forwarding: bool,
+    /// Seconds between keepalive requests; `None` uses
+    /// `AppSettings::keepalive_interval`. Stored only for now (roadmap: resilience).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub keepalive_interval: Option<u16>,
+    /// Reconnect after the session drops; `None` uses `AppSettings::auto_reconnect`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub auto_reconnect: Option<bool>,
+    /// Log the session's output to disk; `None` uses `AppSettings::session_log_enabled`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub log_session: Option<bool>,
+    /// Terminal font family for this connection; `None` uses the setting
+    /// (roadmap: terminal-ux).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub font_family: Option<String>,
+    /// Terminal font size for this connection; `None` uses the setting.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub font_size: Option<u8>,
+    /// Terminal colour scheme for this connection; `None` uses the setting.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub color_scheme: Option<String>,
+    /// Folder path the connection is filed under, `/`-separated
+    /// (`prod/eu`); `None` is the root (roadmap: folders).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub folder: Option<String>,
 }
 
 impl Connection {
@@ -199,6 +251,14 @@ impl Connection {
             remote_path: None,
             tags: Vec::new(),
             color: None,
+            agent_forwarding: false,
+            keepalive_interval: None,
+            auto_reconnect: None,
+            log_session: None,
+            font_family: None,
+            font_size: None,
+            color_scheme: None,
+            folder: None,
         }
     }
 
@@ -226,6 +286,14 @@ impl ConnectionKind {
             | ConnectionKind::JumpShell {
                 gateway_credential_id,
                 ..
+            }
+            | ConnectionKind::RemoteForward {
+                gateway_credential_id,
+                ..
+            }
+            | ConnectionKind::DynamicForward {
+                gateway_credential_id,
+                ..
             } => Some(gateway_credential_id),
             ConnectionKind::LegacyTunnel {
                 gateway_credential_id,
@@ -245,9 +313,29 @@ impl ConnectionKind {
             | ConnectionKind::JumpShell {
                 gateway_credential_id,
                 ..
+            }
+            | ConnectionKind::RemoteForward {
+                gateway_credential_id,
+                ..
+            }
+            | ConnectionKind::DynamicForward {
+                gateway_credential_id,
+                ..
             } => Some(gateway_credential_id),
             ConnectionKind::LegacyTunnel { .. } | ConnectionKind::Direct => None,
         }
+    }
+
+    /// Whether this kind is a forward (`ssh -L`, `-R` or `-D`): it only
+    /// authenticates to its gateway and opens no shell, so SCP, scripts
+    /// and bulk shell actions refuse it.
+    pub fn is_forward(&self) -> bool {
+        matches!(
+            self,
+            ConnectionKind::PortForward { .. }
+                | ConnectionKind::RemoteForward { .. }
+                | ConnectionKind::DynamicForward { .. }
+        )
     }
 }
 
@@ -299,10 +387,32 @@ pub struct AppSettings {
     /// How many automatic backups to keep; manual ones are kept until deleted.
     #[serde(default = "default_backup_keep")]
     pub backup_keep: u32,
+    /// Seconds between SSH keepalive requests on a shell session
+    /// (roadmap: resilience; stored only for now).
+    #[serde(default = "default_keepalive_interval")]
+    pub keepalive_interval: u16,
+    /// Reconnect a dropped shell session automatically.
+    #[serde(default = "default_true")]
+    pub auto_reconnect: bool,
+    /// How many reconnect attempts before giving up.
+    #[serde(default = "default_reconnect_max_attempts")]
+    pub reconnect_max_attempts: u8,
+    /// Write every shell session's output to a log file.
+    #[serde(default)]
+    pub session_log_enabled: bool,
+    /// Where session logs go; `None` is `<data_dir>/session-logs`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session_log_dir: Option<String>,
 }
 
 fn default_font_size() -> u8 {
     14
+}
+fn default_keepalive_interval() -> u16 {
+    30
+}
+fn default_reconnect_max_attempts() -> u8 {
+    5
 }
 fn default_font_family() -> String {
     "JetBrains Mono".to_string()
@@ -350,6 +460,11 @@ impl Default for AppSettings {
             backup_enabled: true,
             backup_interval_hours: default_backup_interval_hours(),
             backup_keep: default_backup_keep(),
+            keepalive_interval: default_keepalive_interval(),
+            auto_reconnect: true,
+            reconnect_max_attempts: default_reconnect_max_attempts(),
+            session_log_enabled: false,
+            session_log_dir: None,
         }
     }
 }
@@ -373,6 +488,9 @@ pub struct AppData {
     /// Saved scripts. Files from before scripts existed have none.
     #[serde(default)]
     pub scripts: Vec<Script>,
+    /// Saved snippets (roadmap: snippets). Files from before have none.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub snippets: Vec<Snippet>,
 }
 
 /// Current `AppData.schema_version` written by this build.
@@ -395,8 +513,22 @@ impl Default for AppData {
             connections: Vec::new(),
             settings: AppSettings::default(),
             scripts: Vec::new(),
+            snippets: Vec::new(),
         }
     }
+}
+
+/// A saved command the user pastes into a terminal (roadmap: snippets).
+/// Data only: no command reads or writes snippets yet.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
+pub struct Snippet {
+    pub id: String,
+    pub name: String,
+    pub command: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tags: Vec<String>,
 }
 
 pub const DEFAULT_SCRIPT_INTERPRETER: &str = "sh -s";
@@ -577,6 +709,18 @@ impl AppData {
 mod tests {
     use super::*;
 
+    /// Every optional field at its default, for literals that only set a
+    /// few fields (`Connection { id: ..., ..blank_connection() }`).
+    fn blank_connection() -> Connection {
+        Connection::new(
+            String::new(),
+            String::new(),
+            22,
+            None,
+            ConnectionKind::Direct,
+        )
+    }
+
     #[test]
     fn test_serde_direct_roundtrip() {
         let kind = ConnectionKind::Direct;
@@ -691,13 +835,6 @@ mod tests {
             host: "internal.example".into(),
             port: 22,
             credential_id: Some("dest-cred".into()),
-            verbosity: 0,
-            extra_args: None,
-            proxy_command: None,
-            login_command: None,
-            remote_path: None,
-            tags: Vec::new(),
-            color: None,
             kind: ConnectionKind::LegacyTunnel {
                 gateway_host: "gw.example".into(),
                 gateway_port: 22,
@@ -705,6 +842,7 @@ mod tests {
                 destination_host: "internal.example".into(),
                 destination_port: 22,
             },
+            ..blank_connection()
         });
 
         data.migrate_legacy_kinds();
@@ -731,13 +869,6 @@ mod tests {
             host: "internal.example".into(),
             port: 22,
             credential_id: None,
-            verbosity: 0,
-            extra_args: None,
-            proxy_command: None,
-            login_command: None,
-            remote_path: None,
-            tags: Vec::new(),
-            color: None,
             kind: ConnectionKind::LegacyTunnel {
                 gateway_host: "gw.example".into(),
                 gateway_port: 22,
@@ -745,6 +876,7 @@ mod tests {
                 destination_host: "internal.example".into(),
                 destination_port: 22,
             },
+            ..blank_connection()
         });
 
         data.migrate_legacy_kinds();
@@ -769,14 +901,8 @@ mod tests {
             host: "api".into(),
             port: 80,
             credential_id: None,
-            verbosity: 0,
-            extra_args: None,
-            proxy_command: None,
-            login_command: None,
-            remote_path: None,
-            tags: Vec::new(),
-            color: None,
             kind: pf.clone(),
+            ..blank_connection()
         });
         data.migrate_legacy_kinds();
         assert_eq!(data.connections[0].kind, pf);
@@ -990,13 +1116,6 @@ mod tests {
                 host: "internal.example".into(),
                 port: 22,
                 credential_id: None,
-                verbosity: 0,
-                extra_args: None,
-                proxy_command: None,
-                login_command: None,
-                remote_path: None,
-                tags: Vec::new(),
-                color: None,
                 kind: ConnectionKind::LegacyTunnel {
                     gateway_host: "gw.example".into(),
                     gateway_port: 22,
@@ -1004,9 +1123,11 @@ mod tests {
                     destination_host: "internal.example".into(),
                     destination_port: 22,
                 },
+                ..blank_connection()
             }],
             settings: AppSettings::default(),
             scripts: Vec::new(),
+            snippets: Vec::new(),
         };
 
         data.migrate_to_current();
@@ -1035,5 +1156,169 @@ mod tests {
         assert!(json.contains(&format!(r#""schema_version":{}"#, CURRENT_SCHEMA_VERSION)));
         let back: AppData = serde_json::from_str(&json).unwrap();
         assert_eq!(back.schema_version, CURRENT_SCHEMA_VERSION);
+    }
+
+    // Roadmap foundation: every new field has a default, so a data.json
+    // from before it existed loads unchanged. -----------------------------
+
+    /// A `data.json` as the build before the foundation wrote it.
+    const PRE_FOUNDATION_DATA: &str = r#"{
+        "schema_version": 1,
+        "credentials": [
+            {"id": "c", "name": "root", "username": "root", "type": "password", "password": ""}
+        ],
+        "connections": [
+            {"id": "x", "name": "web", "host": "h", "port": 22, "credential_id": "c", "type": "direct"},
+            {"id": "y", "name": "db", "host": "db", "port": 5432, "type": "port_forward",
+             "gateway_host": "gw", "gateway_port": 22, "gateway_credential_id": "c",
+             "local_port": 15432, "destination_host": "db", "destination_port": 5432}
+        ],
+        "settings": {"font_size": 14, "font_family": "JetBrains Mono", "color_scheme": "blue", "theme": "dark"},
+        "scripts": []
+    }"#;
+
+    #[test]
+    fn test_pre_foundation_data_loads_with_defaults() {
+        let data: AppData = serde_json::from_str(PRE_FOUNDATION_DATA).unwrap();
+        let web = &data.connections[0];
+        assert!(!web.agent_forwarding);
+        assert_eq!(web.keepalive_interval, None);
+        assert_eq!(web.auto_reconnect, None);
+        assert_eq!(web.log_session, None);
+        assert_eq!(web.font_family, None);
+        assert_eq!(web.font_size, None);
+        assert_eq!(web.color_scheme, None);
+        assert_eq!(web.folder, None);
+        assert!(data.connections[1].kind.is_forward());
+
+        let s = &data.settings;
+        assert_eq!(s.keepalive_interval, 30);
+        assert!(s.auto_reconnect);
+        assert_eq!(s.reconnect_max_attempts, 5);
+        assert!(!s.session_log_enabled);
+        assert_eq!(s.session_log_dir, None);
+        assert!(data.snippets.is_empty());
+    }
+
+    #[test]
+    fn test_pre_foundation_data_roundtrips_without_new_optional_fields() {
+        // Unset Option/Vec fields are omitted on write, so an untouched
+        // file gains only the new required settings keys.
+        let data: AppData = serde_json::from_str(PRE_FOUNDATION_DATA).unwrap();
+        let json = serde_json::to_string(&data).unwrap();
+        for absent in [
+            "keepalive_interval\":null",
+            "folder",
+            "font_size\":null",
+            "snippets",
+            "session_log_dir",
+        ] {
+            assert!(!json.contains(absent), "{absent} should be omitted: {json}");
+        }
+        assert!(json.contains(r#""agent_forwarding":false"#));
+        assert!(json.contains(r#""keepalive_interval":30"#));
+        assert!(json.contains(r#""reconnect_max_attempts":5"#));
+    }
+
+    #[test]
+    fn test_connection_new_fields_roundtrip() {
+        let mut c = Connection::new("prod".into(), "h".into(), 22, None, ConnectionKind::Direct);
+        c.agent_forwarding = true;
+        c.keepalive_interval = Some(15);
+        c.auto_reconnect = Some(false);
+        c.log_session = Some(true);
+        c.font_family = Some("Fira Code".into());
+        c.font_size = Some(16);
+        c.color_scheme = Some("teal".into());
+        c.folder = Some("prod/eu".into());
+        let json = serde_json::to_string(&c).unwrap();
+        assert!(json.contains(r#""folder":"prod/eu""#));
+        let back: Connection = serde_json::from_str(&json).unwrap();
+        assert!(back.agent_forwarding);
+        assert_eq!(back.keepalive_interval, Some(15));
+        assert_eq!(back.auto_reconnect, Some(false));
+        assert_eq!(back.log_session, Some(true));
+        assert_eq!(back.font_family.as_deref(), Some("Fira Code"));
+        assert_eq!(back.font_size, Some(16));
+        assert_eq!(back.color_scheme.as_deref(), Some("teal"));
+        assert_eq!(back.folder.as_deref(), Some("prod/eu"));
+    }
+
+    #[test]
+    fn test_serde_remote_and_dynamic_forward_roundtrip() {
+        let remote = ConnectionKind::RemoteForward {
+            gateway_host: "gw".into(),
+            gateway_port: 22,
+            gateway_credential_id: "gw-cred".into(),
+            remote_port: 8080,
+            destination_host: "127.0.0.1".into(),
+            destination_port: 3000,
+        };
+        let json = serde_json::to_string(&remote).unwrap();
+        assert!(json.contains(r#""type":"remote_forward""#));
+        assert!(json.contains(r#""remote_port":8080"#));
+        assert_eq!(serde_json::from_str::<ConnectionKind>(&json).unwrap(), remote);
+
+        let dynamic = ConnectionKind::DynamicForward {
+            gateway_host: "gw".into(),
+            gateway_port: 22,
+            gateway_credential_id: "gw-cred".into(),
+            local_port: 1080,
+        };
+        let json = serde_json::to_string(&dynamic).unwrap();
+        assert!(json.contains(r#""type":"dynamic_forward""#));
+        assert_eq!(serde_json::from_str::<ConnectionKind>(&json).unwrap(), dynamic);
+
+        for kind in [&remote, &dynamic] {
+            assert!(kind.is_forward());
+            assert_eq!(kind.gateway_credential_id(), Some("gw-cred"));
+        }
+        assert!(!ConnectionKind::Direct.is_forward());
+    }
+
+    #[test]
+    fn test_dangling_gateway_credential_is_cleared_on_new_forward_kinds() {
+        let mut data = AppData::default();
+        data.connections.push(Connection::new(
+            "socks".into(),
+            "gw".into(),
+            22,
+            None,
+            ConnectionKind::DynamicForward {
+                gateway_host: "gw".into(),
+                gateway_port: 22,
+                gateway_credential_id: "deleted".into(),
+                local_port: 1080,
+            },
+        ));
+        assert!(data.drop_dangling_credential_refs());
+        assert_eq!(data.connections[0].kind.gateway_credential_id(), Some(""));
+    }
+
+    #[test]
+    fn test_agent_credential_kind_roundtrip() {
+        let kind = CredentialKind::Agent {};
+        let json = serde_json::to_string(&kind).unwrap();
+        assert_eq!(json, r#"{"type":"agent"}"#);
+        assert_eq!(serde_json::from_str::<CredentialKind>(&json).unwrap(), kind);
+        let cred: Credential =
+            serde_json::from_str(r#"{"id":"a","name":"n","username":"u","type":"agent"}"#).unwrap();
+        assert_eq!(cred.kind, CredentialKind::Agent {});
+    }
+
+    #[test]
+    fn test_snippet_roundtrip_and_default_tags() {
+        let s = Snippet {
+            id: "s1".into(),
+            name: "restart".into(),
+            command: "sudo systemctl restart app".into(),
+            tags: vec!["ops".into()],
+        };
+        let json = serde_json::to_string(&s).unwrap();
+        assert_eq!(serde_json::from_str::<Snippet>(&json).unwrap(), s);
+        let bare: Snippet =
+            serde_json::from_str(r#"{"id":"s2","name":"ls","command":"ls -la"}"#).unwrap();
+        assert!(bare.tags.is_empty());
+        assert!(!serde_json::to_string(&bare).unwrap().contains("tags"));
     }
 }

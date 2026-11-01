@@ -3,15 +3,16 @@ import type { Connection, ScpResult } from "@/types";
 import { invoke } from "@/lib/tauri";
 import { useTerminalsStore } from "@/store/useTerminalsStore";
 import { suffixedLocalDownloadPath } from "@/lib/tags";
+import { isForwardConnection } from "@/lib/sshTerms";
 
 /**
- * Connections that can't participate in bulk SSH/SCP operations.
- * Currently only local forwards — they aren't real shells
- * and SCP commands reject them server-side anyway. Centralized so
- * the filter rule lives in one place if it ever changes.
+ * Connections that can't participate in bulk SSH/SCP operations or run
+ * scripts: the forwards (`ssh -L`, `-R`, `-D`). They open no shell and
+ * the SCP and script commands reject them server-side anyway.
+ * Centralized so the filter rule lives in one place.
  */
 export function isBulkActionable(conn: Connection): boolean {
-  return conn.type !== "port_forward";
+  return !isForwardConnection(conn);
 }
 
 /**
@@ -103,9 +104,12 @@ export function planBulkUpload(
     remotePath: input.remotePath ?? conn.remote_path ?? "",
     localPath: input.localPath,
     status: isBulkActionable(conn) ? "pending" : "skipped",
-    error: isBulkActionable(conn) ? undefined : "Local forwards cannot transfer files",
+    error: isBulkActionable(conn) ? undefined : FORWARD_SKIP_REASON,
   }));
 }
+
+/** Why a forward is skipped by bulk SCP. */
+const FORWARD_SKIP_REASON = "Local forwards cannot transfer files";
 
 /**
  * Build the initial `BulkScpStep[]` for a download. Each step's
@@ -127,7 +131,7 @@ export function planBulkDownload(
       conn.name,
     ),
     status: isBulkActionable(conn) ? "pending" : "skipped",
-    error: isBulkActionable(conn) ? undefined : "Local forwards cannot transfer files",
+    error: isBulkActionable(conn) ? undefined : FORWARD_SKIP_REASON,
   }));
 }
 

@@ -14,7 +14,7 @@
 
 use crate::commands::blocking;
 use crate::commands::ssh::{connect_session, find_connection, ConnectedSession};
-use crate::models::{Connection, ConnectionKind};
+use crate::models::Connection;
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::io::{Read, Write};
@@ -46,6 +46,15 @@ pub struct ScpResult {
     pub entries: Option<u64>,
 }
 
+/// Forwards (`ssh -L`, `-R`, `-D`) open no shell on a host, so there is
+/// nothing to copy files to or from.
+fn refuse_forward(conn: &Connection) -> Result<(), String> {
+    if conn.kind.is_forward() {
+        return Err("SCP is not available for port-forward connections".to_string());
+    }
+    Ok(())
+}
+
 #[tauri::command]
 pub async fn scp_upload(input: ScpUploadInput) -> Result<ScpResult, String> {
     blocking(move || scp_upload_sync(input)).await
@@ -53,10 +62,7 @@ pub async fn scp_upload(input: ScpUploadInput) -> Result<ScpResult, String> {
 
 fn scp_upload_sync(input: ScpUploadInput) -> Result<ScpResult, String> {
     let (data, conn) = find_connection(&input.connection_id)?;
-
-    if matches!(conn.kind, ConnectionKind::PortForward { .. }) {
-        return Err("SCP is not available for port-forward connections".to_string());
-    }
+    refuse_forward(&conn)?;
 
     let mut ssh = connect_session(&data, &conn, "SCP")?;
     let local = Path::new(&input.local_path);
@@ -103,10 +109,7 @@ pub async fn scp_download(input: ScpDownloadInput) -> Result<ScpResult, String> 
 
 fn scp_download_sync(input: ScpDownloadInput) -> Result<ScpResult, String> {
     let (data, conn) = find_connection(&input.connection_id)?;
-
-    if matches!(conn.kind, ConnectionKind::PortForward { .. }) {
-        return Err("SCP is not available for port-forward connections".to_string());
-    }
+    refuse_forward(&conn)?;
 
     let remote_path = resolve_download_remote_path(&conn, &input.remote_path);
     let mut ssh = connect_session(&data, &conn, "SCP")?;
