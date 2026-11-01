@@ -13,8 +13,6 @@ services:
       - -D
       - -e
       - -o
-      - AllowTcpForwarding=yes
-      - -o
       - GatewayPorts=clientspecified
     networks:
       - public

@@ -10,6 +10,7 @@ RUN apk add --no-cache openssh-server-pam openssh-sftp-server openssh && \
     echo "UsePAM yes" >> /etc/ssh/sshd_config && \
     echo "PasswordAuthentication no" >> /etc/ssh/sshd_config && \
     echo "KbdInteractiveAuthentication yes" >> /etc/ssh/sshd_config && \
+    sed -i 's/^AllowTcpForwarding no/AllowTcpForwarding yes/' /etc/ssh/sshd_config && \
     printf 'auth required pam_unix.so\naccount required pam_unix.so\nsession required pam_unix.so\n' > /etc/pam.d/sshd
 
 ARG USER_NAME=testuser
