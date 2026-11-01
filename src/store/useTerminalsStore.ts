@@ -2,6 +2,7 @@ import { errorMessage } from "@/lib/errors";
 import { create } from "zustand";
 import { invoke } from "@/lib/tauri";
 import { log as appLog } from "@/lib/log";
+import { isForwardConnection } from "@/lib/sshTerms";
 import { createOutputChannel, disposeOutput, registerOutputSink } from "@/lib/terminalOutput";
 import type { Connection, OpenMode } from "@/types";
 import type {
@@ -23,7 +24,7 @@ import { useSettingsStore } from "./useSettingsStore";
  *    `ssh_connect` IPC resolves (so the resulting session id is
  *    disconnected immediately rather than left dangling)
  *
- * `connect()` routes port_forward connections to the port forwards store
+ * `connect()` routes every forward kind to the port forwards store
  * and shell connections into a new tab (or split into the active
  * tab, depending on `mode`). When the last tab closes, view falls
  * back to "connections" via the view store.
@@ -37,7 +38,7 @@ interface TerminalsState {
   setActiveTabId: (id: string | null) => void;
 
   /**
-   * Open a connection. For port_forward, hands off to the port forwards
+   * Open a connection. A forward of any kind hands off to the port forwards
    * store. Otherwise opens a shell session in a new tab or split.
    * `replaceSessionId` re-opens an existing failed pane in place,
    * preserving its slot/order.
@@ -109,7 +110,7 @@ export const useTerminalsStore = create<TerminalsState>((set, get) => {
     setActiveTabId: (id) => set({ activeTabId: id }),
 
     connect: async (conn, options) => {
-      if (conn.type === "port_forward") {
+      if (isForwardConnection(conn)) {
         await usePortForwardsStore.getState().startForward(conn);
         return;
       }

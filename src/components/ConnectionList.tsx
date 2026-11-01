@@ -1,5 +1,5 @@
 import React from "react";
-import { KIND_LABELS, isForwardConnection } from "@/lib/sshTerms";
+import { KIND_LABELS, forwardEndpoint, isForwardConnection } from "@/lib/sshTerms";
 import { Connection, Credential, LayoutMode } from "@/types";
 import { Button } from "./ui/button";
 import { Badge } from "./ui/badge";
@@ -39,17 +39,16 @@ interface ConnectionListProps {
 
 function ConnIcon({ conn, className }: { conn: Connection; className?: string }) {
   const cls = cn("h-5 w-5 text-muted-foreground", className);
-  if (conn.type === "port_forward") return <Cable className={cls} aria-hidden="true" />;
+  if (isForwardConnection(conn)) return <Cable className={cls} aria-hidden="true" />;
   if (conn.type === "jump_shell") return <CornerDownRight className={cls} aria-hidden="true" />;
   return <Server className={cls} aria-hidden="true" />;
 }
 
 function describe(conn: Connection): React.ReactNode {
-  if (conn.type === "port_forward") {
+  if (isForwardConnection(conn)) {
     return (
       <>
-        127.0.0.1:{conn.local_port} → {conn.destination_host}:
-        {conn.destination_port} via {conn.gateway_host}
+        {forwardEndpoint(conn)} via {conn.gateway_host}
       </>
     );
   }

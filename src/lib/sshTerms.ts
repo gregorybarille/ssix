@@ -66,9 +66,17 @@ const FORWARD_HOP_TERMS: HopTerms = {
   targetPort: "Remote port",
 };
 
+/** `ssh -R` runs the other way: its far end is on this machine's side. */
+const REMOTE_FORWARD_HOP_TERMS: HopTerms = {
+  ...FORWARD_HOP_TERMS,
+  target: "Local target",
+  targetHost: "Local target host",
+  targetPort: "Local target port",
+};
+
 const HOP_TERMS: Record<TwoHopType, HopTerms> = {
   port_forward: FORWARD_HOP_TERMS,
-  remote_forward: FORWARD_HOP_TERMS,
+  remote_forward: REMOTE_FORWARD_HOP_TERMS,
   // A dynamic forward has no fixed far end; the SOCKS client names it.
   dynamic_forward: FORWARD_HOP_TERMS,
   jump_shell: {
@@ -84,6 +92,18 @@ const HOP_TERMS: Record<TwoHopType, HopTerms> = {
 
 export function hopTerms(type: TwoHopType): HopTerms {
   return HOP_TERMS[type];
+}
+
+/** What a forward carries, in one line, for lists and the Connect picker. */
+export function forwardEndpoint(conn: ForwardConnection): string {
+  switch (conn.type) {
+    case "port_forward":
+      return `127.0.0.1:${conn.local_port} → ${conn.destination_host}:${conn.destination_port}`;
+    case "remote_forward":
+      return `remote port ${conn.remote_port} → ${conn.destination_host}:${conn.destination_port}`;
+    case "dynamic_forward":
+      return `127.0.0.1:${conn.local_port} (SOCKS)`;
+  }
 }
 
 /** "SSH server host" → "SSH Server Host", for form labels. */

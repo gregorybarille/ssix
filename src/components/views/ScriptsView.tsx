@@ -270,7 +270,7 @@ function ScriptRunArea({
         <legend className="text-sm font-medium mb-2">Run on</legend>
         {hosts.length === 0 ? (
           <p className="text-sm text-muted-foreground">
-            No direct or jump host connections yet. Local forwards cannot run scripts.
+            No direct or jump host connections yet. Port forwards cannot run scripts.
           </p>
         ) : (
           <>

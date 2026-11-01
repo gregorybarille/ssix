@@ -40,6 +40,7 @@ import {
 import { useFieldErrors } from "@/hooks/useFieldErrors";
 import { credentialFieldErrors, type CredentialFieldKey } from "@/lib/credentialValidation";
 import { KIND_FLAGS, KIND_LABELS, hopTerms, isForwardType, titleCase } from "@/lib/sshTerms";
+import { mirroredEndpoint } from "./connection-form/endpoint";
 import { CONNECTION_KIND_TABS, ForwardKinds } from "./connection-form/ForwardKinds";
 import { AuthOptions } from "./connection-form/AuthOptions";
 import { SessionOptions } from "./connection-form/SessionOptions";
@@ -524,15 +525,10 @@ export function ConnectionForm({
           createdCredentialId = cred.id;
         }
 
-        // Mirror destination_host/port into top-level host/port for two-hop kinds so
-        // list views can keep displaying a meaningful "host" label; a dynamic
-        // forward has no destination, so its SSH server stands in.
-        const effectiveHost = isTwoHop
-          ? (formWithPorts.destination_host ?? formWithPorts.gateway_host ?? "")
-          : formWithPorts.host;
-        const effectivePort = isTwoHop
-          ? (formWithPorts.destination_port ?? formWithPorts.gateway_port ?? 22)
-          : formWithPorts.port;
+        const { host: effectiveHost, port: effectivePort } = mirroredEndpoint(
+          connectionType,
+          formWithPorts,
+        );
 
         // Audit-4 Phase 4b: build a flat draft, then narrow on `connectionType`
         // to a discriminated `Connection`. The `as Omit<Connection, "id">` casts

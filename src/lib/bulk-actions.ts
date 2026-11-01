@@ -109,7 +109,7 @@ export function planBulkUpload(
 }
 
 /** Why a forward is skipped by bulk SCP. */
-const FORWARD_SKIP_REASON = "Local forwards cannot transfer files";
+const FORWARD_SKIP_REASON = "Port forwards cannot transfer files";
 
 /**
  * Build the initial `BulkScpStep[]` for a download. Each step's

@@ -1,7 +1,7 @@
 /**
  * Backend event-name helpers.
  *
- * These mirror the helpers in `src-tauri/src/ssh.rs` (`forward_status_event`).
+ * These mirror the helpers in `src-tauri/src/forwards.rs` (`forward_status_event`).
  * Shell output and per-session `error` / `closed` notifications are not
  * events: they travel over the Tauri `Channel` created in
  * `src/lib/terminalOutput.ts` and passed to `ssh_connect`, so they stay
@@ -13,7 +13,7 @@
  * `ssix:` prefix for its DOM events — see `ssix:contextmenu`,
  * `ssix:terminal-paste`).
  *
- * Any rename here MUST be reflected in `src-tauri/src/ssh.rs` in the
+ * Any rename here MUST be reflected in `src-tauri/src/forwards.rs` in the
  * same commit. Both sides go through these helpers so the contract
  * is one-point.
  */

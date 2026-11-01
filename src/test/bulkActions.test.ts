@@ -80,7 +80,7 @@ describe("planBulkUpload", () => {
     );
     expect(plan[0].status).toBe("pending");
     expect(plan[1].status).toBe("skipped");
-    expect(plan[1].error).toMatch(/local forward/i);
+    expect(plan[1].error).toMatch(/port forward/i);
   });
 
   it("falls back to conn.remote_path when remotePath is unset", () => {
