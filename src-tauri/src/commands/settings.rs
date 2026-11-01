@@ -14,8 +14,20 @@ pub async fn save_settings(settings: AppSettings) -> Result<AppSettings, String>
     blocking(move || save_settings_sync(settings)).await
 }
 
+/// 0 turns keepalive off, as with OpenSSH's `ServerAliveInterval`.
+pub(crate) fn validate_keepalive_interval(seconds: u16) -> Result<(), String> {
+    if seconds > 3600 {
+        return Err("Keepalive interval must be at most 3600 seconds (0 turns it off)".to_string());
+    }
+    Ok(())
+}
+
 fn save_settings_sync(settings: AppSettings) -> Result<AppSettings, String> {
     validate_git_remote(&settings.git_sync_remote)?;
+    validate_keepalive_interval(settings.keepalive_interval)?;
+    if !(1..=20).contains(&settings.reconnect_max_attempts) {
+        return Err("Reconnect attempts must be between 1 and 20".to_string());
+    }
     if !(1..=720).contains(&settings.backup_interval_hours) {
         return Err("Backup interval must be between 1 and 720 hours".to_string());
     }
@@ -64,6 +76,23 @@ mod tests {
             };
             assert!(save_settings_sync(s).is_err(), "{hours}h keep {keep}");
         }
+    }
+
+    #[test]
+    fn save_settings_bounds_keepalive_and_reconnect() {
+        for (keepalive_interval, reconnect_max_attempts) in [(3601, 5), (30, 0), (30, 21)] {
+            let s = AppSettings {
+                keepalive_interval,
+                reconnect_max_attempts,
+                ..AppSettings::default()
+            };
+            assert!(
+                save_settings_sync(s).is_err(),
+                "keepalive {keepalive_interval} attempts {reconnect_max_attempts}"
+            );
+        }
+        assert!(validate_keepalive_interval(0).is_ok());
+        assert!(validate_keepalive_interval(3600).is_ok());
     }
 
     /// A remote or branch that git would parse as an option must never be
