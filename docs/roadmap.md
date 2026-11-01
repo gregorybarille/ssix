@@ -71,6 +71,26 @@ Merge order: B, A, C, D, F, G.
 | **F Snippets** | Snippet CRUD, `{{variable}}` prompts, Snippets view, palette that pastes into the active pane | `commands/snippets.rs`, `useSnippetsStore`, `views/SnippetsView.tsx`, `SnippetForm`, `SnippetPalette`, one shortcut | `18-snippets` |
 | **G Import** | Import from `~/.ssh/config` with preview, dedupe, mapping of forwards, ProxyJump, ProxyCommand, IdentityFile | `ssh_config.rs`, `commands/import_config.rs`, `ImportDialog.tsx`, Import button in `ConnectionsView` | `19-import` |
 
+Notes the foundation review left for the streams:
+
+- **A Auth** replaces the `AuthMethod::Agent` refusal in `authenticate()`,
+  and gives `CredentialForm` a full path for the agent kind: today an agent
+  credential opens with no active tab and has no submit branch.
+- **C Forwards** also fixes two bugs that predate the roadmap, both in
+  `forwards.rs`. Stopping a forward leaves clients already inside
+  `forward_bidi` tunnelling on their own session clone. An idle forward
+  never notices a dead SSH session, so it stays "running" and keeps
+  accepting clients it cannot serve.
+- **C Forwards** rebases on B, then edits only the two refusal arms in
+  `commands/ssh.rs`, which B owns. It no longer needs `useTerminalsStore`:
+  the foundation already routes every forward kind to the forwards store
+  and lists them in `PortForwardsView`. C still updates that view's
+  `ssh -L` heading and empty state, and `CONNECTION_KIND_TABS`.
+- **A and C** update `src/test/ConnectionFormAdvanced.test.tsx` when they
+  add tabs, because it pins today's lists.
+- **E Terminal UX** checks `color_scheme` against its palette list in
+  `ConnectionAdvanced::validate`; the foundation checks only its shape.
+
 ## Wave 2: two streams, each starting when its dependency has merged
 
 | Stream | Scope | After | Owns | E2E spec |
