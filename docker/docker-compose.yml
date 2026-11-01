@@ -18,7 +18,7 @@ services:
       - public
       - private_a
     ports:
-      - "2201:22"
+      - "${SSIX_PORT_PREFIX:-220}1:22"
     healthcheck:
       # busybox nc on alpine: -z probes the port without sending data.
       # Used by `docker compose up --wait` so CI / E2E doesn't race sshd
@@ -40,7 +40,7 @@ services:
       - public
       - private_b
     ports:
-      - "2202:22"
+      - "${SSIX_PORT_PREFIX:-220}2:22"
     healthcheck:
       test: ["CMD", "nc", "-z", "localhost", "22"]
       interval: 2s
@@ -58,7 +58,7 @@ services:
     networks:
       - private_a
     ports:
-      - "2203:22"
+      - "${SSIX_PORT_PREFIX:-220}3:22"
     healthcheck:
       test: ["CMD", "nc", "-z", "localhost", "22"]
       interval: 2s
@@ -76,7 +76,7 @@ services:
     networks:
       - private_b
     ports:
-      - "2204:22"
+      - "${SSIX_PORT_PREFIX:-220}4:22"
     healthcheck:
       test: ["CMD", "nc", "-z", "localhost", "22"]
       interval: 2s
@@ -97,7 +97,7 @@ services:
     networks:
       - public
     ports:
-      - "2205:22"
+      - "${SSIX_PORT_PREFIX:-220}5:22"
     healthcheck:
       test: ["CMD", "nc", "-z", "localhost", "22"]
       interval: 2s

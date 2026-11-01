@@ -141,24 +141,20 @@ worktree of this repo is the same project, `docker`. Running `npm run docker:up`
 `npm run docker:down` or `npm run e2e` in a second checkout recreates or removes the containers
 of the first and shares its cargo and `node_modules` volumes.
 
-To run side by side, give each checkout its own project name and move its published ports aside
-with an override file. The dockerized E2E runner reaches the servers by hostname on port 22, so
-the published ports do not matter to it:
-
-```yaml
-# compose.isolated.yml, kept outside the repo
-services:
-  server-a: { ports: !override ["127.0.0.1:22201:22"] }
-  server-b: { ports: !override ["127.0.0.1:22202:22"] }
-  server-c: { ports: !override ["127.0.0.1:22203:22"] }
-  server-d: { ports: !override ["127.0.0.1:22204:22"] }
-  server-e: { ports: !override ["127.0.0.1:22205:22"] }
-```
+To run side by side, give each checkout its own project name and port prefix:
 
 ```bash
-docker compose -p my-checkout --profile e2e -f docker/docker-compose.yml \
-  -f /path/to/compose.isolated.yml run --rm --build e2e-runner
+COMPOSE_PROJECT_NAME=ssix-auth SSIX_PORT_PREFIX=231 npm run e2e
+COMPOSE_PROJECT_NAME=ssix-auth npm run e2e:teardown
 ```
+
+- `COMPOSE_PROJECT_NAME` gives the checkout its own containers, networks and volumes. The first
+  run in a project builds from cold.
+- `SSIX_PORT_PREFIX` moves the published ports: `231` publishes `2311` to `2315`. It defaults to
+  `220`, which gives the usual `2201` to `2205`.
+- The dockerized runner reaches the servers by hostname on port 22, so it does not care about the
+  prefix. `npm run e2e:wdio` on the host expects the default ports.
+- Keep the project name on the teardown too, or it removes the default project's fixtures.
 
 ## Windows OpenSSH server (script tests)
 

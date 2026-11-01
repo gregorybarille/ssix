@@ -86,8 +86,23 @@ Merge order: B, A, C, D, F, G.
   `Cargo.toml`; the integrator re-resolves `Cargo.lock` at merge time.
 - Done means: `npm test`, `cargo test`, `npx tsc --noEmit`, generated
   types unchanged, a new E2E spec with unique connection and credential
-  names run locally with `npm run e2e`, a `docs/<feature>.md` plus one
-  link line in `docs/features.md` and the `AGENTS.md` index.
+  names run locally with the stream's isolated command below, a
+  `docs/<feature>.md` plus one link line in `docs/features.md` and the
+  `AGENTS.md` index.
+- Never run the Docker scripts without the stream's project name: the
+  default project holds the fixtures of the main checkout.
+
+  ```bash
+  COMPOSE_PROJECT_NAME=ssix-<stream> SSIX_PORT_PREFIX=<prefix> npm run e2e
+  COMPOSE_PROJECT_NAME=ssix-<stream> npm run e2e:teardown
+  ```
+
+  | Stream | Prefix | | Stream | Prefix |
+  |---|---|---|---|---|
+  | auth | 231 | | snippets | 235 |
+  | resilience | 232 | | import | 236 |
+  | forwards | 233 | | terminal-ux | 237 |
+  | sftp | 234 | | folders | 238 |
 - The `AGENTS.md` conventions apply unchanged: shared UI primitives,
   `aria-label` on icon buttons, `DialogDescription`, `ConfirmDialog` for
   destructive actions, `atomic_write` for every file write, no floating
