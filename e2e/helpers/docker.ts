@@ -47,7 +47,7 @@ export interface SshTarget {
  */
 const inside = process.env.E2E_INSIDE_DOCKER === "1";
 
-export const TARGETS: Record<"a" | "b" | "c" | "d", SshTarget> = {
+export const TARGETS: Record<"a" | "b" | "c" | "d" | "e", SshTarget> = {
   a: {
     host: inside ? "server-a" : "127.0.0.1",
     probeHost: inside ? "server-a" : "127.0.0.1",
@@ -85,6 +85,16 @@ export const TARGETS: Record<"a" | "b" | "c" | "d", SshTarget> = {
     user: "userd",
     password: "passd",
   },
+  e: {
+    // Keyboard-interactive only: `password` answers PAM's "Password:" prompt;
+    // the password auth method itself is refused.
+    host: inside ? "server-e" : "127.0.0.1",
+    probeHost: inside ? "server-e" : "127.0.0.1",
+    probePort: inside ? 22 : 2205,
+    sshPort: inside ? 22 : 2205,
+    user: "usere",
+    password: "passe",
+  },
 };
 
 function tcpPing(host: string, port: number, timeoutMs = 1000): Promise<boolean> {
@@ -110,7 +120,7 @@ function tcpPing(host: string, port: number, timeoutMs = 1000): Promise<boolean>
  * the test hang silently.
  */
 export async function waitForServers(
-  keys: ReadonlyArray<keyof typeof TARGETS> = ["a", "b", "c", "d"],
+  keys: ReadonlyArray<keyof typeof TARGETS> = ["a", "b", "c", "d", "e"],
   totalTimeoutMs = 60_000,
 ): Promise<void> {
   const deadline = Date.now() + totalTimeoutMs;

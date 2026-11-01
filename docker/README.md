@@ -1,6 +1,6 @@
 # SSH Test Environment
 
-Docker Compose setup for testing direct connections, local forwards (`ssh -L`), and jump host (`ssh -J`) connections.
+Docker Compose setup for testing direct connections, local forwards (`ssh -L`), remote forwards (`ssh -R`), jump host (`ssh -J`) connections and keyboard-interactive authentication.
 
 ## Architecture
 
@@ -11,15 +11,19 @@ Host machine
 │                       │
 │                       └── private_a network ──► server-c (userc / passc) [port 2203]
 │
-└── [port 2202] ──► server-b (userb / passb)
-                        │
-                        └── private_b network ──► server-d (userd / passd) [port 2204]
+├── [port 2202] ──► server-b (userb / passb)
+│                       │
+│                       └── private_b network ──► server-d (userd / passd) [port 2204]
+│
+└── [port 2205] ──► server-e (usere / passe, keyboard-interactive only)
 ```
 
-- All four servers are directly accessible from the host on their respective ports.
+- All five servers are directly accessible from the host on their respective ports.
 - **server-c** is additionally reachable through **server-a** via the `private_a` internal network (for testing local forwards and jump host connections).
 - **server-d** is additionally reachable through **server-b** via the `private_b` internal network.
 - All servers have `AllowTcpForwarding yes` in sshd, which local forwards and jump host connections need.
+- **server-a** also has `GatewayPorts clientspecified`, set by its `command:` in `docker-compose.yml`, so a remote forward can choose the address it binds on the server.
+- **server-e** offers keyboard-interactive and refuses the password method. It is built from `Dockerfile.kbdint`, which runs Alpine's PAM build of sshd (`sshd.pam`); the other servers share `Dockerfile`.
 
 ## Usage
 
@@ -35,12 +39,16 @@ ssh -p 2201 usera@localhost
 ssh -p 2202 userb@localhost
 ssh -p 2203 userc@localhost
 ssh -p 2204 userd@localhost
+ssh -p 2205 usere@localhost   # answers a "Password:" prompt from PAM
 
 # Reference: ssh jump connection (server-c via server-a)
 ssh -J usera@localhost:2201 userc@server-c
 
 # Reference: ssh local port forward (server-c:22 via server-a, exposed on host port 9001)
 ssh -L 9001:server-c:22 usera@localhost -p 2201 -N
+
+# Reference: ssh remote port forward, bound on all of server-a's interfaces
+ssh -R 0.0.0.0:9100:127.0.0.1:22 usera@localhost -p 2201 -N
 
 # Stop all servers
 npm run docker:down
@@ -97,6 +105,23 @@ Configure an SSIX connection:
 
 The terminal that opens is a shell on `server-c`, reached via `server-a`.
 
+## Testing keyboard-interactive authentication
+
+`server-e` stands in for servers that ask questions at login, as 2FA and OTP servers do. PAM
+sends one `Password:` prompt, and the answer is `passe`. To see what it offers, and that the
+password method is refused:
+
+```bash
+# Permission denied (publickey,keyboard-interactive).
+ssh -p 2205 -o PubkeyAuthentication=no -o PreferredAuthentications=none usere@localhost
+
+# Permission denied, without ever asking for a password.
+ssh -p 2205 -o PubkeyAuthentication=no -o PreferredAuthentications=password usere@localhost
+
+# Prompts, then logs in.
+ssh -p 2205 -o PubkeyAuthentication=no -o PreferredAuthentications=keyboard-interactive usere@localhost
+```
+
 ## Credentials
 
 > **Note:** These are test-only credentials for local development. Do not reuse them in any production environment.
@@ -107,6 +132,33 @@ The terminal that opens is a shell on `server-c`, reached via `server-a`.
 | server-b | `127.0.0.1` | userb    | passb    | 2202      | Direct, jump host or SSH server |
 | server-c | `127.0.0.1` | userc    | passc    | 2203      | Direct, or via server-a (local forward or jump host) |
 | server-d | `127.0.0.1` | userd    | passd    | 2204      | Direct, or via server-b (local forward or jump host) |
+| server-e | `127.0.0.1` | usere    | passe    | 2205      | Direct, keyboard-interactive only |
+
+## Running from several checkouts
+
+Compose names a project after the directory of its compose file, so every checkout and git
+worktree of this repo is the same project, `docker`. Running `npm run docker:up`,
+`npm run docker:down` or `npm run e2e` in a second checkout recreates or removes the containers
+of the first and shares its cargo and `node_modules` volumes.
+
+To run side by side, give each checkout its own project name and move its published ports aside
+with an override file. The dockerized E2E runner reaches the servers by hostname on port 22, so
+the published ports do not matter to it:
+
+```yaml
+# compose.isolated.yml, kept outside the repo
+services:
+  server-a: { ports: !override ["127.0.0.1:22201:22"] }
+  server-b: { ports: !override ["127.0.0.1:22202:22"] }
+  server-c: { ports: !override ["127.0.0.1:22203:22"] }
+  server-d: { ports: !override ["127.0.0.1:22204:22"] }
+  server-e: { ports: !override ["127.0.0.1:22205:22"] }
+```
+
+```bash
+docker compose -p my-checkout --profile e2e -f docker/docker-compose.yml \
+  -f /path/to/compose.isolated.yml run --rm --build e2e-runner
+```
 
 ## Windows OpenSSH server (script tests)
 

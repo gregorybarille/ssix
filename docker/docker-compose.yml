@@ -6,6 +6,16 @@ services:
         USER_NAME: usera
         USER_PASS: passa
     hostname: server-a
+    # Set here, not in the shared Dockerfile: only server-a is the fixture for
+    # remote forwards (ssh -R), whose clients choose the address to bind.
+    command:
+      - /usr/sbin/sshd
+      - -D
+      - -e
+      - -o
+      - AllowTcpForwarding=yes
+      - -o
+      - GatewayPorts=clientspecified
     networks:
       - public
       - private_a
@@ -76,6 +86,27 @@ services:
       retries: 15
       start_period: 2s
 
+  # Keyboard-interactive only: the "Password:" prompt comes from PAM, and the
+  # password method is off. The fixture for prompts answered in the terminal.
+  server-e:
+    build:
+      context: .
+      dockerfile: Dockerfile.kbdint
+      args:
+        USER_NAME: usere
+        USER_PASS: passe
+    hostname: server-e
+    networks:
+      - public
+    ports:
+      - "2205:22"
+    healthcheck:
+      test: ["CMD", "nc", "-z", "localhost", "22"]
+      interval: 2s
+      timeout: 2s
+      retries: 15
+      start_period: 2s
+
   # ---------------------------------------------------------------------
   # Opt-in E2E runner (see e2e/docker/Dockerfile + entrypoint.sh).
   # NOT started by `docker compose up` because of the `e2e` profile —
@@ -85,7 +116,7 @@ services:
   # or via `npm run e2e`.
   #
   # Attached to all three networks so it can reach every server by
-  # hostname (server-a..d). Cargo registry, target/ and node_modules
+  # hostname (server-a..e). Cargo registry, target/ and node_modules
   # live in named volumes so warm rebuilds stay fast.
   # ---------------------------------------------------------------------
   e2e-runner:
@@ -114,6 +145,8 @@ services:
       server-c:
         condition: service_healthy
       server-d:
+        condition: service_healthy
+      server-e:
         condition: service_healthy
 
 networks:
