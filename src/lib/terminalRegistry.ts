@@ -1,20 +1,61 @@
 import type { Terminal as XTerm } from "@xterm/xterm";
+import { useTerminalsStore } from "@/store/useTerminalsStore";
+import { errorMessage } from "./errors";
+import { log as appLog } from "./log";
+import { invoke } from "./tauri";
 
 /**
- * Live xterm instances by session id.
+ * Live xterm instances by session id, for code outside a `<Terminal>` that
+ * has to reach one: sending text to a session, finding the active one.
  *
  * The WebGL renderer draws to a canvas, so a terminal's text is no longer
  * in the DOM. The e2e suite reads it through `window.__ssixTerminalText`
- * instead; nothing else should depend on this.
+ * instead; nothing else should depend on that.
  */
 const terminals = new Map<string, XTerm>();
 
+/** The session that last had keyboard focus; survives focus moving to a palette or panel. */
+let lastFocusedSessionId: string | null = null;
+
+/** Call after `term.open()`: xterm has no input element to watch before that. */
 export function registerTerminal(sessionId: string, term: XTerm): void {
   terminals.set(sessionId, term);
+  term.textarea?.addEventListener("focus", () => {
+    lastFocusedSessionId = sessionId;
+  });
 }
 
 export function unregisterTerminal(sessionId: string): void {
   terminals.delete(sessionId);
+  if (lastFocusedSessionId === sessionId) lastFocusedSessionId = null;
+}
+
+/**
+ * Send text to a session as if it were typed: it goes straight to `ssh_write`,
+ * like keyboard input, and the remote shell echoes it. Terminal extensions'
+ * `onData` hooks do not run, so an extension can call this without looping.
+ *
+ * Returns whether the session has a live terminal to send to. A write that
+ * fails after that is logged; the session's `closed` notification follows it.
+ */
+export function writeToSession(sessionId: string, text: string): boolean {
+  if (!terminals.has(sessionId)) return false;
+  invoke("ssh_write", { sessionId, data: text }).catch((error) => {
+    appLog.error("terminal", `Could not write to the session: ${errorMessage(error)}`);
+  });
+  return true;
+}
+
+/**
+ * The live session of the active terminal tab: the pane that last had focus,
+ * otherwise the tab's first live pane. `null` when the active tab has none
+ * (no tab open, or only failed panes).
+ */
+export function activeSessionId(): string | null {
+  const { tabs, activeTabId } = useTerminalsStore.getState();
+  const panes = tabs.find((tab) => tab.id === activeTabId)?.panes ?? [];
+  const live = panes.map((pane) => pane.sessionId).filter((id) => terminals.has(id));
+  return live.find((id) => id === lastFocusedSessionId) ?? live[0] ?? null;
 }
 
 function bufferText(term: XTerm): string {

@@ -6,7 +6,15 @@ import { invoke } from "@/lib/tauri";
 import { attachOutput } from "@/lib/terminalOutput";
 import { registerTerminal, unregisterTerminal } from "@/lib/terminalRegistry";
 import { terminalTheme } from "@/lib/terminalTheme";
-import { AppSettings } from "@/types";
+import { AppSettings, Connection } from "@/types";
+import {
+  runTerminalCreate,
+  runTerminalData,
+  runTerminalDispose,
+  runTerminalOutput,
+  type TerminalExtensionContext,
+} from "./terminal/extensions";
+import "./terminal/registerExtensions";
 import "@xterm/xterm/css/xterm.css";
 
 /** Lines kept above the viewport. xterm's default (1000) is low for an SSH client. */
@@ -18,6 +26,8 @@ interface TerminalProps {
   isVisible: boolean;
   onDisconnect: () => void;
   settings?: AppSettings;
+  /** The saved connection behind this session, passed on to terminal extensions. */
+  connection?: Connection;
 }
 
 export interface TerminalPasteDetail {
@@ -26,7 +36,7 @@ export interface TerminalPasteDetail {
   sessionId?: string;
 }
 
-export function Terminal({ sessionId, isVisible, onDisconnect, settings }: TerminalProps) {
+export function Terminal({ sessionId, isVisible, onDisconnect, settings, connection }: TerminalProps) {
   const termRef = useRef<HTMLDivElement>(null);
   const xtermRef = useRef<XTerm | null>(null);
   const fitAddonRef = useRef<FitAddon | null>(null);
@@ -36,12 +46,12 @@ export function Terminal({ sessionId, isVisible, onDisconnect, settings }: Termi
   useEffect(() => {
     onDisconnectRef.current = onDisconnect;
   }, [onDisconnect]);
-  // Read by `onSelectionChange` so the setting toggle takes effect live
-  // without requiring the terminal to remount.
-  const autoCopyEnabledRef = useRef<boolean>(settings?.auto_copy_selection ?? false);
+  // Read through the extension context so a settings change reaches
+  // extensions live, without requiring the terminal to remount.
+  const settingsRef = useRef(settings);
   useEffect(() => {
-    autoCopyEnabledRef.current = settings?.auto_copy_selection ?? false;
-  }, [settings?.auto_copy_selection]);
+    settingsRef.current = settings;
+  }, [settings]);
 
   // Refit when becoming visible
   useEffect(() => {
@@ -164,8 +174,19 @@ export function Terminal({ sessionId, isVisible, onDisconnect, settings }: Termi
      * than one per keystroke. The `closed` notification follows shortly
      * on the output channel and triggers `onDisconnect()`.
      */
+    const extensionContext: TerminalExtensionContext = {
+      term,
+      sessionId,
+      connection,
+      get settings() {
+        return settingsRef.current;
+      },
+    };
+
     let writeFailed = false;
-    const dataDisposable = term.onData((data) => {
+    const dataDisposable = term.onData((input) => {
+      const data = runTerminalData(extensionContext, input);
+      if (data === null) return;
       invoke("ssh_write", { sessionId, data }).catch((err) => {
         if (!writeFailed) {
           writeFailed = true;
@@ -175,19 +196,8 @@ export function Terminal({ sessionId, isVisible, onDisconnect, settings }: Termi
       });
     });
 
-    /**
-     * Opt-in auto-copy (`settings.auto_copy_selection`, off by default):
-     * classic xterm behaviour of copying every selection immediately.
-     * `autoCopyEnabledRef` is read inside the disposable so the toggle takes
-     * effect without re-mounting the terminal.
-     */
-    const selectionDisposable = term.onSelectionChange(() => {
-      if (!autoCopyEnabledRef.current) return;
-      const sel = term.getSelection();
-      if (sel) {
-        navigator.clipboard.writeText(sel).catch(() => {});
-      }
-    });
+    // Before the output is attached below: buffered output replays at once.
+    runTerminalCreate(extensionContext);
 
     // Right-click paste: App.tsx dispatches this with the session id of the
     // terminal under the cursor. Only that terminal pastes.
@@ -201,7 +211,10 @@ export function Terminal({ sessionId, isVisible, onDisconnect, settings }: Termi
     // over the IPC channel created at connect time, buffered by the sink
     // until this terminal attaches, so nothing is lost on a late mount.
     const detachOutput = attachOutput(sessionId, {
-      write: (bytes) => term.write(bytes),
+      write: (bytes) => {
+        term.write(bytes);
+        runTerminalOutput(extensionContext, bytes);
+      },
       onEvent: (event) => {
         if (event.kind === "error") {
           term.write(`\r\n\x1b[31mSSH Error: ${event.message}\x1b[0m\r\n`);
@@ -225,7 +238,7 @@ export function Terminal({ sessionId, isVisible, onDisconnect, settings }: Termi
 
     return () => {
       dataDisposable.dispose();
-      selectionDisposable.dispose();
+      runTerminalDispose(extensionContext);
       window.removeEventListener("ssix:terminal-paste", pasteHandler);
       detachOutput();
       resizeObserver.disconnect();
