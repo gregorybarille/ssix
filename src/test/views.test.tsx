@@ -7,9 +7,9 @@ import { VIEWS } from "@/lib/views";
 
 const { extraView } = vi.hoisted(() => ({
   extraView: {
-    id: "files",
-    label: "Files",
-    description: "Browse remote files",
+    id: "probe_view",
+    label: "Probe",
+    description: "A view only this test knows",
     placement: "main",
     shortcutHint: "Cmd+Shift+F",
   },
@@ -50,18 +50,21 @@ describe("Sidebar from the view table", () => {
       .getAllByRole("button")
       .map((button) => button.dataset.testid);
 
+  // Checks relative order, so a stream adding a real view does not edit this list.
   it("keeps the buttons in place, with a new main view after the existing ones", () => {
     render(<Sidebar active="connections" onNavigate={vi.fn()} terminalCount={1} />);
-    expect(buttonIds()).toEqual([
+    const fixed = [
       "nav-connections",
       "nav-forwards",
       "nav-credentials",
       "nav-scripts",
       "nav-logs",
-      "nav-files",
       "nav-terminals",
       "nav-git-sync",
-    ]);
+    ];
+    const ids = buttonIds();
+    expect(ids.filter((id) => fixed.includes(id ?? ""))).toEqual(fixed);
+    expect(ids.indexOf("nav-probe-view")).toBe(ids.indexOf("nav-terminals") - 1);
   });
 
   it("gives Settings no sidebar button: it lives in the title bar", () => {
@@ -79,11 +82,11 @@ describe("Sidebar from the view table", () => {
 
   it("adds a view's shortcut hint to its tooltip", async () => {
     render(<Sidebar active="connections" onNavigate={vi.fn()} />);
-    const button = screen.getByTestId("nav-files");
-    expect(button).toHaveAttribute("aria-label", "Files");
+    const button = screen.getByTestId("nav-probe-view");
+    expect(button).toHaveAttribute("aria-label", "Probe");
     act(() => button.focus());
-    const tooltip = await screen.findByTestId("nav-files-tooltip");
-    expect(within(tooltip).getByText("Browse remote files")).toBeInTheDocument();
+    const tooltip = await screen.findByTestId("nav-probe-view-tooltip");
+    expect(within(tooltip).getByText("A view only this test knows")).toBeInTheDocument();
     expect(within(tooltip).getByText("Cmd+Shift+F")).toBeInTheDocument();
   });
 });
