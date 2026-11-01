@@ -9,18 +9,19 @@ Host machine
 │
 ├── [port 2201] ──► server-a (usera / passa)
 │                       │
-│                       └── private_a network ──► server-c (userc / passc) [port 2203]
+│                       └── private_a network ──► server-c (userc / passc)
 │
 ├── [port 2202] ──► server-b (userb / passb)
 │                       │
-│                       └── private_b network ──► server-d (userd / passd) [port 2204]
+│                       └── private_b network ──► server-d (userd / passd)
 │
 └── [port 2205] ──► server-e (usere / passe, keyboard-interactive only)
 ```
 
-- All five servers are directly accessible from the host on their respective ports.
-- **server-c** is additionally reachable through **server-a** via the `private_a` internal network (for testing local forwards and jump host connections).
-- **server-d** is additionally reachable through **server-b** via the `private_b` internal network.
+- **server-a**, **server-b** and **server-e** are directly accessible from the host on their respective ports.
+- **server-c** and **server-d** sit only on internal networks, so Docker does not publish the ports the compose file lists for them. Reach them through a jump host.
+- **server-c** is reachable through **server-a** via the `private_a` internal network (for testing local forwards and jump host connections).
+- **server-d** is reachable through **server-b** via the `private_b` internal network.
 - All servers have `AllowTcpForwarding yes` in sshd, which local forwards and jump host connections need.
 - **server-a** also has `GatewayPorts clientspecified`, set by its `command:` in `docker-compose.yml`, so a remote forward can choose the address it binds on the server.
 - **server-e** offers keyboard-interactive and refuses the password method. It is built from `Dockerfile.kbdint`, which runs Alpine's PAM build of sshd (`sshd.pam`); the other servers share `Dockerfile`.
@@ -37,8 +38,6 @@ npm run dev:full
 # Direct connections
 ssh -p 2201 usera@localhost
 ssh -p 2202 userb@localhost
-ssh -p 2203 userc@localhost
-ssh -p 2204 userd@localhost
 ssh -p 2205 usere@localhost   # answers a "Password:" prompt from PAM
 
 # Reference: ssh jump connection (server-c via server-a)
@@ -130,8 +129,8 @@ ssh -p 2205 -o PubkeyAuthentication=no -o PreferredAuthentications=keyboard-inte
 |----------|-------------|----------|----------|-----------|-------------------------------|
 | server-a | `127.0.0.1` | usera    | passa    | 2201      | Direct, jump host or SSH server |
 | server-b | `127.0.0.1` | userb    | passb    | 2202      | Direct, jump host or SSH server |
-| server-c | `127.0.0.1` | userc    | passc    | 2203      | Direct, or via server-a (local forward or jump host) |
-| server-d | `127.0.0.1` | userd    | passd    | 2204      | Direct, or via server-b (local forward or jump host) |
+| server-c | `server-c`  | userc    | passc    | 22        | Via server-a only (local forward or jump host) |
+| server-d | `server-d`  | userd    | passd    | 22        | Via server-b only (local forward or jump host) |
 | server-e | `127.0.0.1` | usere    | passe    | 2205      | Direct, keyboard-interactive only |
 
 ## Running from several checkouts
@@ -150,8 +149,9 @@ COMPOSE_PROJECT_NAME=ssix-auth npm run e2e:teardown
 
 - `COMPOSE_PROJECT_NAME` gives the checkout its own containers, networks and volumes. The first
   run in a project builds from cold.
-- `SSIX_PORT_PREFIX` moves the published ports: `231` publishes `2311` to `2315`. It defaults to
-  `220`, which gives the usual `2201` to `2205`.
+- `SSIX_PORT_PREFIX` moves the published ports: with `231`, server-a is on `2311`, server-b on
+  `2312` and server-e on `2315`. It defaults to `220`, which gives the usual `2201`, `2202` and
+  `2205`.
 - The dockerized runner reaches the servers by hostname on port 22, so it does not care about the
   prefix. `npm run e2e:wdio` on the host expects the default ports.
 - Keep the project name on the teardown too, or it removes the default project's fixtures.
