@@ -31,31 +31,22 @@ import { useDialogsStore } from "./store/useDialogsStore";
 import { useTerminalsStore } from "./store/useTerminalsStore";
 import { usePortForwardsStore } from "./store/usePortForwardsStore";
 import { useApplySettings } from "./hooks/useApplySettings";
-import { useGlobalShortcuts } from "./hooks/useGlobalShortcuts";
+import { TABLE_SHORTCUTS, useGlobalShortcuts } from "./hooks/useGlobalShortcuts";
 import { useScreenshotToast } from "./hooks/useScreenshotToast";
 import { useShallow } from "zustand/react/shallow";
 import { log as appLog } from "./lib/log";
 import { Connection, ConnectionInput, Credential, LayoutMode } from "./types";
 import { connectMany } from "./lib/bulk-actions";
 import type { TagGroup } from "./lib/tags";
+import { VIEWS } from "./lib/views";
 
 /**
- * Settings, Git-Sync, Logs, Scripts and the SCP dialogs are leaf views the user
- * opens infrequently and that pull in sizeable component trees.
- * Lazy-loading them keeps the initial bundle small and shifts their
- * cost to first use.
+ * Settings and the SCP dialogs are opened infrequently and pull in sizeable
+ * component trees. Lazy-loading them keeps the initial bundle small and
+ * shifts their cost to first use, like the views in `lib/views.ts`.
  */
 const SettingsPanel = lazy(() =>
   import("./components/SettingsPanel").then((m) => ({ default: m.SettingsPanel })),
-);
-const GitSyncView = lazy(() =>
-  import("./components/GitSyncView").then((m) => ({ default: m.GitSyncView })),
-);
-const LogsView = lazy(() =>
-  import("./components/LogsView").then((m) => ({ default: m.LogsView })),
-);
-const ScriptsView = lazy(() =>
-  import("./components/views/ScriptsView").then((m) => ({ default: m.ScriptsView })),
 );
 const ScpDialog = lazy(() =>
   import("./components/ScpDialog").then((m) => ({ default: m.ScpDialog })),
@@ -77,6 +68,7 @@ const BulkScpDialog = lazy(() =>
 function App() {
   const view = useViewStore((s) => s.view);
   const setView = useViewStore((s) => s.setView);
+  const currentView = VIEWS.find((v) => v.id === view);
 
   // Select only what App renders. Store actions are stable, so these
   // shallow selectors keep `isLoading`/`error` flips in the stores from
@@ -147,7 +139,6 @@ function App() {
   const connect = useTerminalsStore((s) => s.connect);
   const closePane = useTerminalsStore((s) => s.closePane);
   const closeTab = useTerminalsStore((s) => s.closeTab);
-  const selectTabByIndex = useTerminalsStore((s) => s.selectTabByIndex);
   const forwardSessions = usePortForwardsStore((s) => s.sessions);
   const stopForward = usePortForwardsStore((s) => s.stopForward);
 
@@ -392,28 +383,19 @@ function App() {
   const gitPending =
     gitSyncStatus.has_local_changes || gitSyncStatus.has_remote_changes;
 
-  // Global keyboard shortcuts. The hook reads the latest map from a ref,
-  // so these closures can be rebuilt each render and still see fresh state.
+  // Global keyboard shortcuts: the table, plus what needs App's handlers. The
+  // hook reads the latest map from a ref, so these closures can be rebuilt each
+  // render and still see fresh state.
   useGlobalShortcuts({
-    "mod+k": () => dialogs.setPickerOpen(true),
+    ...TABLE_SHORTCUTS,
     "mod+n": () => {
       setView("connections");
       dialogs.openNewConnection();
     },
-    "mod+,": () => setView("settings"),
     "mod+w": () => {
       if (view !== "terminals" || !activeTabId) return;
       handleCloseTabRequest(activeTabId);
     },
-    "mod+1": () => selectTabByIndex(0),
-    "mod+2": () => selectTabByIndex(1),
-    "mod+3": () => selectTabByIndex(2),
-    "mod+4": () => selectTabByIndex(3),
-    "mod+5": () => selectTabByIndex(4),
-    "mod+6": () => selectTabByIndex(5),
-    "mod+7": () => selectTabByIndex(6),
-    "mod+8": () => selectTabByIndex(7),
-    "mod+9": () => selectTabByIndex(8),
   });
 
   return (
@@ -492,19 +474,12 @@ function App() {
                   />
                 )}
 
-                {view === "scripts" && (
-                  <Suspense fallback={<ViewFallback label="Loading scripts…" />}>
-                    <ScriptsView />
-                  </Suspense>
-                )}
-                {view === "logs" && (
-                  <Suspense fallback={<ViewFallback label="Loading logs…" />}>
-                    <LogsView />
-                  </Suspense>
-                )}
-                {view === "git_sync" && (
-                  <Suspense fallback={<ViewFallback label="Loading git sync…" />}>
-                    <GitSyncView />
+                {/* Views that take no props: rendered from the table in lib/views.ts. */}
+                {currentView?.component && (
+                  <Suspense
+                    fallback={<ViewFallback label={`Loading ${currentView.label.toLowerCase()}…`} />}
+                  >
+                    <currentView.component />
                   </Suspense>
                 )}
                 {view === "settings" && (

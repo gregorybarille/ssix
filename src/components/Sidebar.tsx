@@ -1,17 +1,7 @@
 import React from "react";
-import { Server, Key, TerminalSquare, Cable, ScrollText, GitBranch, FileCode } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { VIEWS, type NavItem, type ViewDefinition, type ViewPlacement } from "@/lib/views";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
-
-export type NavItem =
-  | "connections"
-  | "credentials"
-  | "forwards"
-  | "scripts"
-  | "logs"
-  | "git_sync"
-  | "settings"
-  | "terminals";
 
 interface SidebarProps {
   active: NavItem;
@@ -25,43 +15,11 @@ interface SidebarProps {
  * `hint` is the one line under the name in each button's tooltip: the
  * icons alone do not tell a new user what is behind them.
  */
-const navItems: { id: NavItem; label: string; hint: string; icon: React.ReactNode }[] = [
-  {
-    id: "connections",
-    label: "Connections",
-    hint: "Your saved hosts: open a terminal, transfer files",
-    icon: <Server className="h-5 w-5" aria-hidden="true" />,
-  },
-  {
-    id: "forwards",
-    label: "Port forwards",
-    hint: "Local forwards (ssh -L) and whether they are running",
-    icon: <Cable className="h-5 w-5" aria-hidden="true" />,
-  },
-  {
-    id: "credentials",
-    label: "Credentials",
-    hint: "Passwords and SSH keys used to log in",
-    icon: <Key className="h-5 w-5" aria-hidden="true" />,
-  },
-  {
-    id: "scripts",
-    label: "Scripts",
-    hint: "Saved scripts to run on several hosts at once",
-    icon: <FileCode className="h-5 w-5" aria-hidden="true" />,
-  },
-  {
-    id: "logs",
-    label: "Logs",
-    hint: "What the app and your connections did",
-    icon: <ScrollText className="h-5 w-5" aria-hidden="true" />,
-  },
-];
-
 function NavButton({
   active,
   label,
   hint,
+  shortcutHint,
   onClick,
   icon,
   badge,
@@ -71,6 +29,7 @@ function NavButton({
   active: boolean;
   label: string;
   hint: string;
+  shortcutHint?: string;
   onClick: () => void;
   icon: React.ReactNode;
   badge?: number;
@@ -134,6 +93,7 @@ function NavButton({
       <TooltipContent side="right" data-testid={testId ? `${testId}-tooltip` : undefined}>
         <p className="font-medium">{label}</p>
         <p className="text-muted-foreground">{hint}</p>
+        {shortcutHint && <p className="text-muted-foreground-soft">{shortcutHint}</p>}
       </TooltipContent>
     </Tooltip>
   );
@@ -146,6 +106,30 @@ export function Sidebar({
   forwardCount = 0,
   gitPending = false,
 }: SidebarProps) {
+  // The live state a button shows on top of what the view table says about it.
+  const badges: Partial<Record<NavItem, number>> = {
+    forwards: forwardCount,
+    terminals: terminalCount,
+  };
+  const dots: Partial<Record<NavItem, boolean>> = { git_sync: gitPending };
+
+  const navButton = (view: ViewDefinition<NavItem>) => (
+    <NavButton
+      key={view.id}
+      active={active === view.id}
+      label={view.label}
+      hint={view.description}
+      shortcutHint={view.shortcutHint}
+      onClick={() => onNavigate(view.id)}
+      icon={<view.icon className="h-5 w-5" aria-hidden="true" />}
+      badge={badges[view.id]}
+      dot={dots[view.id]}
+      testId={`nav-${view.id.replace("_", "-")}`}
+    />
+  );
+  const placedIn = (placement: ViewPlacement) =>
+    VIEWS.filter((view) => view.placement === placement).map(navButton);
+
   return (
     <aside
       /*
@@ -162,18 +146,7 @@ export function Sidebar({
     >
       <TooltipProvider>
         <nav aria-label="Primary" className="contents">
-          {navItems.map(({ id, label, hint, icon }) => (
-            <NavButton
-              key={id}
-              active={active === id}
-              label={label}
-              hint={hint}
-              onClick={() => onNavigate(id)}
-              icon={icon}
-              badge={id === "forwards" ? forwardCount : undefined}
-              testId={`nav-${id.replace("_", "-")}`}
-            />
-          ))}
+          {placedIn("main")}
 
           {terminalCount > 0 && (
             <>
@@ -181,29 +154,11 @@ export function Sidebar({
                 className="w-6 border-t border-border my-1"
                 aria-hidden="true"
               />
-              <NavButton
-                active={active === "terminals"}
-                label="Terminals"
-                hint="The terminals you have open"
-                onClick={() => onNavigate("terminals")}
-                icon={<TerminalSquare className="h-5 w-5" aria-hidden="true" />}
-                badge={terminalCount}
-                testId="nav-terminals"
-              />
+              {placedIn("sessions")}
             </>
           )}
 
-          <div className="mt-auto pt-2">
-            <NavButton
-              active={active === "git_sync"}
-              label="Git Sync"
-              hint="Export your connections and settings to a git repository"
-              onClick={() => onNavigate("git_sync")}
-              icon={<GitBranch className="h-5 w-5" aria-hidden="true" />}
-              dot={gitPending}
-              testId="nav-git-sync"
-            />
-          </div>
+          <div className="mt-auto pt-2">{placedIn("footer")}</div>
         </nav>
       </TooltipProvider>
     </aside>

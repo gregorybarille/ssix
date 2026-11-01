@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import type { NavItem } from "@/components/Sidebar";
+import type { NavItem } from "@/lib/views";
 import type { FormSwitchGuard } from "@/store/useDialogsStore";
 
 /**

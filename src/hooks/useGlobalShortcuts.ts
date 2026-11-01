@@ -2,6 +2,11 @@ import { isTypingSurface } from "@/lib/focus";
 
 export { isTypingSurface };
 import { useEffect, useRef } from "react";
+import { useDialogsStore } from "@/store/useDialogsStore";
+import { useTerminalsStore } from "@/store/useTerminalsStore";
+import { useViewStore } from "@/store/useViewStore";
+// roadmap:snippets
+// roadmap:terminal-ux
 
 /**
  * Map of normalized shortcut → handler. Keys use this format:
@@ -28,6 +33,48 @@ export interface ShortcutBinding {
   allowInTypingSurface?: boolean;
 }
 export type ShortcutMap = Record<string, ShortcutHandler | ShortcutBinding>;
+
+/** One row of the shortcut table. */
+export interface ShortcutEntry extends ShortcutBinding {
+  /** Normalized as described above, e.g. `"mod+shift+n"`. */
+  combo: string;
+  /** What it does, in a few words. Users learn it from `docs/features.md`: add it there too. */
+  description: string;
+}
+
+/**
+ * The app's shortcuts. Add one with an entry under your stream's anchor: the
+ * handler calls a store through `getState()` and the listener needs no change.
+ * Only a shortcut that needs App's own handlers stays in the map App passes
+ * to `useGlobalShortcuts`, which wins over this table for the same combo.
+ */
+export const SHORTCUTS: readonly ShortcutEntry[] = [
+  {
+    combo: "mod+k",
+    description: "Quick connect",
+    handler: () => useDialogsStore.getState().setPickerOpen(true),
+  },
+  {
+    combo: "mod+,",
+    description: "Open settings",
+    handler: () => useViewStore.getState().setView("settings"),
+  },
+  ...[1, 2, 3, 4, 5, 6, 7, 8, 9].map((n) => ({
+    combo: `mod+${n}`,
+    description: `Go to terminal tab ${n}`,
+    handler: () => useTerminalsStore.getState().selectTabByIndex(n - 1),
+  })),
+  // roadmap:snippets
+  // roadmap:terminal-ux
+];
+
+/** `SHORTCUTS` in the form `useGlobalShortcuts` takes. */
+export const TABLE_SHORTCUTS: ShortcutMap = Object.fromEntries(
+  SHORTCUTS.map(({ combo, handler, allowInTypingSurface }) => [
+    combo,
+    { handler, allowInTypingSurface },
+  ]),
+);
 
 const isMac = (() => {
   if (typeof navigator === "undefined") return false;
