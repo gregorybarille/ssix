@@ -10,7 +10,9 @@ SSIX is a Tauri v2 desktop application with a React frontend and a Rust backend.
 - `src/components/views/` holds the tab-level views (`ConnectionsView`, `CredentialsView`, `ScriptsView`); `src/components/` contains the remaining UI components and feature views.
 - `src/hooks/` holds reusable React hooks (`useGlobalShortcuts`, `useRovingFocus`, `useUnsavedChangesGuard`, `useLeaveViewGuard`, `useScreenshotToast`, `useApplySettings`, `useDebouncedCallback`).
 - `src/lib/` holds pure helpers shared across components (`search.ts` for the connection filter, `terminalTheme.ts` for the xterm palettes, `port.ts`, `hostKey.ts`, ...).
+- `src/lib/views.ts` lists every view; the sidebar, the `NavItem` type and the routes of views that take no props follow from it (see Extension Points).
 - `src/components/ui/` contains shared Radix-based primitives (including `tooltip.tsx`, used for the sidebar's labels).
+- `src/components/connection-form/`, `src/components/credential-form/` and `src/components/settings/` hold the parts of the two forms and the settings panel that feature work extends; `src/components/terminal/` holds the terminal extension registry and its extensions (see Extension Points).
 - `src/store/` contains Zustand stores that act as the async boundary for the UI. A store's `error` holds the last *load* failure only; views render it with the shared `ErrorBanner` (Retry re-runs the fetch) so a failed load never looks like an empty list. Mutations called from forms and confirm dialogs pass `runAsyncRethrow(..., { recordError: false })`: the caller shows the error and nothing lingers in `error` after the form closes. The Git Sync store is the exception and records action errors too, since its view is where they are shown.
 - `src/lib/tauri.ts` (`invoke`) and `src/lib/terminalOutput.ts` (`createOutputChannel`) call `assertTauriRuntime()` from `src/lib/runtime.ts` first, so outside the desktop webview every backend call rejects with one readable message instead of the bridge's `__TAURI_INTERNALS__ is undefined` TypeError.
 - `src/lib/tauri.ts` lazy-loads Tauri `invoke()` so frontend tests can mock it.
@@ -23,7 +25,8 @@ SSIX is a Tauri v2 desktop application with a React frontend and a Rust backend.
 - `src-tauri/src/storage.rs` loads and saves `~/.ssix/data.json`.
 - `src-tauri/src/keychain.rs` stores secret material in `~/.ssix/secrets.json`.
 - `src-tauri/src/commands/` contains domain-specific Tauri commands.
-- `src-tauri/src/ssh.rs` handles shell sessions, local forwards (`ssh -L`), jump host bridging (`ssh -J`), and SSH I/O loops.
+- `src-tauri/src/ssh.rs` handles shell sessions, authentication, jump host bridging (`ssh -J`), and SSH I/O loops.
+- `src-tauri/src/forwards.rs` handles local forwards (`ssh -L`): `start_port_forward`, `open_direct_tcpip`, `ForwardStatus` and the `ssix:forward:status:{id}` event. It builds on the `pub(crate)` session helpers in `ssh.rs` (`connect_endpoint`, `authenticate`, `open_authenticated_session_over_stream`, `open_hop_session`, `forward_bidi`).
 - `src-tauri/src/known_hosts.rs` verifies server host keys (trust-on-first-use) against `~/.ssix/known_hosts`.
 - `src-tauri/src/remote_script.rs` runs a saved script on an authenticated session (see Script Runs).
 
@@ -33,7 +36,7 @@ UI -> Zustand store -> `invoke()` -> Tauri command -> storage / SSH subsystem ->
 
 ## Persistence Model
 
-- `AppData` stores credentials, connections, settings and scripts in a single JSON document.
+- `AppData` stores credentials, connections, settings, scripts and snippets in a single JSON document. Every field added since the first release has a serde default, so an older file loads unchanged.
 - `storage.rs` keeps the parsed document in memory, keyed by path and mtime, so reads never touch disk unless the file changed underneath the app; every write goes through `atomic_write` and refreshes the cache.
 - Secrets are stored separately from the main JSON file. A credential's secrets are read and replaced as one unit (`keychain::snapshot_for_credential` / `replace_for_credential`); commands that change a credential snapshot first and restore on a failed save so `data.json` and `secrets.json` never disagree. A corrupt secrets file is reported as such instead of being treated as empty.
 - Secrets never reach the frontend store. `get_credentials`, `add_credential` and `update_credential` return redacted credentials (password `""`, no inline key or passphrase; `private_key_path` is kept because a path is not a secret). The credential edit form fetches one credential's secrets with `get_credential_secrets(id)` when it opens and drops them when it closes; `update_credential` takes `keep_secrets`, set by the form whenever the secret fields were not changed (or could not be loaded), so unchanged secrets are never sent back and a failed fetch can never wipe them. Every backend consumer that needs real secrets (SSH/SCP auth, key install, connection cloning, sync-export redaction) resolves them server-side through `keychain::enrich_credential` / `snapshot_for_credential`.
@@ -59,10 +62,31 @@ The stored fields keep their original names: `gateway_*` is the first hop
 (the SSH server of a local forward, the jump host of a jump connection) and
 `destination_*` the far end (the remote host or the target).
 
+- `remote_forward` (`ssh -R`) and `dynamic_forward` (`ssh -D`) are saved like a local forward and validated the same way, but cannot be started yet: `ssh_connect` refuses them, and the connection form does not offer them. `ConnectionKind::is_forward()` and `isForwardConnection` (`src/lib/sshTerms.ts`) group the three kinds; none is a target for SCP or bulk connect.
 - Local forwards bind to `127.0.0.1:<local_port>`. The SSH server session runs non-blocking so clients never stall each other; each client's `direct-tcpip` channel is opened with EAGAIN retries and forwarded by a thread that sleeps in `poll(2)` on both sockets.
 - Jump host shells and SCP share `bridge_via_jump_host`, which returns a loopback stream only once the jump host's channel is open (no handshake/bridge race) and times out instead of hanging if the jump host never answers.
 - Jump host connections bridge through the jump host and then establish the target's SSH session behind it.
 - Forward sessions appear in the Port forwards view, not in the shell tab bar.
+
+## Extension Points
+
+Files that many features would otherwise edit at once are registries: a feature adds an entry or a file, and the code that consumes them stays as it is. Shared lists carry `// roadmap:<stream>` anchors (`auth`, `resilience`, `forwards`, `sftp`, `snippets`, `import`, `terminal-ux`, `folders`; see `docs/roadmap.md`); a stream appends directly under its own anchor so merges do not conflict. They appear in `generate_handler![]` (`src-tauri/src/lib.rs`), `e2e/helpers/selectors.ts`, `src/lib/views.ts`, `src/hooks/useGlobalShortcuts.ts` and `src/components/terminal/registerExtensions.ts`.
+
+| To add | Add it to | Consumed by |
+|---|---|---|
+| A view | An entry in `VIEW_TABLE` in `src/lib/views.ts`: `id`, `label`, `description`, `icon`, `placement`, a lazy `component`, optional `shortcutHint` | `Sidebar.tsx` (button, tooltip, test id `nav-<id>`), `useViewStore.ts` (`NavItem`), `App.tsx` (route) |
+| A keyboard shortcut | An entry in `SHORTCUTS` in `src/hooks/useGlobalShortcuts.ts`: `combo`, `description`, `handler` calling a store through `getState()` | `App.tsx` spreads the table (`TABLE_SHORTCUTS`) into `useGlobalShortcuts` |
+| Terminal behaviour | A `TerminalExtension` in its own file under `src/components/terminal/`, registered in `registerExtensions.ts` | `Terminal.tsx`, through the `runTerminal*` helpers in `extensions.ts` |
+| A per-connection option | A field on `ConnectionAdvanced` (`src/types/index.ts`, `commands/connections.rs`) and an input in its section under `src/components/connection-form/` | `ConnectionForm.tsx` carries the `advanced` object through load, the unsaved-changes guard and submit |
+| A connection kind's fields | `CONNECTION_KIND_TABS` and the `ForwardKinds` component in `src/components/connection-form/ForwardKinds.tsx` | `ConnectionForm.tsx` |
+| A credential kind | An entry in `CREDENTIAL_KIND_TABS` in `src/components/credential-form/kinds.ts` | `CredentialForm.tsx` |
+| A setting | A control in its section under `src/components/settings/`, through `SettingsSectionProps` | `SettingsPanel.tsx`, which owns the debounce and the save queue |
+
+- **Views.** Views that `App.tsx` passes props to (connections, credentials, port forwards, settings, terminals) have no `component` and keep their own branch in `App.tsx`; `src/test/views.test.tsx` fails if a view has neither. `placement` picks the button's place: `main`, `sessions` (only while terminals are open), `footer`, or `titlebar` (no sidebar button).
+- **Shortcuts.** `mod+n` and `mod+w` stay in the map `App.tsx` passes because they call its handlers. That map wins over the table for the same combo.
+- **Terminal extensions.** Each hook receives a `TerminalExtensionContext`: `term`, `sessionId`, `connection`, and `settings`, a getter that follows live changes. `onCreate` runs after the terminal is opened and before any buffered output is replayed; `onData` can rewrite or swallow input (return `null`); `onOutput` observes each chunk after xterm received it; `dispose` runs on unmount, before xterm is disposed. Hooks run in registration order, except `dispose`, which runs in reverse. A hook that throws is logged and skipped, and input it was given still goes through. `autoCopySelection.ts` is the reference extension.
+- **Reaching a session from outside its terminal.** `writeToSession(id, text)` in `src/lib/terminalRegistry.ts` sends text through `ssh_write` like keyboard input, without running `onData` hooks, and returns false when the session has no live terminal. `activeSessionId()` returns the active tab's pane that last had focus, which survives focus moving to a palette or panel, otherwise its first live pane.
+- **Form and settings sections.** `AuthOptions`, `SessionOptions` and `TerminalOptions` (connection form) and `SessionSection` (settings) render nothing until their stream fills them. Each file's comment names the fields it owns.
 
 ## Script Runs
 
