@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { cn } from "@/lib/utils";
 
@@ -189,13 +189,17 @@ export function ContextMenu({
     queueMicrotask(() => item.onClick());
   };
 
-  // Clamp position inside the viewport. Use real measured size if mounted;
-  // otherwise fall back to a conservative estimate so the first paint is
-  // already on-screen.
-  const MENU_W = menuRef.current?.offsetWidth ?? 200;
-  const MENU_H = menuRef.current?.offsetHeight ?? items.length * 32 + 8;
-  const x = Math.max(4, Math.min(position.x, window.innerWidth - MENU_W - 8));
-  const y = Math.max(4, Math.min(position.y, window.innerHeight - MENU_H - 8));
+  // Clamp position inside the viewport, from the menu's real size, measured
+  // before it paints. An estimate left in place would only give way at the next
+  // render, which the first hover causes: the menu would jump, and another item
+  // would be under the pointer as it presses.
+  const [size, setSize] = useState({ width: 200, height: items.length * 32 + 8 });
+  useLayoutEffect(() => {
+    const element = menuRef.current;
+    if (element) setSize({ width: element.offsetWidth, height: element.offsetHeight });
+  }, [items.length]);
+  const x = Math.max(4, Math.min(position.x, window.innerWidth - size.width - 8));
+  const y = Math.max(4, Math.min(position.y, window.innerHeight - size.height - 8));
 
   const menu = (
     <div
