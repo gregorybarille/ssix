@@ -33,6 +33,10 @@ Every session goes through the same connect path as a terminal, on direct and
 jump host connections alike, so host keys are checked the same way. A changed
 key refuses the connection and the view offers **Trust new host key**.
 
+Only a terminal pane can answer a server's keyboard-interactive questions, so
+the view refuses such a server with a message saying so. Use a key or the agent
+([auth.md](auth.md)).
+
 The browsing session uses the connection's keepalive interval, or the app's
 default. If it is lost, the view connects again to the same folder; should the new
 session be lost too, it stops and shows the error with a **Retry** button.
