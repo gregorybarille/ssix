@@ -1,4 +1,4 @@
-import { useEffect, useState, type KeyboardEvent, type MouseEvent } from "react";
+import { useEffect, useMemo, useState, type KeyboardEvent, type MouseEvent } from "react";
 import { useShallow } from "zustand/react/shallow";
 import {
   ArrowDown,
@@ -73,6 +73,33 @@ function ToolButton({ label, icon: Icon, testId, disabled, destructive, onClick 
   );
 }
 
+interface PathFieldProps {
+  side: PaneSide;
+  title: string;
+  path: string;
+  disabled: boolean;
+  onGo: (path: string) => void;
+}
+
+/** The folder typed into a pane. Its draft lives here, so typing leaves the rows alone. */
+function PathField({ side, title, path, disabled, onGo }: PathFieldProps) {
+  const [draft, setDraft] = useState(path);
+  useEffect(() => setDraft(path), [path]);
+  return (
+    <Input
+      value={draft}
+      disabled={disabled}
+      className="h-7 min-w-0 flex-1 font-mono text-xs"
+      aria-label={`Folder on ${title}`}
+      onChange={(e) => setDraft(e.target.value)}
+      onKeyDown={(e) => {
+        if (e.key === "Enter" && draft.trim()) onGo(draft.trim());
+      }}
+      data-testid={`files-path-${side}`}
+    />
+  );
+}
+
 interface FilePaneProps {
   side: PaneSide;
   title: string;
@@ -113,10 +140,11 @@ export function FilePane({ side, title, placeholder }: FilePaneProps) {
   const copyVerb = isRemote ? "Download" : "Upload";
   const CopyIcon = isRemote ? ArrowDown : ArrowUp;
 
-  const [draft, setDraft] = useState(path);
-  useEffect(() => setDraft(path), [path]);
-
-  const chosen = entries.filter((e) => selected.includes(e.path));
+  const selectedPaths = useMemo(() => new Set(selected), [selected]);
+  const chosen = useMemo(
+    () => entries.filter((e) => selectedPaths.has(e.path)),
+    [entries, selectedPaths],
+  );
   const single = chosen.length === 1 ? chosen[0] : null;
   const canCopy = connected && otherPath !== "" && chosen.length > 0;
 
@@ -149,12 +177,12 @@ export function FilePane({ side, title, placeholder }: FilePaneProps) {
   const ctx = useContextMenu();
   const [ctxEntry, setCtxEntry] = useState<FileEntry | null>(null);
   const openMenuFor = (entry: FileEntry) => {
-    if (!selected.includes(entry.path)) select(side, entry.path, "replace");
+    if (!selectedPaths.has(entry.path)) select(side, entry.path, "replace");
     setCtxEntry(entry);
   };
   /** The rows an action from this entry's menu applies to. */
   const menuTargets = (entry: FileEntry) =>
-    selected.includes(entry.path) ? chosen : [entry];
+    selectedPaths.has(entry.path) ? chosen : [entry];
   const buildItems = (entry: FileEntry): ContextMenuItem[] => {
     const items: ContextMenuItem[] = [];
     if (opensAsFolder(entry)) {
@@ -242,16 +270,12 @@ export function FilePane({ side, title, placeholder }: FilePaneProps) {
           disabled={!usable || !parent}
           onClick={() => parent && void navigate(side, parent)}
         />
-        <Input
-          value={draft}
+        <PathField
+          side={side}
+          title={title}
+          path={path}
           disabled={!usable}
-          className="h-7 min-w-0 flex-1 font-mono text-xs"
-          aria-label={`Folder on ${title}`}
-          onChange={(e) => setDraft(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === "Enter" && draft.trim()) void navigate(side, draft.trim());
-          }}
-          data-testid={`files-path-${side}`}
+          onGo={(typed) => void navigate(side, typed)}
         />
         <ToolButton
           label="Refresh"
@@ -338,7 +362,7 @@ export function FilePane({ side, title, placeholder }: FilePaneProps) {
         >
           {entries.map((entry, index) => {
             const Icon = entryIcon(entry);
-            const isSelected = selected.includes(entry.path);
+            const isSelected = selectedPaths.has(entry.path);
             return (
               <div
                 key={entry.path}

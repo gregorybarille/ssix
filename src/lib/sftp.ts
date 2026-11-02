@@ -33,8 +33,19 @@ export function formatSize(bytes: number): string {
   return unit === 0 ? `${value} B` : `${value.toFixed(1)} ${units[unit]}`;
 }
 
+// What `toLocaleString` shows, from one formatter: it costs a new one per call,
+// and a long listing asks for thousands.
+const modifiedFormat = new Intl.DateTimeFormat(undefined, {
+  year: "numeric",
+  month: "numeric",
+  day: "numeric",
+  hour: "numeric",
+  minute: "numeric",
+  second: "numeric",
+});
+
 export function formatModified(seconds: number | null): string {
-  return seconds === null ? "" : new Date(seconds * 1000).toLocaleString();
+  return seconds === null ? "" : modifiedFormat.format(seconds * 1000);
 }
 
 /** A mode typed in octal (`644`, `0755`), or null if it is not one. */

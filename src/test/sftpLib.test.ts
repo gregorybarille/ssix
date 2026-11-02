@@ -67,6 +67,15 @@ describe("formatModified", () => {
   it("reads seconds, not milliseconds", () => {
     expect(formatModified(86_400)).toBe(new Date(86_400_000).toLocaleString());
   });
+
+  it("shares one formatter across calls", () => {
+    const made = vi.spyOn(Intl, "DateTimeFormat");
+    const perCall = vi.spyOn(Date.prototype, "toLocaleString");
+    for (let seconds = 0; seconds < 5; seconds += 1) formatModified(seconds);
+    expect(made).not.toHaveBeenCalled();
+    expect(perCall).not.toHaveBeenCalled();
+    vi.restoreAllMocks();
+  });
 });
 
 describe("parseMode", () => {
