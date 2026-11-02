@@ -111,7 +111,9 @@ Notes the foundation review left for the streams:
   foundation merged. Edit only owned files. Shared lists are append-only
   under the stream's anchor. New Cargo dependencies are appended to
   `Cargo.toml`; the integrator re-resolves `Cargo.lock` at merge time.
-- Done means: `npm test`, `cargo test`, `npx tsc --noEmit`, generated
+- Done means: `npm test`, `cargo fmt --check`,
+  `cargo clippy --all-targets -- -D warnings`, `cargo test`,
+  `npx tsc --noEmit`, generated
   types unchanged, a new E2E spec with unique connection and credential
   names run locally with the stream's isolated command below, a
   `docs/<feature>.md` plus one link line in `docs/features.md` and the
