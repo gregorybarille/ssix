@@ -3,8 +3,15 @@ import { act, fireEvent, screen, waitFor } from "@testing-library/react";
 import type { Terminal as XTerm } from "@xterm/xterm";
 import { SnippetPalette } from "@/components/SnippetPalette";
 import { invoke } from "@/lib/tauri";
-import { NO_TERMINAL_MESSAGE, SEVERAL_LINES_MESSAGE, TAB_MESSAGE } from "@/lib/snippets";
+import {
+  LOGIN_PROMPT_MESSAGE,
+  NO_TERMINAL_MESSAGE,
+  RECONNECTING_MESSAGE,
+  SEVERAL_LINES_MESSAGE,
+  TAB_MESSAGE,
+} from "@/lib/snippets";
 import { registerTerminal, unregisterTerminal } from "@/lib/terminalRegistry";
+import { useAuthPromptStore } from "@/store/useAuthPromptStore";
 import { useSnippetsStore } from "@/store/useSnippetsStore";
 import { useTerminalsStore } from "@/store/useTerminalsStore";
 import { useViewStore } from "@/store/useViewStore";
@@ -72,9 +79,19 @@ const variable = (name: string) =>
   document.querySelector<HTMLInputElement>(`[data-testid="snippet-variable"][data-name="${name}"]`);
 const paletteOpen = () => useSnippetsStore.getState().paletteOpen;
 
+/** Choosing a snippet sends nothing, and the palette stays open and says why. */
+function expectChoosingRefused(message: string) {
+  fireEvent.keyDown(search(), { key: "Enter" });
+  expect(writes()).toEqual([]);
+  expect(paletteOpen()).toBe(true);
+  expect(screen.getByTestId("snippet-palette-error")).toHaveTextContent(message);
+}
+
 describe("SnippetPalette", () => {
   beforeEach(() => {
     mockInvoke.mockReset();
+    useViewStore.setState({ view: "terminals", leaveGuard: null });
+    useAuthPromptStore.setState({ prompts: {} });
     useSnippetsStore.setState({ snippets: [], error: null, isLoading: false, paletteOpen: false });
   });
 
@@ -126,13 +143,32 @@ describe("SnippetPalette", () => {
       expect(screen.queryByTestId("snippet-palette-error")).not.toBeInTheDocument();
     });
 
-    it("notices the terminal going away with the view it lives on", async () => {
-      useViewStore.setState({ view: "terminals", leaveGuard: null });
+    it("has no target while its pane shows a login prompt", async () => {
       liveTerminal("s1");
       activate("s1");
       await openPalette();
       expect(screen.queryByTestId("snippet-palette-error")).not.toBeInTheDocument();
-      unregisterTerminal("s1");
+
+      const prompt = {
+        prompt_id: "p1",
+        host: "h:22",
+        username: "me",
+        instructions: "",
+        prompts: [{ text: "Code: ", echo: false }],
+      };
+      const { receive } = useAuthPromptStore.getState();
+      act(() => receive("s1", { kind: "auth_prompt", ...prompt }));
+      expect(screen.getByTestId("snippet-palette-error")).toHaveTextContent(LOGIN_PROMPT_MESSAGE);
+
+      act(() => receive("s1", { kind: "auth_prompt_closed", prompt_id: "p1" }));
+      expect(screen.queryByTestId("snippet-palette-error")).not.toBeInTheDocument();
+    });
+
+    it("has no target once the user leaves for another view, though the terminal stays mounted", async () => {
+      liveTerminal("s1");
+      activate("s1");
+      await openPalette();
+      expect(screen.queryByTestId("snippet-palette-error")).not.toBeInTheDocument();
       act(() => useViewStore.getState().setView("connections"));
       expect(screen.getByTestId("snippet-palette-error")).toHaveTextContent(NO_TERMINAL_MESSAGE);
       expect(screen.getByTestId("snippet-palette-target")).toHaveTextContent(
@@ -273,6 +309,54 @@ describe("SnippetPalette", () => {
     });
   });
 
+  describe("with a pane that lost its connection", () => {
+    const drop = (sessionId: string) =>
+      useTerminalsStore.setState((state) => ({
+        tabs: state.tabs.map((tab) => ({
+          ...tab,
+          panes: tab.panes.map((pane) =>
+            pane.sessionId === sessionId
+              ? {
+                  ...pane,
+                  retrying: true,
+                  reconnect: {
+                    phase: "waiting" as const,
+                    attempt: 1,
+                    maxAttempts: 5,
+                    retryAt: 0,
+                    message: "gone",
+                  },
+                }
+              : pane,
+          ),
+        })),
+      }));
+
+    it("says so when it is the only one, sends nothing and stays open", async () => {
+      liveTerminal("s1");
+      activate("s1");
+      drop("s1");
+      await openPalette();
+      expect(screen.getByTestId("snippet-palette-error")).toHaveTextContent(RECONNECTING_MESSAGE);
+
+      expectChoosingRefused(RECONNECTING_MESSAGE);
+    });
+
+    it("pastes into the healthy pane beside it, and names that one", async () => {
+      liveTerminal("s1").textarea.dispatchEvent(new FocusEvent("focus"));
+      liveTerminal("s2");
+      activate("s1", "s2");
+      drop("s1");
+      await openPalette();
+      expect(screen.getByTestId("snippet-palette-target")).toHaveTextContent("conn-s2");
+      expect(screen.queryByTestId("snippet-palette-error")).toBeNull();
+
+      fireEvent.keyDown(search(), { key: "Enter" });
+      expect(writes().map(([, args]) => (args as { sessionId: string }).sessionId)).toEqual(["s2"]);
+      expect(paletteOpen()).toBe(false);
+    });
+  });
+
   describe("with no terminal", () => {
     it("explains it up front, in an alert", async () => {
       await openPalette();
@@ -290,10 +374,7 @@ describe("SnippetPalette", () => {
 
     it("stays open and sends nothing when a snippet is chosen", async () => {
       await openPalette();
-      fireEvent.keyDown(search(), { key: "Enter" });
-      expect(writes()).toEqual([]);
-      expect(paletteOpen()).toBe(true);
-      expect(screen.getByTestId("snippet-palette-error")).toHaveTextContent(NO_TERMINAL_MESSAGE);
+      expectChoosingRefused(NO_TERMINAL_MESSAGE);
     });
 
     it("does not ask for values it could not use", async () => {

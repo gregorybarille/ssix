@@ -6,13 +6,15 @@
 > - `docs/development.md` — prerequisites, dev setup, build pipeline
 > - `docs/features.md` — feature catalogue and keyboard shortcuts
 > - `docs/file-transfer.md` — SCP/file transfer behaviour and constraints
+> - `docs/folders.md` — connection folders: path rules, the tree, moving, rename and delete
 > - `docs/forwards.md` — port forwards: kinds, lifecycle, SOCKS replies and limits
-> - `docs/sftp.md` — Files view (SFTP): browsing, transfers, edit in place, and how it differs from SCP
 > - `docs/git-sync.md` — git-sync export feature
 > - `docs/roadmap.md` — validated feature roadmap, stream ownership and rules
 > - `docs/session-resilience.md` — keepalive, auto-reconnect and session logs
+> - `docs/sftp.md` — Files view (SFTP): browsing, transfers, edit in place, and how it differs from SCP
 > - `docs/snippets.md` — snippets, `{{variable}}` prompts and how a paste avoids running anything
 > - `docs/ssh-config-import.md` — import from `~/.ssh/config`: mapping, skips and dedupe
+> - `docs/terminal-ux.md` — find, links, broadcast input, per-connection look, terminals off screen
 > - `docs/troubleshooting.md` — common failure modes and fixes
 
 ## Build & Test

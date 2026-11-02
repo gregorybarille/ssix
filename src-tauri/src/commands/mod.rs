@@ -2,6 +2,7 @@ pub mod auth;
 pub mod backup;
 pub mod connections;
 pub mod credentials;
+pub mod folders;
 pub mod git_sync;
 pub mod import_config;
 pub mod scp;

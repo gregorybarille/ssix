@@ -1,6 +1,6 @@
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { afterEach, describe, it, expect, vi, beforeEach } from "vitest";
 import { ContextMenu, useContextMenu } from "@/components/ContextMenu";
 
 const baseItems = [
@@ -13,6 +13,36 @@ const baseItems = [
 describe("ContextMenu (generic primitive)", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+  });
+
+  describe("near the corner of the window", () => {
+    beforeEach(() => {
+      vi.spyOn(HTMLElement.prototype, "offsetWidth", "get").mockReturnValue(180);
+      vi.spyOn(HTMLElement.prototype, "offsetHeight", "get").mockReturnValue(100);
+    });
+
+    afterEach(() => {
+      vi.restoreAllMocks();
+    });
+
+    it("opens where it stays, rather than jumping at the first hover", () => {
+      render(
+        <ContextMenu
+          position={{ x: window.innerWidth - 10, y: window.innerHeight - 10 }}
+          onClose={vi.fn()}
+          items={baseItems}
+        />,
+      );
+      const inside = {
+        left: `${window.innerWidth - 180 - 8}px`,
+        top: `${window.innerHeight - 100 - 8}px`,
+      };
+      const menu = screen.getByRole("menu");
+      expect(menu).toHaveStyle(inside);
+
+      fireEvent.mouseEnter(screen.getByRole("menuitem", { name: "Delete" }));
+      expect(menu).toHaveStyle(inside);
+    });
   });
 
   it("renders all enabled items as menuitems and skips separators", () => {

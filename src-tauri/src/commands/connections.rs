@@ -60,11 +60,36 @@ pub struct ConnectionAdvanced {
     pub folder: Option<String>,
 }
 
+/// The terminal palettes a connection can pick, as the ids of
+/// `TERMINAL_PALETTES` in `src/lib/terminalTheme.ts`. A test of those
+/// (`src/test/terminalTheme.test.ts`) fails when the two lists differ.
+const TERMINAL_COLOR_SCHEMES: &[&str] = &[
+    "tokyo-night",
+    "tokyo-night-day",
+    "dracula",
+    "nord",
+    "solarized-dark",
+    "solarized-light",
+    "gruvbox-dark",
+    "one-dark",
+];
+
+/// A save is refused; a connection already stored with an unknown scheme still
+/// loads and connects, and its terminal uses the app's colours.
+fn validate_color_scheme(scheme: Option<&str>) -> Result<(), String> {
+    validate_option_text("Color scheme", scheme, 64)?;
+    match scheme.map(str::trim).filter(|s| !s.is_empty()) {
+        Some(scheme) if !TERMINAL_COLOR_SCHEMES.contains(&scheme) => Err(format!(
+            "Unknown color scheme \"{scheme}\": pick one from the list"
+        )),
+        _ => Ok(()),
+    }
+}
+
 impl ConnectionAdvanced {
     /// Refuse an option a later session could not use, when it is saved
     /// rather than when something first reads it. Blank text is fine: it is
-    /// stored as unset. `color_scheme` is only checked for shape here, since
-    /// the terminal-ux stream owns the list of palettes.
+    /// stored as unset.
     fn validate(&self) -> Result<(), String> {
         if let Some(seconds) = self.keepalive_interval {
             validate_keepalive_interval(seconds)?;
@@ -75,12 +100,13 @@ impl ConnectionAdvanced {
             }
         }
         validate_option_text("Font family", self.font_family.as_deref(), 128)?;
-        validate_option_text("Color scheme", self.color_scheme.as_deref(), 64)?;
-        validate_option_text("Folder", self.folder.as_deref(), 512)
+        validate_color_scheme(self.color_scheme.as_deref())?;
+        crate::folder_path::parse(self.folder.as_deref().unwrap_or_default()).map(|_| ())
     }
 
     /// Store the options on `connection`; blank text is stored as unset and
-    /// a folder path is kept `/`-separated without leading or trailing slashes.
+    /// a folder path in the form `folder_path::parse` gives it (`validate`
+    /// has already refused a path it cannot read).
     fn apply_to(self, connection: &mut Connection) {
         connection.agent_forwarding = self.agent_forwarding;
         connection.keepalive_interval = self.keepalive_interval;
@@ -89,7 +115,10 @@ impl ConnectionAdvanced {
         connection.font_family = normalize_optional_text(self.font_family);
         connection.font_size = self.font_size;
         connection.color_scheme = normalize_optional_text(self.color_scheme);
-        connection.folder = normalize_folder(self.folder);
+        connection.folder = self
+            .folder
+            .as_deref()
+            .and_then(|path| crate::folder_path::parse(path).ok().flatten());
     }
 }
 
@@ -561,23 +590,6 @@ fn normalize_remote_path(value: Option<String>) -> Option<String> {
     normalize_optional_text(value).map(|path| path.replace('\\', "/"))
 }
 
-/// A folder path as stored: `/`-separated segments, each trimmed, with no
-/// empty segment (`" prod / eu/ "` becomes `prod/eu`; a blank path is unset).
-fn normalize_folder(value: Option<String>) -> Option<String> {
-    let segments: Vec<&str> = value
-        .as_deref()
-        .unwrap_or_default()
-        .split(['/', '\\'])
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-        .collect();
-    if segments.is_empty() {
-        None
-    } else {
-        Some(segments.join("/"))
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -679,6 +691,76 @@ mod tests {
         }
     }
 
+    fn with_scheme(scheme: &str) -> ConnectionAdvanced {
+        ConnectionAdvanced {
+            color_scheme: Some(scheme.to_string()),
+            ..ConnectionAdvanced::default()
+        }
+    }
+
+    #[test]
+    fn test_color_scheme_must_be_a_known_palette() {
+        for scheme in TERMINAL_COLOR_SCHEMES {
+            assert!(with_scheme(scheme).validate().is_ok(), "{scheme}");
+        }
+        // Stored trimmed, so checked trimmed; blank is stored as unset.
+        assert!(with_scheme(" dracula ").validate().is_ok());
+        assert!(with_scheme("   ").validate().is_ok());
+        assert!(ConnectionAdvanced::default().validate().is_ok());
+
+        // "teal" is an accent colour of the app's settings, not a terminal palette.
+        for scheme in ["teal", "Dracula", "dracula2"] {
+            let error = with_scheme(scheme).validate().unwrap_err();
+            assert!(error.contains("Unknown color scheme"), "{error}");
+            assert!(error.contains(scheme), "{error}");
+        }
+    }
+
+    #[test]
+    fn test_a_stored_unknown_color_scheme_loads_and_only_a_save_refuses_it() {
+        with_isolated_data_dir(|| {
+            let cred = password_credential("a");
+            store_credential(&cred);
+            let conn = add_connection_sync(AddConnectionInput {
+                fields: direct_fields(Some(cred.id.clone())),
+            })
+            .unwrap();
+
+            // As left by a build that had this palette.
+            with_data_mut(|data| {
+                data.connections[0].color_scheme = Some("retired-palette".to_string());
+                Ok(())
+            })
+            .unwrap();
+            let stored = load_data().unwrap().connections.remove(0);
+            assert_eq!(stored.color_scheme.as_deref(), Some("retired-palette"));
+
+            let mut fields = direct_fields(Some(cred.id.clone()));
+            fields.advanced = with_scheme("retired-palette");
+            let refused = update_connection_sync(UpdateConnectionInput {
+                id: conn.id.clone(),
+                fields,
+            })
+            .unwrap_err();
+            assert!(refused.contains("Unknown color scheme"), "{refused}");
+            assert_eq!(
+                load_data().unwrap().connections[0].color_scheme.as_deref(),
+                Some("retired-palette"),
+                "a refused save leaves the stored connection alone"
+            );
+
+            // Clearing it, or picking a known palette, saves.
+            let mut fields = direct_fields(Some(cred.id.clone()));
+            fields.advanced = with_scheme("nord");
+            let saved = update_connection_sync(UpdateConnectionInput {
+                id: conn.id.clone(),
+                fields,
+            })
+            .unwrap();
+            assert_eq!(saved.color_scheme.as_deref(), Some("nord"));
+        });
+    }
+
     fn password_credential(name: &str) -> Credential {
         Credential::new(
             name.to_string(),
@@ -746,18 +828,29 @@ mod tests {
     }
 
     #[test]
-    fn test_folder_paths_are_normalized() {
-        assert_eq!(normalize_folder(None), None);
-        assert_eq!(normalize_folder(Some("  ".into())), None);
-        assert_eq!(normalize_folder(Some("/prod/".into())), Some("prod".into()));
-        assert_eq!(
-            normalize_folder(Some(" prod / eu//west ".into())),
-            Some("prod/eu/west".into())
-        );
-        assert_eq!(
-            normalize_folder(Some("prod\\eu".into())),
-            Some("prod/eu".into())
-        );
+    fn test_a_saved_connection_gets_the_folder_path_rules() {
+        with_isolated_data_dir(|| {
+            let cred = password_credential("a");
+            store_credential(&cred);
+            let with_folder = |name: &str, folder: &str| {
+                let mut fields = direct_fields(Some(cred.id.clone()));
+                fields.name = name.to_string();
+                fields.advanced.folder = Some(folder.to_string());
+                add_connection_sync(AddConnectionInput { fields })
+            };
+            let saved = with_folder("spaced", " /prod / eu//west/ ").unwrap();
+            assert_eq!(saved.folder.as_deref(), Some("prod/eu/west"));
+            assert_eq!(with_folder("blank", " / ").unwrap().folder, None);
+            assert_eq!(
+                with_folder("dots", "prod/../eu").unwrap_err(),
+                "A folder cannot be named . or .."
+            );
+            assert_eq!(
+                with_folder("deep", "a/b/c/d/e/f/g/h/i/j/k").unwrap_err(),
+                "Folders can nest at most 10 levels"
+            );
+            assert_eq!(load_data().unwrap().connections.len(), 2);
+        });
     }
 
     #[test]

@@ -23,26 +23,16 @@ import {
   createDirectConnection,
   createPasswordCredential,
   fill,
+  pressPaletteShortcut,
   readTerminalText,
   textContentOf,
+  waitForGone,
   waitForTerminalContains,
 } from "../helpers/flows.js";
 import { sel } from "../helpers/selectors.js";
 
 /** Long enough for a stray line to run and print. */
 const QUIET_MS = 1_500;
-
-/**
- * Wait until nothing matches. Linux tauri-driver/WebKit throws a stale element
- * error when WebDriver's search lands on a node as React removes it, so look
- * from inside the page, as `clickDialogFooterButton` does.
- */
-async function waitForGone(selector: string): Promise<void> {
-  await browser.waitUntil(
-    () => browser.execute((s: string) => document.querySelector(s) === null, selector),
-    { timeout: 10_000, timeoutMsg: `${selector} is still there` },
-  );
-}
 
 async function openSnippetsView(): Promise<void> {
   await click(sel.navSnippets);
@@ -79,11 +69,6 @@ function savedSnippets(): { id: string; name: string; command: string; tags?: st
   return JSON.parse(readFileSync(join(dir, "data.json"), "utf8")).snippets;
 }
 
-async function pressPaletteShortcut(): Promise<void> {
-  await browser.keys(["Control", "Shift", "s"]);
-  await (await browser.$(sel.snippetPalette)).waitForExist({ timeout: 10_000 });
-}
-
 /** Open the palette the way a user does: from the keyboard, inside the terminal. */
 async function openPaletteFromTerminal(): Promise<void> {
   await (await browser.$(sel.terminalContainer)).click();
@@ -111,6 +96,16 @@ async function realEnter(action: "keyDown" | "keyUp"): Promise<void> {
 
 async function waitForPaletteClosed(): Promise<void> {
   await waitForGone(sel.snippetPalette);
+}
+
+/** How many terminals are on screen: they stay mounted while another view is. */
+async function panesOnScreen(): Promise<number> {
+  return browser.execute(
+    (selector: string) =>
+      Array.from(document.querySelectorAll(selector)).filter((pane) => pane.getClientRects().length > 0)
+        .length,
+    sel.terminalContainer,
+  );
 }
 
 /** The text of each open pane, in the order they are mounted. */
@@ -280,7 +275,10 @@ describe("Snippets", () => {
     await saveSnippet("snip-18-away", ["echo away-$((3*3))"]);
     await click(sel.snippetPaletteButton);
     await (await browser.$(sel.snippetPalette)).waitForExist({ timeout: 10_000 });
-    await (await browser.$(sel.terminalContainer)).waitForExist({ timeout: 10_000 });
+    await browser.waitUntil(async () => (await panesOnScreen()) === 1, {
+      timeout: 10_000,
+      timeoutMsg: "the terminal never came on screen",
+    });
     expect(await textContentOf(await browser.$(sel.snippetPaletteTarget))).toContain("conn-18-a");
     expect(await (await browser.$(sel.snippetPaletteError)).isExisting()).toBe(false);
 
@@ -480,10 +478,10 @@ describe("Snippets", () => {
     await click(sel.connectPickerOption("conn-18-c"));
     await waitForPane(2, "server-a:~$");
 
-    // The second pane takes the keyboard, then leaving the view unmounts every terminal.
+    // The second pane takes the keyboard, then another view takes the screen.
     await (await browser.$$(sel.terminalContainer))[2].click();
     await saveSnippet("snip-18-pane", ["echo pane-$((8*8))"]);
-    await waitForGone(sel.terminalContainer);
+    expect(await panesOnScreen()).toBe(0);
 
     await pressPaletteShortcut();
     await browser.waitUntil(
@@ -512,12 +510,12 @@ describe("Snippets", () => {
     await waitForGone(sel.snippetDiscardCancel);
     expect(await (await browser.$(sel.snippetPalette)).isExisting()).toBe(false);
     expect(await (await browser.$(sel.snippetFormName)).getValue()).toBe("snip-18-unsaved");
-    expect(await paneTexts()).toEqual([]);
+    expect(await panesOnScreen()).toBe(0);
 
     await browser.keys(["Control", "Shift", "s"]);
     await click(sel.snippetDiscardConfirm);
     await (await browser.$(sel.snippetPalette)).waitForExist({ timeout: 10_000 });
-    await browser.waitUntil(async () => (await paneTexts()).length === 3, {
+    await browser.waitUntil(async () => (await panesOnScreen()) === 2, {
       timeout: 10_000,
       timeoutMsg: "the terminals never came back",
     });

@@ -20,6 +20,7 @@ import { Button } from "../ui/button";
 import { ErrorBanner } from "../ui/error-banner";
 import { Input } from "../ui/input";
 import { ContextMenu, useContextMenu, type ContextMenuItem } from "../ContextMenu";
+import { DragChip } from "../ui/drag-chip";
 import { useFileDrag } from "./useFileDrag";
 import { useRovingFocus } from "@/hooks/useRovingFocus";
 import {
@@ -444,18 +445,7 @@ export function FilePane({ side, title, placeholder }: FilePaneProps) {
           items={buildItems(ctxEntry)}
         />
       )}
-      {drag.chip && (
-        <div
-          className={cn(
-            "pointer-events-none fixed z-50 max-w-60 truncate rounded border border-border bg-popover px-2 py-1 text-xs shadow-md",
-            !drag.chip.overTarget && "opacity-60",
-          )}
-          style={{ left: drag.chip.x + 12, top: drag.chip.y + 12 }}
-          data-testid="files-drag-chip"
-        >
-          {drag.chip.label}
-        </div>
-      )}
+      {drag.chip && <DragChip chip={drag.chip} testId="files-drag-chip" />}
     </section>
   );
 }

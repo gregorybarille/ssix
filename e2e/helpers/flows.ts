@@ -16,10 +16,29 @@ export async function fill(selector: string, value: string): Promise<void> {
   await el.setValue(value);
 }
 
+/**
+ * Wait until nothing matches. Linux tauri-driver/WebKit throws a stale element
+ * error when WebDriver's search lands on a node as React removes it, and
+ * `browser.$` is such a search, so look from inside the page.
+ */
+export async function waitForGone(selector: string): Promise<void> {
+  await browser.waitUntil(
+    () => browser.execute((s: string) => document.querySelector(s) === null, selector),
+    { timeout: 10_000, timeoutMsg: `${selector} is still there` },
+  );
+}
+
 export async function click(selector: string): Promise<void> {
   const el = await browser.$(selector);
   await el.waitForClickable({ timeout: 10_000 });
   await el.click();
+}
+
+/** Bring a field far down a form into view. */
+export async function reveal(selector: string): Promise<void> {
+  const el = await browser.$(selector);
+  await el.waitForExist({ timeout: 10_000 });
+  await el.scrollIntoView({ block: "center" });
 }
 
 export async function clickDialogFooterButton(selector: string): Promise<void> {
@@ -197,9 +216,9 @@ export async function createDirectConnection(input: DirectConnectionInput): Prom
  * not hidden behind hover state).
  */
 /**
- * Rows only exist in the list / tile layouts. A previous spec may have
- * left the persisted layout on "tags", so switch back before looking
- * for a row.
+ * Rows are only sure to exist in the list / tile layouts. A previous spec
+ * may have left the persisted layout on "tags", or on "folders" with the
+ * row's folder collapsed, so switch back before looking for a row.
  */
 export async function ensureConnectionRowsLayout(): Promise<void> {
   await navigateTo("connections");
@@ -210,6 +229,14 @@ export async function ensureConnectionRowsLayout(): Promise<void> {
     await toggle.click();
     await list.waitForExist({ timeout: 10_000 });
   }
+}
+
+/** Open a saved connection's form from its row in the Connections view. */
+export async function openConnectionEditor(name: string): Promise<void> {
+  await navigateTo("connections");
+  await ensureConnectionRowsLayout();
+  await clickDialogFooterButton(`${sel.connectionRowByName(name)} ${sel.connectionRowEditButton}`);
+  await (await browser.$(sel.connectionForm)).waitForExist({ timeout: 10_000 });
 }
 
 export async function connectToConnection(name: string): Promise<void> {
@@ -311,24 +338,34 @@ export async function typeIntoTerminal(text: string): Promise<void> {
 }
 
 /** Close every tab, confirming for each one that holds a live shell. */
+/** Open the snippet palette from the keyboard. */
+export async function pressPaletteShortcut(): Promise<void> {
+  await browser.keys(["Control", "Shift", "s"]);
+  await (await browser.$(sel.snippetPalette)).waitForExist({ timeout: 10_000 });
+}
+
 export async function closeAllTabs(): Promise<void> {
   const openTabs = () => browser.$$(sel.terminalTabCloseAny).length;
   const confirmation = () => browser.$(sel.confirmClosePaneConfirm);
-  for (let before = await openTabs(); before > 0; before = await openTabs()) {
-    await browser.execute(
-      (selector: string) => document.querySelector<HTMLElement>(selector)?.click(),
-      sel.terminalTabCloseAny,
+  // From inside the page, as a dialog on its way out can be gone by the time of the click.
+  const clickIfThere = (selector: string) =>
+    browser.execute(
+      (target: string) => document.querySelector<HTMLElement>(target)?.click(),
+      selector,
     );
+  for (let before = await openTabs(); before > 0; before = await openTabs()) {
+    await clickIfThere(sel.terminalTabCloseAny);
     await browser.waitUntil(
       async () => (await openTabs()) < before || (await confirmation().isExisting()),
       { timeout: 10_000, timeoutMsg: "A terminal tab neither closed nor asked to" },
     );
-    if (await confirmation().isExisting()) {
-      await clickDialogFooterButton(sel.confirmClosePaneConfirm);
-      await browser.waitUntil(async () => (await openTabs()) < before, {
-        timeout: 10_000,
-        timeoutMsg: "A terminal tab did not close after confirming",
-      });
-    }
+    // A question already open comes first, so this tab's can take a second answer.
+    await browser.waitUntil(
+      async () => {
+        await clickIfThere(sel.confirmClosePaneConfirm);
+        return (await openTabs()) < before;
+      },
+      { timeout: 10_000, timeoutMsg: "A terminal tab did not close after confirming" },
+    );
   }
 }

@@ -23,6 +23,11 @@
       "csp": "default-src 'self' http://localhost:1420; script-src 'self' http://localhost:1420; style-src 'self' 'unsafe-inline' http://localhost:1420; img-src 'self' data: blob: http://localhost:1420; font-src 'self' data: http://localhost:1420; connect-src 'self' http://localhost:1420 ws://localhost:1420 ws://localhost:1421; object-src 'none'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'"
     }
   },
+  "plugins": {
+    "shell": {
+      "open": "^https?://\\S+$"
+    }
+  },
   "bundle": {
     "active": true,
     "targets": "all",

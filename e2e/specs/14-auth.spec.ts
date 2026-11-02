@@ -31,9 +31,9 @@ import {
   connectToConnection,
   createDirectConnection,
   createPasswordCredential,
-  ensureConnectionRowsLayout,
   fill,
   navigateTo,
+  openConnectionEditor,
   openCredentialEditor,
   pickOption,
   readTerminalText,
@@ -59,13 +59,6 @@ const WRONG_ANSWER = "ssix-14-wrong-answer";
 const SHORT_KEEPALIVE_S = 2;
 /** The watchdog gives up after this many silent intervals. */
 const KEEPALIVES_MISSED_S = 3 * SHORT_KEEPALIVE_S;
-
-async function openConnectionEditor(name: string): Promise<void> {
-  await navigateTo("connections");
-  await ensureConnectionRowsLayout();
-  await clickDialogFooterButton(`${sel.connectionRowByName(name)} ${sel.connectionRowEditButton}`);
-  await (await browser.$(sel.connectionForm)).waitForExist({ timeout: 10_000 });
-}
 
 /** Wait for the shell, run `command` and return once `marker` came back. */
 async function runInShell(prompt: string, command: string, marker: string): Promise<void> {
@@ -477,7 +470,7 @@ describe("Keyboard-interactive login", () => {
     expect(focused).toBe("auth-prompt-input-0");
 
     await answerAuthPrompt(TARGETS.e.password);
-    await expectReconnected();
+    await expectReconnected("before-away-42");
     await (await browser.$(sel.navTerminalsWaiting)).waitForExist({ reverse: true, timeout: 10_000 });
     expect(await (await browser.$(sel.terminalTabPromptWaiting)).isExisting()).toBe(false);
   });

@@ -26,6 +26,34 @@ export function focusIsFreeFor(container: Element | null): boolean {
   return !(active.checkVisibility?.() ?? true);
 }
 
+/**
+ * Whether something took the focus while a dialog or menu closed, such as a
+ * terminal that just connected. Its content is gone by then, so focus left `<body>`
+ * for that reason alone, and returning it would take the keyboard from whoever has it.
+ */
+export function focusWasTaken(): boolean {
+  const active = document.activeElement;
+  return !!active && active !== document.body;
+}
+
+/**
+ * Whether a terminal that just opened may take the keyboard. The user asked for
+ * it, perhaps seconds ago: a connection takes its time. So it gives way to someone
+ * typing elsewhere, and to nothing else, not even the button that asked for it.
+ */
+export function nobodyTypingElsewhere(terminal: Element | null): boolean {
+  return focusIsFreeFor(terminal) || !isTypingSurface(document.activeElement);
+}
+
+/**
+ * Whether the keyboard is already in this terminal's tab, say on the login prompt
+ * that just took it in the other pane. Showing a split tab shows all of its
+ * terminals, and each one asks for the keyboard a moment later.
+ */
+export function keyboardIsInItsTab(terminal: Element | null): boolean {
+  return !!terminal?.closest('[role="tabpanel"]')?.contains(document.activeElement);
+}
+
 /** `<input>` types that take no text, so focusing them is not "typing". */
 const NON_TEXT_INPUT_TYPES = ["button", "checkbox", "radio", "submit", "reset", "file", "range", "color"];
 
@@ -49,4 +77,13 @@ export function isTypingSurface(target: EventTarget | null): boolean {
   if (isTextInput(target)) return true;
   const tag = target.tagName;
   return tag === "INPUT" || tag === "SELECT";
+}
+
+/**
+ * True while a side panel or palette is open. Panels are non-modal: the view
+ * beside one stays clickable, but the keyboard belongs to the panel. One on its
+ * way out, still animating, is not open.
+ */
+export function isPanelOpen(): boolean {
+  return document.querySelector('[data-slot="app-panel-content"]:not([data-state="closed"])') !== null;
 }

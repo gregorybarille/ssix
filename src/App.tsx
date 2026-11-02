@@ -36,7 +36,7 @@ import { TABLE_SHORTCUTS, useGlobalShortcuts } from "./hooks/useGlobalShortcuts"
 import { useScreenshotToast } from "./hooks/useScreenshotToast";
 import { useShallow } from "zustand/react/shallow";
 import { log as appLog } from "./lib/log";
-import { Connection, ConnectionInput, Credential, LayoutMode } from "./types";
+import { AppSettings, Connection, ConnectionInput, Credential } from "./types";
 import { connectMany } from "./lib/bulk-actions";
 import type { TagGroup } from "./lib/tags";
 import { VIEWS } from "./lib/views";
@@ -166,7 +166,7 @@ function App() {
   const connectionSig = React.useMemo(
     () =>
       connections
-        .map((c) => `${c.id}:${c.name}:${c.host}:${c.port}:${c.credential_id ?? ""}`)
+        .map((c) => `${c.id}:${c.name}:${c.host}:${c.port}:${c.credential_id ?? ""}:${c.folder ?? ""}`)
         .sort()
         .join("|"),
     [connections],
@@ -346,7 +346,7 @@ function App() {
         void closePane(sessionId);
         return;
       }
-      dialogs.setConfirmClosePane({ kind: "pane", sessionId, name: pane.connectionName });
+      dialogs.askClosePane({ kind: "pane", sessionId, name: pane.connectionName });
       return;
     }
   };
@@ -360,14 +360,14 @@ function App() {
       return;
     }
     if (tab.panes.length === 1) {
-      dialogs.setConfirmClosePane({
+      dialogs.askClosePane({
         kind: "pane",
         sessionId: tab.panes[0].sessionId,
         name: tab.panes[0].connectionName,
       });
       return;
     }
-    dialogs.setConfirmClosePane({
+    dialogs.askClosePane({
       kind: "tab",
       tabId,
       name: tab.panes.map((p) => p.connectionName).join(" + "),
@@ -376,9 +376,9 @@ function App() {
 
   /* ----------------------------- Layout helpers ----------------------------- */
 
-  const updateLayout = (
-    key: "connection_layout" | "credential_layout" | "tunnel_layout",
-    value: LayoutMode,
+  const updateLayout = <K extends "connection_layout" | "credential_layout" | "tunnel_layout">(
+    key: K,
+    value: AppSettings[K],
   ) => {
     void saveSettings({ ...settings, [key]: value }).catch((error) => {
       appLog.error(
@@ -390,6 +390,7 @@ function App() {
     });
   };
 
+  const terminalsShowing = view === "terminals";
   const totalShellSessions = tabs.reduce((n, t) => n + t.panes.length, 0);
   const gitPending =
     gitSyncStatus.has_local_changes || gitSyncStatus.has_remote_changes;
@@ -426,7 +427,11 @@ function App() {
           />
 
           <main className="flex-1 flex flex-col overflow-hidden min-w-0 min-h-0">
-            {view === "terminals" && tabs.length > 0 ? (
+            {/*
+              Mounted for as long as a tab is open, whichever view is showing:
+              a terminal keeps its scrollback and its modes only while mounted.
+            */}
+            {tabs.length > 0 && (
               <TerminalTabs
                 tabs={tabs}
                 activeTabId={activeTabId}
@@ -437,8 +442,10 @@ function App() {
                 onRetry={(conn, replaceSessionId) => void connect(conn, { replaceSessionId })}
                 onEdit={handleEditFromTerminal}
                 settings={settings}
+                hidden={!terminalsShowing}
               />
-            ) : (
+            )}
+            {!terminalsShowing && (
               <>
                 {view === "connections" && (
                   <ConnectionsView
@@ -617,9 +624,11 @@ function App() {
           }}
         />
 
+        {/* Each question starts afresh, with the focus on Cancel, not on the Close just pressed. */}
         <ConfirmDialog
+          key={dialogs.closePaneTurn}
           open={!!dialogs.confirmClosePane}
-          onOpenChange={(o) => !o && dialogs.setConfirmClosePane(null)}
+          onOpenChange={(o) => !o && dialogs.closePaneAnswered()}
           title="Close terminal?"
           description={
             dialogs.confirmClosePane ? (

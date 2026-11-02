@@ -1,6 +1,9 @@
 import type { Snippet } from "@/types";
 import { detectPlatform } from "./platform";
-import { acceptsBracketedPaste, activeSessionId } from "./terminalRegistry";
+import { useAuthPromptStore } from "@/store/useAuthPromptStore";
+import { useTerminalsStore } from "@/store/useTerminalsStore";
+import { useViewStore } from "@/store/useViewStore";
+import { acceptsBracketedPaste, inputSessionId } from "./terminalRegistry";
 
 /**
  * A `{{variable}}`: a name that starts with a letter or `_` and goes on with
@@ -48,8 +51,20 @@ export function fillVariables(command: string, values: ReadonlyMap<string, strin
 export const NO_TERMINAL_MESSAGE =
   "There is no live terminal to paste into. Connect to a host, or go back to Terminals and pick a tab that is connected.";
 
+export const LOGIN_PROMPT_MESSAGE =
+  "This terminal is waiting for an answer to its login prompt, and a snippet is not one. Answer it, then try again.";
+
+export const RECONNECTING_MESSAGE =
+  "This terminal has lost its connection, and what is sent to it now would be lost. Try again once it is back.";
+
+export const CONNECTING_MESSAGE =
+  "This terminal is still connecting. Try again once its shell is up.";
+
+export const ENDED_MESSAGE =
+  "The shell in this terminal has ended, so there is nothing to paste into. Connect to the host again, or pick a tab that is connected.";
+
 export const SEVERAL_LINES_MESSAGE =
-  "Nothing was pasted: this snippet has several lines, and the program in this terminal has not asked for bracketed paste, so each line would run as soon as it arrived. Put the command on one line (a && b), or use a shell with bracketed paste (bash 5.1 or later, zsh, fish). Just back from another view? Close this palette, click the terminal, press Enter at an empty prompt, then try again.";
+  "Nothing was pasted: this snippet has several lines, and the program in this terminal has not asked for bracketed paste, so each line would run as soon as it arrived. Put the command on one line (a && b), or use a shell with bracketed paste (bash 5.1 or later, zsh, fish).";
 
 export const TAB_MESSAGE =
   "Nothing was pasted: this snippet has a tab, and the program in this terminal has not asked for bracketed paste, so the shell would take the tab as a request to complete, which can change the text or swallow what follows. Replace the tab with spaces, or use a shell with bracketed paste (bash 5.1 or later, zsh, fish).";
@@ -86,12 +101,25 @@ export function preparePaste(
   return { text: kept[0] };
 }
 
+/** Why no pane of the terminal on screen can take a paste right now. */
+export function noTargetMessage(): string {
+  if (useViewStore.getState().view !== "terminals") return NO_TERMINAL_MESSAGE;
+  const { tabs, activeTabId } = useTerminalsStore.getState();
+  const panes = tabs.find((tab) => tab.id === activeTabId)?.panes ?? [];
+  const { prompts } = useAuthPromptStore.getState();
+  if (panes.some((pane) => prompts[pane.sessionId])) return LOGIN_PROMPT_MESSAGE;
+  if (panes.some((pane) => pane.reconnect)) return RECONNECTING_MESSAGE;
+  if (panes.some((pane) => pane.retrying)) return CONNECTING_MESSAGE;
+  if (panes.some((pane) => pane.ended)) return ENDED_MESSAGE;
+  return NO_TERMINAL_MESSAGE;
+}
+
 export type PastePlan = { sessionId: string; text: string } | { error: string };
 
 /** Where a command would go and as what, or why it cannot be pasted right now. */
 export function planPaste(command: string): PastePlan {
-  const sessionId = activeSessionId();
-  if (!sessionId) return { error: NO_TERMINAL_MESSAGE };
+  const sessionId = inputSessionId();
+  if (!sessionId) return { error: noTargetMessage() };
   const prepared = preparePaste(command, acceptsBracketedPaste(sessionId));
   return "error" in prepared ? prepared : { sessionId, text: prepared.text };
 }

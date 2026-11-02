@@ -17,6 +17,16 @@ describe("App shell structure", () => {
     expect(slice).toMatch(/overflow-y-auto overscroll-contain/);
   });
 
+  it("keeps the terminals mounted across views, hidden rather than removed", () => {
+    expect(app).toMatch(/\{tabs\.length > 0 && \(\s*<TerminalTabs/);
+    expect(app).toContain("hidden={!terminalsShowing}");
+    expect(app).toContain('const terminalsShowing = view === "terminals"');
+    const terminals = app.indexOf("<TerminalTabs");
+    const otherViews = app.indexOf("{!terminalsShowing && (");
+    expect(otherViews).toBeGreaterThan(terminals);
+    expect(app.lastIndexOf('view === "settings"')).toBeGreaterThan(otherViews);
+  });
+
   it("renders the screenshot affordances without emoji or a menu icon", () => {
     expect(app).not.toContain("📸");
     expect(toast).not.toContain("📸");

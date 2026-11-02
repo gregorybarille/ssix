@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { renderHook } from "@testing-library/react";
 import {
@@ -5,9 +7,12 @@ import {
   isTypingSurface,
   blockedByTypingSurface,
   SHORTCUTS,
+  FIND_COMBO,
+  findCombo,
   TABLE_SHORTCUTS,
 } from "@/hooks/useGlobalShortcuts";
 import { useDialogsStore } from "@/store/useDialogsStore";
+import { useTerminalSearchStore } from "@/store/useTerminalSearchStore";
 import { useTerminalsStore } from "@/store/useTerminalsStore";
 import { useViewStore } from "@/store/useViewStore";
 
@@ -32,6 +37,35 @@ function dispatch(opts: Partial<KeyboardEventInit & { key: string; target?: HTML
   }
   return event;
 }
+
+describe("SHORTCUTS", () => {
+  it("binds each combo once, none of them the ones App.tsx handles itself", () => {
+    const app = readFileSync(resolve(__dirname, "../App.tsx"), "utf8");
+    const own = [...app.matchAll(/"(mod\+[^"]+)"\s*:/g)].map((match) => match[1]);
+    expect(own).toEqual(expect.arrayContaining(["mod+n", "mod+w"]));
+    const combos = [...SHORTCUTS.map((s) => s.combo), ...own];
+    expect(combos.filter((combo, i) => combos.indexOf(combo) !== i)).toEqual([]);
+  });
+
+  it("takes Cmd+F on macOS and Ctrl+Shift+F elsewhere, clear of every other combo", () => {
+    expect(findCombo(true)).toBe("mod+f");
+    expect(findCombo(false)).toBe("mod+shift+f");
+    const others = SHORTCUTS.map((s) => s.combo).filter((combo) => combo !== FIND_COMBO);
+    expect(others).not.toContain(findCombo(true));
+    expect(others).not.toContain(findCombo(false));
+  });
+
+  it("opens the find bar from inside a terminal, the one place it is any use", () => {
+    const find = SHORTCUTS.find((s) => s.combo === FIND_COMBO);
+    expect(find?.allowInTypingSurface).toBe(true);
+    useViewStore.setState({ view: "terminals" });
+    useTerminalSearchStore.setState({ sessionId: null });
+    const open = vi.spyOn(useTerminalSearchStore.getState(), "open");
+    find?.handler(new KeyboardEvent("keydown"));
+    expect(open).toHaveBeenCalledOnce();
+    open.mockRestore();
+  });
+});
 
 describe("useGlobalShortcuts", () => {
   beforeEach(() => {

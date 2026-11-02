@@ -3,6 +3,7 @@ import {
   registerTerminalExtension,
   runTerminalCreate,
   runTerminalData,
+  runTerminalKey,
   runTerminalOutput,
   terminalExtensions,
   type TerminalExtension,
@@ -10,6 +11,36 @@ import {
 } from "@/components/terminal/extensions";
 
 const ctx = { sessionId: "s1", settings: undefined } as unknown as TerminalExtensionContext;
+
+describe("runTerminalKey", () => {
+  const event = new KeyboardEvent("keydown", { key: "f" });
+  const removers: (() => void)[] = [];
+
+  afterEach(() => removers.splice(0).forEach((remove) => remove()));
+
+  const withKey = (id: string, onKey: TerminalExtension["onKey"]) =>
+    removers.push(registerTerminalExtension({ id, onKey }));
+
+  it("passes a key when every extension does", () => {
+    withKey("yes", () => true);
+    expect(runTerminalKey(ctx, event)).toBe(true);
+  });
+
+  it("keeps a key from xterm when any extension says so, whatever the others say", () => {
+    withKey("no", () => false);
+    withKey("yes", () => true);
+    expect(runTerminalKey(ctx, event)).toBe(false);
+  });
+
+  it("keeps the terminal going when an extension throws", () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    withKey("broken", () => {
+      throw new Error("boom");
+    });
+    expect(runTerminalKey(ctx, event)).toBe(true);
+    vi.restoreAllMocks();
+  });
+});
 
 describe("terminal extension registry", () => {
   const removers: (() => void)[] = [];

@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { autoCopySelection } from "@/components/terminal/autoCopySelection";
 import type { TerminalExtensionContext } from "@/components/terminal/extensions";
+import { useTerminalSearchStore } from "@/store/useTerminalSearchStore";
 import type { AppSettings } from "@/types";
 
 /**
@@ -123,6 +124,21 @@ describe("Terminal — auto-copy on selection (opt-in)", () => {
     settings.current = { auto_copy_selection: true };
     select();
     expect(navigator.clipboard.writeText).toHaveBeenCalledWith("x");
+  });
+
+  it("leaves the clipboard alone while a search selects its matches", () => {
+    const { select } = mountExtension({
+      settings: { current: { auto_copy_selection: true } },
+      getSelection: () => "a match",
+    });
+    useTerminalSearchStore.setState({ sessionId: "s1" });
+    select();
+    expect(navigator.clipboard.writeText).not.toHaveBeenCalled();
+
+    useTerminalSearchStore.setState({ sessionId: "another-pane" });
+    select();
+    expect(navigator.clipboard.writeText).toHaveBeenCalledWith("a match");
+    useTerminalSearchStore.setState({ sessionId: null });
   });
 
   it("releases the selection listener when the terminal goes away", () => {
