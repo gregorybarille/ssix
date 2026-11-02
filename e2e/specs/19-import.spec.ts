@@ -8,9 +8,12 @@
  *     reasons, and saves nothing;
  *   - an import of only the rows left ticked, checked against the stored
  *     connections and credentials;
+ *   - two accounts on one server, told apart by their keys;
  *   - a second import of the same file creating nothing;
  *   - a name clash that leaves the existing connection alone;
  *   - a host imported with only a key path really connecting;
+ *   - an unticked row leaving its name and credential name to the others;
+ *   - every row held back when part of the config was not applied;
  *   - unreadable files and hostile lines being reported.
  */
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
@@ -112,6 +115,32 @@ async function expectSkip(name: string, category: string, reason: string): Promi
   expect(await textContentOf(skip)).toContain(reason);
 }
 
+async function waitForItem(name: string): Promise<WebdriverIO.Element> {
+  const row = await browser.$(sel.importItem(name));
+  await row.waitForExist({ timeout: 10_000 });
+  return row;
+}
+
+async function isTicked(name: string): Promise<boolean> {
+  const row = await waitForItem(name);
+  return (await (await row.$(sel.importItemCheckbox)).getAttribute("aria-checked")) === "true";
+}
+
+async function toggle(name: string): Promise<void> {
+  const row = await waitForItem(name);
+  await (await row.$(sel.importItemCheckbox)).click();
+}
+
+async function noticeTexts(): Promise<string[]> {
+  const notices = await browser.$$(sel.importNotice);
+  return Promise.all(Array.from(notices).map((n) => textContentOf(n)));
+}
+
+async function confirmImport(): Promise<void> {
+  await click(sel.importConfirm);
+  await (await browser.$(sel.importResult)).waitForExist({ timeout: 10_000 });
+}
+
 async function closeImport(): Promise<void> {
   await click(sel.importClose);
   await (await browser.$(sel.importDialog)).waitForExist({ reverse: true, timeout: 10_000 });
@@ -164,6 +193,23 @@ describe("Import from SSH config", () => {
       port: 22,
       credentialName: "cred-19-pw",
     });
+    const heldKey = await backend<StoredCredential>("add_credential", {
+      input: {
+        name: "cred-19-key",
+        username: "same19",
+        type: "ssh_key",
+        private_key_path: "/keys/e2e19-same",
+      },
+    });
+    await backend("add_connection", {
+      input: {
+        name: "conn-19-same-place",
+        host: "10.19.0.6",
+        port: 22,
+        credential_id: heldKey.id,
+        type: "direct",
+      },
+    });
 
     const extra = join(dir, "extra.conf");
     writeFileSync(extra, "Host e2e19-included\n  HostName 10.19.0.20\n  User inc19\n");
@@ -213,10 +259,27 @@ describe("Import from SSH config", () => {
         "  User tok19",
         "  ProxyCommand nc %C",
         "",
-        // The same place as a connection SSIX already has, under a new name.
+        // What a connection SSIX already has does, under a new name.
         "Host e2e19-same-place",
+        "  HostName 10.19.0.6",
+        "  User same19",
+        "  IdentityFile /keys/e2e19-same",
+        "",
+        // The server and user of a connection SSIX has, signing in another way.
+        "Host e2e19-other-sign-in",
         "  HostName 10.19.0.1",
         "  User dup19",
+        "",
+        // Two accounts on one server, told apart only by their keys.
+        "Host e2e19-acct-work",
+        "  HostName 10.19.0.7",
+        "  User acct19",
+        "  IdentityFile /keys/e2e19-work",
+        "",
+        "Host e2e19-acct-personal",
+        "  HostName 10.19.0.7",
+        "  User acct19",
+        "  IdentityFile /keys/e2e19-personal",
         "",
         // The name of a connection SSIX already has, somewhere else.
         "Host conn-19-existing",
@@ -225,9 +288,6 @@ describe("Import from SSH config", () => {
         "",
         "Host e2e19-*.internal",
         "  Port 2200",
-        "",
-        "Match host e2e19-direct",
-        "  User matched19",
         "",
       ].join("\n"),
     );
@@ -252,25 +312,33 @@ describe("Import from SSH config", () => {
       "e2e19-proxied",
       "e2e19-left-out",
       "e2e19-included",
+      "e2e19-other-sign-in",
+      "e2e19-acct-work",
+      "e2e19-acct-personal",
     ]) {
-      await (await browser.$(sel.importItem(name))).waitForExist({ timeout: 10_000 });
+      await waitForItem(name);
     }
+    expect(await isTicked("e2e19-direct")).toBe(true);
+    expect(await isTicked("e2e19-acct-work")).toBe(true);
+    expect(await isTicked("e2e19-acct-personal")).toBe(true);
+
+    // A second alias of one destination is offered, but starts unticked.
+    expect(await isTicked("e2e19-direct-alias")).toBe(false);
+    expect(await textContentOf(await waitForItem("e2e19-direct-alias"))).toContain(
+      "Same destination as 'e2e19-direct'",
+    );
 
     const proxied = await browser.$(sel.importItem("e2e19-proxied"));
     expect(await textContentOf(proxied)).toContain("nc -w 1 %h %p");
 
-    await expectSkip("e2e19-direct-alias", "duplicate", "Same destination as 'e2e19-direct'");
     await expectSkip("e2e19-two-hops", "unsupported", "2 hops");
     await expectSkip("e2e19-bad-port", "invalid", "99999");
     await expectSkip("e2e19-bad-token", "unsupported", "%C");
-    await expectSkip("e2e19-same-place", "already_imported", "conn-19-existing");
+    await expectSkip("e2e19-same-place", "already_imported", "conn-19-same-place");
     await expectSkip("conn-19-existing", "name_clash", "already exists");
     await expectSkip("e2e19-*.internal", "pattern", "not a single host");
     expect(await (await browser.$(sel.importItem("conn-19-existing"))).isExisting()).toBe(false);
 
-    const notices = await browser.$$(sel.importNotice);
-    const noticeTexts = await Promise.all(Array.from(notices).map((n) => textContentOf(n)));
-    expect(noticeTexts.some((text) => text.includes("Match block skipped"))).toBe(true);
     expect(await textContentOf(await browser.$(sel.importFiles))).toContain("extra.conf");
 
     await closeImport();
@@ -280,22 +348,24 @@ describe("Import from SSH config", () => {
 
   it("imports only the rows left ticked, as the config describes them", async () => {
     await openImportOf(configPath);
-    const leftOut = await browser.$(sel.importItem("e2e19-left-out"));
-    await leftOut.waitForExist({ timeout: 10_000 });
-    await (await leftOut.$(sel.importItemCheckbox)).click();
-
-    await click(sel.importConfirm);
-    await (await browser.$(sel.importResult)).waitForExist({ timeout: 10_000 });
+    await toggle("e2e19-left-out");
+    await confirmImport();
 
     // The preview reloads: what was imported now shows as imported.
     await expectSkip("e2e19-direct", "already_imported", "Already in SSIX");
-    await (await browser.$(sel.importItem("e2e19-left-out"))).waitForExist({ timeout: 10_000 });
+    await waitForItem("e2e19-left-out");
     await closeImport();
 
     const names = (await connections()).map((c) => c.name);
     expect(names).toContain("e2e19-included");
     expect(names).not.toContain("e2e19-left-out");
     expect(names).not.toContain("e2e19-direct-alias");
+
+    // Both accounts on the one server, each with its own key.
+    const accountKey = async (name: string) =>
+      (await credentialOf((await connectionNamed(name)).credential_id)).private_key_path;
+    expect(await accountKey("e2e19-acct-work")).toBe("/keys/e2e19-work");
+    expect(await accountKey("e2e19-acct-personal")).toBe("/keys/e2e19-personal");
 
     const direct = await connectionNamed("e2e19-direct");
     expect(direct.type).toBe("direct");
@@ -357,8 +427,11 @@ describe("Import from SSH config", () => {
     const credentialsBefore = await credentials();
 
     await openImportOf(configPath);
-    await (await browser.$(sel.importItem("e2e19-left-out"))).waitForExist({ timeout: 10_000 });
+    await waitForItem("e2e19-left-out");
     expect((await browser.$$(sel.importItems)).length).toBe(1);
+    await expectSkip("e2e19-acct-work", "already_imported", "Already in SSIX");
+    await expectSkip("e2e19-acct-personal", "already_imported", "Already in SSIX");
+    await expectSkip("e2e19-direct-alias", "already_imported", "e2e19-direct");
     await expectSkip("e2e19-direct", "already_imported", "Already in SSIX");
     await expectSkip("e2e19-direct (-L 23619)", "already_imported", "Already in SSIX");
     await expectSkip("e2e19-jumped", "already_imported", "Already in SSIX");
@@ -381,6 +454,87 @@ describe("Import from SSH config", () => {
     // Alpine ash prompt: `<host>:~$` (see spec 03 for context).
     await waitForTerminalContains("server-a:~$", 30_000);
     await navigateTo("connections");
+  });
+
+  it("lets an unticked row leave its name and credential name to the others", async () => {
+    const picks = join(dir, "picks");
+    writeFileSync(
+      picks,
+      [
+        "Host e2e19-prod e2e19-prod-alt",
+        "  HostName 10.19.0.8",
+        "  User pick19",
+        "  IdentityFile /keys/e2e19-pick",
+        "",
+        "Host e2e19-key-a",
+        "  HostName 10.19.0.9",
+        "  User name19",
+        "  IdentityFile /keys/a/id_e2e19name",
+        "",
+        "Host e2e19-key-b",
+        "  HostName 10.19.0.10",
+        "  User name19",
+        "  IdentityFile /keys/b/id_e2e19name",
+        "",
+      ].join("\n"),
+    );
+
+    await openImportOf(picks);
+    expect(await isTicked("e2e19-prod")).toBe(true);
+    expect(await isTicked("e2e19-prod-alt")).toBe(false);
+    await toggle("e2e19-prod");
+    await toggle("e2e19-prod-alt");
+    await toggle("e2e19-key-a");
+    await confirmImport();
+    await closeImport();
+
+    const names = (await connections()).map((c) => c.name);
+    expect(names).toContain("e2e19-prod-alt");
+    expect(names).toContain("e2e19-key-b");
+    expect(names).not.toContain("e2e19-prod");
+    expect(names).not.toContain("e2e19-key-a");
+
+    // /keys/a was left out, so /keys/b has the plain name and no number.
+    const key = await credentialOf((await connectionNamed("e2e19-key-b")).credential_id);
+    expect(key.name).toBe("name19@id_e2e19name");
+    expect(key.private_key_path).toBe("/keys/b/id_e2e19name");
+  });
+
+  it("holds back every row when part of the config was not applied", async () => {
+    const partial = join(dir, "partial");
+    writeFileSync(
+      partial,
+      [
+        "Host e2e19-held-a",
+        "  HostName 10.19.0.11",
+        "  User held19",
+        "",
+        "Host e2e19-held-b",
+        "  HostName 10.19.0.12",
+        "  User held19",
+        "",
+        // ssh would go through a bastion for this host; the import cannot know.
+        "Match host e2e19-held-a",
+        "  ProxyJump e2e19-bastion",
+        "",
+      ].join("\n"),
+    );
+
+    await openImportOf(partial);
+    for (const name of ["e2e19-held-a", "e2e19-held-b"]) {
+      expect(await isTicked(name)).toBe(false);
+      expect(await textContentOf(await waitForItem(name))).toContain("was not applied");
+    }
+    expect((await noticeTexts()).some((text) => text.includes("Match block skipped"))).toBe(true);
+    expect(await (await browser.$(sel.importConfirm)).isEnabled()).toBe(false);
+
+    // It stays the user's choice, row by row.
+    await toggle("e2e19-held-b");
+    await confirmImport();
+    await closeImport();
+    const names = (await connections()).map((c) => c.name);
+    expect(names).toContain("e2e19-held-b");
+    expect(names).not.toContain("e2e19-held-a");
   });
 
   it("reports a missing file and offers nothing to import", async () => {
@@ -408,15 +562,16 @@ describe("Import from SSH config", () => {
     );
 
     await openImportOf(hostile);
-    await (await browser.$(sel.importItem("e2e19-survivor"))).waitForExist({ timeout: 10_000 });
+    await waitForItem("e2e19-survivor");
     expect((await browser.$$(sel.importItems)).length).toBe(1);
+    // The Host line and the Include it could not read could change any host.
+    expect(await isTicked("e2e19-survivor")).toBe(false);
     await expectSkip("e2e19-long", "invalid", "longer than 4096");
     await expectSkip("e2e19-quote", "invalid", "unbalanced quote");
 
-    const notices = await browser.$$(sel.importNotice);
-    const noticeTexts = await Promise.all(Array.from(notices).map((n) => textContentOf(n)));
-    expect(noticeTexts.some((text) => text.includes("include itself"))).toBe(true);
-    expect(noticeTexts.some((text) => text.includes("Host line ignored"))).toBe(true);
+    const texts = await noticeTexts();
+    expect(texts.some((text) => text.includes("include itself"))).toBe(true);
+    expect(texts.some((text) => text.includes("Host line ignored"))).toBe(true);
     await closeImport();
   });
 });
