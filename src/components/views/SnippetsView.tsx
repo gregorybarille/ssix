@@ -43,29 +43,29 @@ export function SnippetsView() {
 
   return (
     <div className="flex flex-col h-full min-h-0">
-      <div className="flex items-center justify-between gap-4 px-6 py-4 border-b border-border">
-        <div className="min-w-0">
+      <div className="space-y-2 px-6 py-4 border-b border-border">
+        <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
           <h1 className="text-lg font-semibold">Snippets</h1>
-          <p className="text-xs text-muted-foreground">
-            {paletteShortcutLabel()} pastes one into the active terminal. Nothing runs until you
-            press Enter there.
-          </p>
+          <div className="flex items-center gap-2">
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={openPalette}
+              data-testid="snippet-palette-button"
+            >
+              <ClipboardPaste className="h-4 w-4 mr-1" aria-hidden="true" />
+              Paste
+            </Button>
+            <Button size="sm" onClick={() => openEditor(null)} data-testid="add-snippet-button">
+              <Plus className="h-4 w-4 mr-1" aria-hidden="true" />
+              New Snippet
+            </Button>
+          </div>
         </div>
-        <div className="flex shrink-0 items-center gap-2">
-          <Button
-            size="sm"
-            variant="outline"
-            onClick={openPalette}
-            data-testid="snippet-palette-button"
-          >
-            <ClipboardPaste className="h-4 w-4 mr-1" aria-hidden="true" />
-            Paste
-          </Button>
-          <Button size="sm" onClick={() => openEditor(null)} data-testid="add-snippet-button">
-            <Plus className="h-4 w-4 mr-1" aria-hidden="true" />
-            New Snippet
-          </Button>
-        </div>
+        <p className="text-xs text-muted-foreground">
+          {paletteShortcutLabel()} pastes one into the active terminal. Nothing runs until you press
+          Enter there.
+        </p>
       </div>
       {loadError && (
         <ErrorBanner
