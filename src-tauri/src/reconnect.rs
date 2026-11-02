@@ -30,7 +30,7 @@ pub(crate) const STABLE_SHELL: Duration = Duration::from_secs(60);
 /// an allow-list, a failure nobody thought of is never retried against a
 /// server that may lock the account. Each entry is part of a message from
 /// `ssh.rs`; jump hosts wrap them, so they are searched anywhere.
-const RETRYABLE_ERRORS: [&str; 12] = [
+const RETRYABLE_ERRORS: [&str; 13] = [
     "Failed to resolve",
     "No addresses resolved",
     "TCP connect to",
@@ -43,6 +43,7 @@ const RETRYABLE_ERRORS: [&str; 12] = [
     "via jump host timed out",
     "forwarder exited",
     crate::login_wait::STALLED,
+    crate::login_wait::LOST,
 ];
 
 pub(crate) fn is_retryable_connect_error(message: &str) -> bool {
@@ -402,6 +403,8 @@ mod tests {
             "Target connect via jump host failed: forwarder exited",
             "Failed to connect inner SSH session: refused",
             crate::login_wait::STALLED,
+            crate::login_wait::LOST,
+            "Jump host j:22: The connection was lost during login",
         ] {
             assert!(is_retryable_connect_error(retryable), "{retryable}");
         }
@@ -414,6 +417,11 @@ mod tests {
             "Target connect via jump host failed: Key auth failed: x",
             "Keyboard-interactive auth failed: [Session(-18)] Authentication failed",
             "Keyboard-interactive auth failed: [Session(-13)] socket disconnect",
+            "Password auth failed: [Session(-13)] socket disconnect",
+            "Password auth failed: [Session(-9)] Timed out waiting on socket",
+            "Key auth failed: [Session(-19)] Waiting for publickey USERAUTH response",
+            "Key auth failed: x. The server then stopped answering",
+            "Key auth failed: x. The connection then closed",
             crate::auth_prompt::CANCELLED,
             crate::auth_prompt::TIMED_OUT,
             "Agent auth failed: Could not reach an SSH agent: refused",

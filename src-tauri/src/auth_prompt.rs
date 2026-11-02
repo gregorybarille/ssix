@@ -199,8 +199,32 @@ pub(crate) enum PromptFailure {
     /// Something on our side ended it: one of [`CANCELLED`], [`TIMED_OUT`] or
     /// `crate::login_wait::STALLED`.
     GaveUp(&'static str),
-    /// The server did not accept the answers.
+    /// The connection failed before any question, so nobody has answered anything.
+    ConnectionLost,
+    /// The server did not accept the answers. A connection that closes once a
+    /// question has been asked lands here too: it cannot be told from a server
+    /// hanging up on a wrong answer, and whoever answers is there to press Retry.
     Refused(String),
+}
+
+/// What an exchange came to, from why it stopped, if it was stopped, whether it
+/// got as far as a question, and what libssh2 said.
+fn exchange_outcome(
+    given_up: Option<&'static str>,
+    asked: bool,
+    result: Result<(), ssh2::Error>,
+) -> Result<(), PromptFailure> {
+    if let Some(reason) = given_up {
+        return Err(PromptFailure::GaveUp(reason));
+    }
+    match result {
+        Ok(()) => Ok(()),
+        Err(e) if !asked && crate::login_wait::connection_failed(&e) => {
+            Err(PromptFailure::ConnectionLost)
+        }
+        Err(_) if !asked => Err(PromptFailure::NothingAsked),
+        Err(e) => Err(PromptFailure::Refused(e.to_string())),
+    }
 }
 
 /// Run keyboard-interactive authentication, asking in `pane`, which also shows
@@ -228,14 +252,10 @@ pub(crate) fn authenticate(
         debug: debug.clone(),
     };
     let result = exchange(session, &endpoint.username, &mut prompter, STALLS);
-    if let Some(reason) = prompter.given_up {
-        return Err(PromptFailure::GaveUp(reason));
+    if let Err(e) = &result {
+        debug.at(1, || format!("Keyboard-interactive ended: {}", e));
     }
-    match result {
-        Ok(()) => Ok(()),
-        Err(_) if !prompter.asked => Err(PromptFailure::NothingAsked),
-        Err(e) => Err(PromptFailure::Refused(e.to_string())),
-    }
+    exchange_outcome(prompter.given_up, prompter.asked, result)
 }
 
 #[derive(Serialize)]
@@ -781,6 +801,41 @@ mod tests {
     }
 
     #[test]
+    fn a_connection_lost_counts_only_before_a_question() {
+        let error = |code, reason: &'static str| {
+            Err(ssh2::Error::new(ssh2::ErrorCode::Session(code), reason))
+        };
+        let lost = || error(-18, "Waiting for keyboard USERAUTH response");
+        let refused = || error(-18, "Authentication failed (keyboard-interactive)");
+
+        assert_eq!(
+            exchange_outcome(None, false, lost()),
+            Err(PromptFailure::ConnectionLost)
+        );
+        assert_eq!(
+            exchange_outcome(None, false, error(-7, "Unable to send")),
+            Err(PromptFailure::ConnectionLost)
+        );
+        assert_eq!(
+            exchange_outcome(None, false, refused()),
+            Err(PromptFailure::NothingAsked)
+        );
+        assert!(matches!(
+            exchange_outcome(None, true, lost()),
+            Err(PromptFailure::Refused(_))
+        ));
+        assert!(matches!(
+            exchange_outcome(None, true, error(-13, "socket disconnect")),
+            Err(PromptFailure::Refused(_))
+        ));
+        assert_eq!(
+            exchange_outcome(Some(CANCELLED), false, lost()),
+            Err(PromptFailure::GaveUp(CANCELLED))
+        );
+        assert_eq!(exchange_outcome(None, true, Ok(())), Ok(()));
+    }
+
+    #[test]
     fn answering_or_cancelling_an_unknown_prompt_is_harmless() {
         assert!(answer("no-such-prompt", vec![]).is_err());
         cancel("no-such-prompt");
@@ -1200,6 +1255,45 @@ mod live {
         let started = Instant::now();
         let _ = exchange(&session, &target.username, &mut prompter, SHORT_STALLS);
         assert_stalled(prompter.given_up, started.elapsed());
+    }
+
+    #[test]
+    #[ignore = "needs a keyboard-interactive server (SSIX_LIVE_KBDINT_SSH)"]
+    fn live_keyboard_connection_closed_before_the_question_can_be_retried() {
+        let Some(target) = target() else { return };
+        let proxy = proxy_to(&target);
+        let session = session_up_to_login(&proxy, &target);
+        proxy.freeze();
+        proxy.cut_after(Duration::from_millis(300));
+        let mut prompter = silent_prompter(&target, &session, None);
+        let result = exchange(&session, &target.username, &mut prompter, SHORT_STALLS);
+        assert_eq!(prompter.given_up, None);
+        assert_eq!(
+            exchange_outcome(prompter.given_up, prompter.asked, result),
+            Err(PromptFailure::ConnectionLost)
+        );
+    }
+
+    /// Whoever answered is there to press Retry, and the server may have hung up
+    /// on a wrong answer.
+    #[test]
+    #[ignore = "needs a keyboard-interactive server (SSIX_LIVE_KBDINT_SSH)"]
+    fn live_keyboard_connection_closed_after_the_answer_stops_the_retries() {
+        let Some(target) = target() else { return };
+        let proxy = Arc::new(proxy_to(&target));
+        let cutter = proxy.clone();
+        let (given_up, result, _) =
+            exchange_through(&target, &proxy, None, SHORT_STALLS, move |id| {
+                cutter.freeze();
+                cutter.cut_after(Duration::from_millis(300));
+                let id = id.to_string();
+                thread::spawn(move || answer(&id, vec!["anything".into()]).unwrap());
+            });
+        assert_eq!(given_up, None);
+        assert!(matches!(
+            exchange_outcome(given_up, true, result),
+            Err(PromptFailure::Refused(_))
+        ));
     }
 
     #[test]

@@ -105,8 +105,11 @@ A dropped shell that needs answers asks again in the same pane
   same way. Nothing asks again until you press **Retry**, so walking away from a
   dropped session cannot lock an account or fill the pane with prompts. A failed
   agent login stops it too.
-- A server that goes silent mid-login does not stop it: that is the network
-  failing again, so the reconnect tries again, and asks again once it gets through.
+- A server that goes silent mid-login, or a connection that closes before any
+  question, does not stop it: that is the network failing again, so the reconnect
+  tries again, and asks again once it gets through. A connection that closes once
+  a question has been asked does stop it, since a server can hang up on a wrong
+  answer.
 - Closing the pane or tab, or anything else that ends the attempt, closes a
   waiting prompt within a moment.
 - A prompt in a background tab or behind another view waits there. A key on its

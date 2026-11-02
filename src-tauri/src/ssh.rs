@@ -639,22 +639,34 @@ fn open_session_unless_cancelled(
     Ok(session)
 }
 
+/// The connection failed while listing the methods.
+struct LostConnection;
+
 /// The method names a server offers (`publickey,keyboard-interactive`). `None`
-/// when it could not be asked, which offers nothing but rules nothing out.
-fn list_auth_methods(session: &Session, username: &str, debug: &SshDebug) -> Option<String> {
+/// when it could not be asked, which offers nothing but rules nothing out. This
+/// sends a "none" request, so a connection that fails here has lost nothing secret.
+fn list_auth_methods(
+    session: &Session,
+    username: &str,
+    debug: &SshDebug,
+) -> Result<Option<String>, LostConnection> {
     match crate::libssh2_ext::userauth_list(session, username) {
         Ok(methods) => {
             debug.at(1, || {
                 format!("Authentications that can continue: {}", methods)
             });
             // An empty list goes with a server that just accepted "none".
-            (!methods.is_empty()).then_some(methods)
+            Ok((!methods.is_empty()).then_some(methods))
         }
         Err(e) => {
             debug.at(1, || {
                 format!("Could not list authentication methods: {}", e)
             });
-            None
+            if crate::login_wait::connection_failed(&e) {
+                Err(LostConnection)
+            } else {
+                Ok(None)
+            }
         }
     }
 }
@@ -742,13 +754,15 @@ fn prompt_failure_message(
     failure: crate::auth_prompt::PromptFailure,
 ) -> String {
     use crate::auth_prompt::PromptFailure;
-    use crate::login_wait::STALLED;
+    use crate::login_wait::{LOST, STALLED};
     match failure {
         PromptFailure::NothingAsked => first_step.to_string(),
         PromptFailure::GaveUp(reason) if !refused => reason.to_string(),
+        PromptFailure::ConnectionLost if !refused => LOST.to_string(),
         PromptFailure::GaveUp(STALLED) => {
             format!("{}. The server then stopped answering", first_step)
         }
+        PromptFailure::ConnectionLost => format!("{}. The connection then closed", first_step),
         PromptFailure::GaveUp(reason) => format!("{}. {}", first_step, reason),
         PromptFailure::Refused(reason) if !refused => {
             format!("Keyboard-interactive auth failed: {}", reason)
@@ -822,7 +836,8 @@ pub(crate) fn authenticate(
     let username = &endpoint.username;
     // Listing the methods sends a "none" request, as `ssh -v` does. A
     // server that accepts it leaves nothing else to do.
-    let offered = list_auth_methods(session, username, debug);
+    let offered = list_auth_methods(session, username, debug)
+        .map_err(|LostConnection| crate::login_wait::LOST.to_string())?;
     if session.authenticated() {
         debug.at(1, || "Authentication succeeded (none).".to_string());
         return Ok(());
@@ -860,7 +875,8 @@ pub(crate) fn authenticate(
     let method = match unfinished {
         None => method,
         Some((error, tried)) => {
-            let remaining = list_auth_methods(session, username, debug);
+            // A connection lost here stays what the credential came to.
+            let remaining = list_auth_methods(session, username, debug).unwrap_or(None);
             if session.authenticated() {
                 method
             } else {
@@ -1770,7 +1786,7 @@ mod idle_wait_tests {
 mod credential_failure_tests {
     use super::*;
     use crate::auth_prompt::{PromptFailure, CANCELLED, TIMED_OUT};
-    use crate::login_wait::STALLED;
+    use crate::login_wait::{LOST, STALLED};
     use crate::reconnect::is_retryable_connect_error;
 
     fn failure(code: i32, reason: &'static str) -> CredentialFailure {
@@ -1848,9 +1864,21 @@ mod credential_failure_tests {
     #[test]
     fn a_silent_server_after_a_refusal_is_not_retried() {
         let first = "Key auth failed: combination invalid";
-        let message = prompt_failure_message(first, true, PromptFailure::GaveUp(STALLED));
-        assert!(message.starts_with(first), "{message}");
-        assert!(!is_retryable_connect_error(&message), "{message}");
+        for failure in [
+            PromptFailure::GaveUp(STALLED),
+            PromptFailure::ConnectionLost,
+        ] {
+            let message = prompt_failure_message(first, true, failure);
+            assert!(message.starts_with(first), "{message}");
+            assert!(!is_retryable_connect_error(&message), "{message}");
+        }
+    }
+
+    #[test]
+    fn a_connection_lost_after_a_refusal_says_so_and_is_not_retried() {
+        let first = "Key auth failed: combination invalid";
+        let message = prompt_failure_message(first, true, PromptFailure::ConnectionLost);
+        assert_eq!(message, format!("{first}. The connection then closed"));
     }
 
     #[test]
@@ -1859,6 +1887,7 @@ mod credential_failure_tests {
         let on_its_own = |failure| prompt_failure_message(first, false, failure);
         assert_eq!(on_its_own(PromptFailure::GaveUp(CANCELLED)), CANCELLED);
         assert_eq!(on_its_own(PromptFailure::GaveUp(STALLED)), STALLED);
+        assert_eq!(on_its_own(PromptFailure::ConnectionLost), LOST);
         assert!(is_retryable_connect_error(&on_its_own(
             PromptFailure::GaveUp(STALLED)
         )));
@@ -2332,6 +2361,109 @@ mod tests {
             let error = start_shell(session, &target.endpoint, &opts).err().unwrap();
             assert_eq!(error, ATTEMPT_CANCELLED);
         });
+    }
+
+    /// A saved password and a stored key.
+    fn credentials_for_a_lost_login() -> Vec<Endpoint> {
+        use crate::commands::ssh_keygen::{generate_ssh_key_sync, GenerateSshKeyInput, KeyStorage};
+        let password = crate::remote_script::live::Target::from_env().endpoint;
+        let key = generate_ssh_key_sync(GenerateSshKeyInput {
+            storage: KeyStorage::Inline,
+            name_hint: None,
+            passphrase: None,
+            comment: None,
+        })
+        .unwrap();
+        let mut with_key = password.clone();
+        with_key.auth = AuthMethod::KeyMemory {
+            private_key: key.private_key,
+            passphrase: None,
+        };
+        vec![password, with_key]
+    }
+
+    fn assert_stops_the_retries(failure: CredentialFailure) {
+        assert!(matches!(failure, CredentialFailure::Local(_)));
+        let error = failure.into_message();
+        assert!(
+            error.starts_with("Password auth failed") || error.starts_with("Key auth failed"),
+            "{error}"
+        );
+        assert!(!crate::reconnect::is_retryable_connect_error(&error));
+    }
+
+    /// Once a credential went out, a close can be a server hanging up on it, and
+    /// sending it again could lock the account.
+    #[test]
+    #[ignore]
+    fn live_a_connection_closed_after_the_credential_went_out_is_not_retried() {
+        use crate::login_wait::test_support::FreezingProxy;
+        for endpoint in credentials_for_a_lost_login() {
+            let proxy = FreezingProxy::to(&endpoint.addr());
+            let session = proxy.session();
+            proxy.freeze();
+            proxy.cut_after(Duration::from_millis(300));
+            let debug = SshDebug::new(0, "live-test");
+            let failure = authenticate_with_credential(&session, &endpoint, &debug).unwrap_err();
+            assert_stops_the_retries(failure);
+        }
+    }
+
+    /// No reply in time can be a server still judging the credential.
+    #[test]
+    #[ignore]
+    fn live_a_credential_with_no_reply_in_time_is_not_retried() {
+        use crate::login_wait::test_support::FreezingProxy;
+        for endpoint in credentials_for_a_lost_login() {
+            let proxy = FreezingProxy::to(&endpoint.addr());
+            let session = proxy.session();
+            session.set_timeout(1_000);
+            proxy.freeze();
+            let debug = SshDebug::new(0, "live-test");
+            let failure = authenticate_with_credential(&session, &endpoint, &debug).unwrap_err();
+            assert_stops_the_retries(failure);
+        }
+    }
+
+    /// Every kind of credential, none of which leaves on a connection already lost.
+    fn every_credential_kind() -> Vec<Endpoint> {
+        let mut endpoints = credentials_for_a_lost_login();
+        let mut agent = endpoints[0].clone();
+        agent.auth = AuthMethod::Agent;
+        endpoints.push(agent);
+        endpoints
+    }
+
+    fn assert_lost(error: String) {
+        assert_eq!(error, crate::login_wait::LOST);
+        assert!(crate::reconnect::is_retryable_connect_error(&error));
+    }
+
+    #[test]
+    #[ignore]
+    fn live_a_connection_closed_before_the_credential_went_out_can_be_retried() {
+        use crate::login_wait::test_support::FreezingProxy;
+        for endpoint in every_credential_kind() {
+            let proxy = FreezingProxy::to(&endpoint.addr());
+            let session = proxy.session();
+            proxy.cut();
+            let debug = SshDebug::new(0, "live-test");
+            assert_lost(authenticate(&session, &endpoint, &debug).unwrap_err());
+        }
+    }
+
+    #[test]
+    #[ignore]
+    fn live_a_network_stalled_before_the_credential_went_out_can_be_retried() {
+        use crate::login_wait::test_support::FreezingProxy;
+        for endpoint in every_credential_kind() {
+            let proxy = FreezingProxy::to(&endpoint.addr());
+            let session = proxy.session();
+            session.set_timeout(1_000);
+            proxy.freeze();
+            let debug = SshDebug::new(0, "live-test");
+            assert_lost(authenticate(&session, &endpoint, &debug).unwrap_err());
+        }
     }
 
     /// A network that dies under a live shell surfaces as a failed read, never
