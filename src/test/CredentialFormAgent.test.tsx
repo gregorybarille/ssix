@@ -17,6 +17,16 @@ const agentCredential: Credential = {
 
 const tab = () => screen.getByTestId("credential-form-kind-agent");
 
+/** A new credential's form, with its name and username filled in. */
+async function startNewCredential() {
+  const onSubmit = vi.fn(async () => {});
+  render(<CredentialForm open onOpenChange={vi.fn()} credential={null} onSubmit={onSubmit} />);
+  const user = userEvent.setup();
+  await user.type(screen.getByLabelText(/credential name/i), "agent");
+  await user.type(screen.getByTestId("credential-form-username"), "me");
+  return { onSubmit, user };
+}
+
 describe("CredentialForm's SSH agent tab", () => {
   beforeEach(() => {
     vi.mocked(invoke).mockReset();
@@ -24,12 +34,7 @@ describe("CredentialForm's SSH agent tab", () => {
   });
 
   it("creates an agent credential with no secret in it", async () => {
-    const onSubmit = vi.fn(async () => {});
-    render(<CredentialForm open onOpenChange={vi.fn()} credential={null} onSubmit={onSubmit} />);
-    const user = userEvent.setup();
-
-    await user.type(screen.getByLabelText(/credential name/i), "agent");
-    await user.type(screen.getByTestId("credential-form-username"), "me");
+    const { onSubmit, user } = await startNewCredential();
     await user.click(tab());
 
     expect(screen.getByTestId("credential-form-agent-hint")).toHaveTextContent("SSH_AUTH_SOCK");
@@ -42,12 +47,7 @@ describe("CredentialForm's SSH agent tab", () => {
   });
 
   it("does not ask for a password typed on another tab", async () => {
-    const onSubmit = vi.fn(async () => {});
-    render(<CredentialForm open onOpenChange={vi.fn()} credential={null} onSubmit={onSubmit} />);
-    const user = userEvent.setup();
-
-    await user.type(screen.getByLabelText(/credential name/i), "agent");
-    await user.type(screen.getByTestId("credential-form-username"), "me");
+    const { onSubmit, user } = await startNewCredential();
     await user.type(screen.getByTestId("credential-form-password"), "typed-by-mistake");
     await user.click(tab());
     await user.click(screen.getByTestId("credential-form-submit"));

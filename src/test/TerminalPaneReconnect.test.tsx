@@ -8,6 +8,7 @@ import { invoke } from "@/lib/tauri";
 import type { ReconnectState } from "@/lib/reconnect";
 import { useAuthPromptStore } from "@/store/useAuthPromptStore";
 import type { Connection } from "@/types";
+import { terminalTabsCallbacks } from "./terminalTabsCallbacks";
 
 vi.mock("@/lib/tauri", () => ({ invoke: vi.fn() }));
 const invokeMock = vi.mocked(invoke);
@@ -167,12 +168,8 @@ describe("a pane's terminal", () => {
           },
         ]}
         activeTabId="t1"
-        onSelectTab={vi.fn()}
-        onCloseTab={vi.fn()}
+        {...terminalTabsCallbacks()}
         onClosePane={onClosePane}
-        onNewTab={vi.fn()}
-        onRetry={vi.fn()}
-        onEdit={vi.fn()}
       />
     );
   }

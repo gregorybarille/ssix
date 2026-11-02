@@ -7,6 +7,7 @@ import { TerminalTabs } from "@/components/TerminalTabs";
 import type { AuthPromptRequest } from "@/lib/authPrompt";
 import { invoke } from "@/lib/tauri";
 import { useAuthPromptStore } from "@/store/useAuthPromptStore";
+import { terminalTabsCallbacks } from "./terminalTabsCallbacks";
 
 vi.mock("@/lib/tauri", () => ({ invoke: vi.fn() }));
 vi.mock("@/components/Terminal", () => ({
@@ -162,12 +163,8 @@ describe("a terminal pane with a prompt", () => {
           },
         ]}
         activeTabId="t1"
-        onSelectTab={vi.fn()}
-        onCloseTab={vi.fn()}
+        {...terminalTabsCallbacks()}
         onClosePane={onClosePane}
-        onNewTab={vi.fn()}
-        onRetry={vi.fn()}
-        onEdit={vi.fn()}
       />,
     );
   });
