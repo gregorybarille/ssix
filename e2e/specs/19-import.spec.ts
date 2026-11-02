@@ -12,6 +12,8 @@
  *   - a second import of the same file creating nothing;
  *   - a name clash that leaves the existing connection alone;
  *   - a host imported with only a key path really connecting;
+ *   - a host that names no key really connecting with the agent;
+ *   - imported remote and dynamic forwards really starting;
  *   - an unticked row leaving its name and credential name to the others;
  *   - every row held back when part of the config was not applied;
  *   - unreadable files and hostile lines being reported.
@@ -23,6 +25,7 @@ import { waitForAppReady } from "../helpers/app.js";
 import { TARGETS, waitForServers } from "../helpers/docker.js";
 import {
   click,
+  closeAllTabs,
   connectToConnection,
   createDirectConnection,
   createPasswordCredential,
@@ -30,9 +33,12 @@ import {
   fill,
   navigateTo,
   textContentOf,
+  typeIntoTerminal,
   waitForTerminalContains,
 } from "../helpers/flows.js";
+import { startForward, stopForward } from "../helpers/forwards.js";
 import { sel } from "../helpers/selectors.js";
+import { agentPublicKey } from "../helpers/ssh-agent.js";
 
 interface StoredConnection {
   id: string;
@@ -129,6 +135,11 @@ async function isTicked(name: string): Promise<boolean> {
 async function toggle(name: string): Promise<void> {
   const row = await waitForItem(name);
   await (await row.$(sel.importItemCheckbox)).click();
+}
+
+async function toggleOnIfUnticked(name: string): Promise<void> {
+  await waitForItem(name);
+  if (!(await isTicked(name))) await toggle(name);
 }
 
 async function noticeTexts(): Promise<string[]> {
@@ -453,6 +464,44 @@ describe("Import from SSH config", () => {
     await connectToConnection("e2e19-direct");
     // Alpine ash prompt: `<host>:~$` (see spec 03 for context).
     await waitForTerminalContains("server-a:~$", 30_000);
+    await navigateTo("connections");
+  });
+
+  it("connects with the agent when a host names no key", async () => {
+    // The shell the last test opened puts the agent's key on server-a.
+    await click(sel.navTerminals);
+    await typeIntoTerminal(
+      `umask 077; echo '${agentPublicKey()}' >> ~/.ssh/authorized_keys; echo ssix-19-$((40+2))\n`,
+    );
+    await waitForTerminalContains("ssix-19-42", 15_000);
+    await closeAllTabs();
+
+    const agentConfig = join(dir, "config-agent");
+    writeFileSync(
+      agentConfig,
+      ["Host e2e19-agent", `  HostName ${sameServer}`, `  Port ${TARGETS.a.sshPort}`, `  User ${TARGETS.a.user}`, ""].join("\n"),
+    );
+    await openImportOf(agentConfig);
+    await toggleOnIfUnticked("e2e19-agent");
+    await confirmImport();
+    await expectSkip("e2e19-agent", "already_imported", "Already in SSIX");
+    await closeImport();
+    const agent = await connectionNamed("e2e19-agent");
+    expect((await credentialOf(agent.credential_id)).type).toBe("agent");
+
+    await navigateTo("connections");
+    await connectToConnection("e2e19-agent");
+    // With every tab closed, this prompt can only be the agent session's.
+    await waitForTerminalContains("server-a:~$", 30_000);
+    await closeAllTabs();
+    await navigateTo("connections");
+  });
+
+  it("starts the remote and dynamic forwards it imported", async () => {
+    for (const name of ["e2e19-direct (-R 23620)", "e2e19-direct (-D 23621)"]) {
+      await startForward(name);
+      await stopForward(name);
+    }
     await navigateTo("connections");
   });
 
