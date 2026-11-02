@@ -30,7 +30,7 @@ use std::time::{Duration, Instant};
 
 use ssh2::Session;
 
-use crate::reconnect::{reconnect_delay, ReconnectPolicy, Recovery};
+use crate::reconnect::{reconnect_delay, AttemptCount, ReconnectPolicy, Recovery};
 use crate::session_log::{SessionLog, SessionLogPlan};
 use crate::ssh_debug::{host_key_type_name, SshDebug};
 use tauri::ipc::{Channel, InvokeResponseBody};
@@ -821,11 +821,14 @@ fn spawn_shell_worker(
             pty_size: None,
         };
         let mut shell = shell;
+        let mut attempts = AttemptCount::default();
         loop {
+            let opened = Instant::now();
             let reason = match run_io_loop(shell, &mut io) {
                 ShellEnd::Closed => break,
                 ShellEnd::Dropped(reason) => reason,
             };
+            attempts.shell_ended(opened.elapsed());
             io.report_lost(source, &reason);
             let ctx = &io.ctx;
             let emit = |event: OutputEvent| {
@@ -837,6 +840,7 @@ fn spawn_shell_worker(
                 open: Arc::clone(&resilience.reopen),
                 control: &io.control,
                 pty_size: &mut io.pty_size,
+                attempts: &mut attempts,
                 delay: reconnect_delay,
                 emit: &emit,
             }

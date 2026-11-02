@@ -19,6 +19,8 @@ const FIRST_DELAY_SECS: u64 = 2;
 const MAX_DELAY_SECS: u64 = 60;
 /// How often a worker checks whether a running attempt has finished.
 const ATTEMPT_POLL: Duration = Duration::from_millis(50);
+/// How long a shell has to stay up for the count of attempts to start over.
+pub(crate) const STABLE_SHELL: Duration = Duration::from_secs(60);
 
 /// Errors from connecting that can go away by themselves. Everything else,
 /// above all an authentication or host-key failure, stops the retries: with
@@ -57,6 +59,21 @@ pub(crate) fn reconnect_delay(attempt: u8) -> Duration {
 pub struct ReconnectPolicy {
     pub enabled: bool,
     pub max_attempts: u8,
+}
+
+/// The automatic attempts used so far. It outlives a reopened shell: a server
+/// that accepts a login and drops it straight away would otherwise be retried
+/// forever, with the backoff starting over each time.
+#[derive(Default)]
+pub(crate) struct AttemptCount(u8);
+
+impl AttemptCount {
+    /// A shell that lasted starts the count over.
+    pub(crate) fn shell_ended(&mut self, lasted: Duration) {
+        if lasted >= STABLE_SHELL {
+            self.0 = 0;
+        }
+    }
 }
 
 /// What the user asked for while a session was disconnected.
@@ -157,6 +174,7 @@ pub(crate) struct Recovery<'a, S> {
     pub open: Arc<dyn Fn() -> Result<S, String> + Send + Sync>,
     pub control: &'a ControlRx,
     pub pty_size: &'a mut Option<(u32, u32)>,
+    pub attempts: &'a mut AttemptCount,
     pub delay: fn(u8) -> Duration,
     pub emit: &'a dyn Fn(OutputEvent),
 }
@@ -171,19 +189,19 @@ impl<S: Send + 'static> Recovery<'_, S> {
             open,
             control,
             pty_size,
+            attempts,
             delay,
             emit,
         } = self;
         let max_attempts = policy.max_attempts.max(1);
         let mut automatic = policy.enabled;
-        let mut attempt = 0;
         let mut message = reason;
         loop {
-            if automatic && attempt < max_attempts {
-                attempt += 1;
-                let wait = delay(attempt);
+            if automatic && attempts.0 < max_attempts {
+                attempts.0 += 1;
+                let wait = delay(attempts.0);
                 emit(OutputEvent::Reconnecting {
-                    attempt,
+                    attempt: attempts.0,
                     max_attempts,
                     delay_ms: wait.as_millis() as u64,
                     message: message.clone(),
@@ -209,6 +227,8 @@ impl<S: Send + 'static> Recovery<'_, S> {
                         Some(UserAction::Cancel) | None => {}
                     }
                 }
+                // Asking again gives the next drop its automatic attempts back.
+                attempts.0 = 0;
                 emit(OutputEvent::Reconnecting {
                     attempt: 1,
                     max_attempts: 1,
@@ -278,6 +298,7 @@ mod tests {
             let (log, counter) = (Arc::clone(&events), Arc::clone(&opens));
             thread::spawn(move || {
                 let mut pty_size = None;
+                let mut attempts = AttemptCount::default();
                 let emit = |event: OutputEvent| {
                     log.lock()
                         .unwrap()
@@ -290,6 +311,7 @@ mod tests {
                     open,
                     control: &control,
                     pty_size: &mut pty_size,
+                    attempts: &mut attempts,
                     delay,
                     emit: &emit,
                 }
@@ -428,6 +450,63 @@ mod tests {
         assert!(!h.events().iter().any(|e| e.contains("reconnect_stopped")));
     }
 
+    /// A worker's whole life with a server that accepts the login and drops
+    /// the shell after `lasted`, `drops` times at most. Returns how many shells
+    /// it opened before running out of attempts.
+    fn shells_opened_by_a_server_that_keeps_dropping(lasted: Duration, drops: u32) -> u32 {
+        let (handle, control) = control_channel().unwrap();
+        let opens = Arc::new(AtomicU32::new(0));
+        let counter = Arc::clone(&opens);
+        let open: Arc<dyn Fn() -> Result<&'static str, String> + Send + Sync> =
+            Arc::new(move || {
+                counter.fetch_add(1, Ordering::SeqCst);
+                Ok("shell")
+            });
+        let mut attempts = AttemptCount::default();
+        let mut pty_size = None;
+        let stopper = handle.clone();
+        for _ in 0..drops {
+            // Out of attempts, a recovery parks for the user: closing ends it.
+            let emit = |event: OutputEvent| {
+                if matches!(event, OutputEvent::ReconnectStopped { .. }) {
+                    stopper.send(SessionMsg::Disconnect).unwrap();
+                }
+            };
+            let shell = Recovery {
+                policy: ReconnectPolicy {
+                    enabled: true,
+                    max_attempts: 2,
+                },
+                open: Arc::clone(&open),
+                control: &control,
+                pty_size: &mut pty_size,
+                attempts: &mut attempts,
+                delay: instantly,
+                emit: &emit,
+            }
+            .run("gone".to_string());
+            if shell.is_none() {
+                break;
+            }
+            attempts.shell_ended(lasted);
+        }
+        opens.load(Ordering::SeqCst)
+    }
+
+    #[test]
+    fn shells_that_keep_dropping_use_up_the_attempts() {
+        let short = STABLE_SHELL - Duration::from_secs(1);
+        assert_eq!(shells_opened_by_a_server_that_keeps_dropping(short, 10), 2);
+    }
+
+    #[test]
+    fn a_shell_that_stayed_up_starts_the_count_over() {
+        assert_eq!(
+            shells_opened_by_a_server_that_keeps_dropping(STABLE_SHELL, 10),
+            10
+        );
+    }
+
     #[test]
     fn with_reconnect_off_nothing_is_tried_until_the_user_asks() {
         let off = ReconnectPolicy {
@@ -468,6 +547,31 @@ mod tests {
 
         h.handle.send(SessionMsg::Reconnect).unwrap();
         assert_eq!(h.finish(), Some("shell"));
+    }
+
+    #[test]
+    fn retry_gives_the_next_drop_its_attempts_back() {
+        let (handle, control) = control_channel().unwrap();
+        let mut attempts = AttemptCount(5);
+        let mut pty_size = None;
+        let stopper = handle.clone();
+        let emit = |event: OutputEvent| {
+            if matches!(event, OutputEvent::ReconnectStopped { .. }) {
+                stopper.send(SessionMsg::Reconnect).unwrap();
+            }
+        };
+        let shell = Recovery {
+            policy: FIVE_TRIES,
+            open: Arc::new(|| Ok("shell")),
+            control: &control,
+            pty_size: &mut pty_size,
+            attempts: &mut attempts,
+            delay: instantly,
+            emit: &emit,
+        }
+        .run("gone".to_string());
+        assert_eq!(shell, Some("shell"));
+        assert_eq!(attempts.0, 0);
     }
 
     #[test]
