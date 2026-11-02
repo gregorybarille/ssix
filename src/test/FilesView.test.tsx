@@ -6,6 +6,7 @@ import { useConnectionsStore } from "@/store/useConnectionsStore";
 import { useSftpStore } from "@/store/useSftpStore";
 import type { Connection, FileEntry, FileListing, PaneTarget } from "@/types";
 import { renderInPanel } from "./panel";
+import { withPointerCoordinates } from "./pointerEvents";
 
 vi.mock("@/lib/tauri", () => ({ invoke: vi.fn() }));
 const invokeMock = vi.mocked(invoke);
@@ -617,19 +618,7 @@ describe("dragging", () => {
     fireEvent.pointerMove(window, { clientX: point.x, clientY: point.y });
   };
 
-  // jsdom's PointerEvent drops the coordinates fireEvent sets, so give them back.
-  beforeEach(() => {
-    class TestPointerEvent extends MouseEvent {}
-    vi.stubGlobal("PointerEvent", TestPointerEvent);
-    Object.defineProperty(window, "PointerEvent", {
-      configurable: true,
-      writable: true,
-      value: TestPointerEvent,
-    });
-  });
-  afterEach(() => {
-    vi.unstubAllGlobals();
-  });
+  withPointerCoordinates();
 
   const lastInput = () => {
     const [args] = calls("sftp_start_transfer").slice(-1) as {

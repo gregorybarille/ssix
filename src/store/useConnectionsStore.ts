@@ -28,6 +28,9 @@ interface ConnectionsState {
   deleteFolder: (path: string) => Promise<void>;
 }
 
+const withReplaced = (connections: Connection[], conn: Connection) =>
+  connections.map((c) => (c.id === conn.id ? conn : c));
+
 // The store always holds the full, unfiltered list. Search is a pure
 // client-side filter (`src/lib/search.ts`) over this list, so typing in
 // the search bar never touches the backend or replaces the array.
@@ -56,9 +59,7 @@ export const useConnectionsStore = create<ConnectionsState>((set) => ({
   updateConnection: (input) =>
     runAsyncRethrow(set, async () => {
       const conn = await invoke<Connection>("update_connection", { input });
-      set((state) => ({
-        connections: state.connections.map((c) => (c.id === conn.id ? conn : c)),
-      }));
+      set((state) => ({ connections: withReplaced(state.connections, conn) }));
     }, { recordError: false }),
 
   deleteConnection: (id) =>
@@ -86,9 +87,7 @@ export const useConnectionsStore = create<ConnectionsState>((set) => ({
   moveConnectionToFolder: (id, folder) =>
     runAsyncRethrow(set, async () => {
       const conn = await invoke<Connection>("move_connection_to_folder", { id, folder });
-      set((state) => ({
-        connections: state.connections.map((c) => (c.id === conn.id ? conn : c)),
-      }));
+      set((state) => ({ connections: withReplaced(state.connections, conn) }));
     }, { recordError: false }),
 
   // Both answer with every connection: one call can touch many of them.

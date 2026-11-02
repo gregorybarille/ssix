@@ -49,6 +49,15 @@ function renderForm(connection: Connection | null, { isClone = false } = {}) {
 const folderField = () => screen.getByTestId("connection-form-folder");
 const submit = () => screen.getByTestId("connection-form-submit");
 
+async function expectSavedInNoFolder(
+  user: ReturnType<typeof userEvent.setup>,
+  onSubmit: ReturnType<typeof vi.fn>,
+) {
+  await user.click(submit());
+  await waitFor(() => expect(onSubmit).toHaveBeenCalled());
+  expect(onSubmit.mock.calls[0][0].folder).toBeUndefined();
+}
+
 beforeEach(() => {
   act(() => useConnectionsStore.setState({ connections: [saved, tunnel] }));
 });
@@ -91,9 +100,7 @@ describe("ConnectionForm's folder", () => {
     const user = userEvent.setup();
     const { onSubmit } = renderForm(saved);
     await user.clear(folderField());
-    await user.click(submit());
-    await waitFor(() => expect(onSubmit).toHaveBeenCalled());
-    expect(onSubmit.mock.calls[0][0].folder).toBeUndefined();
+    await expectSavedInNoFolder(user, onSubmit);
   });
 
   it("shows a bad path inline as it is typed, and refuses to save it", async () => {
@@ -191,9 +198,7 @@ describe("ConnectionForm's folder", () => {
       const { onSubmit } = renderForm(saved);
       moveTo(undefined);
       expect(folderField()).toHaveValue("");
-      await user.click(submit());
-      await waitFor(() => expect(onSubmit).toHaveBeenCalled());
-      expect(onSubmit.mock.calls[0][0].folder).toBeUndefined();
+      await expectSavedInNoFolder(user, onSubmit);
     });
 
     it("keeps a folder the user typed", async () => {

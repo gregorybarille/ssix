@@ -5,25 +5,9 @@ import { CredentialsView } from "@/components/views/CredentialsView";
 import { useConnectionsStore } from "@/store/useConnectionsStore";
 import type { AppSettings, Connection, ConnectionLayout } from "@/types";
 
-const settings = (connection_layout: ConnectionLayout): AppSettings => ({
-  font_size: 14,
-  font_family: "monospace",
-  color_scheme: "blue",
-  theme: "dark",
-  connection_layout,
-  credential_layout: "list",
-  tunnel_layout: "list",
-  default_open_mode: "tab",
-  auto_copy_selection: false,
-  git_sync_remote: "origin",
-  backup_enabled: true,
-  backup_interval_hours: 24,
-  backup_keep: 10,
-  keepalive_interval: 30,
-  auto_reconnect: true,
-  reconnect_max_attempts: 5,
-  session_log_enabled: false,
-});
+/** These views read only the layouts. */
+const settings = (connection_layout: ConnectionLayout) =>
+  ({ connection_layout, credential_layout: "list", tunnel_layout: "list" }) as AppSettings;
 
 const CONNECTIONS: Connection[] = [
   { id: "a", name: "filed", host: "h", port: 22, type: "direct", folder: "prod" },

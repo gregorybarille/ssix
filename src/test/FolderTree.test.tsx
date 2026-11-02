@@ -6,6 +6,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { FolderTree } from "@/components/FolderTree";
 import { useConnectionsStore } from "@/store/useConnectionsStore";
 import type { Connection } from "@/types";
+import { withPointerCoordinates } from "./pointerEvents";
 
 const direct = (name: string, folder?: string, tags?: string[]): Connection => ({
   id: name,
@@ -400,19 +401,7 @@ describe("search", () => {
 });
 
 describe("dragging", () => {
-  // jsdom's PointerEvent drops the coordinates fireEvent sets, so give them back.
-  beforeEach(() => {
-    class TestPointerEvent extends MouseEvent {}
-    vi.stubGlobal("PointerEvent", TestPointerEvent);
-    Object.defineProperty(window, "PointerEvent", {
-      configurable: true,
-      writable: true,
-      value: TestPointerEvent,
-    });
-  });
-  afterEach(() => {
-    vi.unstubAllGlobals();
-  });
+  withPointerCoordinates();
 
   const dragOnto = (from: HTMLElement, over: Element | null) => {
     fireEvent.pointerDown(from, { button: 0, clientX: 0, clientY: 0 });

@@ -81,6 +81,15 @@ export function ConnectionsView({
     [connections, searchQuery],
   );
 
+  const rowActions = {
+    onEdit: (conn: Connection) => dialogs.openEditConnection(conn),
+    onDelete,
+    onClone: (conn: Connection) => dialogs.openCloneConnection(conn),
+    onConnect,
+    onScp: (conn: Connection) => dialogs.openScp(conn),
+    onBrowse: browseFiles,
+  };
+
   return (
     <>
       <div className="flex items-center justify-between px-6 py-4 border-b border-border">
@@ -134,24 +143,14 @@ export function ConnectionsView({
             connections={connections}
             credentials={credentials}
             query={searchQuery}
-            onEdit={(conn) => dialogs.openEditConnection(conn)}
-            onDelete={onDelete}
-            onClone={(conn) => dialogs.openCloneConnection(conn)}
-            onConnect={onConnect}
-            onScp={(conn) => dialogs.openScp(conn)}
-            onBrowse={browseFiles}
+            {...rowActions}
           />
         ) : (
           <ConnectionList
             connections={visibleConnections}
             credentials={credentials}
             layout={layout}
-            onEdit={(conn) => dialogs.openEditConnection(conn)}
-            onDelete={onDelete}
-            onClone={(conn) => dialogs.openCloneConnection(conn)}
-            onConnect={onConnect}
-            onScp={(conn) => dialogs.openScp(conn)}
-            onBrowse={browseFiles}
+            {...rowActions}
           />
         )}
       </div>
