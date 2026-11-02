@@ -131,13 +131,20 @@ async function waitForPhase(phase: "waiting" | "stopped", timeoutMs = 30_000) {
   return status;
 }
 
-/** The shell came back in this pane: one terminal, with what it held before. */
+/**
+ * The shell came back in this pane: one terminal, with what it held before
+ * still above the reconnect line. A cursor sent back up the screen by the drop
+ * would write that line over the old output.
+ */
 async function expectReconnected(...kept: string[]): Promise<void> {
   await waitForTerminalContains(RECONNECTED, 40_000);
   await (await browser.$(sel.reconnectStatus)).waitForExist({ reverse: true, timeout: 10_000 });
   expect(await browser.$$(sel.terminalContainer).length).toBe(1);
   const text = await readTerminalText();
-  for (const line of kept) expect(text).toContain(line);
+  for (const line of kept) {
+    expect(text).toContain(line);
+    expect(text.indexOf(line)).toBeLessThan(text.indexOf(RECONNECTED));
+  }
 }
 
 /** Stays stopped for longer than a next attempt would take to start. */
@@ -265,6 +272,22 @@ describe("Session resilience", () => {
 
     await expectReconnected("BEFORE-CUT-42", "SSH Error:");
     await expectShellAnswers("AFTER-CUT");
+  });
+
+  it("leaves the alternate screen of a program that died with the connection", async () => {
+    await createShellConnection("conn-15-altscreen");
+    await openShell("conn-15-altscreen");
+    await expectShellAnswers("BEFORE-ALT");
+    await typeIntoTerminal("printf '\\033[?1049h'\n");
+    await browser.waitUntil(async () => !(await readTerminalText()).includes("BEFORE-ALT-42"), {
+      timeout: 10_000,
+      timeoutMsg: "The terminal never switched to the alternate screen",
+    });
+
+    await cutConnection();
+
+    await expectReconnected("BEFORE-ALT-42");
+    await expectShellAnswers("AFTER-ALT");
   });
 
   it("counts its attempts until cancelled, drops what is typed meanwhile, and retries on request", async () => {

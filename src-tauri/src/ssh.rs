@@ -64,8 +64,14 @@ const KEEPALIVE_MIN_INTERVAL_SECS: u32 = 2;
 /// the alternate screen, resets modes and turns off mouse reporting. The
 /// remote can no longer do any of it, and it would hide the error, the
 /// scrollback and the new prompt.
+///
+/// xterm.js restores the saved cursor on `?1049l` even when the normal screen
+/// is already showing, which would send the cursor to the top left of a plain
+/// prompt. `ESC 7` first saves where it is: on the normal screen the restore
+/// then goes nowhere, and on the alternate screen the save lands on that
+/// screen's own record, so the normal screen's position still comes back.
 const TERMINAL_RESTORE: &[u8] =
-    b"\x1b[?1049l\x1b[!p\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1006l\x1b[?2004l";
+    b"\x1b7\x1b[?1049l\x1b[!p\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1006l\x1b[?2004l";
 
 #[derive(Clone)]
 pub enum AuthMethod {
