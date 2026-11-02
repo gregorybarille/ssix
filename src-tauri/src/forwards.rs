@@ -1246,6 +1246,23 @@ mod live {
         }
     }
 
+    /// A local forward to `port` on the server's loopback, which is the only
+    /// way in to what a remote forward listens on.
+    fn forward_to_server_port(port: u16) -> (u16, SessionHandle, Arc<Recorder>) {
+        let events = Arc::new(Recorder::default());
+        let local_port = free_port();
+        let handle = start_port_forward(
+            server(),
+            local_port,
+            "127.0.0.1".to_string(),
+            port,
+            0,
+            Arc::clone(&events),
+        )
+        .unwrap();
+        (local_port, handle, events)
+    }
+
     fn free_port() -> u16 {
         TcpListener::bind("127.0.0.1:0")
             .unwrap()
@@ -1476,17 +1493,7 @@ mod live {
 
             // The port is on the server's loopback, so the way in is a local
             // forward through the same server.
-            let client_events = Arc::new(Recorder::default());
-            let client_port = free_port();
-            let client_handle = start_port_forward(
-                server(),
-                client_port,
-                "127.0.0.1".to_string(),
-                remote_port,
-                0,
-                Arc::clone(&client_events),
-            )
-            .unwrap();
+            let (client_port, client_handle, client_events) = forward_to_server_port(remote_port);
 
             for round in 0..3 {
                 let mut client = connect(client_port);
@@ -1541,17 +1548,7 @@ mod live {
                 Arc::clone(&events),
             )
             .unwrap();
-            let client_events = Arc::new(Recorder::default());
-            let client_port = free_port();
-            let client_handle = start_port_forward(
-                server(),
-                client_port,
-                "127.0.0.1".to_string(),
-                remote_port,
-                0,
-                Arc::clone(&client_events),
-            )
-            .unwrap();
+            let (client_port, client_handle, client_events) = forward_to_server_port(remote_port);
 
             let mut client = connect(client_port);
             assert_closed(&mut client);
