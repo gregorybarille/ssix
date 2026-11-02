@@ -602,7 +602,7 @@ mod forward {
                 }
             }
 
-            if !self.agent_ended && self.to_channel.len() < MAX_BUFFERED {
+            if self.reads_agent() {
                 match self.agent.read(buf) {
                     Ok(0) => self.agent_gone(),
                     Ok(n) => {
@@ -634,6 +634,11 @@ mod forward {
             Ok(moved)
         }
 
+        /// Whether `pump` would read the agent's socket now.
+        fn reads_agent(&self) -> bool {
+            !self.agent_ended && self.to_channel.len() < MAX_BUFFERED
+        }
+
         fn agent_gone(&mut self) {
             self.agent_ended = true;
             self.to_agent.clear();
@@ -654,6 +659,24 @@ mod forward {
                 Instant::now()
             });
             delivered_at.elapsed() > ANSWER_LINGER
+        }
+    }
+
+    /// Wait up to `wait` for something to read on the sockets that will be read.
+    /// The others stay out of it: an agent that hung up, or one whose answer has
+    /// nowhere to go yet, always polls as readable, and would make this spin.
+    pub(super) fn wait_for_readers(
+        sockets: impl Iterator<Item = (wake::Fd, bool)>,
+        wait: Duration,
+    ) {
+        let readers: Vec<wake::Fd> = sockets
+            .filter(|&(_, will_read)| will_read)
+            .map(|(socket, _)| socket)
+            .collect();
+        if readers.is_empty() {
+            thread::sleep(wait);
+        } else {
+            wake::wait_readable(&readers, wait);
         }
     }
 
@@ -712,12 +735,10 @@ mod forward {
                 wait = BUSY_WAIT_MIN;
                 continue;
             }
-            let sockets: Vec<wake::Fd> = bridges.iter().map(|b| wake::fd_of(&b.agent)).collect();
-            if sockets.is_empty() {
-                thread::sleep(wait);
-            } else {
-                wake::wait_readable(&sockets, wait);
-            }
+            let sockets = bridges
+                .iter()
+                .map(|bridge| (wake::fd_of(&bridge.agent), bridge.reads_agent()));
+            wait_for_readers(sockets, wait);
             wait = (wait * 2).min(BUSY_WAIT_MAX);
         }
 
@@ -751,6 +772,40 @@ mod forward {
                 thread::sleep(BUSY_WAIT_MIN);
             }
         }
+    }
+}
+
+#[cfg(all(test, unix))]
+mod pump_wait_tests {
+    use super::forward::wait_for_readers;
+    use crate::ssh::wake;
+    use std::iter::once;
+    use std::os::unix::net::UnixStream;
+    use std::time::{Duration, Instant};
+
+    #[test]
+    fn a_socket_it_will_not_read_does_not_cut_the_wait_short() {
+        let (hung_up, peer) = UnixStream::pair().unwrap();
+        drop(peer);
+        let socket = wake::fd_of(&hung_up);
+        let wait = Duration::from_millis(100);
+
+        let started = Instant::now();
+        wait_for_readers(once((socket, false)), wait);
+        assert!(started.elapsed() >= wait);
+
+        // The same socket ends the wait at once when it will be read.
+        let started = Instant::now();
+        wait_for_readers(once((socket, true)), Duration::from_secs(5));
+        assert!(started.elapsed() < Duration::from_secs(1));
+    }
+
+    #[test]
+    fn no_sockets_at_all_still_wait() {
+        let wait = Duration::from_millis(50);
+        let started = Instant::now();
+        wait_for_readers(std::iter::empty(), wait);
+        assert!(started.elapsed() >= wait);
     }
 }
 
