@@ -47,9 +47,7 @@ pub(crate) fn forward_status_event(session_id: &str) -> String {
 
 /// Emit a status change for the forward `ctx` runs.
 fn emit_status(ctx: &SessionContext, status: ForwardStatus) {
-    let _ = ctx
-        .app
-        .emit(&forward_status_event(&ctx.session_id), status);
+    let _ = ctx.app.emit(&forward_status_event(&ctx.session_id), status);
 }
 
 /// Open a `direct-tcpip` channel on a non-blocking session, waiting for the
@@ -127,13 +125,16 @@ pub fn start_port_forward(
         let destination = destination.clone();
         let active = Arc::clone(&active);
         move |state: &'static str, message: Option<String>| {
-            emit_status(&ctx, ForwardStatus {
-                state,
-                local_port,
-                destination: destination.clone(),
-                message,
-                active_clients: active.load(Ordering::SeqCst),
-            });
+            emit_status(
+                &ctx,
+                ForwardStatus {
+                    state,
+                    local_port,
+                    destination: destination.clone(),
+                    message,
+                    active_clients: active.load(Ordering::SeqCst),
+                },
+            );
         }
     };
     status("listening", None);

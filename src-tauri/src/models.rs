@@ -1257,7 +1257,10 @@ mod tests {
         let json = serde_json::to_string(&remote).unwrap();
         assert!(json.contains(r#""type":"remote_forward""#));
         assert!(json.contains(r#""remote_port":8080"#));
-        assert_eq!(serde_json::from_str::<ConnectionKind>(&json).unwrap(), remote);
+        assert_eq!(
+            serde_json::from_str::<ConnectionKind>(&json).unwrap(),
+            remote
+        );
 
         let dynamic = ConnectionKind::DynamicForward {
             gateway_host: "gw".into(),
@@ -1267,7 +1270,10 @@ mod tests {
         };
         let json = serde_json::to_string(&dynamic).unwrap();
         assert!(json.contains(r#""type":"dynamic_forward""#));
-        assert_eq!(serde_json::from_str::<ConnectionKind>(&json).unwrap(), dynamic);
+        assert_eq!(
+            serde_json::from_str::<ConnectionKind>(&json).unwrap(),
+            dynamic
+        );
 
         for kind in [&remote, &dynamic] {
             assert!(kind.is_forward());
