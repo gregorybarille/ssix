@@ -22,7 +22,8 @@ terminal ignores its repeats until you let go.
 |---|---|
 | No terminal is open, or every pane of the active tab failed | The palette says there is no live terminal. Nothing is sent and it stays open. |
 | Terminals are open but you are on another view | The palette goes to the Terminals view first, so you see where the text lands. An editor with unsaved changes asks before leaving, as it does for any change of view, and the palette opens only if you leave. |
-| The active pane shows a login prompt | The palette targets another pane of the tab if it has a live one, and otherwise says there is no live terminal. A prompt takes questions, not text. |
+| The active pane shows a login prompt | The palette targets another pane of the tab if it has a live one, and otherwise asks you to answer the prompt first. A prompt takes questions, not text. |
+| The active pane lost its connection, is still connecting, or its shell ended | The palette targets another pane of the tab if it has a live one, even if the other had the keyboard, and otherwise says why. The backend would discard the text, so nothing is sent and the palette stays open. |
 
 ## Line breaks and control characters
 

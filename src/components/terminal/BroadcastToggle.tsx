@@ -1,8 +1,8 @@
 import { Radio } from "lucide-react";
 import type { TerminalTab } from "@/components/TerminalTabs";
+import { isLiveShell } from "@/lib/terminalRegistry";
 import { useTerminalsStore } from "@/store/useTerminalsStore";
 import { Button } from "../ui/button";
-import { isLiveShell } from "./broadcastInput";
 
 /**
  * Turns broadcast input on and off for the active tab. Off by default, and it

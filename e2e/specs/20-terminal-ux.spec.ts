@@ -843,6 +843,50 @@ describe("Terminal UX", () => {
     });
   });
 
+  describe("the snippet palette beside a pane that lost its connection", () => {
+    async function openPalette(): Promise<void> {
+      await click(sel.snippetPaletteButton);
+      await (await browser.$(sel.snippetPalette)).waitForExist({ timeout: 10_000 });
+    }
+
+    async function closePalette(): Promise<void> {
+      await browser.keys(["Escape"]);
+      await (await browser.$(sel.snippetPalette)).waitForExist({ reverse: true, timeout: 10_000 });
+    }
+
+    it("says why when no pane can take text", async () => {
+      await createDroppableConnection("conn-20-paste-lost");
+      const id = await openShell("conn-20-paste-lost");
+      refuseConnections();
+      await typeIn(id, "kill -9 $PPID\n");
+      await waitForDrop();
+
+      await openPalette();
+      expect(await textContentOf(await browser.$(sel.snippetPaletteError))).toContain(
+        "lost its connection",
+      );
+      await closePalette();
+    });
+
+    it("targets the healthy pane, though the other one had the keyboard", async () => {
+      await createDroppableConnection("conn-20-paste-dropped");
+      await createConnectionA("conn-20-paste-healthy");
+      const first = await openShell("conn-20-paste-dropped");
+      await splitWith("conn-20-paste-healthy");
+      await secondPane(first);
+      refuseConnections();
+      await typeIn(first, "kill -9 $PPID\n");
+      await waitForDrop();
+
+      await openPalette();
+      expect(await textContentOf(await browser.$(sel.snippetPaletteTarget))).toContain(
+        "conn-20-paste-healthy",
+      );
+      expect(await (await browser.$(sel.snippetPaletteError)).isExisting()).toBe(false);
+      await closePalette();
+    });
+  });
+
   describe("a connection's look", () => {
     it("takes the connection's font and colours, and follows an edit", async () => {
       await createConnectionA("conn-20-look", async () => {

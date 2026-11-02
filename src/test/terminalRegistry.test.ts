@@ -1,9 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Terminal as XTerm } from "@xterm/xterm";
-import type { TerminalTab } from "@/components/TerminalTabs";
+import type { TerminalSession, TerminalTab } from "@/components/TerminalTabs";
 import {
   activeSessionId,
   handKeyboardTo,
+  inputSessionId,
   isHeldEnter,
   registerTerminal,
   terminalText,
@@ -33,6 +34,21 @@ function tab(id: string, ...sessionIds: string[]): TerminalTab {
   };
 }
 
+const dropped: Partial<TerminalSession> = {
+  retrying: true,
+  reconnect: { phase: "waiting", attempt: 1, maxAttempts: 5, retryAt: 0, message: "gone" },
+};
+
+/** Change one pane of the tabs in the store. */
+function setPane(sessionId: string, change: Partial<TerminalSession>) {
+  useTerminalsStore.setState((state) => ({
+    tabs: state.tabs.map((t) => ({
+      ...t,
+      panes: t.panes.map((p) => (p.sessionId === sessionId ? { ...p, ...change } : p)),
+    })),
+  }));
+}
+
 const loginPrompt = {
   kind: "auth_prompt" as const,
   prompt_id: "p1",
@@ -60,6 +76,10 @@ describe("terminalRegistry", () => {
   });
 
   describe("writeToSession", () => {
+    beforeEach(() => {
+      useTerminalsStore.setState({ tabs: [tab("t1", "s1")], activeTabId: "t1" });
+    });
+
     it("sends the text through ssh_write, like keyboard input", () => {
       liveTerminal("s1");
       expect(writeToSession("s1", "uptime\r")).toBe(true);
@@ -89,6 +109,28 @@ describe("terminalRegistry", () => {
       expect(writeToSession("s1", "uptime\r")).toBe(true);
     });
 
+    it.each<[string, Partial<TerminalSession>]>([
+      ["still connecting", { retrying: true }],
+      ["that lost its connection", dropped],
+      [
+        "that stopped trying to reconnect",
+        { reconnect: { phase: "stopped", message: "gone" }, error: "gone" },
+      ],
+      ["that failed", { error: "refused" }],
+      ["whose shell ended", { ended: true }],
+    ])("refuses a pane %s, where the text would be lost", (_name, change) => {
+      liveTerminal("s1");
+      setPane("s1", change);
+      expect(writeToSession("s1", "uptime\r")).toBe(false);
+      expect(invoke).not.toHaveBeenCalled();
+    });
+
+    it("refuses a terminal that is in no pane", () => {
+      liveTerminal("s2");
+      expect(writeToSession("s2", "uptime\r")).toBe(false);
+      expect(invoke).not.toHaveBeenCalled();
+    });
+
     it("logs a write the backend rejects", async () => {
       const logged = vi.spyOn(console, "error").mockImplementation(() => {});
       invoke.mockRejectedValue("session not found");
@@ -96,6 +138,30 @@ describe("terminalRegistry", () => {
       expect(writeToSession("s1", "uptime\r")).toBe(true);
       await vi.waitFor(() => expect(logged).toHaveBeenCalled());
       expect(logged.mock.calls[0][1]).toContain("session not found");
+    });
+  });
+
+  describe("with a pane that dropped beside a healthy one", () => {
+    beforeEach(() => {
+      const first = liveTerminal("s1");
+      liveTerminal("s2");
+      useTerminalsStore.setState({ tabs: [tab("t1", "s1", "s2")], activeTabId: "t1" });
+      first.focus();
+      setPane("s1", dropped);
+    });
+
+    it("sends text to the healthy one, though the other had the focus", () => {
+      expect(inputSessionId()).toBe("s2");
+    });
+
+    it("stays on the one the user is looking at for what only reads it", () => {
+      expect(activeSessionId()).toBe("s1");
+    });
+
+    it("has nowhere for text once the healthy one drops too", () => {
+      setPane("s2", dropped);
+      expect(inputSessionId()).toBeNull();
+      expect(activeSessionId()).toBe("s1");
     });
   });
 

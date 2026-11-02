@@ -1,4 +1,5 @@
 import type { Terminal as XTerm } from "@xterm/xterm";
+import type { TerminalSession } from "@/components/TerminalTabs";
 import { useAuthPromptStore } from "@/store/useAuthPromptStore";
 import { useTerminalsStore } from "@/store/useTerminalsStore";
 import { useViewStore } from "@/store/useViewStore";
@@ -40,12 +41,24 @@ export function unregisterTerminal(sessionId: string): void {
 }
 
 /**
- * Whether text may go to a session: it has a terminal, and no login prompt over
- * it. A dropped shell logging in again keeps its terminal behind the prompt, and
- * what the user is shown there is a question, not a shell.
+ * Whether a pane is showing a live shell, the only thing that may receive text. A
+ * pane that is still connecting, lost its connection or whose shell ended would
+ * lose it: the backend discards what reaches a shell that is not there. Neither
+ * does a pane showing a login prompt: what the user is shown there is a question,
+ * not a shell, even over a dropped shell that keeps its terminal behind the prompt.
  */
+export function isLiveShell(pane: TerminalSession): boolean {
+  if (useAuthPromptStore.getState().prompts[pane.sessionId]) return false;
+  return !pane.error && !pane.retrying && !pane.reconnect && !pane.ended;
+}
+
+/** Whether text may go to a session: it has a terminal, in a pane with a live shell. */
 function takesInput(sessionId: string): boolean {
-  return terminals.has(sessionId) && !useAuthPromptStore.getState().prompts[sessionId];
+  const pane = useTerminalsStore
+    .getState()
+    .tabs.flatMap((tab) => tab.panes)
+    .find((candidate) => candidate.sessionId === sessionId);
+  return terminals.has(sessionId) && !!pane && isLiveShell(pane);
 }
 
 /** A session's xterm, for what has no function of its own here. */
@@ -105,18 +118,34 @@ export function isHeldEnter(sessionId: string, e: KeyboardEvent): boolean {
   return false;
 }
 
-/**
- * The session of the terminal the user is looking at: the active tab's pane that
- * last had focus, otherwise its first pane that can take input. `null` when there
- * is none: on another view, where terminals stay mounted but none is on screen,
- * and with no tab open or only failed panes or panes behind a login prompt.
- */
-export function activeSessionId(): string | null {
+/** Of the active tab's panes that qualify, the one that last had focus, or else the first. */
+function activePaneAmong(qualifies: (sessionId: string) => boolean): string | null {
   if (useViewStore.getState().view !== "terminals") return null;
   const { tabs, activeTabId } = useTerminalsStore.getState();
   const panes = tabs.find((tab) => tab.id === activeTabId)?.panes ?? [];
-  const live = panes.map((pane) => pane.sessionId).filter(takesInput);
-  return live.find((id) => id === lastFocusedSessionId) ?? live[0] ?? null;
+  const ids = panes.map((pane) => pane.sessionId).filter(qualifies);
+  return ids.find((id) => id === lastFocusedSessionId) ?? ids[0] ?? null;
+}
+
+/**
+ * The session of the terminal the user is looking at, for what only reads it, like
+ * find, or gives it the keyboard: a shell that dropped still has its scrollback.
+ * `null` when there is none: on another view, where terminals stay mounted but none
+ * is on screen, and with no tab open or only failed panes or panes behind a login
+ * prompt.
+ */
+export function activeSessionId(): string | null {
+  return activePaneAmong(
+    (id) => terminals.has(id) && !useAuthPromptStore.getState().prompts[id],
+  );
+}
+
+/**
+ * The session text sent from outside a terminal goes to: like `activeSessionId`,
+ * but only a pane that can take it, so a healthy pane comes before one that dropped.
+ */
+export function inputSessionId(): string | null {
+  return activePaneAmong(takesInput);
 }
 
 function bufferText(term: XTerm): string {

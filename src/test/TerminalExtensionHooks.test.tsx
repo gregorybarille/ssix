@@ -345,11 +345,16 @@ describe("Terminal extension hooks", () => {
   });
 
   it("makes a mounted terminal reachable through the registry, until it unmounts", () => {
+    useTerminalsStore.setState({
+      tabs: [{ id: "t1", mode: "single", panes: [{ sessionId: "s1", connectionName: "prod" }] }],
+      activeTabId: "t1",
+    });
     const view = mount();
     expect(writeToSession("s1", "uptime\r")).toBe(true);
     expect(mocks.invoke).toHaveBeenCalledWith("ssh_write", { sessionId: "s1", data: "uptime\r" });
     view.unmount();
     expect(writeToSession("s1", "uptime\r")).toBe(false);
     expect(activeSessionId()).toBeNull();
+    useTerminalsStore.setState({ tabs: [], activeTabId: null });
   });
 });

@@ -1,16 +1,17 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Terminal as XTerm } from "@xterm/xterm";
-import {
-  broadcastInput,
-  isLiveShell,
-  isTypedInput,
-} from "@/components/terminal/broadcastInput";
+import { broadcastInput, isTypedInput } from "@/components/terminal/broadcastInput";
 import type { TerminalExtensionContext } from "@/components/terminal/extensions";
 import type { TerminalSession, TerminalTab } from "@/components/TerminalTabs";
 import type { AuthEvent } from "@/lib/authPrompt";
 import { invoke } from "@/lib/tauri";
 import { deliverChannelMessage, type OutputSink } from "@/lib/terminalOutput";
-import { registerTerminal, unregisterTerminal, writeToSession } from "@/lib/terminalRegistry";
+import {
+  isLiveShell,
+  registerTerminal,
+  unregisterTerminal,
+  writeToSession,
+} from "@/lib/terminalRegistry";
 import { useAuthPromptStore } from "@/store/useAuthPromptStore";
 import { useTerminalsStore } from "@/store/useTerminalsStore";
 import type { Connection } from "@/types";
