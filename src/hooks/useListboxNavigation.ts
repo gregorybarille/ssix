@@ -36,21 +36,21 @@ export function useListboxNavigation({ count, onChoose }: ListboxNavigationOptio
     }
   }, [activeIndex, count]);
 
-  const moveTo = (e: KeyboardEvent, index: number) => {
+  const move = (e: KeyboardEvent, next: (index: number) => number) => {
     e.preventDefault();
     pointerMovedRef.current = false;
-    setActiveIndex(index);
+    setActiveIndex((index) => (count === 0 ? 0 : next(index)));
   };
 
   const onKeyDown = (e: KeyboardEvent) => {
     if (e.key === "ArrowDown") {
-      moveTo(e, count === 0 ? 0 : (activeIndex + 1) % count);
+      move(e, (index) => (index + 1) % count);
     } else if (e.key === "ArrowUp") {
-      moveTo(e, count === 0 ? 0 : (activeIndex - 1 + count) % count);
+      move(e, (index) => (index - 1 + count) % count);
     } else if (e.key === "Home") {
-      moveTo(e, 0);
+      move(e, () => 0);
     } else if (e.key === "End") {
-      moveTo(e, count === 0 ? 0 : count - 1);
+      move(e, () => count - 1);
     } else if (e.key === "Enter") {
       e.preventDefault();
       if (count > 0) onChoose(activeIndex);
