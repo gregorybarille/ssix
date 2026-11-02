@@ -1533,20 +1533,11 @@ fn resize_pty(channel: &mut ssh2::Channel, cols: u32, rows: u32, ctx: &SessionCo
 }
 
 // ---------------------------------------------------------------------------
-// Hops: jump hosts (ssh -J); local forwards share these from `crate::forwards`
+// Hops: jump hosts (ssh -J)
 // ---------------------------------------------------------------------------
 
-/// Open the session to the first hop: the SSH server of a forward or
-/// the jump host of a jump connection. `role` names it in errors and debug
-/// lines.
-pub(crate) fn open_hop_session(
-    hop: &Endpoint,
-    role: &str,
-    verbosity: u8,
-) -> Result<Session, String> {
-    open_hop_unless_cancelled(hop, role, verbosity, None)
-}
-
+/// Open the session to the jump host of a jump connection. `role` names it in
+/// errors and debug lines.
 fn open_hop_unless_cancelled(
     hop: &Endpoint,
     role: &str,
