@@ -144,15 +144,20 @@ describe("ConnectionForm's folder", () => {
     );
   });
 
-  it("lets bad text left in the hidden field give way to the saved folder", async () => {
-    const user = userEvent.setup();
-    const { onSubmit } = renderForm(tunnel);
+  /** Leave text the field refuses, then go to a kind that hides the field. */
+  const hideRefusedFolder = async (user: ReturnType<typeof userEvent.setup>) => {
     await user.click(screen.getByTestId("connection-form-kind-direct"));
     await user.clear(folderField());
     await user.type(folderField(), "a/..");
     expect(await screen.findByTestId("connection-form-folder-error")).toBeInTheDocument();
     await user.click(screen.getByTestId("connection-form-kind-dynamicforward"));
     expect(screen.queryByTestId("connection-form-folder")).not.toBeInTheDocument();
+  };
+
+  it("lets bad text left in the hidden field give way to the saved folder", async () => {
+    const user = userEvent.setup();
+    const { onSubmit } = renderForm(tunnel);
+    await hideRefusedFolder(user);
     await user.click(submit());
     await waitFor(() =>
       expect(onSubmit).toHaveBeenCalledWith(
@@ -164,10 +169,7 @@ describe("ConnectionForm's folder", () => {
   it("gives way to where the row is now, not where it was when the form opened", async () => {
     const user = userEvent.setup();
     const { onSubmit } = renderForm(tunnel);
-    await user.click(screen.getByTestId("connection-form-kind-direct"));
-    await user.clear(folderField());
-    await user.type(folderField(), "a/..");
-    await user.click(screen.getByTestId("connection-form-kind-dynamicforward"));
+    await hideRefusedFolder(user);
     act(() =>
       useConnectionsStore.setState({ connections: [saved, { ...tunnel, folder: "dragged/here" }] }),
     );

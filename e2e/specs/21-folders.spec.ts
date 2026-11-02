@@ -115,6 +115,14 @@ const grabPoint = (selector: string) =>
     return { x: Math.round(box.left + 30), y: Math.round(box.top + box.height / 2) };
   }, selector);
 
+/** The tree with this spec's own rows on screen. Says how many terminal tabs are open. */
+async function showOwnRows(): Promise<number> {
+  await showTree();
+  await fill(sel.connectionSearchInput, OWN_NAMES);
+  await waitForRow(LOOSE);
+  return browser.$$(sel.terminalTabCloseAny).length;
+}
+
 /** One mouse across calls: a new id would be another mouse, with no button down. */
 const mouse = () =>
   browser.action("pointer", { id: "folders-mouse", parameters: { pointerType: "mouse" } });
@@ -401,10 +409,7 @@ describe("Folders", () => {
 
   describe("moving a connection", () => {
     it("drags a row onto a folder without opening a session", async () => {
-      await showTree();
-      await fill(sel.connectionSearchInput, OWN_NAMES);
-      await waitForRow(LOOSE);
-      const tabs = await browser.$$(sel.terminalTabCloseAny).length;
+      const tabs = await showOwnRows();
 
       await dragRow(sel.connectionRowByName(LOOSE), sel.folderRow(EU));
       await waitForStoredFolder(LOOSE, EU);
@@ -420,10 +425,7 @@ describe("Folders", () => {
     });
 
     it("does not connect when a drag comes back to its own row", async () => {
-      await showTree();
-      await fill(sel.connectionSearchInput, OWN_NAMES);
-      await waitForRow(LOOSE);
-      const tabs = await browser.$$(sel.terminalTabCloseAny).length;
+      const tabs = await showOwnRows();
 
       await dragRow(sel.connectionRowByName(LOOSE), sel.connectionRowByName(LOOSE));
       await (await browser.$(sel.folderTree)).waitForDisplayed({ timeout: 10_000 });
@@ -433,15 +435,12 @@ describe("Folders", () => {
     });
 
     it("cancels a drag with Escape, which goes no further than the drag", async () => {
-      await showTree();
-      await fill(sel.connectionSearchInput, OWN_NAMES);
-      await waitForRow(LOOSE);
+      const tabs = await showOwnRows();
       // A side panel to close, should Escape get that far.
       const edit = await (await rowOf(DB)).$(sel.connectionRowEditButton);
       await edit.waitForClickable({ timeout: 10_000 });
       await edit.click();
       await (await browser.$(sel.connectionForm)).waitForExist({ timeout: 10_000 });
-      const tabs = await browser.$$(sel.terminalTabCloseAny).length;
 
       const start = await grabPoint(sel.connectionRowByName(LOOSE));
       const over = await grabPoint(sel.folderRow(PROD));
@@ -481,9 +480,7 @@ describe("Folders", () => {
     });
 
     it("moves with the picker, from the row's menu", async () => {
-      await showTree();
-      await fill(sel.connectionSearchInput, OWN_NAMES);
-      await waitForRow(LOOSE);
+      await showOwnRows();
       await rightClick(sel.connectionRowByName(LOOSE));
       await click(sel.folderMoveMenuItem);
 
@@ -504,9 +501,7 @@ describe("Folders", () => {
     });
 
     it("moves from the keyboard, and gives focus back", async () => {
-      await showTree();
-      await fill(sel.connectionSearchInput, OWN_NAMES);
-      await waitForRow(LOOSE);
+      await showOwnRows();
       await focusRow(sel.connectionRowByName(LOOSE));
       await browser.keys(["Shift", "F10"]);
       await chooseMenuItem(sel.folderMoveMenuItem);
