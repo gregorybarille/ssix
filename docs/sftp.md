@@ -97,8 +97,9 @@ until you press **Upload changes**.
   on other systems whatever `xdg-open` picks for the file's type. The copy is not
   executable, so opening a script does not run it. If nothing can be started, the
   panel says so and you can open the path yourself.
-- Files up to 32 MiB can be edited this way. Opening and uploading show no progress
-  and cannot be cancelled.
+- Files up to 32 MiB can be edited this way, counted as the bytes arrive as well as
+  from the size the server reports. Opening and uploading show no progress and cannot
+  be cancelled.
 
 ## Files view and SCP
 

@@ -216,11 +216,7 @@ pub(super) fn edit_open(connection_id: &str, remote_path: &str) -> Result<EditSe
         return Err(format!("{} is not a file", remote_path));
     }
     if stat.size.unwrap_or(0) > MAX_BYTES {
-        return Err(format!(
-            "{} is too large to edit in place (the limit is {} MiB). Download it instead.",
-            remote_path,
-            MAX_BYTES / (1024 * 1024)
-        ));
+        return Err(too_large(remote_path));
     }
 
     let name = remote_name(&real)
@@ -262,24 +258,54 @@ pub(super) fn edit_open(connection_id: &str, remote_path: &str) -> Result<EditSe
     })
 }
 
+fn too_large(remote_path: &str) -> String {
+    format!(
+        "{} is too large to edit in place (the limit is {} MiB). Download it instead.",
+        remote_path,
+        MAX_BYTES / (1024 * 1024)
+    )
+}
+
 fn fetch_copy(sftp: &Sftp, remote_path: &str, copy: &Path) -> Result<(Digest256, u64), String> {
     let mut remote = sftp
         .open(Path::new(remote_path))
         .map_err(|e| call_error("Could not read", remote_path, &e))?;
+    fill_copy(&mut remote, copy, MAX_BYTES, &|| too_large(remote_path))
+}
+
+/// Write `source` to a new private `copy`, up to `limit` bytes. A server may
+/// report no size or a wrong one, so the limit holds as the bytes arrive, and
+/// a copy that stops short does not stay.
+fn fill_copy(
+    source: &mut dyn Read,
+    copy: &Path,
+    limit: u64,
+    over_limit: &dyn Fn() -> String,
+) -> Result<(Digest256, u64), String> {
     let mut file =
         create_private_file(copy).map_err(|e| format!("Could not create the copy: {}", e))?;
     let mut hashing = HashingReader {
-        inner: &mut remote,
+        inner: source,
         hasher: Sha256::new(),
     };
     let mut written = 0u64;
-    copy_stream(&mut hashing, &mut file, &mut |n| {
+    let filled = copy_stream(&mut hashing, &mut file, &mut |n| {
         written += n as u64;
+        if written > limit {
+            return Err(Stop::Failed(over_limit()));
+        }
         Ok(())
     })
-    .map_err(Stop::into_message)?;
-    file.flush()
-        .map_err(|e| format!("Could not write the copy: {}", e))?;
+    .map_err(Stop::into_message)
+    .and_then(|()| {
+        file.flush()
+            .map_err(|e| format!("Could not write the copy: {}", e))
+    });
+    drop(file);
+    if let Err(error) = filled {
+        let _ = fs::remove_file(copy);
+        return Err(error);
+    }
     Ok((hashing.hasher.finalize().into(), written))
 }
 
@@ -688,6 +714,54 @@ mod tests {
         let via_stream = digest_of(&mut data).unwrap();
         let direct: Digest256 = Sha256::digest(vec![9u8; 300_000]).into();
         assert_eq!(via_stream, direct);
+    }
+
+    #[test]
+    fn a_copy_over_the_limit_stops_and_is_removed() {
+        with_isolated_data_dir(|| {
+            make_private_dir(&edit_root()).unwrap();
+            let copy = edit_root().join("over");
+            // Bigger than one chunk, and than the limit: nothing said so first.
+            let mut source = io::Cursor::new(vec![1u8; 300_000]);
+            let err = fill_copy(&mut source, &copy, 1024, &|| "too large".to_string()).unwrap_err();
+            assert_eq!(err, "too large");
+            assert!(!copy.exists(), "the partial copy must go");
+            assert!(
+                source.position() < 300_000,
+                "the copy must stop, not read to the end"
+            );
+        });
+    }
+
+    #[test]
+    fn a_copy_of_exactly_the_limit_is_kept_whole() {
+        with_isolated_data_dir(|| {
+            make_private_dir(&edit_root()).unwrap();
+            let copy = edit_root().join("exact");
+            let mut source = io::Cursor::new(vec![2u8; 1024]);
+            let (digest, written) =
+                fill_copy(&mut source, &copy, 1024, &|| "too large".to_string()).unwrap();
+            assert_eq!(written, 1024);
+            assert_eq!(digest, local_digest(&copy).unwrap());
+            assert_eq!(fs::read(&copy).unwrap(), vec![2u8; 1024]);
+        });
+    }
+
+    #[test]
+    fn a_failed_copy_is_removed() {
+        with_isolated_data_dir(|| {
+            make_private_dir(&edit_root()).unwrap();
+            let copy = edit_root().join("broken");
+            struct Broken;
+            impl Read for Broken {
+                fn read(&mut self, _: &mut [u8]) -> io::Result<usize> {
+                    Err(io::Error::other("connection lost"))
+                }
+            }
+            let err = fill_copy(&mut Broken, &copy, 1024, &String::new).unwrap_err();
+            assert!(err.contains("connection lost"), "{}", err);
+            assert!(!copy.exists());
+        });
     }
 
     #[test]
