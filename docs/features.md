@@ -2,7 +2,7 @@
 
 ## Connections
 
-SSIX supports three connection types, named after the OpenSSH options they
+SSIX supports five connection types, named after the OpenSSH options they
 correspond to:
 
 | Kind | `ssh` equivalent | Hosts |
@@ -10,6 +10,8 @@ correspond to:
 | Direct (`direct`) | `ssh user@host` | the host |
 | Local forward (`port_forward`) | `ssh -L local:remote:port user@server` | the **SSH server**, which forwards a local port to the **remote host** |
 | Jump host (`jump_shell`) | `ssh -J user@jumphost user@target` | the **jump host**, which relays the session to the **target** |
+| Remote forward (`remote_forward`) | `ssh -R remote:target:port user@server` | the **SSH server**, which forwards a port of its own back to the **local target** |
+| Dynamic forward (`dynamic_forward`) | `ssh -D socks user@server` | the **SSH server**, which dials what the clients of a local SOCKS5 proxy ask for |
 
 The names in backticks are the stored values in `data.json`; they predate
 the OpenSSH wording and are kept so existing data loads unchanged. The
@@ -112,9 +114,19 @@ The terminal tab bar is a true WAI-ARIA tablist. With focus on a tab:
 
 - local forwards (`ssh -L`): SSIX listens on `127.0.0.1:<local port>` and
   forwards each connection through the SSH server to the remote host
-- one row per local forward with status indicator:
-  grey for not connected/connecting, green for connected, red for connection errors
-- expandable inline detail panes beneath each forward; multiple rows can stay expanded
+- remote forwards (`ssh -R`): the SSH server listens on its own loopback and
+  each connection comes back to a target on this machine's side
+- dynamic forwards (`ssh -D`): a SOCKS5 proxy on `127.0.0.1:<SOCKS port>` whose
+  connections the SSH server dials, resolving names itself
+- one row per forward with status indicator: grey for not connected/connecting,
+  green for connected, red for connection errors and for a forward whose
+  connection was lost
+- expandable inline detail panes beneath each forward, with its client count and
+  last client error; multiple rows can stay expanded
+- stopping a forward drops its clients, and a forward whose session dies closes
+  its port and says so
+
+See [Port Forwards](forwards.md) for details.
 
 ## Search, Tags, And Colors
 
