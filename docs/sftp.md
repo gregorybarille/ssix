@@ -34,7 +34,8 @@ jump host connections alike, so host keys are checked the same way. A changed
 key refuses the connection and the view offers **Trust new host key**.
 
 The browsing session uses the connection's keepalive interval, or the app's
-default. If it is lost, the pane says so and connects again to the same folder.
+default. If it is lost, the view connects again to the same folder; should the new
+session be lost too, it stops and shows the error with a **Retry** button.
 
 Each transfer and each edit opens its own session, so copying does not hold up
 browsing. At most three transfers run at once; the others wait, and can be

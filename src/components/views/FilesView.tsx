@@ -19,12 +19,14 @@ import { useSftpStore } from "@/store/useSftpStore";
 
 function ConnectFailure({ error }: { error: string }) {
   const trustHostKey = useSftpStore((s) => s.trustHostKey);
+  const retry = useSftpStore((s) => s.retryConnect);
   const mismatch = parseHostKeyMismatch(error);
   if (!mismatch) {
     return (
       <ErrorBanner
         className="mx-6 mt-2"
         message={readableSftpError(error)}
+        onRetry={() => void retry()}
         testId="files-connect-error"
       />
     );

@@ -216,6 +216,27 @@ describe("listing", () => {
     expect(state.remote.error).toBeNull();
   });
 
+  it("stops reconnecting when the new session is lost as well, until asked again", async () => {
+    await connected();
+    backend({
+      sftp_connect: () => ({ session_id: "s2", start_path: "/home/me", label: "me@host" }),
+      sftp_list: () => {
+        throw "SFTP_SESSION_LOST The connection was lost";
+      },
+    });
+    invokeMock.mockClear();
+    await useSftpStore.getState().refresh("remote");
+    await flush();
+    await flush();
+    expect(calls("sftp_connect")).toHaveLength(1);
+    expect(useSftpStore.getState().remote.error).toBe("The connection was lost");
+
+    await useSftpStore.getState().refresh("remote");
+    await flush();
+    await flush();
+    expect(calls("sftp_connect")).toHaveLength(2);
+  });
+
   it("keeps the selection on a refresh, without what has gone", async () => {
     backend({ sftp_list: () => listing("/a", [file("/a/1"), file("/a/2")]) });
     await useSftpStore.getState().navigate("local", "/a");

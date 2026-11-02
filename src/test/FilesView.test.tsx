@@ -177,6 +177,13 @@ describe("FilesView", () => {
     await act(() => useSftpStore.getState().connect("c1"));
     expect(screen.getByTestId("files-connect-error")).toHaveTextContent("Authentication failed");
     expect(screen.queryByTestId("files-list-remote")).not.toBeInTheDocument();
+
+    answer();
+    fireEvent.click(screen.getByTestId("files-connect-error-retry"));
+    await waitFor(() =>
+      expect(screen.getByTestId("files-pane-remote")).toHaveAttribute("data-path", "/home/me"),
+    );
+    expect(screen.queryByTestId("files-connect-error")).not.toBeInTheDocument();
   });
 
   it("offers to trust a changed host key and connects again", async () => {

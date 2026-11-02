@@ -97,6 +97,8 @@ interface SftpState {
   /** Open a session to the connection and show `path`, or where it starts. */
   connect: (connectionId: string, path?: string) => Promise<void>;
   disconnect: () => void;
+  /** Try the failed connection again; picking it in the list again would change nothing. */
+  retryConnect: () => Promise<void>;
   /** Accept the host key a connection now presents, and connect again. */
   trustHostKey: (host: string, port: number) => Promise<void>;
   navigate: (side: PaneSide, path: string) => Promise<void>;
@@ -144,6 +146,8 @@ const emptyPane = (): PaneState => ({
 // about a folder or connection the user has left.
 const paneRequests: Record<PaneSide, number> = { local: 0, remote: 0 };
 let connectRequests = 0;
+/** The session was replaced and no folder has been listed on the new one yet. */
+let justReconnected = false;
 /** Numbers rows for transfers the backend refused, which have no id from it. */
 let refusedTransfers = 0;
 
@@ -156,10 +160,20 @@ export const useSftpStore = create<SftpState>((set, get) => {
   const patchEdit = (patch: Partial<EditState>) =>
     set((state) => (state.edit ? { edit: { ...state.edit, ...patch } } : {}));
 
-  /** A lost session is replaced in the background; the caller reports the error. */
+  /**
+   * A lost session is replaced in the background; the caller reports the
+   * error. A folder that takes the new session down too must not loop, so
+   * that error stays on screen and the next try is the user's.
+   */
   const reconnectIfLost = (message: string) => {
     const { connectionId, remote } = get();
-    if (isSessionLost(message) && connectionId) void get().connect(connectionId, remote.path);
+    if (!isSessionLost(message) || !connectionId) return;
+    if (justReconnected) {
+      justReconnected = false;
+      return;
+    }
+    justReconnected = true;
+    void get().connect(connectionId, remote.path);
   };
 
   /** Run a change made through a dialog: its error is the dialog's to show. */
@@ -324,6 +338,11 @@ export const useSftpStore = create<SftpState>((set, get) => {
       });
     },
 
+    retryConnect: async () => {
+      const { connectionId } = get();
+      if (connectionId) await get().connect(connectionId);
+    },
+
     trustHostKey: async (host, port) => {
       const { connectionId } = get();
       if (!connectionId) return;
@@ -346,6 +365,7 @@ export const useSftpStore = create<SftpState>((set, get) => {
           path,
         });
         if (request !== paneRequests[side]) return;
+        if (side === "remote") justReconnected = false;
         const pane = get()[side];
         const stay = listing.path === pane.path;
         const exists = new Set(listing.entries.map((e) => e.path));
