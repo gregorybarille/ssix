@@ -23,6 +23,8 @@
 //! machine and the connection. Its block is dropped and reported.
 
 use std::borrow::Cow;
+use std::cell::Cell;
+use std::cmp::Ordering;
 use std::collections::HashSet;
 use std::fmt;
 use std::fs;
@@ -36,6 +38,17 @@ const MAX_TOTAL_BYTES: u64 = 1024 * 1024;
 /// OpenSSH's own limit (`READCONF_MAX_DEPTH`).
 const MAX_INCLUDE_DEPTH: usize = 16;
 const MAX_FILES: usize = 64;
+/// Forwards one host keeps. A `Host *` block with tens of thousands of them
+/// would otherwise be copied for every host.
+pub const MAX_FORWARDS_PER_HOST: usize = 64;
+/// `IdentityFile` values one host keeps, for the same reason. Only the first
+/// is ever used.
+const MAX_IDENTITY_FILES: usize = 64;
+/// Notices one read keeps. The one after these says the list stops there.
+const MAX_NOTICES: usize = 200;
+/// What setting up one wildcard comparison costs in `resolve_steps`, on top
+/// of its loop: it allocates, which a plain comparison does not.
+const WILDCARD_SETUP_STEPS: usize = 16;
 
 /// A line of a config file, shown as `~/.ssh/config:12`.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -187,6 +200,8 @@ pub struct ResolvedHost {
     /// its only mention is negated or inside an `Include` whose enclosing
     /// block does not match it, where OpenSSH would ignore it too.
     pub named: bool,
+    /// The first forward past `MAX_FORWARDS_PER_HOST`, if any.
+    pub forwards_left_out: Option<Source>,
 }
 
 impl ResolvedHost {
@@ -200,10 +215,14 @@ impl ResolvedHost {
             Keyword::HostName => first(&mut self.host_name, value),
             Keyword::Port => first(&mut self.port, value),
             Keyword::User => first(&mut self.user, value),
-            Keyword::IdentityFile => self.identity_files.push(value.clone()),
-            Keyword::LocalForward => self.local_forwards.push(value.clone()),
-            Keyword::RemoteForward => self.remote_forwards.push(value.clone()),
-            Keyword::DynamicForward => self.dynamic_forwards.push(value.clone()),
+            Keyword::IdentityFile => {
+                if self.identity_files.len() < MAX_IDENTITY_FILES {
+                    self.identity_files.push(value.clone());
+                }
+            }
+            Keyword::LocalForward | Keyword::RemoteForward | Keyword::DynamicForward => {
+                self.add_forward(keyword, value);
+            }
             Keyword::ProxyJump => {
                 if self.proxy.is_none() {
                     self.proxy = Some(Proxy::Jump(value.clone()));
@@ -215,6 +234,24 @@ impl ResolvedHost {
                 }
             }
         }
+    }
+}
+
+impl ResolvedHost {
+    fn add_forward(&mut self, keyword: Keyword, value: &Value) {
+        let held =
+            self.local_forwards.len() + self.remote_forwards.len() + self.dynamic_forwards.len();
+        if held >= MAX_FORWARDS_PER_HOST {
+            self.forwards_left_out
+                .get_or_insert_with(|| value.at.clone());
+            return;
+        }
+        let slot = match keyword {
+            Keyword::LocalForward => &mut self.local_forwards,
+            Keyword::RemoteForward => &mut self.remote_forwards,
+            _ => &mut self.dynamic_forwards,
+        };
+        slot.push(value.clone());
     }
 }
 
@@ -235,6 +272,8 @@ pub struct ParsedConfig {
     pub notices: Vec<Notice>,
     /// Every file read, for the preview to name.
     pub files: Vec<String>,
+    /// What every `resolve` so far has cost, see `resolve_steps`.
+    steps: Cell<usize>,
 }
 
 impl ParsedConfig {
@@ -260,8 +299,25 @@ impl ParsedConfig {
     pub fn resolve(&self, target: &str) -> ResolvedHost {
         let mut out = ResolvedHost::default();
         let mut active = true;
-        walk(&self.statements, &mut active, false, target, &mut out);
+        let mut steps = 0;
+        walk(
+            &self.statements,
+            &mut active,
+            false,
+            target,
+            &mut out,
+            &mut steps,
+        );
+        self.steps.set(self.steps.get().saturating_add(steps));
         out
+    }
+
+    /// The work every `resolve` so far has done: statements visited and
+    /// characters compared. Each host walks the whole file, so this is what a
+    /// large or hostile file drives up, and it counts the same on every read
+    /// of one file, so a preview and its apply stop at the same host.
+    pub fn resolve_steps(&self) -> usize {
+        self.steps.get()
     }
 
     /// Every distinct name on a `Host` line, in the order they first appear.
@@ -307,11 +363,13 @@ fn walk(
     never_match: bool,
     target: &str,
     out: &mut ResolvedHost,
+    steps: &mut usize,
 ) {
     for statement in statements {
+        *steps += 1;
         match statement {
             Statement::Host(patterns, _) => {
-                *active = !never_match && block_applies(patterns, target);
+                *active = !never_match && block_applies(patterns, target, steps);
                 if *active && patterns.iter().any(|p| !p.negated && p.text == target) {
                     out.named = true;
                 }
@@ -324,17 +382,17 @@ fn walk(
             }
             Statement::Included(children) => {
                 let outer = *active;
-                walk(children, active, never_match || !outer, target, out);
+                walk(children, active, never_match || !outer, target, out, steps);
                 *active = outer;
             }
         }
     }
 }
 
-fn block_applies(patterns: &[Pattern], target: &str) -> bool {
+fn block_applies(patterns: &[Pattern], target: &str, steps: &mut usize) -> bool {
     let mut applies = false;
     for pattern in patterns {
-        if wildcard_match(&pattern.text, target) {
+        if wildcard_match_counted(&pattern.text, target, steps) {
             if pattern.negated {
                 return false;
             }
@@ -347,15 +405,22 @@ fn block_applies(patterns: &[Pattern], target: &str) -> bool {
 /// `*` and `?` matching, as OpenSSH's `match_pattern`. Remembers one star to
 /// back up to, so a pattern with many stars cannot take exponential time.
 fn wildcard_match(pattern: &str, text: &str) -> bool {
+    wildcard_match_counted(pattern, text, &mut 0)
+}
+
+fn wildcard_match_counted(pattern: &str, text: &str, steps: &mut usize) -> bool {
     if !pattern.contains(['*', '?']) {
+        *steps += 1;
         return pattern == text;
     }
+    *steps += WILDCARD_SETUP_STEPS;
     let pattern: Vec<char> = pattern.chars().collect();
     let text: Vec<char> = text.chars().collect();
     let (mut p, mut t) = (0, 0);
     let mut star = None;
     let mut resume = 0;
     while t < text.len() {
+        *steps += 1;
         if pattern.get(p) == Some(&'*') {
             star = Some(p);
             resume = t;
@@ -559,6 +624,7 @@ impl<'a> Reader<'a> {
             statements,
             notices: self.notices,
             files: self.files,
+            steps: Cell::new(0),
         }
     }
 
@@ -568,6 +634,13 @@ impl<'a> Reader<'a> {
     }
 
     fn notice(&mut self, at: &Source, message: String) {
+        let message = match self.notices.len().cmp(&MAX_NOTICES) {
+            Ordering::Less => message,
+            Ordering::Equal => {
+                format!("Lines after these {MAX_NOTICES} were passed over too, and are not listed")
+            }
+            Ordering::Greater => return,
+        };
         self.notices.push(Notice {
             source: at.clone(),
             message,
@@ -1075,6 +1148,76 @@ mod tests {
         let web = config.resolve("web");
         assert!(!web.named);
         assert!(web.user.is_none());
+    }
+
+    #[test]
+    fn a_host_keeps_a_limited_number_of_forwards_and_remembers_the_first_left_out() {
+        let home = std::path::Path::new("/nonexistent-home");
+        let mut text = String::from("Host *\n");
+        for i in 0..MAX_FORWARDS_PER_HOST + 10 {
+            let keyword = [
+                "LocalForward 1 d:1",
+                "RemoteForward 2 d:2",
+                "DynamicForward 3",
+            ];
+            text.push_str(keyword[i % 3]);
+            text.push('\n');
+        }
+        let config = ParsedConfig::parse_text(&text, home);
+        let host = config.resolve("web");
+        let held =
+            host.local_forwards.len() + host.remote_forwards.len() + host.dynamic_forwards.len();
+        assert_eq!(held, MAX_FORWARDS_PER_HOST);
+        assert_eq!(
+            host.forwards_left_out.map(|at| at.line),
+            Some(MAX_FORWARDS_PER_HOST + 2)
+        );
+    }
+
+    #[test]
+    fn a_few_forwards_leave_nothing_out() {
+        let config = ParsedConfig::parse_text(
+            "Host *\nLocalForward 1 d:1\n",
+            std::path::Path::new("/nonexistent-home"),
+        );
+        assert!(config.resolve("web").forwards_left_out.is_none());
+    }
+
+    #[test]
+    fn a_host_keeps_a_limited_number_of_identity_files_starting_with_the_first() {
+        let text: String = (0..MAX_IDENTITY_FILES + 10)
+            .map(|i| format!("IdentityFile /k/{i}\n"))
+            .collect();
+        let config = ParsedConfig::parse_text(&text, std::path::Path::new("/nonexistent-home"));
+        let host = config.resolve("web");
+        assert_eq!(host.identity_files.len(), MAX_IDENTITY_FILES);
+        assert_eq!(host.identity_files[0].single().unwrap(), "/k/0");
+    }
+
+    #[test]
+    fn notices_stop_at_the_limit_and_say_so_once() {
+        let text = "Match all\n".repeat(MAX_NOTICES + 500);
+        let config = ParsedConfig::parse_text(&text, std::path::Path::new("/nonexistent-home"));
+        assert_eq!(config.notices.len(), MAX_NOTICES + 1);
+        assert!(config.notices[MAX_NOTICES].message.contains("not listed"));
+        assert!(config.notices[..MAX_NOTICES]
+            .iter()
+            .all(|n| !n.message.contains("not listed")));
+    }
+
+    #[test]
+    fn resolving_counts_its_work_and_adds_it_up() {
+        let config = ParsedConfig::parse_text(
+            "Host web db\n  User u\nHost *x\n  Port 1\n",
+            std::path::Path::new("/nonexistent-home"),
+        );
+        assert_eq!(config.resolve_steps(), 0);
+        config.resolve("web");
+        let once = config.resolve_steps();
+        // Four statements, two plain patterns, and one wildcard comparison.
+        assert!(once >= 4 + 2 + WILDCARD_SETUP_STEPS, "{once}");
+        config.resolve("web");
+        assert_eq!(config.resolve_steps(), once * 2);
     }
 
     #[test]

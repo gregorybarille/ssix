@@ -37,7 +37,7 @@ use crate::commands::credentials::validate_credential_fields;
 use crate::models::{AppData, Connection, ConnectionKind, Credential, CredentialKind};
 use crate::ssh_config::{
     display_path, is_unix_socket, jump_value, parse_forward_end, parse_jump_hop, parse_port,
-    valid_host, HostEntry, ParsedConfig, Proxy, ResolvedHost, Source, Value,
+    valid_host, HostEntry, ParsedConfig, Proxy, ResolvedHost, Source, Value, MAX_FORWARDS_PER_HOST,
 };
 use crate::storage::{load_data, with_data_mut};
 
@@ -46,9 +46,17 @@ use ts_rs::TS;
 
 const DEFAULT_CONFIG_PATH: &str = "~/.ssh/config";
 const DEFAULT_SSH_PORT: u16 = 22;
-/// Hosts one import plans, so a generated or hostile file stays quick to
-/// preview. Each host walks the whole file once.
+/// Hosts one import plans.
 const MAX_HOSTS: usize = 2000;
+/// What planning may spend on working out hosts, in
+/// `ParsedConfig::resolve_steps`. Each host walks the whole file and apply
+/// plans while holding the data lock, so hosts times file size must stay
+/// bounded, not just each on its own. 2000 hosts of a dozen lines each fit.
+const MAX_RESOLVE_STEPS: usize = 50_000_000;
+/// Connections one import offers, however many forwards its hosts have.
+const MAX_ROWS: usize = 2000;
+/// Skipped entries one preview lists. A generated file can hold 100k patterns.
+const MAX_SKIPS: usize = 2000;
 /// `check_connection`'s limit, tested first so an absurdly long name is not
 /// matched against every pattern in the file.
 const MAX_NAME_CHARS: usize = 128;
@@ -1010,6 +1018,7 @@ fn plan_alias(
     env: &ImportEnv,
     alias: &str,
     at: &Source,
+    plan: &mut Plan,
 ) -> Vec<Result<PlannedConnection, ImportSkip>> {
     if alias.chars().count() > MAX_NAME_CHARS {
         let shown: String = alias.chars().take(40).collect();
@@ -1033,6 +1042,12 @@ fn plan_alias(
         Ok(planned) => planned,
         Err(refusal) => return vec![Err(refusal.skip(alias, at))],
     };
+    if let Some(first) = &resolved.forwards_left_out {
+        plan.report_limit(
+            format!("Forwards after the first {MAX_FORWARDS_PER_HOST} of a host were not read"),
+            first,
+        );
+    }
 
     let mut planned = vec![Ok(main_connection(alias, at, &server, &route))];
     for (values, flavor) in [
@@ -1078,6 +1093,10 @@ struct Plan {
     /// The name each new credential asks for, to tell the rows that would
     /// have to number theirs if an earlier row is ticked too.
     new_credentials: HashMap<String, CredentialSpec>,
+    /// Limits reported so far: each one is reported once, however often it is hit.
+    limits_reported: HashSet<String>,
+    /// Skips past `MAX_SKIPS`, which are counted and not listed.
+    skips_left_out: usize,
 }
 
 /// Connections the plan must not repeat: those stored, and those it has
@@ -1185,6 +1204,30 @@ fn check_row(
 }
 
 impl Plan {
+    fn skip(&mut self, skip: ImportSkip) {
+        if self.skipped.len() < MAX_SKIPS {
+            self.skipped.push(skip);
+        } else {
+            self.skips_left_out += 1;
+        }
+    }
+
+    fn report_limit(&mut self, message: String, at: &Source) {
+        if self.limits_reported.insert(message.clone()) {
+            self.notices.push(ImportNotice {
+                message,
+                source: at.to_string(),
+            });
+        }
+    }
+
+    fn report_row_limit(&mut self, at: &Source) {
+        self.report_limit(
+            format!("Only the first {MAX_ROWS} connections are offered: the rest of the config was not planned"),
+            at,
+        );
+    }
+
     /// Offer `planned` as a row, or say why not. `scratch` is the stored data,
     /// and `book` its credentials: a row's name and validity are worked out
     /// against those alone, because the other rows may end up unticked.
@@ -1197,13 +1240,15 @@ impl Plan {
     ) {
         let destination = planned.signature().to_string();
         if let Some(refusal) = known.refusal(&planned.name, &destination) {
-            self.skipped
-                .push(refusal.skip(&planned.name, &planned.source));
+            self.skip(refusal.skip(&planned.name, &planned.source));
+            return;
+        }
+        if self.items.len() >= MAX_ROWS {
+            self.report_row_limit(&planned.source);
             return;
         }
         if let Err(reason) = check_row(&planned, scratch, book) {
-            self.skipped
-                .push(Refusal::invalid(reason).skip(&planned.name, &planned.source));
+            self.skip(Refusal::invalid(reason).skip(&planned.name, &planned.source));
             return;
         }
 
@@ -1249,6 +1294,13 @@ impl Plan {
     }
 
     fn into_preview(self, config: &ParsedConfig, path: String) -> ImportPreview {
+        let skips_left_out = (self.skips_left_out > 0).then(|| ImportNotice {
+            message: format!(
+                "{} more skipped entries are not listed: only the first {MAX_SKIPS} are",
+                self.skips_left_out
+            ),
+            source: path.clone(),
+        });
         let notices = config
             .notices
             .iter()
@@ -1257,6 +1309,7 @@ impl Plan {
                 source: notice.source.to_string(),
             })
             .chain(self.notices)
+            .chain(skips_left_out)
             .collect();
         ImportPreview {
             path,
@@ -1298,7 +1351,7 @@ fn build_plan(config: &ParsedConfig, data: &AppData, env: &ImportEnv) -> Plan {
                 } else {
                     "A pattern, not a single host: it supplies options to the hosts it matches"
                 };
-                plan.skipped.push(ImportSkip {
+                plan.skip(ImportSkip {
                     name: pattern,
                     category: ImportSkipCategory::Pattern,
                     reason: reason.to_string(),
@@ -1306,20 +1359,19 @@ fn build_plan(config: &ParsedConfig, data: &AppData, env: &ImportEnv) -> Plan {
                 });
             }
             HostEntry::Alias { name, at } => {
-                hosts += 1;
-                if hosts > MAX_HOSTS {
-                    if hosts == MAX_HOSTS + 1 {
-                        plan.notices.push(ImportNotice {
-                            message: format!("Hosts after the first {MAX_HOSTS} were not read"),
-                            source: at.to_string(),
-                        });
-                    }
+                if hosts >= MAX_HOSTS || config.resolve_steps() >= MAX_RESOLVE_STEPS {
+                    plan.report_limit(format!("Hosts after the first {hosts} were not read"), &at);
                     continue;
                 }
-                for outcome in plan_alias(config, env, &name, &at) {
+                if plan.items.len() >= MAX_ROWS {
+                    plan.report_row_limit(&at);
+                    continue;
+                }
+                hosts += 1;
+                for outcome in plan_alias(config, env, &name, &at, &mut plan) {
                     match outcome {
                         Ok(planned) => plan.admit(planned, &mut scratch, &book, &mut known),
-                        Err(skip) => plan.skipped.push(skip),
+                        Err(skip) => plan.skip(skip),
                     }
                 }
             }
@@ -2763,6 +2815,142 @@ mod tests {
                 .collect();
             assert_eq!(notice.len(), 1);
             assert_eq!(item(&preview, "h0").credentials[0].name, "u@id");
+        });
+    }
+
+    /// Far more than any of these takes, and far less than the fan-out they
+    /// guard against, which would plan about 100M rows.
+    const QUICKLY: std::time::Duration = std::time::Duration::from_secs(60);
+
+    fn notices_saying<'a>(preview: &'a ImportPreview, phrase: &str) -> Vec<&'a ImportNotice> {
+        let saying = preview
+            .notices
+            .iter()
+            .filter(|n| n.message.contains(phrase));
+        saying.collect()
+    }
+
+    #[test]
+    fn a_default_block_of_forwards_cannot_fan_out_over_every_host() {
+        in_data_dir(|f| {
+            let mut text: String = (0..MAX_HOSTS).map(|i| format!("Host h{i}\n")).collect();
+            text.push_str("Host *\n  User u\n");
+            for i in 0..38_000 {
+                text.push_str(&format!("  LocalForward {} d:1\n", 1 + i % 60_000));
+            }
+            assert!(text.len() < 1024 * 1024, "{}", text.len());
+            let started = std::time::Instant::now();
+
+            let preview = f.preview(&text);
+            assert_eq!(preview.items.len(), MAX_ROWS);
+            let first_host = preview
+                .items
+                .iter()
+                .filter(|i| i.name.starts_with("h0 (-L "))
+                .count();
+            assert_eq!(first_host, MAX_FORWARDS_PER_HOST);
+            assert_eq!(
+                notices_saying(&preview, "Forwards after the first").len(),
+                1
+            );
+            assert_eq!(notices_saying(&preview, "connections are offered").len(), 1);
+
+            // Apply plans again and stores every row, all under the data lock.
+            let result = f.apply_all(&preview);
+            assert_eq!(result.connections.len(), MAX_ROWS);
+            assert!(started.elapsed() < QUICKLY, "{:?}", started.elapsed());
+        });
+    }
+
+    #[test]
+    fn a_file_of_patterns_lists_a_limited_number_of_skips() {
+        in_data_dir(|f| {
+            let mut text = String::from("Host real\n  User u\n");
+            for i in 0..70_000 {
+                text.push_str(&format!("Host *x{i}\n"));
+            }
+            assert!(text.len() < 1024 * 1024, "{}", text.len());
+            let started = std::time::Instant::now();
+
+            let preview = f.preview(&text);
+            assert_eq!(names(&preview), ["real"]);
+            assert_eq!(preview.skipped.len(), MAX_SKIPS);
+            let left_out = notices_saying(&preview, "more skipped entries");
+            assert_eq!(left_out.len(), 1);
+            assert!(
+                left_out[0]
+                    .message
+                    .starts_with(&(70_000 - MAX_SKIPS).to_string()),
+                "{}",
+                left_out[0].message
+            );
+            assert!(started.elapsed() < QUICKLY, "{:?}", started.elapsed());
+        });
+    }
+
+    #[test]
+    fn a_file_of_match_lines_lists_a_limited_number_of_notices() {
+        in_data_dir(|f| {
+            let text = format!("Host real\n  User u\n{}", "Match all\n".repeat(100_000));
+            assert!(text.len() < 1024 * 1024, "{}", text.len());
+            let started = std::time::Instant::now();
+
+            let preview = f.preview(&text);
+            assert_eq!(names(&preview), ["real"]);
+            assert_eq!(notices_saying(&preview, "were passed over too").len(), 1);
+            assert!(preview.notices.len() < 300, "{}", preview.notices.len());
+            assert!(started.elapsed() < QUICKLY, "{:?}", started.elapsed());
+        });
+    }
+
+    #[test]
+    fn a_file_slow_to_match_stops_at_its_budget_and_says_where() {
+        in_data_dir(|f| {
+            // Each pattern backs up over the whole name, on every host.
+            let name = "a".repeat(120);
+            let mut text: String = (0..MAX_HOSTS)
+                .map(|i| format!("Host {name}{i}\n  User u\n"))
+                .collect();
+            let pattern = format!("*{}b", "a".repeat(60));
+            while text.len() < 1024 * 1024 - 100 {
+                text.push_str(&format!("Host {pattern}\n"));
+            }
+            let started = std::time::Instant::now();
+
+            let preview = f.preview(&text);
+            assert!(preview.items.len() < MAX_HOSTS, "{}", preview.items.len());
+            let notice = notices_saying(&preview, "were not read");
+            assert_eq!(notice.len(), 1);
+            assert!(
+                notice[0].message.contains(&preview.items.len().to_string()),
+                "{}",
+                notice[0].message
+            );
+            assert!(started.elapsed() < QUICKLY, "{:?}", started.elapsed());
+
+            // Planning again stops at the same host, so its keys still match.
+            let result = f.apply_all(&preview);
+            assert_eq!(result.connections.len(), preview.items.len());
+        });
+    }
+
+    #[test]
+    fn thousands_of_keys_with_one_file_name_are_numbered_without_searching() {
+        in_data_dir(|f| {
+            let text: String = (0..MAX_HOSTS)
+                .map(|i| format!("Host h{i}\n  User u\n  IdentityFile /k{i}/id\n"))
+                .collect();
+            let started = std::time::Instant::now();
+            let result = f.import(&text);
+            assert_eq!(result.credentials.len(), MAX_HOSTS);
+            assert_eq!(result.credentials[0], "u@id");
+            assert_eq!(
+                result.credentials[MAX_HOSTS - 1],
+                format!("u@id ({MAX_HOSTS})")
+            );
+            let unique: HashSet<&String> = result.credentials.iter().collect();
+            assert_eq!(unique.len(), MAX_HOSTS);
+            assert!(started.elapsed() < QUICKLY, "{:?}", started.elapsed());
         });
     }
 

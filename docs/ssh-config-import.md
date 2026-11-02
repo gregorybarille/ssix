@@ -59,9 +59,11 @@ share one slot, and `none` counts as the first value.
 - **A token in a username**, in `User` or in `ProxyJump %r@bastion`: a credential
   stores a username as written, so it would sign in as `%r`.
 
-An import reads at most 1 MiB across 64 files and plans at most 2000 hosts.
-`Include` cycles stop at the file that would repeat. Anything left out this way
-is listed in the panel under **Passed over**.
+An import reads at most 1 MiB across 64 files. It plans at most 2000 hosts, or
+fewer when a very large file makes each one slow to work out, and offers at most
+2000 connections, with at most 64 forwards per host. It lists at most 2000 skipped
+entries and 200 passed-over lines. `Include` cycles stop at the file that would
+repeat. Each limit is reported once in the panel under **Passed over**.
 
 ## Hosts with no `User` or `IdentityFile`
 
