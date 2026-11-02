@@ -321,12 +321,44 @@ pub async fn ssh_connect(
             let (gateway, destination) = jump_endpoints(&data, &conn)?;
             start_jump_shell(gateway, destination, opts, ctx, resilience)
         }
-        // Data-only until the forwards stream lands (docs/roadmap.md).
-        ConnectionKind::RemoteForward { .. } => {
-            Err("Remote forwards (ssh -R) are not supported yet".to_string())
+        ConnectionKind::RemoteForward {
+            gateway_host,
+            gateway_port,
+            gateway_credential_id,
+            remote_port,
+            destination_host,
+            destination_port,
+        } => {
+            let gateway = resolve_endpoint(
+                &data.credentials,
+                gateway_host,
+                *gateway_port,
+                gateway_credential_id,
+            )?
+            .through(conn.proxy_command.as_deref());
+            crate::forwards::start_remote_forward(
+                gateway,
+                *remote_port,
+                destination_host.clone(),
+                *destination_port,
+                conn.verbosity,
+                ctx,
+            )
         }
-        ConnectionKind::DynamicForward { .. } => {
-            Err("Dynamic forwards (ssh -D) are not supported yet".to_string())
+        ConnectionKind::DynamicForward {
+            gateway_host,
+            gateway_port,
+            gateway_credential_id,
+            local_port,
+        } => {
+            let gateway = resolve_endpoint(
+                &data.credentials,
+                gateway_host,
+                *gateway_port,
+                gateway_credential_id,
+            )?
+            .through(conn.proxy_command.as_deref());
+            crate::forwards::start_dynamic_forward(gateway, *local_port, conn.verbosity, ctx)
         }
         ConnectionKind::LegacyTunnel { .. } => Err(
             "Legacy tunnel connection encountered after migration. Please re-save this connection."

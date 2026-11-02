@@ -434,7 +434,8 @@ export function ConnectionForm({
           portChecks.push({ key: "destination_port", required: true, label: terms.targetPort });
         }
         if (connectionType === "port_forward" || connectionType === "dynamic_forward") {
-          portChecks.push({ key: "local_port", required: true, label: "Local port" });
+          const label = connectionType === "dynamic_forward" ? "SOCKS port" : "Local port";
+          portChecks.push({ key: "local_port", required: true, label });
         }
         if (connectionType === "remote_forward") {
           portChecks.push({ key: "remote_port", required: true, label: "Remote port" });
@@ -504,7 +505,7 @@ export function ConnectionForm({
           throw new Error("Please fix the highlighted fields");
         }
 
-        // A local forward has no target credential.
+        // A forward has no target credential.
         let credentialId = needsTargetAuth ? formWithPorts.credential_id : undefined;
         let createdCredentialId: string | null = null;
         if (needsTargetAuth && authMethod !== "credential") {
@@ -782,7 +783,9 @@ export function ConnectionForm({
             placeholder={
               connectionType === "port_forward"
                 ? "api.internal"
-                : "internal.example.com"
+                : connectionType === "remote_forward"
+                  ? "127.0.0.1"
+                  : "internal.example.com"
             }
             value={form.destination_host ?? ""}
             onChange={(e) => {
@@ -797,7 +800,13 @@ export function ConnectionForm({
         <PortField
           id="destination_port"
           label={titleCase(terms.targetPort)}
-          placeholder={connectionType === "port_forward" ? "80" : "22"}
+          placeholder={
+            connectionType === "port_forward"
+              ? "80"
+              : connectionType === "remote_forward"
+                ? "3000"
+                : "22"
+          }
           value={portInputs.destination_port}
           onChange={(raw) => updatePort("destination_port", raw)}
           error={portErrors.destination_port}
@@ -818,7 +827,7 @@ export function ConnectionForm({
       value={connectionType}
       onValueChange={(v) => setConnectionType(v as ConnectionType)}
     >
-      <TabsList className="w-full gap-1 rounded-xl bg-muted/70 p-1">
+      <TabsList className="h-auto w-full flex-wrap gap-1 rounded-xl bg-muted/70 p-1 group-data-[orientation=horizontal]/tabs:h-auto">
         {CONNECTION_KIND_TABS.map(({ type, testId }) => (
           <TabsTrigger
             key={type}

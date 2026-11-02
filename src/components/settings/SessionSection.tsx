@@ -28,7 +28,7 @@ export function SessionSection({
       >
         <h3 id="settings-session-heading" className="text-sm font-medium">Sessions</h3>
         <p id="settings-session-desc" className="text-xs text-muted-foreground">
-          How shell sessions deal with a lost connection. Local forwards do not use these.
+          How shell sessions deal with a lost connection. Port forwards do not use these.
         </p>
 
         <div className="space-y-2">

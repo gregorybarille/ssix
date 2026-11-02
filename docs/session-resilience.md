@@ -3,8 +3,9 @@
 Keepalive, auto-reconnect and session logs for shell sessions (direct and
 jump host connections).
 
-**Local forwards are out of scope.** A forward keeps its own session, sends no
-keepalives, does not reconnect and writes no log, whatever these options say.
+**Port forwards are out of scope.** A forward keeps its own session, does not
+reconnect and writes no log, whatever these options say. It checks that its
+session is alive on its own schedule ([forwards.md](forwards.md)).
 
 Settings → Sessions holds the defaults. A connection's form can override the
 keepalive, auto-reconnect and logging; the number of attempts and the log

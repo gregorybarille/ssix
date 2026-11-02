@@ -15,6 +15,7 @@ import {
   fill,
   navigateTo,
   pickOption,
+  saveConnectionForm,
 } from "../helpers/flows.js";
 import { sel } from "../helpers/selectors.js";
 
@@ -91,7 +92,7 @@ describe("Port forward (server-a → server-c:22)", () => {
     await fill(sel.connectionFormTargetHost, "server-c");
     await fill(sel.connectionFormTargetPort, "22");
     await fill(sel.connectionFormLocalPort, String(LOCAL_PORT));
-    await click(sel.connectionFormSubmit);
+    await saveConnectionForm();
 
     await navigateTo("forwards");
     // The port forwards view renders one row per local forward

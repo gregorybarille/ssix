@@ -43,11 +43,13 @@ Older builds showed this as `TypeError: ... window.__TAURI_INTERNALS__ is undefi
 - Confirm out of band (hosting console, admin) that the server really was reinstalled or re-keyed, then click **Trust new host key**. If nobody changed the server, do not trust the key: the connection may be intercepted.
 - Recorded keys live in `~/.ssix/known_hosts` (OpenSSH format). `ssh-keygen -R <host> -f ~/.ssix/known_hosts` removes an entry by hand; for a non-default port use `-R '[host]:port'`.
 
-## Local Forward Does Not Work
+## A Port Forward Does Not Work
 
 - Confirm the local port is free.
 - Confirm the remote service is reachable from the SSH server.
-- Check the Port forwards view for status updates or errors.
+- Check the Port forwards view for status updates or errors; a row's details show its last client error.
+- A remote forward listens on the SSH server's loopback, so other machines cannot reach it unless the server has `GatewayPorts yes`.
+- See [Port Forwards](forwards.md#troubleshooting) for what SOCKS replies and "refused to listen" mean.
 
 ## SCP Transfer Fails
 
@@ -59,7 +61,7 @@ Older builds showed this as `TypeError: ... window.__TAURI_INTERNALS__ is undefi
 
 - Exit 127 usually means the interpreter (or a command the script calls) is not installed on that host, for example `bash` on a minimal Alpine image. Pick `sh -s` or install it.
 - The script runs without a terminal and with the remote user's non-login environment, so `PATH` additions from `.bash_profile` and commands that prompt (`sudo` asking for a password) do not work; use full paths and `sudo -n`.
-- "only available for direct and jump host connections" means the host is a local forward.
+- "only available for direct and jump host connections" means the host is a port forward.
 - On a Windows OpenSSH server, save the script with **Runs on: Windows** and write it in PowerShell; a Linux, macOS, BSD script is started through `sh` and fails there with a shell error. The other way round, a Windows script on a Linux host fails with "powershell: not found" (exit 127).
 - Cancel on Windows ends the script and everything it started together (a job object). On a Windows too old to nest job objects (before Windows 8 / Server 2012), only PowerShell stops and the programs it started run on.
 - A Windows script that shows errors but succeeds: errors that don't stop a PowerShell script keep its exit code at 0. End with `exit 1` on failure, or set `$ErrorActionPreference = 'Stop'` at the top.

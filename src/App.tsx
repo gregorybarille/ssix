@@ -29,7 +29,7 @@ import { useGitSyncStore } from "./store/useGitSyncStore";
 import { useViewStore } from "./store/useViewStore";
 import { useDialogsStore } from "./store/useDialogsStore";
 import { useTerminalsStore } from "./store/useTerminalsStore";
-import { usePortForwardsStore } from "./store/usePortForwardsStore";
+import { runningForwardCount, usePortForwardsStore } from "./store/usePortForwardsStore";
 import { useApplySettings } from "./hooks/useApplySettings";
 import { TABLE_SHORTCUTS, useGlobalShortcuts } from "./hooks/useGlobalShortcuts";
 import { useScreenshotToast } from "./hooks/useScreenshotToast";
@@ -416,7 +416,7 @@ function App() {
             active={view}
             onNavigate={(v) => setView(v)}
             terminalCount={totalShellSessions}
-            forwardCount={forwardSessions.length}
+            forwardCount={runningForwardCount(forwardSessions)}
             gitPending={gitPending}
           />
 
@@ -574,6 +574,7 @@ function App() {
           }
           confirmLabel="Delete connection"
           variant="destructive"
+          testId="confirm-delete-connection"
           onConfirm={async () => {
             if (dialogs.confirmDeleteConn) {
               await performDeleteConnection(dialogs.confirmDeleteConn.id);
@@ -656,7 +657,7 @@ function App() {
                     {dialogs.confirmTagAction.connections.length === 1 ? "" : "s"}{" "}
                     tagged{" "}
                     <strong>{dialogs.confirmTagAction.label}</strong>?
-                    Local forwards will be skipped.
+                    Port forwards will be skipped.
                   </>
                 )}
               </>

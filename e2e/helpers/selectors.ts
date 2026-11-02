@@ -132,7 +132,7 @@ export const sel = {
   scpStatus: '[data-testid="scp-status"]',
 
   // Port forwards
-  // "Start" a forward = clicking Connect on its local forward connection
+  // "Start" a forward = clicking Connect on its forward connection
   // row, so the button is the same as the generic connect button.
   forwardRowByName: (name: string) =>
     `[data-testid^="forward-row-"][data-name="${name}"]`,
@@ -287,6 +287,12 @@ export const sel = {
   confirmClosePane: '[data-testid="confirm-close-pane"]',
   confirmClosePaneConfirm: '[data-testid="confirm-close-pane-confirm"]',
   // roadmap:forwards
+  connectionFormKindRemoteForward: '[data-testid="connection-form-kind-remoteforward"]',
+  connectionFormKindDynamicForward: '[data-testid="connection-form-kind-dynamicforward"]',
+  connectionFormRemotePort: '[data-testid="connection-form-remote-port"]',
+  connectionFormSocksPort: '[data-testid="connection-form-socks-port"]',
+  confirmStopForwardConfirm: '[data-testid="confirm-stop-forward-confirm"]',
+  confirmDeleteConnectionConfirm: '[data-testid="confirm-delete-connection-confirm"]',
   // roadmap:sftp
   // roadmap:snippets
   // roadmap:import

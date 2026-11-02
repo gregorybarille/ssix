@@ -125,7 +125,7 @@ function RowActions({ conn, onEdit, onDelete, onClone, onConnect, onScp }: RowAc
       )}
       {onScp && (
         <span
-          title={scpBlocked ? "SCP not available for local forwards" : undefined}
+          title={scpBlocked ? "SCP not available for port forwards" : undefined}
           className="inline-flex"
         >
           <Button
@@ -138,7 +138,7 @@ function RowActions({ conn, onEdit, onDelete, onClone, onConnect, onScp }: RowAc
             }, conn)}
             aria-label={
               scpBlocked
-                ? "SCP not available for local forwards"
+                ? "SCP not available for port forwards"
                 : `Transfer files to ${conn.name}`
             }
             data-testid={`scp-open-${conn.id}`}

@@ -15,6 +15,36 @@ export interface ForwardSession {
   connection: ForwardConnection;
   error?: string;
   retrying?: boolean;
+  /** It ran and then ended on its own; `error` says why. */
+  lost?: boolean;
+  /** Clients connected right now, from the forward's status events. */
+  activeClients?: number;
+  /** Why the last client that could not be served failed; the forward goes on. */
+  clientError?: string;
+}
+
+/** What stopping `conn` closes, for the confirmation. */
+function stopConsequence(conn: ForwardConnection): string {
+  switch (conn.type) {
+    case "port_forward":
+      return "closes its local port";
+    case "remote_forward":
+      return "closes its port on the SSH server";
+    case "dynamic_forward":
+      return "closes its SOCKS port";
+  }
+}
+
+/** The label of the port a forward listens on. */
+function listenPortLabel(conn: ForwardConnection): string {
+  switch (conn.type) {
+    case "port_forward":
+      return "Local port";
+    case "remote_forward":
+      return "Remote port";
+    case "dynamic_forward":
+      return "SOCKS port";
+  }
 }
 
 interface PortForwardsViewProps {
@@ -46,10 +76,7 @@ export function PortForwardsView({
    * requires destructive actions to go through <ConfirmDialog>; the
    * same standard that gates "close live terminal pane" applies here.
    */
-  const [pendingClose, setPendingClose] = useState<{
-    sessionId: string;
-    name: string;
-  } | null>(null);
+  const [pendingClose, setPendingClose] = useState<ForwardConnection | null>(null);
 
   const getCredentialName = (id?: string) =>
     id ? credentials.find((c) => c.id === id)?.name ?? "Unknown credential" : "No credential";
@@ -90,7 +117,7 @@ export function PortForwardsView({
         <h1 className="text-lg font-semibold flex items-center gap-2">
           <Cable aria-hidden="true" className="h-5 w-5" />
           Port forwards
-          <span className="font-mono text-xs font-normal text-muted-foreground-soft">ssh -L</span>
+          <span className="font-mono text-xs font-normal text-muted-foreground-soft">ssh -L -R -D</span>
         </h1>
         <span className="text-xs text-muted-foreground">
           {forwardDefs.length} configured
@@ -100,7 +127,7 @@ export function PortForwardsView({
       <div className="flex-1 overflow-y-auto px-6 py-4">
         {forwardDefs.length === 0 ? (
           <p className="text-sm text-muted-foreground italic">
-            No local forwards configured yet.
+            No port forwards configured yet.
           </p>
         ) : (
           <div className="space-y-3">
@@ -112,7 +139,9 @@ export function PortForwardsView({
                 status === "connected"
                   ? "Connected"
                   : status === "error"
-                    ? "Error connecting"
+                    ? session?.lost
+                      ? "Connection lost"
+                      : "Error connecting"
                     : status === "connecting"
                       ? "Connecting"
                       : "Not connected";
@@ -123,6 +152,7 @@ export function PortForwardsView({
                   data-name={conn.name}
                   data-status={status}
                   data-session-id={session?.sessionId}
+                  data-clients={session?.activeClients ?? 0}
                   className="rounded-lg border bg-card overflow-hidden"
                 >
                   <div className="flex items-center gap-3 px-3 py-2">
@@ -162,13 +192,7 @@ export function PortForwardsView({
                         variant="ghost"
                         size="icon"
                         className="h-8 w-8"
-                        onClick={() =>
-                          session &&
-                          setPendingClose({
-                            sessionId: session.sessionId,
-                            name: conn.name,
-                          })
-                        }
+                        onClick={() => setPendingClose(conn)}
                         data-testid={`forward-stop-${conn.id}`}
                         aria-label={`Stop forward ${conn.name}`}
                       >
@@ -205,10 +229,20 @@ export function PortForwardsView({
                             <dd>{conn.destination_host}:{conn.destination_port}</dd>
                           </>
                         )}
-                        <dt className="text-muted-foreground">
-                          {conn.type === "remote_forward" ? "Remote port" : "Local port"}
-                        </dt>
+                        <dt className="text-muted-foreground">{listenPortLabel(conn)}</dt>
                         <dd>{conn.type === "remote_forward" ? conn.remote_port : conn.local_port}</dd>
+                        {status === "connected" && (
+                          <>
+                            <dt className="text-muted-foreground">Clients</dt>
+                            <dd>{session?.activeClients ?? 0}</dd>
+                          </>
+                        )}
+                        {session?.clientError && (
+                          <>
+                            <dt className="text-muted-foreground">Last client error</dt>
+                            <dd className="text-destructive">{session.clientError}</dd>
+                          </>
+                        )}
                         {session?.error && (
                           <>
                             <dt className="text-muted-foreground">Error</dt>
@@ -225,7 +259,12 @@ export function PortForwardsView({
                           <Copy className="mr-1.5 h-3.5 w-3.5" aria-hidden="true" />
                           Clone
                         </Button>
-                        <Button variant="outline" size="sm" onClick={() => onDelete(conn.id)}>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => onDelete(conn.id)}
+                          data-testid={`forward-delete-${conn.id}`}
+                        >
                           <Trash2 className="mr-1.5 h-3.5 w-3.5" aria-hidden="true" />
                           Delete
                         </Button>
@@ -247,14 +286,18 @@ export function PortForwardsView({
         title="Stop forwarding?"
         description={
           pendingClose
-            ? `Stopping "${pendingClose.name}" closes its local port and drops every connection using it.`
+            ? `Stopping "${pendingClose.name}" ${stopConsequence(pendingClose)} and drops every connection using it.`
             : ""
         }
         confirmLabel="Stop"
         variant="destructive"
+        testId="confirm-stop-forward"
         onConfirm={() => {
           if (pendingClose) {
-            onCloseSession(pendingClose.sessionId);
+            // Looked up now: a forward still connecting when the dialog opened
+            // has a new session id by the time it is confirmed, or may be over.
+            const current = getLatestSession(pendingClose);
+            if (current && !current.error) onCloseSession(current.sessionId);
             setPendingClose(null);
           }
         }}

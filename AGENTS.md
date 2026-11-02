@@ -6,6 +6,7 @@
 > - `docs/development.md` — prerequisites, dev setup, build pipeline
 > - `docs/features.md` — feature catalogue and keyboard shortcuts
 > - `docs/file-transfer.md` — SCP/file transfer behaviour and constraints
+> - `docs/forwards.md` — port forwards: kinds, lifecycle, SOCKS replies and limits
 > - `docs/git-sync.md` — git-sync export feature
 > - `docs/roadmap.md` — validated feature roadmap, stream ownership and rules
 > - `docs/session-resilience.md` — keepalive, auto-reconnect and session logs
@@ -27,8 +28,8 @@
 - **Tauri v2** desktop app: React/Vite frontend (`src/`) + Rust backend (`src-tauri/`)
 - **Frontend state**: Zustand stores in `src/store/` call Tauri via `src/lib/tauri.ts` (lazy-loaded for test mocking; rejects with a readable message outside the desktop runtime, see `src/lib/runtime.ts`). A store's `error` is its last load failure, rendered with `<ErrorBanner>`; form-driven mutations pass `{ recordError: false }` and show their own errors
 - **Backend commands**: `src-tauri/src/commands/` → registered in `lib.rs` `invoke_handler![]`
-- **SSH sessions**: `ssh2` crate, one thread per session; the command layer talks to a worker through `SessionHandle` (mpsc + wake pipe). Shell output streams as raw bytes over a Tauri `Channel` (`src/lib/terminalOutput.ts` → `ssh_connect { onOutput }`), with `error`/`closed` notifications as JSON `OutputEvent`s on the same channel; local forwards live in `src-tauri/src/forwards.rs` and emit `ssix:forward:status:{id}` (use helpers there + `src/lib/events.ts`). Every handshake goes through `open_authenticated_session_over_stream` (timeouts + host-key verification in `known_hosts.rs`) — never call `Session::handshake` elsewhere
-- **Terminal**: xterm.js, stays mounted when hidden; local forwards live in `PortForwardsView`, not the terminal tab bar. New terminal behaviour is a `TerminalExtension` under `src/components/terminal/`, not an edit to `Terminal.tsx`
+- **SSH sessions**: `ssh2` crate, one thread per session; the command layer talks to a worker through `SessionHandle` (mpsc + wake pipe). Shell output streams as raw bytes over a Tauri `Channel` (`src/lib/terminalOutput.ts` → `ssh_connect { onOutput }`), with `error`/`closed` notifications as JSON `OutputEvent`s on the same channel; port forwards live in `src-tauri/src/forwards.rs` and emit `ssix:forward:status:{id}` (use helpers there + `src/lib/events.ts`). Every handshake goes through `open_authenticated_session_over_stream` (timeouts + host-key verification in `known_hosts.rs`) — never call `Session::handshake` elsewhere
+- **Terminal**: xterm.js, stays mounted when hidden; port forwards live in `PortForwardsView`, not the terminal tab bar. New terminal behaviour is a `TerminalExtension` under `src/components/terminal/`, not an edit to `Terminal.tsx`
 - **Registries**: add views to `src/lib/views.ts`, form options to the section files under `src/components/connection-form/`, settings to `src/components/settings/`; shared lists carry `// roadmap:<stream>` anchors (see "Extension Points" in `docs/architecture.md`)
 - **Persistence**: File-based at `~/.ssix/data.json`. All writes MUST use `atomic_write()` — never `fs::write` directly
 - **Models**: `src/types/index.ts` ↔ `src-tauri/src/models.rs` must stay in sync (snake_case throughout). `cargo test` regenerates ts-rs bindings into `src/types/generated/`; `src/test/typesParity.test.ts` fails when a generated field is missing from the hand-written index.ts. CI: run `cargo test && git diff --exit-code src/types/generated/`.

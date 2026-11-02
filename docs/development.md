@@ -208,6 +208,7 @@ End-to-end:
 - Direct shell with SSH key auth
 - Jump host connection
 - Local forward and local client access
+- Remote forward and dynamic forward (SOCKS5) client access
 - SCP file transfer
 - Recursive SCP directory transfer
 - Git Sync export, diff, one-click sync

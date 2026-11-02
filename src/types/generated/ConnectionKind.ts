@@ -15,8 +15,7 @@
  * `RemoteForward` (`ssh -R`) asks the gateway to listen on `remote_port` and
  * forwards every connection it accepts back to `destination_host:destination_port`
  * on this machine's side. `DynamicForward` (`ssh -D`) runs a local SOCKS5 proxy on
- * `local_port` whose connections are dialled by the gateway. Both are data-only
- * so far: connecting them is not implemented yet (roadmap: forwards).
+ * `local_port` whose connections are dialled by the gateway.
  *
  * Legacy data with `type: "tunnel"` is migrated to `JumpShell` on load.
  */

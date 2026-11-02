@@ -18,6 +18,32 @@ const portForwardConn: Connection = {
   destination_port: 80,
 };
 
+const remoteForwardConn: ForwardSession["connection"] = {
+  id: "rf-1",
+  name: "webhook",
+  host: "gateway.dev",
+  port: 22,
+  type: "remote_forward",
+  gateway_host: "gateway.dev",
+  gateway_port: 22,
+  gateway_credential_id: "gw-cred",
+  remote_port: 8080,
+  destination_host: "127.0.0.1",
+  destination_port: 3000,
+};
+
+const dynamicForwardConn: ForwardSession["connection"] = {
+  id: "df-1",
+  name: "socks",
+  host: "gateway.dev",
+  port: 22,
+  type: "dynamic_forward",
+  gateway_host: "gateway.dev",
+  gateway_port: 22,
+  gateway_credential_id: "gw-cred",
+  local_port: 1080,
+};
+
 const directConn: Connection = {
   id: "direct-1",
   name: "prod-server",
@@ -169,6 +195,155 @@ describe("PortForwardsView", () => {
     expect(screen.getByText("api-tunnel")).toBeInTheDocument();
     // prod-server (direct) should NOT appear
     expect(screen.queryByText("prod-server")).not.toBeInTheDocument();
+  });
+
+  it("names all three forward flags in the heading", () => {
+    render(<PortForwardsView {...defaultProps} />);
+    expect(screen.getByText("ssh -L -R -D")).toBeInTheDocument();
+  });
+
+  it("does not call the empty list local forwards", () => {
+    render(<PortForwardsView {...defaultProps} connections={[]} />);
+    expect(screen.getByText("No port forwards configured yet.")).toBeInTheDocument();
+  });
+
+  it("lists remote and dynamic forwards as rows", () => {
+    render(
+      <PortForwardsView
+        {...defaultProps}
+        connections={[remoteForwardConn, dynamicForwardConn]}
+      />,
+    );
+    expect(screen.getByTestId("forward-row-rf-1")).toHaveAttribute("data-name", "webhook");
+    expect(screen.getByTestId("forward-row-df-1")).toHaveAttribute("data-name", "socks");
+    expect(screen.getByText("2 configured")).toBeInTheDocument();
+  });
+
+  it("says the connection was lost when a running forward ended, and offers a restart", () => {
+    const sessions: ForwardSession[] = [
+      {
+        sessionId: "s-lost",
+        connectionName: "api-tunnel",
+        connection: portForwardConn,
+        error: "Lost the connection to the SSH server gateway.dev:22",
+        lost: true,
+      },
+    ];
+    render(<PortForwardsView {...defaultProps} sessions={sessions} />);
+    expect(screen.getByTestId("forward-row-pf-1")).toHaveAttribute("data-status", "error");
+    expect(screen.getByTestId("forward-status-pf-1")).toHaveAccessibleName(
+      "api-tunnel: Connection lost",
+    );
+    expect(screen.getByTestId("connect-button-pf-1")).toBeInTheDocument();
+    expect(screen.queryByTestId("forward-stop-pf-1")).not.toBeInTheDocument();
+  });
+
+  it("shows the client count and the last client error of a running forward", async () => {
+    const user = userEvent.setup();
+    const sessions: ForwardSession[] = [
+      {
+        sessionId: "s-busy",
+        connectionName: "socks",
+        connection: dynamicForwardConn,
+        activeClients: 3,
+        clientError: "to db:5432: connect failed",
+      },
+    ];
+    render(
+      <PortForwardsView {...defaultProps} connections={[dynamicForwardConn]} sessions={sessions} />,
+    );
+    const row = screen.getByTestId("forward-row-df-1");
+    expect(row).toHaveAttribute("data-clients", "3");
+    expect(row).toHaveAttribute("data-status", "connected");
+
+    await user.click(within(row).getAllByRole("button")[0]);
+    expect(screen.getByText("Clients")).toBeInTheDocument();
+    expect(screen.getByText("3")).toBeInTheDocument();
+    expect(screen.getByText("Last client error")).toBeInTheDocument();
+    expect(screen.getByText("to db:5432: connect failed")).toBeInTheDocument();
+  });
+
+  it("counts no clients on a forward that is not running", async () => {
+    const user = userEvent.setup();
+    render(<PortForwardsView {...defaultProps} />);
+    const row = screen.getByTestId("forward-row-pf-1");
+    expect(row).toHaveAttribute("data-clients", "0");
+    await user.click(within(row).getAllByRole("button")[0]);
+    expect(screen.queryByText("Clients")).not.toBeInTheDocument();
+  });
+
+  it.each([
+    { conn: portForwardConn as ForwardSession["connection"], label: "Local port", port: "9000" },
+    { conn: remoteForwardConn, label: "Remote port", port: "8080" },
+    { conn: dynamicForwardConn, label: "SOCKS port", port: "1080" },
+  ])("labels the port it listens on as $label", async ({ conn, label, port }) => {
+    const user = userEvent.setup();
+    render(<PortForwardsView {...defaultProps} connections={[conn]} />);
+    await user.click(
+      within(screen.getByTestId(`forward-row-${conn.id}`)).getAllByRole("button")[0],
+    );
+    expect(screen.getByText(label)).toBeInTheDocument();
+    expect(screen.getByText(port)).toBeInTheDocument();
+  });
+
+  it.each([
+    { conn: portForwardConn as ForwardSession["connection"], consequence: "closes its local port" },
+    { conn: remoteForwardConn, consequence: "closes its port on the SSH server" },
+    { conn: dynamicForwardConn, consequence: "closes its SOCKS port" },
+  ])("says stopping $consequence", async ({ conn, consequence }) => {
+    const user = userEvent.setup();
+    const sessions: ForwardSession[] = [
+      { sessionId: "s-stop", connectionName: conn.name, connection: conn },
+    ];
+    render(<PortForwardsView {...defaultProps} connections={[conn]} sessions={sessions} />);
+    await user.click(screen.getByTestId(`forward-stop-${conn.id}`));
+    expect(screen.getByTestId("confirm-stop-forward")).toHaveTextContent(consequence);
+    expect(screen.getByTestId("confirm-stop-forward")).toHaveTextContent(conn.name);
+  });
+
+  describe("confirming a stop opened while the forward was connecting", () => {
+    const connecting: ForwardSession = {
+      sessionId: "forward-pf-1-placeholder",
+      connectionName: "api-tunnel",
+      connection: portForwardConn as ForwardSession["connection"],
+      retrying: true,
+    };
+
+    const openStop = async () => {
+      const onCloseSession = vi.fn();
+      const props = { ...defaultProps, onCloseSession };
+      const user = userEvent.setup();
+      const view = render(<PortForwardsView {...props} sessions={[connecting]} />);
+      await user.click(screen.getByTestId("forward-stop-pf-1"));
+      return {
+        onCloseSession,
+        becomes: (sessions: ForwardSession[]) =>
+          view.rerender(<PortForwardsView {...props} sessions={sessions} />),
+        confirm: () => user.click(screen.getByRole("button", { name: "Stop" })),
+      };
+    };
+
+    it("stops the session it has connected as since", async () => {
+      const { onCloseSession, becomes, confirm } = await openStop();
+      becomes([{ ...connecting, sessionId: "session-real", retrying: false }]);
+      await confirm();
+      expect(onCloseSession).toHaveBeenCalledTimes(1);
+      expect(onCloseSession).toHaveBeenCalledWith("session-real");
+    });
+
+    it("stops nothing if it has ended since", async () => {
+      const { onCloseSession, becomes, confirm } = await openStop();
+      becomes([]);
+      await confirm();
+      expect(onCloseSession).not.toHaveBeenCalled();
+    });
+
+    it("stops nothing if it has failed since", async () => {
+      const { onCloseSession, becomes, confirm } = await openStop();
+      becomes([{ ...connecting, retrying: false, error: "refused" }]);
+      await confirm();
+      expect(onCloseSession).not.toHaveBeenCalled();
+    });
   });
 
   it("shows the configured forward count", () => {
