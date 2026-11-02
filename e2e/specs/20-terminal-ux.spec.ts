@@ -34,6 +34,7 @@ import {
   navigateTo,
   openConnectionEditor,
   pickOption,
+  pressPaletteShortcut,
   reveal,
   saveConnectionForm,
   textContentOf,
@@ -930,11 +931,6 @@ describe("Terminal UX", () => {
   });
 
   describe("the snippet palette beside a pane that lost its connection", () => {
-    async function openPalette(): Promise<void> {
-      await click(sel.snippetPaletteButton);
-      await (await browser.$(sel.snippetPalette)).waitForExist({ timeout: 10_000 });
-    }
-
     async function closePalette(): Promise<void> {
       await browser.keys(["Escape"]);
       await (await browser.$(sel.snippetPalette)).waitForExist({ reverse: true, timeout: 10_000 });
@@ -947,7 +943,7 @@ describe("Terminal UX", () => {
       await typeIn(id, "kill -9 $PPID\n");
       await waitForDrop();
 
-      await openPalette();
+      await pressPaletteShortcut();
       expect(await textContentOf(await browser.$(sel.snippetPaletteError))).toContain(
         "lost its connection",
       );
@@ -964,7 +960,7 @@ describe("Terminal UX", () => {
       await typeIn(first, "kill -9 $PPID\n");
       await waitForDrop();
 
-      await openPalette();
+      await pressPaletteShortcut();
       expect(await textContentOf(await browser.$(sel.snippetPaletteTarget))).toContain(
         "conn-20-paste-healthy",
       );

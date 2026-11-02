@@ -326,6 +326,12 @@ export async function typeIntoTerminal(text: string): Promise<void> {
 }
 
 /** Close every tab, confirming for each one that holds a live shell. */
+/** Open the snippet palette from the keyboard. */
+export async function pressPaletteShortcut(): Promise<void> {
+  await browser.keys(["Control", "Shift", "s"]);
+  await (await browser.$(sel.snippetPalette)).waitForExist({ timeout: 10_000 });
+}
+
 export async function closeAllTabs(): Promise<void> {
   const openTabs = () => browser.$$(sel.terminalTabCloseAny).length;
   const confirmation = () => browser.$(sel.confirmClosePaneConfirm);

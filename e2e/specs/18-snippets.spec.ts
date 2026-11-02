@@ -23,6 +23,7 @@ import {
   createDirectConnection,
   createPasswordCredential,
   fill,
+  pressPaletteShortcut,
   readTerminalText,
   textContentOf,
   waitForTerminalContains,
@@ -77,11 +78,6 @@ function savedSnippets(): { id: string; name: string; command: string; tags?: st
   const dir = currentTestDataDir();
   if (!dir) throw new Error("SSIX_DATA_DIR is not set");
   return JSON.parse(readFileSync(join(dir, "data.json"), "utf8")).snippets;
-}
-
-async function pressPaletteShortcut(): Promise<void> {
-  await browser.keys(["Control", "Shift", "s"]);
-  await (await browser.$(sel.snippetPalette)).waitForExist({ timeout: 10_000 });
 }
 
 /** Open the palette the way a user does: from the keyboard, inside the terminal. */
