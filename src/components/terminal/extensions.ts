@@ -36,6 +36,13 @@ export interface TerminalExtension {
   onData?(ctx: TerminalExtensionContext, data: string): string | null;
   /** Shell output, after it was handed to xterm. Observe it only: do not keep or change `bytes`. */
   onOutput?(ctx: TerminalExtensionContext, bytes: Uint8Array): void;
+  /**
+   * A keydown on its way into xterm, which handles keys before they bubble to
+   * the window. Return `false` to keep the key from the terminal, and so from
+   * the session; the event carries on, so the window's shortcuts still see it.
+   * Runs only while the terminal is taking keys at all.
+   */
+  onKey?(ctx: TerminalExtensionContext, event: KeyboardEvent): boolean | void;
 }
 
 const extensions: TerminalExtension[] = [];
@@ -108,4 +115,14 @@ export function runTerminalOutput(ctx: TerminalExtensionContext, bytes: Uint8Arr
   for (const extension of extensions) {
     if (extension.onOutput) guarded(extension, "onOutput", () => extension.onOutput?.(ctx, bytes));
   }
+}
+
+/** Whether xterm may handle this key: `false` if an extension kept it from the terminal. */
+export function runTerminalKey(ctx: TerminalExtensionContext, event: KeyboardEvent): boolean {
+  let allowed = true;
+  for (const extension of extensions) {
+    if (!extension.onKey) continue;
+    if (guarded(extension, "onKey", () => extension.onKey?.(ctx, event)) === false) allowed = false;
+  }
+  return allowed;
 }

@@ -111,11 +111,14 @@ describe("AuthPrompt", () => {
       expect(field(0)).toHaveFocus();
     });
 
-    it("takes it when the user arrives at a pane whose prompt was already waiting", () => {
-      const typing = someoneTyping();
-      setup({ userCameToIt: true });
-      expect(field(0)).toHaveFocus();
-      typing.remove();
+    it("leaves it to a panel that holds it, also when the user comes to its tab", () => {
+      const panel = document.createElement("div");
+      panel.dataset.slot = "app-panel-content";
+      document.body.append(panel);
+      const { rerender } = render(beside(false));
+      rerender(beside(true));
+      expect(field(0)).not.toHaveFocus();
+      panel.remove();
     });
 
     it("leaves it alone while hidden", () => {
@@ -257,6 +260,70 @@ describe("a prompt out of view", () => {
   });
 
   beforeEach(() => useAuthPromptStore.setState({ prompts: {} }));
+
+  const waiting = (pane: string) =>
+    act(() => useAuthPromptStore.getState().receive(pane, { kind: "auth_prompt", ...request }));
+
+  /** The tabs, kept mounted as App keeps them, and a field in whichever view replaced them. */
+  const app = (props: { hidden?: boolean; activeTabId?: string } = {}) => (
+    <>
+      <input data-testid="other-view" />
+      <TerminalTabs
+        tabs={[tabWith("t1", "a"), tabWith("t2", "b")]}
+        activeTabId="t1"
+        {...terminalTabsCallbacks()}
+        {...props}
+      />
+    </>
+  );
+
+  it("takes the keyboard when the user comes back to its view", () => {
+    const { rerender } = render(app({ hidden: true }));
+    waiting("a");
+    screen.getByTestId("other-view").focus();
+    rerender(app());
+    expect(field(0)).toHaveFocus();
+  });
+
+  it("takes the keyboard when the user comes to its tab", () => {
+    const { rerender } = render(app({ activeTabId: "t2" }));
+    waiting("a");
+    screen.getByTestId("other-view").focus();
+    rerender(app({ activeTabId: "t1" }));
+    expect(field(0)).toHaveFocus();
+  });
+
+  it("leaves the keyboard in the view the user is in when it arrives", () => {
+    render(app({ hidden: true }));
+    screen.getByTestId("other-view").focus();
+    waiting("a");
+    expect(screen.getByTestId("other-view")).toHaveFocus();
+  });
+
+  it("leaves the keyboard in the other pane when it arrives on screen", () => {
+    render(
+      <TerminalTabs
+        tabs={[
+          {
+            id: "t1",
+            mode: "horizontal",
+            panes: [
+              { sessionId: "a", connectionName: "a", connection, retrying: true },
+              { sessionId: "b", connectionName: "b", connection },
+            ],
+          },
+        ]}
+        activeTabId="t1"
+        {...terminalTabsCallbacks()}
+      />,
+    );
+    const otherPane = document.createElement("input");
+    screen.getByTestId("terminal-b").append(otherPane);
+    otherPane.focus();
+    waiting("a");
+    expect(otherPane).toHaveFocus();
+    expect(field(0)).not.toHaveFocus();
+  });
 
   it("marks its tab, for as long as it waits and on no other", () => {
     render(

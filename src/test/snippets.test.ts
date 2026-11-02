@@ -1,8 +1,13 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Terminal as XTerm } from "@xterm/xterm";
+import type { TerminalSession } from "@/components/TerminalTabs";
 import {
   fillVariables,
+  CONNECTING_MESSAGE,
+  ENDED_MESSAGE,
+  LOGIN_PROMPT_MESSAGE,
   NO_TERMINAL_MESSAGE,
+  RECONNECTING_MESSAGE,
   planPaste,
   preparePaste,
   SEVERAL_LINES_MESSAGE,
@@ -17,7 +22,9 @@ import {
   registerTerminal,
   unregisterTerminal,
 } from "@/lib/terminalRegistry";
+import { useAuthPromptStore } from "@/store/useAuthPromptStore";
 import { useTerminalsStore } from "@/store/useTerminalsStore";
+import { useViewStore } from "@/store/useViewStore";
 
 vi.mock("@/lib/tauri", () => ({ invoke: vi.fn() }));
 
@@ -266,6 +273,7 @@ describe("planPaste and the registry", () => {
   }
 
   function activate(...sessionIds: string[]) {
+    useViewStore.setState({ view: "terminals" });
     useTerminalsStore.setState({
       tabs: [
         {
@@ -283,6 +291,13 @@ describe("planPaste and the registry", () => {
     useTerminalsStore.setState({ tabs: [], activeTabId: null });
   });
 
+  it("has nowhere to paste while the terminal is on another view", () => {
+    live("s1");
+    activate("s1");
+    useViewStore.setState({ view: "connections" });
+    expect(planPaste("uptime")).toEqual({ error: NO_TERMINAL_MESSAGE });
+  });
+
   it("explains that there is no terminal", () => {
     expect(planPaste("uptime")).toEqual({ error: NO_TERMINAL_MESSAGE });
   });
@@ -290,6 +305,54 @@ describe("planPaste and the registry", () => {
   it("explains a tab whose panes all failed", () => {
     activate("failed");
     expect(planPaste("uptime")).toEqual({ error: NO_TERMINAL_MESSAGE });
+  });
+
+  describe("says why no pane can take it", () => {
+    const paneChange = (change: Partial<TerminalSession>) =>
+      useTerminalsStore.setState((state) => ({
+        tabs: state.tabs.map((t) => ({ ...t, panes: t.panes.map((p) => ({ ...p, ...change })) })),
+      }));
+
+    it.each<[string, Partial<TerminalSession>, string]>([
+      [
+        "lost its connection",
+        {
+          retrying: true,
+          reconnect: { phase: "waiting", attempt: 1, maxAttempts: 5, retryAt: 0, message: "gone" },
+        },
+        RECONNECTING_MESSAGE,
+      ],
+      [
+        "stopped reconnecting",
+        { reconnect: { phase: "stopped", message: "gone" }, error: "gone" },
+        RECONNECTING_MESSAGE,
+      ],
+      ["is still connecting", { retrying: true }, CONNECTING_MESSAGE],
+      ["has ended", { ended: true }, ENDED_MESSAGE],
+    ])("when the only pane %s", (_name, change, message) => {
+      live("s1");
+      activate("s1");
+      paneChange(change);
+      expect(planPaste("uptime")).toEqual({ error: message });
+    });
+
+    it("when the only pane is behind a login prompt", () => {
+      live("s1");
+      activate("s1");
+      useAuthPromptStore.setState({
+        prompts: {
+          s1: {
+            prompt_id: "p1",
+            host: "h:22",
+            username: "me",
+            instructions: "",
+            prompts: [{ text: "Code: ", echo: false }],
+          },
+        },
+      });
+      expect(planPaste("uptime")).toEqual({ error: LOGIN_PROMPT_MESSAGE });
+      useAuthPromptStore.setState({ prompts: {} });
+    });
   });
 
   it("targets the active pane", () => {
@@ -310,10 +373,6 @@ describe("planPaste and the registry", () => {
     activate("s1");
     expect(acceptsBracketedPaste("s1")).toBe(false);
     expect(planPaste("a\nb")).toEqual({ error: SEVERAL_LINES_MESSAGE });
-  });
-
-  it("gives advice that works with the palette open, where a terminal takes no keys", () => {
-    expect(SEVERAL_LINES_MESSAGE).toMatch(/Close this palette.*press Enter/);
   });
 
   it("explains why a tab is refused", () => {

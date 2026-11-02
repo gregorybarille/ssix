@@ -81,9 +81,8 @@ Connection** and **Close terminal**, plus **Trust new host key** for a changed
 key. The pane stays until you close it. With auto-reconnect off, a dropped
 session goes straight to this state.
 
-**Edit Connection** keeps the session: save, go back to Terminals and press
-**Retry** to use the new values. The form is in another view, so opening it
-clears the terminal's scrollback (see Known limits).
+**Edit Connection** keeps the session and its scrollback: save, go back to
+Terminals and press **Retry** to use the new values.
 
 Each attempt reads the connection and its credentials again, so a password or
 host edited meanwhile applies, and a deleted connection stops the retries. The
@@ -133,9 +132,6 @@ when a session opens: changing the settings does not affect open sessions.
 
 ## Known limits
 
-- Scrollback survives a reconnect, not a change of view: going from Terminals
-  to another view and back clears it, with or without a drop. What the session
-  printed meanwhile is kept.
 - libssh2 keeps each keepalive answer in memory until the session ends, about
   100 bytes each: some 300 KB a day per session at the default interval.
   Reconnecting or reopening a session frees it.

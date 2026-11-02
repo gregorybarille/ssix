@@ -94,6 +94,7 @@ changes, because the unsaved-changes baseline follows the fetched values.
 - GPU-accelerated rendering (xterm WebGL addon) when the WebView supports it, 10 000 lines of scrollback
 - right-click pastes into the terminal under the cursor only
 - keepalive, auto-reconnect in the same tab and session logs: see [Session resilience](session-resilience.md)
+- find in scrollback, clickable links, broadcast input, a look per connection, and terminals that keep their state across views: see [Terminal UX](terminal-ux.md)
 
 ### Host-key verification
 
@@ -606,6 +607,7 @@ macOS and `Ctrl` everywhere else.
 | `Mod+W`        | Close the active terminal tab (with confirm if live)     |
 | `Mod+1`…`Mod+9`| Switch to terminal tab N                                 |
 | `Mod+Shift+S`  | Paste a snippet into the active terminal ([Snippets](snippets.md)) |
+| `Cmd+F` on macOS, `Ctrl+Shift+F` elsewhere | Find in the visible terminal: see [Terminal UX](terminal-ux.md#find) |
 
 On macOS the shortcuts work everywhere, including while a terminal
 has focus: `Cmd+K`, `Cmd+W` or `Cmd+1` are never consumed by the shell
@@ -619,6 +621,10 @@ its main use is from inside a terminal, and neither the shell nor a text
 field has a use for `Ctrl+Shift+S`. To avoid swallowing those bindings,
 combos that mix `Ctrl` and `Cmd` simultaneously are ignored on every
 platform.
+
+The find shortcut also works from inside a terminal, which is its whole point.
+It is `Cmd+F` on macOS and `Ctrl+Shift+F` on Linux and Windows, so `Ctrl+F` stays
+with the shell and any program in it.
 
 The terminal tab strip itself also implements its own WAI-ARIA
 keyboard model (Arrow keys, Home/End, Delete) — see the Terminals
