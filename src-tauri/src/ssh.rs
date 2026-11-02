@@ -22,7 +22,7 @@
 use std::io::{self, Read, Write};
 use std::net::{Shutdown, SocketAddr, TcpListener, TcpStream, ToSocketAddrs};
 use std::path::Path;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender, TryRecvError};
 use std::sync::Arc;
 use std::thread;
@@ -30,7 +30,7 @@ use std::time::{Duration, Instant};
 
 use ssh2::Session;
 
-use crate::reconnect::{reconnect_delay, AttemptCount, ReconnectPolicy, Recovery};
+use crate::reconnect::{reconnect_delay, AttemptCount, OpenAttempt, ReconnectPolicy, Recovery};
 use crate::session_log::{SessionLog, SessionLogPlan};
 use crate::ssh_debug::{host_key_type_name, SshDebug};
 use tauri::ipc::{Channel, InvokeResponseBody};
@@ -123,6 +123,8 @@ pub struct ShellOptions {
     pub startup_command: Option<String>,
     /// Seconds between SSH keepalives, 0 for none.
     pub keepalive_interval: u16,
+    /// Set by a reconnect attempt's owner once nobody wants the result.
+    pub cancelled: Option<Arc<AtomicBool>>,
 }
 
 /// Everything a worker needs to talk back to the app.
@@ -541,6 +543,28 @@ pub(crate) fn open_authenticated_session_over_stream(
     verbosity: u8,
     extra_args: Option<&str>,
 ) -> Result<Session, String> {
+    open_session_unless_cancelled(tcp, endpoint, verbosity, extra_args, None)
+}
+
+/// What an attempt ends with once it was cancelled. Nobody reads it.
+const ATTEMPT_CANCELLED: &str = "The reconnect attempt was cancelled";
+
+fn stop_if_cancelled(cancelled: Option<&AtomicBool>) -> Result<(), String> {
+    match cancelled {
+        Some(flag) if flag.load(Ordering::SeqCst) => Err(ATTEMPT_CANCELLED.to_string()),
+        _ => Ok(()),
+    }
+}
+
+/// [`open_authenticated_session_over_stream`] that does not log in once
+/// `cancelled` is set: a cancelled attempt must not cost a login on the server.
+fn open_session_unless_cancelled(
+    tcp: TcpStream,
+    endpoint: &Endpoint,
+    verbosity: u8,
+    extra_args: Option<&str>,
+    cancelled: Option<&AtomicBool>,
+) -> Result<Session, String> {
     tcp.set_nonblocking(false).ok();
 
     let debug = SshDebug::new(verbosity, endpoint.addr());
@@ -583,6 +607,7 @@ pub(crate) fn open_authenticated_session_over_stream(
         )
     });
 
+    stop_if_cancelled(cancelled)?;
     authenticate(&session, endpoint, &debug)?;
     Ok(session)
 }
@@ -684,20 +709,29 @@ pub struct OpenShell {
     keepalive_interval: u16,
 }
 
-/// Authenticate over `tcp`, request a PTY, start a shell and run the startup
-/// command. The session is switched to non-blocking mode before returning.
+/// Authenticate over `tcp` and start a shell.
 pub(crate) fn open_shell_over_stream(
     tcp: TcpStream,
     endpoint: &Endpoint,
     opts: &ShellOptions,
 ) -> Result<OpenShell, String> {
-    let session = open_authenticated_session_over_stream(
+    let session = open_session_unless_cancelled(
         tcp,
         endpoint,
         opts.verbosity,
         opts.extra_args.as_deref(),
+        opts.cancelled.as_deref(),
     )?;
+    start_shell(session, endpoint, opts)
+}
 
+/// Request a PTY, start a shell and run the startup command. The session is
+/// switched to non-blocking mode before returning.
+fn start_shell(
+    session: Session,
+    endpoint: &Endpoint,
+    opts: &ShellOptions,
+) -> Result<OpenShell, String> {
     let debug = SshDebug::new(opts.verbosity, endpoint.addr());
     debug.at(1, || "Opening a session channel.".to_string());
     let mut channel = session
@@ -719,6 +753,8 @@ pub(crate) fn open_shell_over_stream(
     channel
         .shell()
         .map_err(|e| format!("Shell request failed: {}", e))?;
+    // The login command can do anything, and nobody asked for it any more.
+    stop_if_cancelled(opts.cancelled.as_deref())?;
     if let Some(command) = opts.startup_command.as_deref() {
         debug.at(2, || format!("Sending startup command: {}", command));
     }
@@ -749,8 +785,13 @@ pub(crate) fn open_jump_shell(
     destination: &Endpoint,
     opts: &ShellOptions,
 ) -> Result<OpenShell, String> {
-    let stream =
-        bridge_via_jump_host(gateway, &destination.host, destination.port, opts.verbosity)?;
+    let stream = bridge_unless_cancelled(
+        gateway,
+        &destination.host,
+        destination.port,
+        opts.verbosity,
+        opts.cancelled.as_deref(),
+    )?;
     open_shell_over_stream(stream, destination, opts)
         .map_err(|e| format!("Target connect via jump host failed: {}", e))
 }
@@ -765,7 +806,7 @@ pub struct ShellResilience {
     /// session opened applies.
     pub policy: Arc<dyn Fn() -> ReconnectPolicy + Send + Sync>,
     /// Open the shell again, from the saved connection as it is by then.
-    pub reopen: Arc<dyn Fn() -> Result<OpenShell, String> + Send + Sync>,
+    pub reopen: OpenAttempt<OpenShell>,
     pub log: Option<SessionLogPlan>,
 }
 
@@ -1240,10 +1281,20 @@ pub(crate) fn open_hop_session(
     role: &str,
     verbosity: u8,
 ) -> Result<Session, String> {
+    open_hop_unless_cancelled(hop, role, verbosity, None)
+}
+
+fn open_hop_unless_cancelled(
+    hop: &Endpoint,
+    role: &str,
+    verbosity: u8,
+    cancelled: Option<&AtomicBool>,
+) -> Result<Session, String> {
     SshDebug::new(verbosity, hop.addr()).at(1, || {
         format!("Using {} {}", role.to_lowercase(), hop.addr())
     });
-    open_authenticated_session(hop, verbosity, None)
+    connect_endpoint(hop, verbosity)
+        .and_then(|tcp| open_session_unless_cancelled(tcp, hop, verbosity, None, cancelled))
         .map_err(|e| format!("{} {}: {}", role, hop.addr(), e))
 }
 
@@ -1338,13 +1389,23 @@ pub(crate) fn bridge_via_jump_host(
     destination_port: u16,
     verbosity: u8,
 ) -> Result<TcpStream, String> {
+    bridge_unless_cancelled(gateway, destination_host, destination_port, verbosity, None)
+}
+
+fn bridge_unless_cancelled(
+    gateway: &Endpoint,
+    destination_host: &str,
+    destination_port: u16,
+    verbosity: u8,
+    cancelled: Option<&AtomicBool>,
+) -> Result<TcpStream, String> {
     let listener = TcpListener::bind("127.0.0.1:0")
         .map_err(|e| format!("Failed to bind ephemeral loopback port: {}", e))?;
     let local_port = listener
         .local_addr()
         .map_err(|e| format!("local_addr() failed: {}", e))?
         .port();
-    let gateway_session = open_hop_session(gateway, "Jump host", verbosity)?;
+    let gateway_session = open_hop_unless_cancelled(gateway, "Jump host", verbosity, cancelled)?;
     let debug = SshDebug::new(verbosity, gateway.addr());
 
     let (ready_tx, ready_rx) = mpsc::channel::<Result<(), String>>();
@@ -1882,6 +1943,31 @@ mod tests {
                 );
                 thread::sleep(Duration::from_millis(20));
             }
+        });
+    }
+
+    /// A cancelled attempt stops before the login, where a wrong password
+    /// would show that it tried, and before the login command.
+    #[test]
+    #[ignore]
+    fn live_a_cancelled_attempt_neither_logs_in_nor_starts_the_login_command() {
+        let target = crate::remote_script::live::Target::from_env();
+        crate::storage::test_support::with_isolated_data_dir(|| {
+            let opts = ShellOptions {
+                startup_command: Some("true".to_string()),
+                cancelled: Some(Arc::new(AtomicBool::new(true))),
+                ..ShellOptions::default()
+            };
+            let wrong_password = Endpoint {
+                auth: AuthMethod::Password("not-the-password".into()),
+                ..target.endpoint.clone()
+            };
+            let error = open_shell(&wrong_password, &opts).err().unwrap();
+            assert_eq!(error, ATTEMPT_CANCELLED);
+
+            let session = open_authenticated_session(&target.endpoint, 0, None).unwrap();
+            let error = start_shell(session, &target.endpoint, &opts).err().unwrap();
+            assert_eq!(error, ATTEMPT_CANCELLED);
         });
     }
 

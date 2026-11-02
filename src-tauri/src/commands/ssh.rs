@@ -201,6 +201,7 @@ fn shell_options(conn: &Connection, settings: &AppSettings) -> ShellOptions {
         keepalive_interval: conn
             .keepalive_interval
             .unwrap_or(settings.keepalive_interval),
+        cancelled: None,
     }
 }
 
@@ -214,9 +215,15 @@ fn reconnect_policy(conn: &Connection, settings: &AppSettings) -> ReconnectPolic
 /// Open the shell of a saved connection again after it dropped. It reads the
 /// connection and its credentials afresh, so a changed password or edited
 /// host applies, and a connection deleted meanwhile stops the retries.
-fn reopen_shell(connection_id: &str) -> Result<OpenShell, String> {
+fn reopen_shell(
+    connection_id: &str,
+    cancelled: std::sync::Arc<std::sync::atomic::AtomicBool>,
+) -> Result<OpenShell, String> {
     let (data, conn) = find_connection(connection_id)?;
-    let opts = shell_options(&conn, &data.settings);
+    let opts = ShellOptions {
+        cancelled: Some(cancelled),
+        ..shell_options(&conn, &data.settings)
+    };
     match &conn.kind {
         ConnectionKind::Direct => open_shell(&direct_target(&data, &conn)?, &opts),
         ConnectionKind::JumpShell { .. } => {
@@ -243,7 +250,7 @@ fn shell_resilience(
             Ok((data, conn)) => reconnect_policy(&conn, &data.settings),
             Err(_) => fallback,
         }),
-        reopen: std::sync::Arc::new(move || reopen_shell(&reopen_id)),
+        reopen: std::sync::Arc::new(move |cancelled| reopen_shell(&reopen_id, cancelled)),
         log: SessionLogPlan::resolve(conn, settings, session_id),
     }
 }
@@ -433,7 +440,7 @@ mod tests {
     #[test]
     fn a_deleted_connection_is_not_reopened() {
         crate::storage::test_support::with_isolated_data_dir(|| {
-            let error = reopen_shell("gone").err().unwrap();
+            let error = reopen_shell("gone", Default::default()).err().unwrap();
             assert_eq!(error, "Connection not found");
             assert!(!crate::reconnect::is_retryable_connect_error(&error));
         });

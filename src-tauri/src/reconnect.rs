@@ -5,8 +5,10 @@
 //!
 //! An attempt runs on a helper thread because connecting can block for tens
 //! of seconds, and Cancel and closing the pane must not wait for it. A
-//! cancelled attempt is abandoned: whatever it opens is dropped.
+//! cancelled attempt is told to stop, which it checks before logging in and
+//! before running the login command. Whatever it still opens is dropped.
 
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, RecvTimeoutError, TryRecvError};
 use std::sync::Arc;
 use std::thread;
@@ -53,6 +55,9 @@ pub(crate) fn reconnect_delay(attempt: u8) -> Duration {
         .unwrap_or(MAX_DELAY_SECS);
     Duration::from_secs(secs.min(MAX_DELAY_SECS))
 }
+
+/// Opens a shell again. The flag is set once nobody wants the result.
+pub type OpenAttempt<S> = Arc<dyn Fn(Arc<AtomicBool>) -> Result<S, String> + Send + Sync>;
 
 /// Whether and how often a dropped session reconnects by itself.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -130,15 +135,17 @@ enum Attempt<S> {
 
 /// Run `open` once on a helper thread, staying responsive to the user.
 fn run_attempt<S: Send + 'static>(
-    open: &Arc<dyn Fn() -> Result<S, String> + Send + Sync>,
+    open: &OpenAttempt<S>,
     control: &ControlRx,
     pty_size: &mut Option<(u32, u32)>,
 ) -> Attempt<S> {
     let (tx, rx) = mpsc::channel();
     let open = Arc::clone(open);
+    let cancelled = Arc::new(AtomicBool::new(false));
+    let flag = Arc::clone(&cancelled);
     thread::spawn(move || {
         // The worker is gone when it cancelled; the result is dropped here.
-        let _ = tx.send(open());
+        let _ = tx.send(open(flag));
     });
     loop {
         match rx.try_recv() {
@@ -160,7 +167,8 @@ fn run_attempt<S: Send + 'static>(
         }
         match wait_for_user(control, Some(ATTEMPT_POLL), pty_size) {
             Some(action @ (UserAction::Close | UserAction::Cancel)) => {
-                return Attempt::Interrupted(action)
+                cancelled.store(true, Ordering::SeqCst);
+                return Attempt::Interrupted(action);
             }
             // Already attempting: nothing to do sooner.
             Some(UserAction::RetryNow) | None => {}
@@ -171,7 +179,7 @@ fn run_attempt<S: Send + 'static>(
 /// One session's way back from a dropped connection.
 pub(crate) struct Recovery<'a, S> {
     pub policy: ReconnectPolicy,
-    pub open: Arc<dyn Fn() -> Result<S, String> + Send + Sync>,
+    pub open: OpenAttempt<S>,
     pub control: &'a ControlRx,
     pub pty_size: &'a mut Option<(u32, u32)>,
     pub attempts: &'a mut AttemptCount,
@@ -253,7 +261,7 @@ impl<S: Send + 'static> Recovery<'_, S> {
 mod tests {
     use super::*;
     use crate::ssh::{control_channel, SessionHandle};
-    use std::sync::atomic::{AtomicU32, Ordering};
+    use std::sync::atomic::AtomicU32;
     use std::sync::Mutex;
 
     const AUTH_FAILURE: &str = "Password auth failed: [Session(-18)] Authentication failed";
@@ -291,6 +299,15 @@ mod tests {
             delay: fn(u8) -> Duration,
             results: impl Fn(u32) -> Result<&'static str, String> + Send + Sync + 'static,
         ) -> Self {
+            Self::start_watching(policy, delay, move |n, _| results(n))
+        }
+
+        /// As `start`, for attempts that look at their cancel flag.
+        fn start_watching(
+            policy: ReconnectPolicy,
+            delay: fn(u8) -> Duration,
+            results: impl Fn(u32, &AtomicBool) -> Result<&'static str, String> + Send + Sync + 'static,
+        ) -> Self {
             let (handle, control) = control_channel().unwrap();
             let events = Arc::new(Mutex::new(Vec::new()));
             let opens = Arc::new(AtomicU32::new(0));
@@ -304,8 +321,9 @@ mod tests {
                         .unwrap()
                         .push(serde_json::to_string(&event).unwrap());
                 };
-                let open: Arc<dyn Fn() -> Result<&'static str, String> + Send + Sync> =
-                    Arc::new(move || results(counter.fetch_add(1, Ordering::SeqCst) + 1));
+                let open: OpenAttempt<&'static str> = Arc::new(move |cancelled| {
+                    results(counter.fetch_add(1, Ordering::SeqCst) + 1, &cancelled)
+                });
                 let shell = Recovery {
                     policy,
                     open,
@@ -457,11 +475,10 @@ mod tests {
         let (handle, control) = control_channel().unwrap();
         let opens = Arc::new(AtomicU32::new(0));
         let counter = Arc::clone(&opens);
-        let open: Arc<dyn Fn() -> Result<&'static str, String> + Send + Sync> =
-            Arc::new(move || {
-                counter.fetch_add(1, Ordering::SeqCst);
-                Ok("shell")
-            });
+        let open: OpenAttempt<&'static str> = Arc::new(move |_| {
+            counter.fetch_add(1, Ordering::SeqCst);
+            Ok("shell")
+        });
         let mut attempts = AttemptCount::default();
         let mut pty_size = None;
         let stopper = handle.clone();
@@ -562,7 +579,7 @@ mod tests {
         };
         let shell = Recovery {
             policy: FIVE_TRIES,
-            open: Arc::new(|| Ok("shell")),
+            open: Arc::new(|_| Ok("shell")),
             control: &control,
             pty_size: &mut pty_size,
             attempts: &mut attempts,
@@ -603,6 +620,36 @@ mod tests {
         thread::sleep(Duration::from_millis(100));
         assert!(h.finished.try_recv().is_err(), "still parked");
         h.close();
+    }
+
+    /// A recovery with an attempt that runs until it is told to stop, as one
+    /// reaching its login would. `Receiver` hears when it was told.
+    fn recovery_with_a_running_attempt() -> (Harness, mpsc::Receiver<()>) {
+        let (told, heard) = mpsc::channel();
+        let told = Mutex::new(told);
+        let h = Harness::start_watching(FIVE_TRIES, instantly, move |_, cancelled| {
+            eventually("the cancel flag", || cancelled.load(Ordering::SeqCst));
+            told.lock().unwrap().send(()).unwrap();
+            Err("cancelled".to_string())
+        });
+        eventually("the attempt to start", || h.opens() == 1);
+        (h, heard)
+    }
+
+    #[test]
+    fn cancel_tells_a_running_attempt_to_stop() {
+        let (h, heard) = recovery_with_a_running_attempt();
+        h.handle.send(SessionMsg::CancelReconnect).unwrap();
+        heard.recv_timeout(Duration::from_secs(10)).unwrap();
+        h.wait_for_event("reconnect_stopped");
+        h.close();
+    }
+
+    #[test]
+    fn closing_tells_a_running_attempt_to_stop() {
+        let (h, heard) = recovery_with_a_running_attempt();
+        h.close();
+        heard.recv_timeout(Duration::from_secs(10)).unwrap();
     }
 
     #[test]
