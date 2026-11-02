@@ -250,11 +250,9 @@ export function FolderTree({
   const typeahead = React.useRef({ text: "", at: 0 });
 
   const onTreeKeyDown = (e: React.KeyboardEvent<HTMLElement>) => {
-    const target = e.target as HTMLElement;
-    // A key on a row's own buttons is theirs.
-    if (target.getAttribute("role") !== "treeitem") return;
-    const index = Number(target.dataset.rovingIndex);
+    const index = Number((e.target as HTMLElement).dataset.rovingIndex);
     const row = rows[index];
+    // A key on a row's own buttons is theirs: they have no index.
     if (!row) return;
 
     if (e.key === "ArrowRight") {
