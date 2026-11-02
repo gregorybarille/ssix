@@ -92,6 +92,9 @@ describe("SnippetsView", () => {
       const notice = await screen.findByTestId("snippet-form-git-sync-notice");
       expect(notice).toHaveTextContent("Git Sync exports snippets exactly as written");
       expect(notice).toHaveTextContent("Keep passwords and tokens out");
+      expect(screen.getByTestId("snippet-form-command")).toHaveAccessibleDescription(
+        expect.stringContaining("Git Sync exports snippets exactly as written"),
+      );
     });
 
     it("lists the variables it found as the command is typed", async () => {

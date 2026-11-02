@@ -87,11 +87,9 @@ export function SnippetForm({ snippet, onSubmit, onClose, onGuardChange }: Snipp
           aria-required="true"
           data-testid="snippet-form-command"
           aria-invalid={fieldErrors.command ? true : undefined}
-          aria-describedby={
-            fieldErrors.command
-              ? "snippet-command-error snippet-command-hint"
-              : "snippet-command-hint"
-          }
+          aria-describedby={`${
+            fieldErrors.command ? "snippet-command-error " : ""
+          }snippet-command-hint snippet-git-sync-notice`}
         />
         {fieldErrors.command && (
           <p id="snippet-command-error" role="alert" className="text-xs text-destructive">
