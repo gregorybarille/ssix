@@ -443,6 +443,24 @@ fn file_mode(meta: &fs::Metadata) -> Option<u32> {
     }
 }
 
+/// Every folder of a walk starts here: the walk may be cancelled, or too deep.
+fn enter_folder(
+    dir: impl std::fmt::Display,
+    cancel: &AtomicBool,
+    depth: usize,
+) -> Result<(), Stop> {
+    if cancel.load(Ordering::SeqCst) {
+        return Err(Stop::Cancelled);
+    }
+    if depth > MAX_DEPTH {
+        return Err(Stop::Failed(format!(
+            "{} is nested too deeply to transfer",
+            dir
+        )));
+    }
+    Ok(())
+}
+
 /// The entry the user picked is followed if it is a symlink, as `scp` does.
 /// Inside a folder symlinks are skipped: following them could leave the
 /// tree or go round in a loop.
@@ -471,15 +489,7 @@ fn walk_local(
     cancel: &AtomicBool,
     depth: usize,
 ) -> Result<(), Stop> {
-    if cancel.load(Ordering::SeqCst) {
-        return Err(Stop::Cancelled);
-    }
-    if depth > MAX_DEPTH {
-        return Err(Stop::Failed(format!(
-            "{} is nested too deeply to transfer",
-            dir.display()
-        )));
-    }
+    enter_folder(dir.display(), cancel, depth)?;
     let entries =
         fs::read_dir(dir).map_err(|e| format!("Could not read {}: {}", dir.display(), e))?;
     for entry in entries {
@@ -533,15 +543,7 @@ fn walk_remote(
     cancel: &AtomicBool,
     depth: usize,
 ) -> Result<(), Stop> {
-    if cancel.load(Ordering::SeqCst) {
-        return Err(Stop::Cancelled);
-    }
-    if depth > MAX_DEPTH {
-        return Err(Stop::Failed(format!(
-            "{} is nested too deeply to transfer",
-            dir
-        )));
-    }
+    enter_folder(dir, cancel, depth)?;
     let entries = read_remote_dir(sftp, dir).map_err(|e| call_error("Could not read", dir, &e))?;
     for (name, stat) in entries {
         // These names become files on this machine, so one a server made up
@@ -923,7 +925,7 @@ where
 
 #[cfg(test)]
 mod tests {
-    use super::super::browse::TempDir;
+    use super::super::browse::{save_forward, TempDir};
     use super::*;
     use std::io::{self, Cursor};
     use std::sync::Mutex;
@@ -1225,26 +1227,14 @@ mod tests {
     #[test]
     fn a_transfer_refuses_a_forward_before_it_starts() {
         crate::storage::test_support::with_isolated_data_dir(|| {
-            let forward = crate::models::Connection::new(
-                "fwd".into(),
-                "h".into(),
-                22,
-                None,
-                crate::models::ConnectionKind::PortForward {
-                    gateway_host: "gw".into(),
-                    gateway_port: 22,
-                    gateway_credential_id: "c".into(),
-                    local_port: 8080,
-                    destination_host: "db".into(),
-                    destination_port: 5432,
-                },
-            );
-            let connection_id = forward.id.clone();
-            crate::storage::with_data_mut(|data| {
-                data.connections.push(forward);
-                Ok(())
-            })
-            .unwrap();
+            let connection_id = save_forward(crate::models::ConnectionKind::PortForward {
+                gateway_host: "gw".into(),
+                gateway_port: 22,
+                gateway_credential_id: "c".into(),
+                local_port: 8080,
+                destination_host: "db".into(),
+                destination_port: 5432,
+            });
             let (emit, events) = collector();
             let err = start_transfer(
                 TransferInput {

@@ -720,11 +720,23 @@ pub(super) fn missing_or(
 }
 
 #[cfg(test)]
-pub(crate) use tests::TempDir;
+pub(crate) use tests::{save_forward, TempDir};
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Save a forward of this kind and return its id.
+    pub(crate) fn save_forward(kind: crate::models::ConnectionKind) -> String {
+        let forward = crate::models::Connection::new("fwd".into(), "h".into(), 22, None, kind);
+        let id = forward.id.clone();
+        crate::storage::with_data_mut(|data| {
+            data.connections.push(forward);
+            Ok(())
+        })
+        .unwrap();
+        id
+    }
 
     /// A fresh folder, removed when the test ends.
     pub(crate) struct TempDir(pub PathBuf);
@@ -931,24 +943,12 @@ mod tests {
     #[test]
     fn forwards_have_no_files_to_browse() {
         crate::storage::test_support::with_isolated_data_dir(|| {
-            let forward = crate::models::Connection::new(
-                "fwd".into(),
-                "h".into(),
-                22,
-                None,
-                crate::models::ConnectionKind::DynamicForward {
-                    gateway_host: "gw".into(),
-                    gateway_port: 22,
-                    gateway_credential_id: "c".into(),
-                    local_port: 1080,
-                },
-            );
-            let id = forward.id.clone();
-            crate::storage::with_data_mut(|data| {
-                data.connections.push(forward);
-                Ok(())
-            })
-            .unwrap();
+            let id = save_forward(crate::models::ConnectionKind::DynamicForward {
+                gateway_host: "gw".into(),
+                gateway_port: 22,
+                gateway_credential_id: "c".into(),
+                local_port: 1080,
+            });
             let err = sftp_connect_sync(&id).unwrap_err();
             assert!(err.contains("not available"), "{}", err);
             assert_eq!(

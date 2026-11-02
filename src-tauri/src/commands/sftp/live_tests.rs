@@ -132,6 +132,16 @@ fn transfer_with(
         .expect("the transfer should end")
 }
 
+/// Run a transfer and cancel it as soon as bytes have moved.
+fn cancel_at_first_bytes(input: TransferInput) -> TransferEvent {
+    let cancelled = AtomicBool::new(false);
+    transfer_with(input, move |transfer_id, bytes| {
+        if bytes > 0 && !cancelled.swap(true, Ordering::SeqCst) {
+            sftp_cancel_transfer(transfer_id.to_string());
+        }
+    })
+}
+
 fn upload(connection_id: &str, source: &Path, target_dir: &str, overwrite: bool) -> TransferEvent {
     transfer(TransferInput {
         connection_id: connection_id.to_string(),
@@ -417,22 +427,13 @@ fn live_sftp_cancelled_transfers_leave_no_partial_file() {
         drop(file);
 
         // Cancelled from its own progress report, so it is mid-copy.
-        let cancelled = Arc::new(AtomicBool::new(false));
-        let flag = cancelled.clone();
-        let last = transfer_with(
-            TransferInput {
-                connection_id: id.to_string(),
-                direction: TransferDirection::Upload,
-                source: big.to_str().unwrap().to_string(),
-                target_dir: dir.path.clone(),
-                overwrite: false,
-            },
-            move |transfer_id, bytes| {
-                if bytes > 0 && !flag.swap(true, Ordering::SeqCst) {
-                    sftp_cancel_transfer(transfer_id.to_string());
-                }
-            },
-        );
+        let last = cancel_at_first_bytes(TransferInput {
+            connection_id: id.to_string(),
+            direction: TransferDirection::Upload,
+            source: big.to_str().unwrap().to_string(),
+            target_dir: dir.path.clone(),
+            overwrite: false,
+        });
         assert!(
             matches!(last, TransferEvent::Cancelled { .. }),
             "{:?}",
@@ -452,22 +453,13 @@ fn live_sftp_cancelled_transfers_leave_no_partial_file() {
         );
         let down = TempDir::new("live-cancel-down");
         fs::write(down.0.join("big.remote"), "previous").unwrap();
-        let cancelled = Arc::new(AtomicBool::new(false));
-        let flag = cancelled.clone();
-        let last = transfer_with(
-            TransferInput {
-                connection_id: id.to_string(),
-                direction: TransferDirection::Download,
-                source: dir.child("big.remote"),
-                target_dir: down.0.to_str().unwrap().to_string(),
-                overwrite: true,
-            },
-            move |transfer_id, bytes| {
-                if bytes > 0 && !flag.swap(true, Ordering::SeqCst) {
-                    sftp_cancel_transfer(transfer_id.to_string());
-                }
-            },
-        );
+        let last = cancel_at_first_bytes(TransferInput {
+            connection_id: id.to_string(),
+            direction: TransferDirection::Download,
+            source: dir.child("big.remote"),
+            target_dir: down.0.to_str().unwrap().to_string(),
+            overwrite: true,
+        });
         assert!(
             matches!(last, TransferEvent::Cancelled { .. }),
             "{:?}",
