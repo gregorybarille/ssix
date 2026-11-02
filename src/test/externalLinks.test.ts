@@ -27,6 +27,8 @@ const REFUSED = [
   "ftp://example.com/file",
   "smb://example.com/share",
   "x-custom-app://do-something",
+  "file:///Applications/Calculator.app?https://x",
+  "smb://host/share#https://x",
   "//example.com/no-scheme",
   "example.com",
   "",
@@ -54,7 +56,7 @@ describe("parseExternalUrl", () => {
     expect(parseExternalUrl("https://[2001:db8::1]:8443/")?.hostname).toBe("[2001:db8::1]");
   });
 
-  it.each(REFUSED)("refuses %j", (raw) => {
+  it.each([...REFUSED, ...DISGUISED.filter((raw) => /\s/.test(raw))])("refuses %j", (raw) => {
     expect(parseExternalUrl(raw)).toBeNull();
   });
 
@@ -98,14 +100,15 @@ describe("isLinkOpenClick", () => {
 });
 
 /**
- * The plugin's own check behind the one above. The plugin wraps this in
- * `^...$`, and its default also lets `mailto:` and `tel:` through.
+ * The plugin's own check behind the one above. The plugin searches with this as
+ * written, adding no anchors of its own, so an unanchored pattern would let through
+ * anything with a URL inside it. Its default also lets `mailto:` and `tel:` through.
  */
 describe("the shell plugin's open scope", () => {
   const config = JSON.parse(
     readFileSync(resolve(__dirname, "../../src-tauri/tauri.conf.json"), "utf8"),
   ) as { plugins: { shell: { open: string } } };
-  const scope = new RegExp(`^${config.plugins.shell.open}$`);
+  const scope = new RegExp(config.plugins.shell.open);
 
   it("lets http and https through, IPv6 hosts too", () => {
     expect(scope.test("http://example.com/")).toBe(true);

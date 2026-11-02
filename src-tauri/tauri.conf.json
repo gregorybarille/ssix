@@ -25,7 +25,7 @@
   },
   "plugins": {
     "shell": {
-      "open": "https?://\\S+"
+      "open": "^https?://\\S+$"
     }
   },
   "bundle": {
