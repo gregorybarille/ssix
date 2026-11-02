@@ -58,8 +58,8 @@ top of the pane shows the attempt and the countdown, with **Cancel**. The
 Logs view has a line for each step.
 
 **Cancel** does not wait for a running attempt. The attempt stops before it logs
-in and before it runs the login command, and if it got further, its shell is
-closed.
+in, while a login prompt waits and before it runs the login command, and if it
+got further, its shell is closed.
 
 The count survives a reconnect until the new shell has stayed up for a minute,
 so a server that accepts the login and drops it straight away uses up the

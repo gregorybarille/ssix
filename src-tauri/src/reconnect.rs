@@ -5,8 +5,9 @@
 //!
 //! An attempt runs on a helper thread because connecting can block for tens
 //! of seconds, and Cancel and closing the pane must not wait for it. A
-//! cancelled attempt is told to stop, which it checks before logging in and
-//! before running the login command. Whatever it still opens is dropped.
+//! cancelled attempt is told to stop, which it checks before logging in, while
+//! a login prompt waits, and before running the login command. Whatever it
+//! still opens is dropped.
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, RecvTimeoutError, TryRecvError};
