@@ -22,6 +22,13 @@ export async function click(selector: string): Promise<void> {
   await el.click();
 }
 
+/** Bring a field far down a form into view. */
+export async function reveal(selector: string): Promise<void> {
+  const el = await browser.$(selector);
+  await el.waitForExist({ timeout: 10_000 });
+  await el.scrollIntoView({ block: "center" });
+}
+
 export async function clickDialogFooterButton(selector: string): Promise<void> {
   const el = await browser.$(selector);
   await el.waitForExist({ timeout: 10_000 });
@@ -238,6 +245,22 @@ export async function readTerminalText(): Promise<string> {
     parts.push(await r.getText());
   }
   return parts.join("\n");
+}
+
+/** Close the open terminal tab, answering the confirmation a live pane asks for. */
+export async function closeTerminal(): Promise<void> {
+  const nav = await browser.$(sel.navTerminals);
+  const confirm = await browser.$(sel.confirmClosePane);
+  if ((await nav.isExisting()) && !(await confirm.isExisting())) {
+    await nav.click();
+    await clickDialogFooterButton(sel.terminalTabCloseAny);
+    await browser.waitUntil(async () => (await confirm.isExisting()) || !(await nav.isExisting()), {
+      timeout: 10_000,
+      timeoutMsg: "Closing the tab neither asked for confirmation nor closed it",
+    });
+  }
+  if (await confirm.isExisting()) await clickDialogFooterButton(sel.confirmClosePaneConfirm);
+  await nav.waitForExist({ reverse: true, timeout: 10_000 });
 }
 
 /** Wait for a FailedTerminal whose backend error contains `needle`. */

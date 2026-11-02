@@ -386,5 +386,29 @@ export const sel = {
   importItemCheckbox: '[data-testid="import-item-checkbox"]',
   importSkip: (name: string) => `[data-testid="import-skip"][data-name="${name}"]`,
   // roadmap:terminal-ux
+  terminalContainerBySession: (id: string) =>
+    `[data-testid="terminal-container"][data-session-id="${id}"]`,
+  terminalSearch: '[data-testid="terminal-search"]',
+  terminalSearchInput: '[data-testid="terminal-search-input"]',
+  terminalSearchStatus: '[data-testid="terminal-search-status"]',
+  terminalSearchPrevious: '[data-testid="terminal-search-previous"]',
+  terminalSearchNext: '[data-testid="terminal-search-next"]',
+  terminalSearchClose: '[data-testid="terminal-search-close"]',
+  terminalLinkHint: '[data-testid="terminal-link-hint"]',
+  terminalLinkConfirm: '[data-testid="terminal-link-confirm"]',
+  terminalLinkConfirmCancel: '[data-testid="terminal-link-confirm-cancel"]',
+  terminalLinkConfirmHost: '[data-testid="terminal-link-confirm-host"]',
+  terminalLinkConfirmUrl: '[data-testid="terminal-link-confirm-url"]',
+  broadcastToggle: '[data-testid="broadcast-toggle"]',
+  broadcastIndicator: '[data-testid="broadcast-indicator"]',
+  terminalNewMenu: '[data-testid="terminal-new-menu"]',
+  terminalNewSplitRight: '[data-testid="terminal-new-split-right"]',
+  connectPickerOption: (name: string) => `[role="option"][data-name="${name}"]`,
+  // Scoped under a connection row (see connectionRowByName).
+  connectionRowEditButton: '[data-testid^="edit-connection-"]',
+  connectionFormFontFamily: '[data-testid="connection-form-font-family"]',
+  connectionFormFontSize: '[data-testid="connection-form-font-size"]',
+  connectionFormColorScheme: '[data-testid="connection-form-color-scheme"]',
+  connectionFormColorSchemeError: '[data-testid="connection-form-color-scheme-error"]',
   // roadmap:folders
 } as const;

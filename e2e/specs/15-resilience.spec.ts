@@ -20,14 +20,15 @@
  * Exercises `src-tauri/src/reconnect.rs`, `session_log.rs`, the shell worker in
  * `ssh.rs` and the status bar of `FailedTerminal`. See docs/session-resilience.md.
  */
-import { existsSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { waitForAppReady } from "../helpers/app.js";
 import { currentTestDataDir } from "../helpers/data-dir.js";
 import { TARGETS, waitForServers } from "../helpers/docker.js";
+import { flaggedProxy } from "../helpers/flagged-proxy.js";
 import {
   click,
-  clickDialogFooterButton,
+  closeTerminal,
   connectToConnection,
   createDirectConnection,
   createPasswordCredential,
@@ -36,6 +37,7 @@ import {
   openCredentialEditor,
   pickOption,
   readTerminalText,
+  reveal,
   saveConnectionForm,
   textContentOf,
   typeIntoTerminal,
@@ -62,18 +64,11 @@ function dataDir(): string {
   return dir;
 }
 
-/** While this file exists, the proxy command below refuses to connect. */
-const refuseFlag = () => join(dataDir(), "refuse-proxy-15");
-const refuseConnections = () => writeFileSync(refuseFlag(), "");
-const allowConnections = () => rmSync(refuseFlag(), { force: true });
-const refusingProxy = () =>
-  `[ -e ${refuseFlag()} ] && exit 1; exec nc ${TARGETS.a.host} ${TARGETS.a.sshPort}`;
-
-async function reveal(selector: string): Promise<void> {
-  const el = await browser.$(selector);
-  await el.waitForExist({ timeout: 10_000 });
-  await el.scrollIntoView({ block: "center" });
-}
+const {
+  refuseConnections,
+  allowConnections,
+  proxyCommand: refusingProxy,
+} = flaggedProxy("refuse-proxy-15");
 
 interface ShellConnection {
   credentialName?: string;
@@ -123,22 +118,6 @@ async function expectNoRetry(): Promise<void> {
   await browser.pause(NO_RETRY_WINDOW_MS);
   expect(await (await browser.$(sel.reconnectStatusPhase("stopped"))).isExisting()).toBe(true);
   expect(await readTerminalText()).not.toContain(RECONNECTED);
-}
-
-/** Close the open terminal, answering the confirmation a live pane asks for. */
-async function closeTerminal(): Promise<void> {
-  const nav = await browser.$(sel.navTerminals);
-  const confirm = await browser.$(sel.confirmClosePane);
-  if ((await nav.isExisting()) && !(await confirm.isExisting())) {
-    await nav.click();
-    await clickDialogFooterButton(sel.terminalTabCloseAny);
-    await browser.waitUntil(async () => (await confirm.isExisting()) || !(await nav.isExisting()), {
-      timeout: 10_000,
-      timeoutMsg: "Closing the tab neither asked for confirmation nor closed it",
-    });
-  }
-  if (await confirm.isExisting()) await clickDialogFooterButton(sel.confirmClosePaneConfirm);
-  await nav.waitForExist({ reverse: true, timeout: 10_000 });
 }
 
 async function setCredentialPassword(name: string, password: string): Promise<void> {
@@ -336,9 +315,7 @@ describe("Session resilience", () => {
     await click(sel.navTerminals);
     await click(sel.failedTerminalRetry);
 
-    // Nothing to expect from before: leaving the Terminals view clears a
-    // terminal's scrollback, reconnect or not.
-    await expectReconnected();
+    await expectReconnected("BEFORE-AUTH-42");
     await expectShellAnswers("AFTER-AUTH");
   });
 
@@ -425,9 +402,7 @@ describe("Session resilience", () => {
     await click(sel.navTerminals);
     await click(sel.failedTerminalRetry);
 
-    // Nothing to expect from before: leaving the Terminals view clears a
-    // terminal's scrollback, reconnect or not.
-    await expectReconnected();
+    await expectReconnected("BEFORE-EDIT-42");
     await expectShellAnswers("AFTER-EDIT");
   });
 

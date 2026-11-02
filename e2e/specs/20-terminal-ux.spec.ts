@@ -1,0 +1,730 @@
+/**
+ * Spec 20: the terminal beyond a plain shell.
+ *
+ *   • it keeps its scrollback and session across views, off screen;
+ *   • find in the scrollback (Ctrl+F);
+ *   • links, which come from output and so are not to be trusted;
+ *   • broadcast input across the panes of a tab;
+ *   • a connection's own font and colours.
+ *
+ * Commands print `<tag>-42` from `$((40+2))`, so the echo of the typed line
+ * can never be mistaken for the shell's answer. Terminals are read through
+ * `window.__ssixTerminalText`, which also reads one off screen. The suite runs
+ * on Linux only, where the shortcut modifier is Ctrl.
+ *
+ * Exercises `src/components/Terminal.tsx`, `src/components/terminal/`,
+ * `src/lib/terminalTheme.ts` and `validate_color_scheme` in
+ * `src-tauri/src/commands/connections.rs`. See docs/terminal-ux.md.
+ */
+import { readFileSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import { waitForAppReady } from "../helpers/app.js";
+import { currentTestDataDir } from "../helpers/data-dir.js";
+import { TARGETS, waitForServers } from "../helpers/docker.js";
+import { flaggedProxy } from "../helpers/flagged-proxy.js";
+import {
+  click,
+  clickDialogFooterButton,
+  closeTerminal,
+  connectToConnection,
+  createDirectConnection,
+  createPasswordCredential,
+  ensureConnectionRowsLayout,
+  fill,
+  navigateTo,
+  pickOption,
+  reveal,
+  saveConnectionForm,
+  textContentOf,
+  waitForTerminalContains,
+} from "../helpers/flows.js";
+import { sel } from "../helpers/selectors.js";
+
+const PROMPT_A = "server-a:~$";
+const PROMPT_B = "server-b:~$";
+const CREDENTIAL_A = "cred-20-a";
+const CREDENTIAL_B = "cred-20-b";
+const RECONNECTED = "[SSIX] Reconnected.";
+const CLOSED = "Connection closed.";
+/** What a terminal shows with no scheme of its own: Tokyo Night, or Day on a light app theme. */
+const APP_BACKGROUNDS = ["#1a1b26", "#e1e2e7"];
+/** Long enough for a key that was going to reach somewhere to have done so. */
+const SETTLE_MS = 500;
+
+function dataDir(): string {
+  const dir = currentTestDataDir();
+  if (!dir) throw new Error("SSIX_DATA_DIR is not set");
+  return dir;
+}
+
+const { refuseConnections, allowConnections, proxyCommand } = flaggedProxy("refuse-proxy-20");
+
+/** A connection to server-a. */
+function createConnectionA(name: string, beforeSave?: () => Promise<void>): Promise<void> {
+  return createDirectConnection({
+    name,
+    host: TARGETS.a.host,
+    port: TARGETS.a.sshPort,
+    credentialName: CREDENTIAL_A,
+    beforeSave,
+  });
+}
+
+/**
+ * A connection to server-a that `refuseConnections` can keep from coming back.
+ * OpenBSD `nc` outlives a connection the server cut until something is written
+ * to it, hence the short keepalive: see `15-resilience.spec.ts`.
+ */
+function createDroppableConnection(name: string): Promise<void> {
+  return createDirectConnection({
+    name,
+    host: TARGETS.a.host,
+    port: TARGETS.a.sshPort,
+    credentialName: CREDENTIAL_A,
+    proxyCommand: proxyCommand(),
+    beforeSave: async () => {
+      await reveal(sel.connectionFormKeepalive);
+      await fill(sel.connectionFormKeepalive, "2");
+    },
+  });
+}
+
+const sessionIds = () =>
+  browser.execute(() =>
+    [...document.querySelectorAll<HTMLElement>('[data-testid="terminal-container"]')].map(
+      (el) => el.dataset.sessionId ?? "",
+    ),
+  );
+
+/** Open a connection in a new tab, and give back its session once the shell is up. */
+async function openShell(name: string, prompt = PROMPT_A): Promise<string> {
+  await connectToConnection(name);
+  await waitForTerminalContains(prompt);
+  const ids = await sessionIds();
+  expect(ids).toHaveLength(1);
+  return ids[0];
+}
+
+/** Open a connection beside the shell of the active tab. */
+async function splitWith(name: string): Promise<void> {
+  await click(sel.terminalNewMenu);
+  await click(sel.terminalNewSplitRight);
+  await click(sel.connectPickerOption(name));
+}
+
+const textOf = (id: string) =>
+  browser.execute((session: string) => window.__ssixTerminalText?.(session) ?? "", id);
+
+async function stateOf(id: string) {
+  const state = await browser.execute(
+    (session: string) => window.__ssixTerminalState?.(session) ?? null,
+    id,
+  );
+  if (!state) throw new Error(`No terminal for session ${id}`);
+  return state;
+}
+
+async function waitForText(id: string, needle: string, timeout = 30_000): Promise<void> {
+  await browser.waitUntil(async () => (await textOf(id)).includes(needle), {
+    timeout,
+    timeoutMsg: `The terminal never showed ${JSON.stringify(needle)}`,
+  });
+}
+
+async function waitForFocus(id: string): Promise<void> {
+  await browser.waitUntil(async () => (await stateOf(id)).focused, {
+    timeout: 10_000,
+    timeoutMsg: "The terminal did not get the keyboard back",
+  });
+}
+
+/**
+ * Press keys where the keyboard already is, one call per key: within a call
+ * keys are held down together. No click first, so a test using this also proves
+ * where the keyboard is.
+ */
+async function press(text: string): Promise<void> {
+  for (const key of text) await browser.keys([key]);
+}
+
+async function typeIn(id: string, text: string): Promise<void> {
+  await click(sel.terminalContainerBySession(id));
+  await press(text);
+}
+
+const findShortcut = () => browser.keys(["Control", "f"]);
+
+async function expectGone(selector: string): Promise<void> {
+  await browser.pause(SETTLE_MS);
+  expect(await (await browser.$(selector)).isExisting()).toBe(false);
+}
+
+async function openConnectionEditor(name: string): Promise<void> {
+  await ensureConnectionRowsLayout();
+  const row = await browser.$(sel.connectionRowByName(name));
+  await row.waitForExist({ timeout: 10_000 });
+  // The action strip is hidden until the row is hovered or focused.
+  await browser.execute((el: HTMLElement) => el.focus(), row as unknown as HTMLElement);
+  const edit = await row.$(sel.connectionRowEditButton);
+  await edit.waitForClickable({ timeout: 10_000 });
+  await edit.click();
+  await (await browser.$(sel.connectionForm)).waitForExist({ timeout: 10_000 });
+}
+
+const lastTick = (text: string) =>
+  Math.max(0, ...[...text.matchAll(/^TICK-(\d+)-/gm)].map((match) => Number(match[1])));
+
+/**
+ * Send the mouse to the line of a terminal that reads exactly `line`. Events
+ * are dispatched where xterm listens for them, at the pixels of a cell in that
+ * line: its renderer draws to a canvas, and WebDriver cannot hold Ctrl through
+ * a click on WebKitGTK.
+ */
+async function mouseOnLine(
+  id: string,
+  line: string,
+  types: string[],
+  init: MouseEventInit = {},
+): Promise<void> {
+  await browser.execute(
+    (session: string, wanted: string, events: string[], options: MouseEventInit) => {
+      const screen = document.querySelector(
+        `[data-session-id="${session}"] .xterm-screen`,
+      ) as HTMLElement;
+      const state = window.__ssixTerminalState?.(session);
+      const row = (window.__ssixTerminalText?.(session) ?? "").split("\n").indexOf(wanted);
+      if (!state || row < 0) throw new Error(`No line ${wanted} in the terminal`);
+      const rect = screen.getBoundingClientRect();
+      const clientX = rect.left + (1.5 * rect.width) / state.cols;
+      const clientY = rect.top + ((row - state.viewportY + 0.5) * rect.height) / state.rows;
+      for (const type of events) {
+        screen.dispatchEvent(
+          new MouseEvent(type, { bubbles: true, cancelable: true, clientX, clientY, ...options }),
+        );
+      }
+    },
+    id,
+    line,
+    types,
+    init,
+  );
+}
+
+const CLICK = ["mousedown", "mouseup"];
+
+/** Print `text` as an OSC 8 hyperlink to `target`, and wait for it. */
+async function printHyperlink(id: string, target: string, text: string): Promise<void> {
+  await typeIn(id, `printf '\\033]8;;${target}\\033\\\\${text}\\033]8;;\\033\\\\\\n'\n`);
+  await waitForText(id, `\n${text}\n`);
+}
+
+async function waitForSearchInputFocus(): Promise<void> {
+  await browser.waitUntil(
+    () =>
+      browser.execute(
+        (input: string) => document.activeElement === document.querySelector(input),
+        sel.terminalSearchInput,
+      ),
+    { timeout: 10_000, timeoutMsg: "The find bar did not take the keyboard" },
+  );
+}
+
+/** Ctrl+F to the find bar, Escape out of it, and the keyboard is back in the terminal. */
+async function openFindThenEscape(id: string): Promise<void> {
+  await findShortcut();
+  await waitForSearchInputFocus();
+  await browser.keys(["Escape"]);
+  await (await browser.$(sel.terminalSearch)).waitForExist({ reverse: true, timeout: 10_000 });
+  await waitForFocus(id);
+}
+
+async function waitForSearchStatus(expected: RegExp): Promise<string> {
+  const status = await browser.$(sel.terminalSearchStatus);
+  let last = "";
+  await browser.waitUntil(
+    async () => {
+      last = await textContentOf(status);
+      return expected.test(last);
+    },
+    { timeout: 10_000, timeoutMsg: `The find bar never said ${expected}; it said "${last}"` },
+  );
+  return last;
+}
+
+const toggleLabel = async () => textContentOf(await browser.$(sel.broadcastToggle));
+
+async function waitForToggleLabel(expected: string): Promise<void> {
+  await browser.waitUntil(async () => (await toggleLabel()).includes(expected), {
+    timeout: 10_000,
+    timeoutMsg: `The broadcast toggle never said "${expected}"`,
+  });
+}
+
+async function waitForDrop(): Promise<void> {
+  await (await browser.$(sel.reconnectStatus)).waitForExist({ timeout: 30_000 });
+}
+
+describe("Terminal UX", () => {
+  before(async () => {
+    await waitForServers(["a", "b"]);
+    await waitForAppReady();
+    await createPasswordCredential({
+      name: CREDENTIAL_A,
+      username: TARGETS.a.user,
+      password: TARGETS.a.password,
+    });
+    await createPasswordCredential({
+      name: CREDENTIAL_B,
+      username: TARGETS.b.user,
+      password: TARGETS.b.password,
+    });
+  });
+
+  afterEach(async () => {
+    allowConnections();
+    await closeTerminal();
+  });
+
+  describe("off screen", () => {
+    it("keeps a terminal as it was across views, taking output but no keys", async () => {
+      await createConnectionA("conn-20-views");
+      const id = await openShell("conn-20-views");
+      await typeIn(id, "echo BEFORE-$((40+2))\n");
+      await waitForText(id, "BEFORE-42");
+      // A program's terminal mode: a new terminal in its place would not have it.
+      await typeIn(id, "printf '\\033[?2004h'\n");
+      await browser.waitUntil(async () => (await stateOf(id)).bracketedPaste, {
+        timeout: 10_000,
+        timeoutMsg: "Bracketed paste never turned on",
+      });
+      const { cols, rows } = await stateOf(id);
+
+      await typeIn(id, "for i in $(seq 90); do echo TICK-$i-$(stty size | tr ' ' x); sleep 1; done\n");
+      await waitForText(id, "TICK-1-");
+
+      await navigateTo("connections");
+      const container = await browser.$(sel.terminalContainerBySession(id));
+      expect(await container.isExisting()).toBe(true);
+      expect(await container.isDisplayed()).toBe(false);
+      expect((await stateOf(id)).focused).toBe(false);
+
+      // Output lands while nothing shows it.
+      const ticksAtHiding = lastTick(await textOf(id));
+      await browser.waitUntil(async () => lastTick(await textOf(id)) >= ticksAtHiding + 2, {
+        timeout: 15_000,
+        timeoutMsg: "No output reached the terminal off screen",
+      });
+
+      // Keys typed elsewhere stay there, in a field or with the focus on nothing.
+      await fill(sel.connectionSearchInput, "AWAY-KEYS");
+      await click(sel.connectionSearchClear);
+      await browser.execute(() => (document.activeElement as HTMLElement | null)?.blur());
+      await press("STRAY-KEYS\n");
+
+      // The keyboard goes back without a click.
+      await click(sel.navTerminals);
+      await waitForFocus(id);
+      await browser.keys(["Control", "c"]);
+      await press("echo AFTER-$((40+2))\n");
+      await waitForText(id, "AFTER-42");
+
+      const text = await textOf(id);
+      expect(text).toContain("BEFORE-42");
+      expect(text).not.toContain("AWAY-KEYS");
+      expect(text).not.toContain("STRAY-KEYS");
+      // The shell was never resized to nothing, nor back and forth.
+      const sizes = new Set([...text.matchAll(/^TICK-\d+-(\S+)$/gm)].map((match) => match[1]));
+      expect([...sizes]).toEqual([`${rows}x${cols}`]);
+      const state = await stateOf(id);
+      expect([state.rows, state.cols]).toEqual([rows, cols]);
+      expect(state.bracketedPaste).toBe(true);
+    });
+
+    it("reconnects off screen, with its status there on return", async () => {
+      await createDroppableConnection("conn-20-drop");
+      const id = await openShell("conn-20-drop");
+      await typeIn(id, "echo BEFORE-DROP-$((40+2))\n");
+      await waitForText(id, "BEFORE-DROP-42");
+
+      refuseConnections();
+      await typeIn(id, "kill -9 $PPID\n");
+      await navigateTo("connections");
+      await waitForDrop();
+      expect(await (await browser.$(sel.reconnectStatus)).isDisplayed()).toBe(false);
+      expect(await (await browser.$(sel.confirmClosePane)).isExisting()).toBe(false);
+
+      await click(sel.navTerminals);
+      expect(await (await browser.$(sel.reconnectStatus)).isDisplayed()).toBe(true);
+
+      await navigateTo("connections");
+      allowConnections();
+      await waitForText(id, RECONNECTED, 40_000);
+
+      await click(sel.navTerminals);
+      await (await browser.$(sel.reconnectStatus)).waitForExist({ reverse: true, timeout: 10_000 });
+      const text = await textOf(id);
+      expect(text.indexOf("BEFORE-DROP-42")).toBeGreaterThan(-1);
+      expect(text.indexOf("BEFORE-DROP-42")).toBeLessThan(text.indexOf(RECONNECTED));
+      await typeIn(id, "echo AFTER-DROP-$((40+2))\n");
+      await waitForText(id, "AFTER-DROP-42");
+    });
+
+    it("asks about a shell that ended only once its terminal is back", async () => {
+      await createConnectionA("conn-20-ended");
+      const id = await openShell("conn-20-ended");
+      await typeIn(id, "exec sh -c 'sleep 10'\n");
+      await navigateTo("connections");
+
+      await waitForText(id, CLOSED);
+      await expectGone(sel.confirmClosePane);
+
+      await click(sel.navTerminals);
+      await (await browser.$(sel.confirmClosePane)).waitForExist({ timeout: 10_000 });
+    });
+  });
+
+  describe("find", () => {
+    it("finds in the terminal's scrollback, and hands the keyboard back", async () => {
+      await createConnectionA("conn-20-find");
+      const id = await openShell("conn-20-find");
+      await typeIn(id, "for i in 1 2 3; do echo NEEDLE-$((40+i)); done\n");
+      await waitForText(id, "NEEDLE-43");
+
+      await findShortcut();
+      await waitForSearchInputFocus();
+      await press("NEEDLE-4");
+
+      const first = await waitForSearchStatus(/^\d of 3$/);
+      await browser.keys(["Enter"]);
+      const second = await waitForSearchStatus(new RegExp(`^(?!${first}$)\\d of 3$`));
+      await browser.keys(["Shift", "Enter"]);
+      await waitForSearchStatus(new RegExp(`^${first}$`));
+      await click(sel.terminalSearchNext);
+      await waitForSearchStatus(new RegExp(`^${second}$`));
+      await click(sel.terminalSearchPrevious);
+      await waitForSearchStatus(new RegExp(`^${first}$`));
+
+      await fill(sel.terminalSearchInput, "NO-SUCH-TEXT");
+      await waitForSearchStatus(/^No matches$/);
+      expect(await (await browser.$(sel.terminalSearchNext)).isEnabled()).toBe(false);
+
+      // Asking again brings the keyboard back to a bar already open.
+      await browser.execute(() => (document.activeElement as HTMLElement | null)?.blur());
+      await openFindThenEscape(id);
+      await press("echo BACK-$((40+2))\n");
+      await waitForText(id, "BACK-42");
+    });
+
+    it("keeps Ctrl+F from the program in the terminal", async () => {
+      await createConnectionA("conn-20-find-key");
+      const id = await openShell("conn-20-find-key");
+      await typeIn(id, "cat -v\n");
+
+      await openFindThenEscape(id);
+
+      await press("MARK\n");
+      await waitForText(id, "MARK\nMARK");
+      expect(await textOf(id)).not.toContain("^F");
+      await browser.keys(["Control", "d"]);
+    });
+
+    it("acts only on a terminal the user can see", async () => {
+      await createConnectionA("conn-20-find-hidden");
+      await openShell("conn-20-find-hidden");
+
+      await findShortcut();
+      await (await browser.$(sel.terminalSearch)).waitForExist({ timeout: 10_000 });
+      await navigateTo("connections");
+      await (await browser.$(sel.terminalSearch)).waitForExist({ reverse: true, timeout: 10_000 });
+
+      await findShortcut();
+      await expectGone(sel.terminalSearch);
+      await click(sel.navTerminals);
+      await expectGone(sel.terminalSearch);
+    });
+  });
+
+  describe("links", () => {
+    it("shows the real target of a hyperlink and asks before opening it", async () => {
+      await createConnectionA("conn-20-osc8");
+      const id = await openShell("conn-20-osc8");
+      await printHyperlink(id, "https://real-target.example/path", "SAFE-LOOKING-TEXT");
+
+      await mouseOnLine(id, "SAFE-LOOKING-TEXT", ["mousemove"]);
+      const hint = await browser.$(sel.terminalLinkHint);
+      await hint.waitForExist({ timeout: 10_000 });
+      expect(await textContentOf(hint)).toContain("https://real-target.example/path");
+
+      // A click alone does nothing.
+      await mouseOnLine(id, "SAFE-LOOKING-TEXT", CLICK);
+      await expectGone(sel.terminalLinkConfirm);
+
+      await mouseOnLine(id, "SAFE-LOOKING-TEXT", CLICK, { ctrlKey: true });
+      const confirm = await browser.$(sel.terminalLinkConfirm);
+      await confirm.waitForExist({ timeout: 10_000 });
+      expect(await textContentOf(await browser.$(sel.terminalLinkConfirmHost))).toBe(
+        "real-target.example",
+      );
+      expect(await textContentOf(await browser.$(sel.terminalLinkConfirmUrl))).toBe(
+        "https://real-target.example/path",
+      );
+      await clickDialogFooterButton(sel.terminalLinkConfirmCancel);
+      await confirm.waitForExist({ reverse: true, timeout: 10_000 });
+
+      await mouseOnLine(id, "SAFE-LOOKING-TEXT", ["mouseleave"]);
+      await hint.waitForExist({ reverse: true, timeout: 10_000 });
+    });
+
+    it("offers nothing for a hyperlink to anything but http or https", async () => {
+      await createConnectionA("conn-20-file-link");
+      const id = await openShell("conn-20-file-link");
+      await printHyperlink(id, "file:///etc/passwd", "FILE-LINK-TEXT");
+
+      await mouseOnLine(id, "FILE-LINK-TEXT", ["mousemove"]);
+      await expectGone(sel.terminalLinkHint);
+      await mouseOnLine(id, "FILE-LINK-TEXT", CLICK, { ctrlKey: true });
+      await expectGone(sel.terminalLinkConfirm);
+    });
+
+    it("finds a URL in the text, and asks when its user name reads like a host", async () => {
+      await createConnectionA("conn-20-url");
+      const id = await openShell("conn-20-url");
+      const url = "https://bank.example@evil.example/login";
+      await typeIn(id, `echo ${url}\n`);
+      await waitForText(id, `\n${url}\n`);
+
+      await mouseOnLine(id, url, ["mousemove"]);
+      const hint = await browser.$(sel.terminalLinkHint);
+      await hint.waitForExist({ timeout: 10_000 });
+      expect(await textContentOf(hint)).toContain(url);
+
+      await mouseOnLine(id, url, CLICK);
+      await expectGone(sel.terminalLinkConfirm);
+
+      await mouseOnLine(id, url, CLICK, { ctrlKey: true });
+      await (await browser.$(sel.terminalLinkConfirm)).waitForExist({ timeout: 10_000 });
+      expect(await textContentOf(await browser.$(sel.terminalLinkConfirmHost))).toBe("evil.example");
+      await clickDialogFooterButton(sel.terminalLinkConfirmCancel);
+    });
+  });
+
+  describe("broadcast input", () => {
+    const toggle = () => click(sel.broadcastToggle);
+
+    /** Two panes in one tab: `a` on server-a, which can be dropped, `b` on server-b. */
+    async function openSplit(suffix: string): Promise<[string, string]> {
+      await createDroppableConnection(`conn-20-cast-a-${suffix}`);
+      await createDirectConnection({
+        name: `conn-20-cast-b-${suffix}`,
+        host: TARGETS.b.host,
+        port: TARGETS.b.sshPort,
+        credentialName: CREDENTIAL_B,
+      });
+      await openShell(`conn-20-cast-a-${suffix}`);
+      await splitWith(`conn-20-cast-b-${suffix}`);
+      await waitForTerminalContains(PROMPT_B);
+      const ids = await sessionIds();
+      expect(ids).toHaveLength(2);
+      return [ids[0], ids[1]];
+    }
+
+    /** Lose pane `a`'s connection for good, leaving broadcast as it was. */
+    async function dropPane(a: string): Promise<void> {
+      refuseConnections();
+      await toggle();
+      await typeIn(a, "kill -9 $PPID\n");
+      await waitForDrop();
+      await toggle();
+    }
+
+    it("is off by default, and on sends what is typed in either pane to both", async () => {
+      const [a, b] = await openSplit("both");
+
+      /** Run a command in pane `from`, and see it answer there and in `to`, or only there. */
+      async function echoFrom(from: string, tag: string, to: string, reachesTo: boolean) {
+        await typeIn(from, `echo ${tag}-$((40+2))\n`);
+        await waitForText(from, `${tag}-42`);
+        if (reachesTo) {
+          await waitForText(to, `${tag}-42`);
+        } else {
+          await browser.pause(SETTLE_MS);
+          expect(await textOf(to)).not.toContain(`${tag}-`);
+        }
+      }
+      const toggleState = async (pressed: string, indicator: boolean) => {
+        expect(await (await browser.$(sel.broadcastToggle)).getAttribute("aria-pressed")).toBe(pressed);
+        expect(await (await browser.$(sel.broadcastIndicator)).isExisting()).toBe(indicator);
+      };
+
+      await toggleState("false", false);
+      await echoFrom(a, "SOLO", b, false);
+
+      await toggle();
+      await toggleState("true", true);
+      await waitForToggleLabel("Broadcasting to 2 of 2 panes");
+      await echoFrom(a, "FROM-A", b, true);
+      await echoFrom(b, "FROM-B", a, true);
+
+      await toggle();
+      await waitForToggleLabel("Broadcast input");
+      await toggleState("false", false);
+      await echoFrom(a, "SOLO-AGAIN", b, false);
+    });
+
+    it("does not mirror what describes one pane, such as a focus report", async () => {
+      const [a, b] = await openSplit("focus");
+
+      // `a` reports focus changes; `cat -v` in `b` would show one that arrived.
+      await typeIn(a, "printf '\\033[?1004h'\n");
+      await typeIn(b, "cat -v\n");
+
+      await toggle();
+      await typeIn(a, "MARK\n");
+      await waitForText(b, "MARK\nMARK");
+      await typeIn(b, "\n");
+      const text = await textOf(b);
+      expect(text).not.toContain("^[[I");
+      expect(text).not.toContain("^[[O");
+    });
+
+    it("sends nothing to a pane that lost its connection, even after it returns", async () => {
+      const [a, b] = await openSplit("drop");
+      await toggle();
+      await dropPane(a);
+      await waitForToggleLabel("Broadcasting to 1 of 2 panes");
+
+      await typeIn(b, "echo WHILE-DROPPED-$((40+2))\n");
+      await waitForText(b, "WHILE-DROPPED-42");
+
+      allowConnections();
+      await waitForText(a, RECONNECTED, 40_000);
+      await (await browser.$(sel.reconnectStatus)).waitForExist({ reverse: true, timeout: 10_000 });
+      await waitForToggleLabel("Broadcasting to 2 of 2 panes");
+
+      await typeIn(b, "echo RETURNED-$((40+2))\n");
+      await waitForText(a, "RETURNED-42");
+      expect(await textOf(a)).not.toContain("WHILE-DROPPED-");
+    });
+
+    it("goes off when closing a pane leaves one", async () => {
+      const [a] = await openSplit("close");
+      await toggle();
+      await dropPane(a);
+
+      await click(sel.failedTerminalDismiss);
+      const confirm = await browser.$(sel.confirmClosePane);
+      if (await confirm.isExisting()) await clickDialogFooterButton(sel.confirmClosePaneConfirm);
+      await browser.waitUntil(async () => (await sessionIds()).length === 1, {
+        timeout: 10_000,
+        timeoutMsg: "The pane did not close",
+      });
+
+      const button = await browser.$(sel.broadcastToggle);
+      expect(await button.getAttribute("aria-pressed")).toBe("false");
+      expect(await button.isEnabled()).toBe(false);
+      await expectGone(sel.broadcastIndicator);
+    });
+  });
+
+  describe("a connection's look", () => {
+    it("takes the connection's font and colours, and follows an edit", async () => {
+      await createConnectionA("conn-20-look", async () => {
+        await reveal(sel.connectionFormColorScheme);
+        await pickOption(sel.connectionFormColorScheme, "Dracula");
+        await pickOption(sel.connectionFormFontSize, "18px");
+      });
+      const id = await openShell("conn-20-look");
+      const opened = await stateOf(id);
+      expect(opened.background).toBe("#282a36");
+      expect(opened.fontSize).toBe(18);
+
+      await openConnectionEditor("conn-20-look");
+      await reveal(sel.connectionFormColorScheme);
+      expect(await textContentOf(await browser.$(sel.connectionFormColorScheme))).toContain("Dracula");
+      await pickOption(sel.connectionFormColorScheme, "Nord");
+      await pickOption(sel.connectionFormFontSize, "12px");
+      await saveConnectionForm();
+
+      // Off screen, colours change at once and the font waits to be measured.
+      await browser.waitUntil(async () => (await stateOf(id)).background === "#2e3440", {
+        timeout: 10_000,
+        timeoutMsg: "The saved scheme did not reach the open terminal",
+      });
+      expect((await stateOf(id)).fontSize).toBe(18);
+      expect((await stateOf(id)).cols).toBe(opened.cols);
+
+      await click(sel.navTerminals);
+      await browser.waitUntil(async () => (await stateOf(id)).fontSize === 12, {
+        timeout: 10_000,
+        timeoutMsg: "The saved font did not reach the terminal when it came back",
+      });
+      // Smaller letters fit more of them, and the shell is told.
+      await browser.waitUntil(async () => (await stateOf(id)).cols > opened.cols, {
+        timeout: 10_000,
+        timeoutMsg: "The terminal did not refit to its new font",
+      });
+      const { cols, rows } = await stateOf(id);
+      await typeIn(id, "echo SIZE=$(stty size | tr ' ' x)\n");
+      await waitForText(id, `SIZE=${rows}x${cols}`);
+    });
+
+    it("goes back to the app's colours when the scheme is cleared", async () => {
+      await createConnectionA("conn-20-clear", async () => {
+        await reveal(sel.connectionFormColorScheme);
+        await pickOption(sel.connectionFormColorScheme, "Nord");
+      });
+      const id = await openShell("conn-20-clear");
+      expect((await stateOf(id)).background).toBe("#2e3440");
+
+      await openConnectionEditor("conn-20-clear");
+      await reveal(sel.connectionFormColorScheme);
+      await pickOption(sel.connectionFormColorScheme, "Follow the app theme");
+      await saveConnectionForm();
+
+      await browser.waitUntil(
+        async () => APP_BACKGROUNDS.includes((await stateOf(id)).background ?? ""),
+        { timeout: 10_000, timeoutMsg: "The terminal kept the cleared scheme" },
+      );
+    });
+
+    it("opens a terminal with a stored scheme it does not know, and refuses only to save it", async () => {
+      const name = "conn-20-retired";
+      await createConnectionA(name);
+
+      // As left by a build that had this palette.
+      const dataFile = join(dataDir(), "data.json");
+      const stored = () =>
+        JSON.parse(readFileSync(dataFile, "utf8")) as {
+          connections: { name: string; color_scheme?: string }[];
+        };
+      const data = stored();
+      const connection = data.connections.find((candidate) => candidate.name === name);
+      if (!connection) throw new Error(`${name} is not in data.json`);
+      connection.color_scheme = "retired-palette";
+      writeFileSync(dataFile, JSON.stringify(data, null, 2));
+      await browser.refresh();
+      await waitForAppReady();
+
+      const id = await openShell(name);
+      expect(APP_BACKGROUNDS).toContain((await stateOf(id)).background);
+
+      await openConnectionEditor(name);
+      const fieldError = await browser.$(sel.connectionFormColorSchemeError);
+      await fieldError.waitForExist({ timeout: 10_000 });
+      expect(await textContentOf(fieldError)).toContain("no longer available");
+
+      await clickDialogFooterButton(sel.connectionFormSubmit);
+      const formError = await browser.$(sel.connectionFormError);
+      await formError.waitForExist({ timeout: 10_000 });
+      expect(await textContentOf(formError)).toContain("Unknown color scheme");
+      expect(await (await browser.$(sel.connectionForm)).isExisting()).toBe(true);
+
+      await reveal(sel.connectionFormColorScheme);
+      await pickOption(sel.connectionFormColorScheme, "Dracula");
+      await saveConnectionForm();
+      expect(stored().connections.find((candidate) => candidate.name === name)?.color_scheme).toBe(
+        "dracula",
+      );
+    });
+  });
+});
