@@ -339,6 +339,8 @@ describe("changing files", () => {
     );
     expect(calls("sftp_mkdir")).toEqual([{ target: { side: "remote", session_id: "s1" }, dir: "/home/me", name: "new" }]);
 
+    // The button stays disabled until the refused action has finished.
+    await waitFor(() => expect(screen.getByTestId("files-name-submit")).toBeEnabled());
     answer();
     fireEvent.click(screen.getByTestId("files-name-submit"));
     await waitFor(() => expect(screen.queryByTestId("files-name-dialog")).not.toBeInTheDocument());
