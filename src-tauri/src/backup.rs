@@ -113,7 +113,7 @@ fn sha256_hex(bytes: &[u8]) -> String {
 }
 
 /// `YYYYMMDD-HHMMSS-mmm` in UTC, so names sort in creation order.
-fn timestamp(ms: u64) -> String {
+pub(crate) fn timestamp(ms: u64) -> String {
     let secs = ms / 1000;
     let (h, m, s) = (secs / 3600 % 24, secs / 60 % 60, secs % 60);
     // Civil date from days since 1970-01-01 (Howard Hinnant's algorithm).
