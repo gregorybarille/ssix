@@ -387,6 +387,16 @@ describe("Snippets", () => {
     await expectNotInTerminal("multi-");
   });
 
+  it("keeps keys out of a terminal clicked while the palette is open", async () => {
+    await openPaletteFromTerminal();
+    // The panel sits beside the terminal: a click there retargets it and moves the focus.
+    await (await browser.$(sel.terminalContainer)).click();
+    await browser.keys(["l", "e", "a", "k", "e", "d", "Enter"]);
+    await browser.keys(["Escape"]);
+    await waitForPaletteClosed();
+    await expectNotInTerminal("leaked");
+  });
+
   it("refuses a tab where the shell would read it as a completion", async () => {
     await openSnippetsView();
     await click(sel.addSnippetButton);

@@ -144,7 +144,9 @@ export function Terminal({ sessionId, isVisible, onDisconnect, settings, connect
      * Ctrl+V on macOS is captured by the WebView).
      *
      * In-app panels are non-modal, so xterm's hidden textarea can keep
-     * focus while a panel is open. Never forward keystrokes in that state.
+     * focus while a panel is open. Never forward keystrokes in that state,
+     * on keypress as well: xterm sends printable keys and Enter from there
+     * when it was told to skip their keydown.
      */
     term.attachCustomKeyEventHandler((e) => {
       if (isHeldEnter(sessionId, e)) {
@@ -152,10 +154,12 @@ export function Terminal({ sessionId, isVisible, onDisconnect, settings, connect
         e.preventDefault();
         return false;
       }
-      if (e.type !== "keydown") return true;
+      if (e.type === "keyup") return true;
       if (isPanelOpen()) {
+        if (e.type === "keypress") e.preventDefault();
         return false;
       }
+      if (e.type !== "keydown") return true;
       const mod = e.metaKey || e.ctrlKey;
       if (!mod || e.altKey) return true;
       const key = e.key.toLowerCase();

@@ -200,6 +200,25 @@ describe("Terminal extension hooks", () => {
     });
   });
 
+  describe("with a panel open", () => {
+    const key = (type: string) => new KeyboardEvent(type, { key: "a", cancelable: true });
+
+    it("forwards no key, on keypress either, where xterm sends printable keys from", () => {
+      mount();
+      const panel = document.createElement("div");
+      panel.dataset.slot = "app-panel-content";
+      document.body.appendChild(panel);
+      const handler = mocks.term?.keyHandler;
+      const keypress = key("keypress");
+      expect(handler?.(key("keydown"))).toBe(false);
+      expect(handler?.(keypress)).toBe(false);
+      expect(keypress.defaultPrevented).toBe(true);
+      expect(handler?.(key("keyup"))).toBe(true);
+      panel.remove();
+      expect(handler?.(key("keypress"))).toBe(true);
+    });
+  });
+
   describe("becoming visible", () => {
     const props = {
       sessionId: "s1",

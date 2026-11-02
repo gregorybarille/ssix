@@ -151,10 +151,11 @@ describe("Terminal — explicit Cmd/Ctrl+C copy (always available)", () => {
    */
   function makeKeyHandler(opts: { getSelection: () => string }) {
     return (e: { type: string; metaKey: boolean; ctrlKey: boolean; altKey: boolean; key: string }) => {
-      if (e.type !== "keydown") return true;
+      if (e.type === "keyup") return true;
       if (document.querySelector('[data-slot="app-panel-content"]')) {
         return false;
       }
+      if (e.type !== "keydown") return true;
       const mod = e.metaKey || e.ctrlKey;
       if (!mod || e.altKey) return true;
       const key = e.key.toLowerCase();
