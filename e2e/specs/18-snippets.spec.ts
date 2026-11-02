@@ -32,6 +32,18 @@ import { sel } from "../helpers/selectors.js";
 /** Long enough for a stray line to run and print. */
 const QUIET_MS = 1_500;
 
+/**
+ * Wait until nothing matches. Linux tauri-driver/WebKit throws a stale element
+ * error when WebDriver's search lands on a node as React removes it, so look
+ * from inside the page, as `clickDialogFooterButton` does.
+ */
+async function waitForGone(selector: string): Promise<void> {
+  await browser.waitUntil(
+    () => browser.execute((s: string) => document.querySelector(s) === null, selector),
+    { timeout: 10_000, timeoutMsg: `${selector} is still there` },
+  );
+}
+
 async function openSnippetsView(): Promise<void> {
   await click(sel.navSnippets);
   await (await browser.$(sel.addSnippetButton)).waitForExist({ timeout: 10_000 });
@@ -51,7 +63,7 @@ async function saveSnippet(name: string, lines: string[]): Promise<void> {
     if (line) await command.addValue(line);
   }
   await clickDialogFooterButton(sel.snippetFormSubmit);
-  await form.waitForExist({ reverse: true, timeout: 10_000 });
+  await waitForGone(sel.snippetForm);
   await (await browser.$(sel.snippetRowByName(name))).waitForExist({ timeout: 10_000 });
 }
 
@@ -86,7 +98,7 @@ async function choose(name: string): Promise<void> {
 }
 
 async function waitForPaletteClosed(): Promise<void> {
-  await (await browser.$(sel.snippetPalette)).waitForExist({ reverse: true, timeout: 10_000 });
+  await waitForGone(sel.snippetPalette);
 }
 
 async function expectNotInTerminal(text: string): Promise<void> {
@@ -141,7 +153,7 @@ describe("Snippets", () => {
     await tags.setValue("logs-18");
     await browser.keys(["Enter"]);
     await clickDialogFooterButton(sel.snippetFormSubmit);
-    await form.waitForExist({ reverse: true, timeout: 10_000 });
+    await waitForGone(sel.snippetForm);
 
     const row = await browser.$(sel.snippetRowByName("snip-18-crud"));
     await row.waitForExist({ timeout: 10_000 });
@@ -173,7 +185,7 @@ describe("Snippets", () => {
     await form.waitForExist({ timeout: 10_000 });
     await fill(sel.snippetFormCommand, "tail -n 5 {{file}}");
     await clickDialogFooterButton(sel.snippetFormSubmit);
-    await form.waitForExist({ reverse: true, timeout: 10_000 });
+    await waitForGone(sel.snippetForm);
     await browser.waitUntil(
       async () => (await textContentOf(row)).includes("tail -n 5 {{file}}"),
       { timeout: 10_000, timeoutMsg: "the row never showed the edit" },
@@ -183,10 +195,7 @@ describe("Snippets", () => {
     for (const name of ["snip-18-crud", "snip-18-crud-2"]) {
       await (await snippetRowButton(name, sel.snippetRowDelete)).click();
       await clickDialogFooterButton(sel.snippetDeleteConfirm);
-      await (await browser.$(sel.snippetRowByName(name))).waitForExist({
-        reverse: true,
-        timeout: 10_000,
-      });
+      await waitForGone(sel.snippetRowByName(name));
       expect(savedSnippets().map((s) => s.name)).not.toContain(name);
     }
   });
