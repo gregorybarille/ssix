@@ -297,7 +297,7 @@ fn add_connection_sync(input: AddConnectionInput) -> Result<Connection, String> 
 /// update. Trims the name first, so " web" is stored as, and clashes with,
 /// "web". `editing` is the id of the connection being updated, whose own
 /// name is not a clash.
-fn check_connection(
+pub(crate) fn check_connection(
     data: &AppData,
     f: &mut ConnectionFields,
     editing: Option<&str>,
@@ -322,7 +322,7 @@ fn check_connection(
 
 /// Store `f`, already checked, as a new connection: shared by add and
 /// clone, so a clone gets exactly the normalization a new connection gets.
-fn insert_new_connection(data: &mut AppData, f: ConnectionFields) -> Connection {
+pub(crate) fn insert_new_connection(data: &mut AppData, f: ConnectionFields) -> Connection {
     let mut connection = Connection::new(f.name, f.host, f.port, f.credential_id, f.kind);
     connection.verbosity = f.verbosity;
     connection.extra_args = f.extra_args;

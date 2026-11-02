@@ -2,6 +2,7 @@ import React, { Suspense, lazy } from "react";
 import { Plus } from "lucide-react";
 import { ConnectionList } from "../ConnectionList";
 import { ConnectionForm } from "../ConnectionForm";
+import { ImportButton } from "../ImportDialog";
 import { SearchBar } from "../SearchBar";
 import { LayoutToggle } from "../ui/layout-toggle";
 import { Button } from "../ui/button";
@@ -84,6 +85,7 @@ export function ConnectionsView({
         <h1 className="text-lg font-semibold">Connections</h1>
         <div className="flex items-center gap-2">
           <LayoutToggle value={settings.connection_layout} onChange={onLayoutChange} showTags />
+          <ImportButton />
           <Button
             size="sm"
             onClick={() => dialogs.openNewConnection()}

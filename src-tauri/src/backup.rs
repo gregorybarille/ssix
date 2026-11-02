@@ -105,7 +105,7 @@ fn now_ms() -> u64 {
         .unwrap_or(0)
 }
 
-fn sha256_hex(bytes: &[u8]) -> String {
+pub(crate) fn sha256_hex(bytes: &[u8]) -> String {
     Sha256::digest(bytes)
         .iter()
         .map(|b| format!("{:02x}", b))

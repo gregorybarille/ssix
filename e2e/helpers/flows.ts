@@ -309,3 +309,26 @@ export async function typeIntoTerminal(text: string): Promise<void> {
   await term.click();
   for (const key of text) await browser.keys([key]);
 }
+
+/** Close every tab, confirming for each one that holds a live shell. */
+export async function closeAllTabs(): Promise<void> {
+  const openTabs = () => browser.$$(sel.terminalTabCloseAny).length;
+  const confirmation = () => browser.$(sel.confirmClosePaneConfirm);
+  for (let before = await openTabs(); before > 0; before = await openTabs()) {
+    await browser.execute(
+      (selector: string) => document.querySelector<HTMLElement>(selector)?.click(),
+      sel.terminalTabCloseAny,
+    );
+    await browser.waitUntil(
+      async () => (await openTabs()) < before || (await confirmation().isExisting()),
+      { timeout: 10_000, timeoutMsg: "A terminal tab neither closed nor asked to" },
+    );
+    if (await confirmation().isExisting()) {
+      await clickDialogFooterButton(sel.confirmClosePaneConfirm);
+      await browser.waitUntil(async () => (await openTabs()) < before, {
+        timeout: 10_000,
+        timeoutMsg: "A terminal tab did not close after confirming",
+      });
+    }
+  }
+}

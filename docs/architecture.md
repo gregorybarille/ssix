@@ -30,6 +30,7 @@ SSIX is a Tauri v2 desktop application with a React frontend and a Rust backend.
 - `src-tauri/src/known_hosts.rs` verifies server host keys (trust-on-first-use) against `~/.ssix/known_hosts`.
 - `src-tauri/src/reconnect.rs` and `src-tauri/src/session_log.rs` hold a shell worker's auto-reconnect and session log (see [session-resilience.md](session-resilience.md)).
 - `src-tauri/src/remote_script.rs` runs a saved script on an authenticated session (see Script Runs).
+- `src-tauri/src/ssh_config.rs` reads OpenSSH client config files for `commands/import_config.rs` (see [Import from SSH config](ssh-config-import.md)).
 
 ## Data Flow
 

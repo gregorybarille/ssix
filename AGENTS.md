@@ -12,6 +12,7 @@
 > - `docs/roadmap.md` — validated feature roadmap, stream ownership and rules
 > - `docs/session-resilience.md` — keepalive, auto-reconnect and session logs
 > - `docs/snippets.md` — snippets, `{{variable}}` prompts and how a paste avoids running anything
+> - `docs/ssh-config-import.md` — import from `~/.ssh/config`: mapping, skips and dedupe
 > - `docs/troubleshooting.md` — common failure modes and fixes
 
 ## Build & Test

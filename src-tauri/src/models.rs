@@ -303,7 +303,7 @@ impl ConnectionKind {
     }
 
     /// Mutable gateway credential id of a current tunnel kind.
-    fn gateway_credential_id_mut(&mut self) -> Option<&mut String> {
+    pub(crate) fn gateway_credential_id_mut(&mut self) -> Option<&mut String> {
         match self {
             ConnectionKind::PortForward {
                 gateway_credential_id,
