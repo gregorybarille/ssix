@@ -522,6 +522,12 @@ enum Incoming {
         listener: ssh2::Listener,
         serve: ServeChannel,
     },
+    /// Clients found only by asking, like `Ssh`, which needs a real session.
+    #[cfg(test)]
+    Queued {
+        waiting: Arc<AtomicUsize>,
+        accepted: Arc<AtomicUsize>,
+    },
 }
 
 impl Incoming {
@@ -554,6 +560,11 @@ impl Incoming {
                     Err(_) => return Ok(()),
                 }
             },
+            #[cfg(test)]
+            Incoming::Queued { waiting, accepted } => {
+                accepted.fetch_add(waiting.swap(0, Ordering::SeqCst), Ordering::SeqCst);
+                Ok(())
+            }
         }
     }
 
@@ -562,14 +573,14 @@ impl Incoming {
     fn fd(&self) -> Option<wake::Fd> {
         match self {
             Incoming::Tcp { listener, .. } => Some(wake::fd_of(listener)),
-            Incoming::Ssh { .. } => None,
+            _ => None,
         }
     }
 
     fn clients_tick(&self) -> Duration {
         match self {
             Incoming::Tcp { .. } => CLIENTS_TICK,
-            Incoming::Ssh { .. } => REMOTE_CLIENTS_TICK,
+            _ => REMOTE_CLIENTS_TICK,
         }
     }
 }
@@ -634,8 +645,16 @@ fn supervise<U: Uplink>(
                 Probe::Busy => {}
                 Probe::Stopped => break None,
             }
+            // The probe read the session, which can have queued a remote
+            // forward's connection with nothing left on the socket to wake
+            // this thread for it.
+            if let Err(e) = incoming.accept_all(&hub) {
+                break Some(e);
+            }
         }
 
+        // Looked at again: that can have started a client.
+        let idle = hub.in_flight.load(Ordering::SeqCst) == 0;
         let mut fds = vec![control.wake.fd()];
         fds.extend(incoming.fd());
         let timeout = if idle {
@@ -951,7 +970,7 @@ mod tests {
     use super::test_support::*;
     use super::*;
     use std::collections::VecDeque;
-    use std::io::Read;
+    use std::io::{Read, Write};
 
     const SOON: Duration = Duration::from_secs(5);
     /// Long enough that a test finishing in time did not rely on a probe.
@@ -1202,6 +1221,37 @@ mod tests {
         let reason = f.wait_for_end().expect("a reason for the frontend");
         assert!(reason.contains("Lost the connection"), "{}", reason);
         assert_dropped(&mut client);
+    }
+
+    #[test]
+    fn a_connection_a_probe_read_is_accepted_without_waiting_for_the_next_probe() {
+        let (socket, mut server_end) = socket_pair();
+        let uplink = Arc::new(FakeUplink::new(socket, &[]));
+        let waiting = Arc::new(AtomicUsize::new(0));
+        let accepted = Arc::new(AtomicUsize::new(0));
+        {
+            // What libssh2 does in a probe: it reads the socket dry and queues
+            // the connection, so the socket wakes nobody for it afterwards.
+            let waiting = Arc::clone(&waiting);
+            *uplink.on_probe.lock().unwrap() = Box::new(move |mut socket: &TcpStream| {
+                let mut buf = [0u8; 16];
+                while matches!(socket.read(&mut buf), Ok(n) if n > 0) {}
+                waiting.store(1, Ordering::SeqCst);
+            });
+        }
+        let incoming = Incoming::Queued {
+            waiting,
+            accepted: Arc::clone(&accepted),
+        };
+        let (_hub, events, handle) = supervised(&uplink, incoming, timing(NEVER));
+
+        server_end.write_all(b"x").unwrap();
+        wait_for("the connection to be accepted", SOON, || {
+            accepted.load(Ordering::SeqCst) == 1
+        });
+
+        handle.send(SessionMsg::Disconnect).unwrap();
+        wait_for("the forward to end", SOON, || events.ended_with().is_some());
     }
 
     #[test]
