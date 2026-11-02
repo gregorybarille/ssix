@@ -481,6 +481,28 @@ describe("Keyboard-interactive login", () => {
     await runInShell("server-e:~$", "echo after-drop-$((6*7))", "after-drop-42");
   });
 
+  it("shows from any view that a prompt is waiting, and gives it the keyboard on arrival", async () => {
+    await openPromptedShell("before-away");
+
+    await cutConnection();
+    await navigateTo("connections");
+    await (await browser.$(sel.navTerminalsWaiting)).waitForExist({ timeout: 30_000 });
+    expect(await (await browser.$(sel.navTerminals)).getAttribute("aria-label")).toContain(
+      "login prompt waiting",
+    );
+
+    await click(sel.navTerminals);
+    await waitForAuthPrompt();
+    expect(await (await browser.$(sel.terminalTabPromptWaiting)).isExisting()).toBe(true);
+    const focused = await browser.execute(() => document.activeElement?.getAttribute("data-testid"));
+    expect(focused).toBe("auth-prompt-input-0");
+
+    await answerAuthPrompt(TARGETS.e.password);
+    await expectReconnected("before-away-42");
+    await (await browser.$(sel.navTerminalsWaiting)).waitForExist({ reverse: true, timeout: 10_000 });
+    expect(await (await browser.$(sel.terminalTabPromptWaiting)).isExisting()).toBe(false);
+  });
+
   it("stops reconnecting on Cancel, keeps the pane and asks again on Retry", async () => {
     await openPromptedShell("before-cancel");
 

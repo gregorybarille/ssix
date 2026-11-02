@@ -1,10 +1,11 @@
-import React, { useState } from "react";
+import React, { useRef, useState } from "react";
 import { Terminal } from "./Terminal";
 import { FailedTerminal } from "./FailedTerminal";
 import { AuthPrompt } from "./AuthPrompt";
 import { useAuthPromptStore } from "@/store/useAuthPromptStore";
 import { Button } from "./ui/button";
 import {
+  KeyRound,
   X,
   Plus,
   SplitSquareHorizontal,
@@ -83,6 +84,9 @@ function PaneRenderer({
   // this position in the tree, so its scrollback survives the reconnect.
   const neverConnected = !session.reconnect && (session.error || session.retrying);
   const authPrompt = useAuthPromptStore((state) => state.prompts[session.sessionId]);
+  // This view is only mounted while it is shown, so a prompt that is already up
+  // as a pane mounts is one the user just came to.
+  const promptAtMount = useRef(authPrompt?.prompt_id);
   // A login prompt has the whole pane until it closes, also over a shell that is
   // reconnecting. Its terminal stays where it is underneath, inert: it keeps its
   // scrollback, and cannot take the focus and an answer with it from the prompt.
@@ -107,6 +111,7 @@ function PaneRenderer({
           request={authPrompt}
           isVisible={isVisible}
           reconnecting={!!session.reconnect}
+          userCameToIt={authPrompt.prompt_id === promptAtMount.current}
           onFocusReleased={() => focusSession(session.sessionId)}
           onAnswer={(answers) => useAuthPromptStore.getState().answer(session.sessionId, answers)}
           // A dropped shell keeps its pane: Cancel ends the attempt, which stops
@@ -152,6 +157,7 @@ export function TerminalTabs({
 }: TerminalTabsProps) {
   const [menuOpen, setMenuOpen] = useState(false);
   const tabRefs = React.useRef(new Map<string, HTMLButtonElement>());
+  const prompts = useAuthPromptStore((state) => state.prompts);
 
   // Right-click context menu for terminal tabs.
   const ctx = useContextMenu();
@@ -253,6 +259,8 @@ export function TerminalTabs({
           const splitSuffix =
             tab.mode !== "single" ? ` (${tab.mode} split)` : "";
           const failureSuffix = hasFailure ? " — connection failed" : "";
+          const promptWaiting = tab.panes.some((p) => prompts[p.sessionId]);
+          const promptSuffix = promptWaiting ? " — login prompt waiting" : "";
           /*
            * Audit-3 follow-up P2#5: append the keyboard close hint
            * to the active tab's accessible name. The visible "x"
@@ -278,7 +286,7 @@ export function TerminalTabs({
               id={`terminal-tab-${tab.id}`}
               aria-controls={`terminal-panel-${tab.id}`}
               aria-selected={isActive}
-              aria-label={`Terminal ${label}${splitSuffix}${failureSuffix}${closeHintSuffix}`}
+              aria-label={`Terminal ${label}${splitSuffix}${failureSuffix}${promptSuffix}${closeHintSuffix}`}
               tabIndex={isActive ? 0 : -1}
               className={cn(
                 "group flex items-center gap-1.5 px-3 py-1.5 text-xs cursor-pointer border-r border-border/80 shadow-[inset_-1px_0_0_hsl(var(--border))] shrink-0 max-w-[200px] transition-colors text-left",
@@ -298,6 +306,16 @@ export function TerminalTabs({
                   title="Connection failed"
                   aria-hidden="true"
                 />
+              )}
+              {promptWaiting && (
+                <span
+                  className="shrink-0 text-primary"
+                  title="Login prompt waiting"
+                  aria-hidden="true"
+                  data-testid="terminal-tab-prompt-waiting"
+                >
+                  <KeyRound className="h-3 w-3" />
+                </span>
               )}
               <span className="truncate">{label}</span>
               {tab.mode !== "single" && (

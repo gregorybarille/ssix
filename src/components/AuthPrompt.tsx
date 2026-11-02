@@ -13,6 +13,8 @@ interface AuthPromptProps {
   isVisible: boolean;
   /** The server is asking because a dropped shell is logging in again. */
   reconnecting?: boolean;
+  /** This prompt was already waiting when the user arrived at its pane. */
+  userCameToIt?: boolean;
   onAnswer: (answers: string[]) => Promise<void>;
   onCancel: () => void;
   /** The prompt went, and nothing else holds the keyboard. */
@@ -35,12 +37,13 @@ interface AuthPromptProps {
  * A prompt arrives whenever the server gets round to asking, which may be while
  * the user is typing in another pane, possibly a password. So it only takes the
  * keyboard from its own pane or from nobody, and otherwise waits to be clicked
- * on. Switching to its tab is the user coming to it, which always does.
+ * on. Arriving at its tab or view is the user coming to it, which always does.
  */
 export function AuthPrompt({
   request,
   isVisible,
   reconnecting = false,
+  userCameToIt = false,
   onAnswer,
   onCancel,
   onFocusReleased,
@@ -69,11 +72,11 @@ export function AuthPrompt({
 
   const wasVisible = useRef<boolean | null>(null);
   useEffect(() => {
-    const cameToIt = wasVisible.current === false;
+    const cameToIt = wasVisible.current === false || (wasVisible.current === null && userCameToIt);
     wasVisible.current = isVisible;
     const pane = root.current?.parentElement ?? null;
     if (isVisible && (cameToIt || focusIsFreeFor(pane))) fields.current[0]?.focus();
-  }, [isVisible]);
+  }, [isVisible, userCameToIt]);
 
   useEffect(() => {
     const pane = root.current?.parentElement ?? null;

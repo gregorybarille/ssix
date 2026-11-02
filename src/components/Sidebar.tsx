@@ -1,7 +1,9 @@
 import React from "react";
+import { KeyRound } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { VIEWS, type NavItem, type ViewDefinition, type ViewPlacement } from "@/lib/views";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
+import { useAuthPromptStore } from "@/store/useAuthPromptStore";
 
 interface SidebarProps {
   active: NavItem;
@@ -23,6 +25,7 @@ function NavButton({
   icon,
   badge,
   dot,
+  waiting,
   testId,
 }: {
   active: boolean;
@@ -32,6 +35,8 @@ function NavButton({
   icon: React.ReactNode;
   badge?: number;
   dot?: boolean;
+  /** What is waiting for the user behind this button, in words. */
+  waiting?: string;
   testId?: string;
 }) {
   /*
@@ -46,6 +51,7 @@ function NavButton({
     label,
     badge !== undefined && badge > 0 ? `${badge} active` : null,
     dot ? "pending changes" : null,
+    waiting ?? null,
   ]
     .filter(Boolean)
     .join(", ");
@@ -86,6 +92,15 @@ function NavButton({
               aria-hidden="true"
             />
           )}
+          {waiting && (
+            <span
+              className="absolute -bottom-0.5 -right-0.5 rounded-full p-0.5 bg-primary text-primary-foreground"
+              aria-hidden="true"
+              data-testid={testId ? `${testId}-waiting` : undefined}
+            >
+              <KeyRound className="h-2.5 w-2.5" />
+            </span>
+          )}
         </button>
       </TooltipTrigger>
       <TooltipContent side="right" data-testid={testId ? `${testId}-tooltip` : undefined}>
@@ -103,12 +118,16 @@ export function Sidebar({
   forwardCount = 0,
   gitPending = false,
 }: SidebarProps) {
+  const promptWaiting = useAuthPromptStore((state) => Object.keys(state.prompts).length > 0);
   // The live state a button shows on top of what the view table says about it.
   const badges: Partial<Record<NavItem, number>> = {
     forwards: forwardCount,
     terminals: terminalCount,
   };
   const dots: Partial<Record<NavItem, boolean>> = { git_sync: gitPending };
+  const waiting: Partial<Record<NavItem, string>> = {
+    terminals: promptWaiting ? "login prompt waiting" : undefined,
+  };
 
   const navButton = (view: ViewDefinition<NavItem>) => (
     <NavButton
@@ -120,6 +139,7 @@ export function Sidebar({
       icon={<view.icon className="h-5 w-5" aria-hidden="true" />}
       badge={badges[view.id]}
       dot={dots[view.id]}
+      waiting={waiting[view.id]}
       testId={`nav-${view.id.replace("_", "-")}`}
     />
   );

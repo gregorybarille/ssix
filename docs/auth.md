@@ -109,8 +109,9 @@ A dropped shell that needs answers asks again in the same pane
   failing again, so the reconnect tries again, and asks again once it gets through.
 - Closing the pane or tab, or anything else that ends the attempt, closes a
   waiting prompt within a moment.
-- A prompt in a background tab waits there, and nothing draws attention to it
-  until you switch to that tab.
+- A prompt in a background tab or behind another view waits there. A key on its
+  tab and on the **Terminals** entry in the sidebar shows that one is waiting, and
+  it gets the keyboard when you go there.
 
 Only a shell has a pane to ask in, so it is the only thing that can answer. The
 shell of a jump host connection can ask for either hop, and the pane says which

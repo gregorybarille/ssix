@@ -1,6 +1,6 @@
 import { StrictMode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { AuthPrompt } from "@/components/AuthPrompt";
 import { TerminalTabs } from "@/components/TerminalTabs";
@@ -109,6 +109,13 @@ describe("AuthPrompt", () => {
 
       rerender(beside(true));
       expect(field(0)).toHaveFocus();
+    });
+
+    it("takes it when the user arrives at a pane whose prompt was already waiting", () => {
+      const typing = someoneTyping();
+      setup({ userCameToIt: true });
+      expect(field(0)).toHaveFocus();
+      typing.remove();
     });
 
     it("leaves it alone while hidden", () => {
@@ -238,6 +245,38 @@ describe("AuthPrompt", () => {
     await userEvent.setup().click(screen.getByTestId("auth-prompt-cancel"));
     expect(onCancel).toHaveBeenCalledTimes(1);
     expect(onAnswer).not.toHaveBeenCalled();
+  });
+});
+
+describe("a prompt out of view", () => {
+  const connection = { id: "c1", name: "otp", host: "h", port: 22, type: "direct" as const };
+  const tabWith = (id: string, sessionId: string) => ({
+    id,
+    mode: "single" as const,
+    panes: [{ sessionId, connectionName: id, connection, retrying: true }],
+  });
+
+  beforeEach(() => useAuthPromptStore.setState({ prompts: {} }));
+
+  it("marks its tab, for as long as it waits and on no other", () => {
+    render(
+      <TerminalTabs
+        tabs={[tabWith("t1", "in-view"), tabWith("t2", "behind")]}
+        activeTabId="t1"
+        {...terminalTabsCallbacks()}
+      />,
+    );
+    expect(screen.queryByTestId("terminal-tab-prompt-waiting")).toBeNull();
+
+    act(() => useAuthPromptStore.getState().receive("behind", { kind: "auth_prompt", ...request }));
+    const tab = screen.getByRole("tab", { name: /login prompt waiting/ });
+    expect(tab).toHaveAttribute("id", "terminal-tab-t2");
+    expect(screen.getAllByTestId("terminal-tab-prompt-waiting")).toHaveLength(1);
+
+    act(() =>
+      useAuthPromptStore.getState().receive("behind", { kind: "auth_prompt_closed", prompt_id: "p1" }),
+    );
+    expect(screen.queryByTestId("terminal-tab-prompt-waiting")).toBeNull();
   });
 });
 
