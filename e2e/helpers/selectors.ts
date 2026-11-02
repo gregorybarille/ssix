@@ -249,6 +249,26 @@ export const sel = {
   // Each roadmap stream appends its selectors under its own anchor.
   // roadmap:auth
   // roadmap:resilience
+  // The status view of a shell that lost its connection (phase: waiting | stopped).
+  reconnectStatus: '[data-testid="failed-terminal"][data-reconnect-phase]',
+  reconnectStatusPhase: (phase: "waiting" | "stopped") =>
+    `[data-testid="failed-terminal"][data-reconnect-phase="${phase}"]`,
+  reconnectCancelButton: '[data-testid="reconnect-cancel-button"]',
+  failedTerminalRetry: '[data-testid="failed-terminal-retry"]',
+  failedTerminalDismiss: '[data-testid="failed-terminal-dismiss"]',
+  connectionFormKeepalive: '[data-testid="connection-form-keepalive"]',
+  connectionFormAutoReconnect: '[data-testid="connection-form-auto-reconnect"]',
+  connectionFormLogSession: '[data-testid="connection-form-log-session"]',
+  settingsKeepaliveInterval: '[data-testid="settings-keepalive-interval"]',
+  settingsAutoReconnect: '[data-testid="settings-auto-reconnect"]',
+  settingsReconnectMaxAttempts: '[data-testid="settings-reconnect-max-attempts"]',
+  settingsSessionLogEnabled: '[data-testid="settings-session-log-enabled"]',
+  settingsSessionLogDir: '[data-testid="settings-session-log-dir"]',
+  navTerminals: '[data-testid="nav-terminals"]',
+  // Whichever terminal tab comes first; its id is generated.
+  terminalTabCloseAny: '[data-testid^="close-tab-"]',
+  confirmClosePane: '[data-testid="confirm-close-pane"]',
+  confirmClosePaneConfirm: '[data-testid="confirm-close-pane-confirm"]',
   // roadmap:forwards
   // roadmap:sftp
   // roadmap:snippets

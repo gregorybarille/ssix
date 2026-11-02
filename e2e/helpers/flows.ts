@@ -150,6 +150,8 @@ export interface DirectConnectionInput {
   /** Label of a verbosity option, e.g. "-vv (negotiated algorithms)". */
   verbosity?: string;
   proxyCommand?: string;
+  /** Fill more of the form, just before it is saved. */
+  beforeSave?: () => Promise<void>;
 }
 
 export async function saveConnectionForm(): Promise<void> {
@@ -183,6 +185,7 @@ export async function createDirectConnection(input: DirectConnectionInput): Prom
       await browser.keys(["Enter"]);
     }
   }
+  await input.beforeSave?.();
   await saveConnectionForm();
 }
 

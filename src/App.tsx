@@ -612,6 +612,7 @@ function App() {
           }
           confirmLabel="Close"
           variant="destructive"
+          testId="confirm-close-pane"
           onConfirm={async () => {
             const target = dialogs.confirmClosePane;
             if (!target) return;
