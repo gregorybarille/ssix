@@ -336,7 +336,6 @@ export const sel = {
   filesFooter: (side: "local" | "remote") => `[data-testid="files-footer-${side}"]`,
   // roadmap:snippets
   navSnippets: '[data-testid="nav-snippets"]',
-  navTerminals: '[data-testid="nav-terminals"]',
   addSnippetButton: '[data-testid="add-snippet-button"]',
   snippetForm: '[data-testid="snippet-form"]',
   snippetFormName: '[data-testid="snippet-form-name"]',
@@ -366,7 +365,6 @@ export const sel = {
   snippetDiscardCancel: '[data-testid="snippet-discard-cancel"]',
   snippetDiscardConfirm: '[data-testid="snippet-discard-confirm"]',
   terminalTabByName: (name: string) => `[role="tab"][aria-label^="Terminal ${name}"]`,
-  terminalNewMenu: '[aria-label="Open a new tab or split"]',
   terminalSplitRight: '//*[@role="menuitem"][contains(., "Split right")]',
   connectPickerOption: (name: string) => `[role="option"][data-name="${name}"]`,
   // roadmap:import
