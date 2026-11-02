@@ -34,8 +34,6 @@ export interface ViewDefinition<Id extends string = string> {
    * it passes props.
    */
   component?: LazyExoticComponent<ComponentType>;
-  /** A third tooltip line naming the view's shortcut, shown as written. */
-  shortcutHint?: string;
 }
 
 /**

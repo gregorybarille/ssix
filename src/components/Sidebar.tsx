@@ -19,7 +19,6 @@ function NavButton({
   active,
   label,
   hint,
-  shortcutHint,
   onClick,
   icon,
   badge,
@@ -29,7 +28,6 @@ function NavButton({
   active: boolean;
   label: string;
   hint: string;
-  shortcutHint?: string;
   onClick: () => void;
   icon: React.ReactNode;
   badge?: number;
@@ -93,7 +91,6 @@ function NavButton({
       <TooltipContent side="right" data-testid={testId ? `${testId}-tooltip` : undefined}>
         <p className="font-medium">{label}</p>
         <p className="text-muted-foreground">{hint}</p>
-        {shortcutHint && <p className="text-muted-foreground-soft">{shortcutHint}</p>}
       </TooltipContent>
     </Tooltip>
   );
@@ -119,7 +116,6 @@ export function Sidebar({
       active={active === view.id}
       label={view.label}
       hint={view.description}
-      shortcutHint={view.shortcutHint}
       onClick={() => onNavigate(view.id)}
       icon={<view.icon className="h-5 w-5" aria-hidden="true" />}
       badge={badges[view.id]}

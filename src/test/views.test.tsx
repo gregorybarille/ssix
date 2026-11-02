@@ -11,7 +11,6 @@ const { extraView } = vi.hoisted(() => ({
     label: "Probe",
     description: "A view only this test knows",
     placement: "main",
-    shortcutHint: "Cmd+Shift+F",
   },
 }));
 
@@ -87,6 +86,5 @@ describe("Sidebar from the view table", () => {
     act(() => button.focus());
     const tooltip = await screen.findByTestId("nav-probe-view-tooltip");
     expect(within(tooltip).getByText("A view only this test knows")).toBeInTheDocument();
-    expect(within(tooltip).getByText("Cmd+Shift+F")).toBeInTheDocument();
   });
 });

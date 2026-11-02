@@ -74,7 +74,7 @@ Files that many features would otherwise edit at once are registries: a feature 
 
 | To add | Add it to | Consumed by |
 |---|---|---|
-| A view | An entry in `VIEW_TABLE` in `src/lib/views.ts`: `id`, `label`, `description`, `icon`, `placement`, a lazy `component`, optional `shortcutHint` | `Sidebar.tsx` (button, tooltip, test id `nav-<id>`), `useViewStore.ts` (`NavItem`), `App.tsx` (route) |
+| A view | An entry in `VIEW_TABLE` in `src/lib/views.ts`: `id`, `label`, `description`, `icon`, `placement`, a lazy `component` | `Sidebar.tsx` (button, tooltip, test id `nav-<id>`), `useViewStore.ts` (`NavItem`), `App.tsx` (route) |
 | A keyboard shortcut | An entry in `SHORTCUTS` in `src/hooks/useGlobalShortcuts.ts`: `combo`, `description`, `handler` calling a store through `getState()` | `App.tsx` spreads the table (`TABLE_SHORTCUTS`) into `useGlobalShortcuts` |
 | Terminal behaviour | A `TerminalExtension` in its own file under `src/components/terminal/`, registered in `registerExtensions.ts` | `Terminal.tsx`, through the `runTerminal*` helpers in `extensions.ts` |
 | A per-connection option | A field on `ConnectionAdvanced` (`src/types/index.ts`, `commands/connections.rs`) and an input in its section under `src/components/connection-form/` | `ConnectionForm.tsx` carries the `advanced` object through load, the unsaved-changes guard and submit |
