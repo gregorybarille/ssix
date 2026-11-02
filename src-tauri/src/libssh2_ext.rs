@@ -1,10 +1,9 @@
 //! The libssh2 calls the `ssh2` crate does not wrap, and nothing else.
 //!
 //! `libssh2-sys` is the copy `ssh2` links, so these run on the same sessions.
-//! `libssh2_session_callback_set2`, `libssh2_userauth_publickey` and
-//! `libssh2_poll_channel_read` are public libssh2 API that `libssh2-sys` does
-//! not declare; they are declared here. Nothing reaches into a private
-//! libssh2 struct.
+//! `libssh2_session_callback_set2` and `libssh2_userauth_publickey` are public
+//! libssh2 API that `libssh2-sys` does not declare; they are declared here.
+//! Nothing reaches into a private libssh2 struct.
 //!
 //! Two rules keep this sound, and every wrapper below relies on them:
 //!
@@ -15,7 +14,7 @@
 //!   session is freed, whichever comes first, so whoever holds one must also
 //!   hold a clone of its `Session`.
 
-use std::ffi::{c_char, c_int, c_uchar, c_void, CString};
+use std::ffi::{c_char, c_int, c_uchar, c_ulong, c_void, CString};
 use std::io;
 use std::marker::PhantomData;
 use std::mem;
@@ -61,8 +60,6 @@ extern "C" {
         sign_callback: Option<SignFn>,
         abstract_: *mut *mut c_void,
     ) -> c_int;
-
-    fn libssh2_poll_channel_read(channel: *mut raw::LIBSSH2_CHANNEL, extended: c_int) -> c_int;
 }
 
 /// Proof that the session's mutex is held. Only [`with_session`] makes one,
@@ -105,10 +102,20 @@ impl RawChannel {
     /// Whether data for this channel already sits in libssh2's queue. Unlike
     /// [`Self::read`] this leaves the socket alone, so it never pulls another
     /// channel's packets out from under the thread that sleeps on the socket.
+    ///
+    /// Not `libssh2_poll_channel_read`: that gives up at the first queued packet
+    /// under five bytes, and libssh2 keeps a one-byte answer to each keepalive
+    /// queued until the session ends. After the first one it would say no for
+    /// the rest of the session, and the agent's clients would hang.
     pub(crate) fn has_data(&self, locked: &Locked<'_>) -> bool {
         self.check(locked);
-        // SAFETY: the channel is live (module rules) and the session is locked.
-        unsafe { libssh2_poll_channel_read(self.raw, 0) == 1 }
+        let mut queued: c_ulong = 0;
+        // SAFETY: `queued` outlives the call, the other output may be null, the
+        // channel is live (module rules) and the session is locked.
+        unsafe {
+            raw::libssh2_channel_window_read_ex(self.raw, &mut queued, std::ptr::null_mut());
+        }
+        queued > 0
     }
 
     /// Whether the server sent EOF and everything before it has been read.
