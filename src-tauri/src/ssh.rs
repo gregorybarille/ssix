@@ -182,7 +182,7 @@ impl SessionContext {
         crate::logs::log(&self.app, level, source, message);
     }
 
-    fn emit_error(&self, message: String) {
+    pub(crate) fn emit_error(&self, message: String) {
         self.send_event(OutputEvent::Error { message });
     }
 
