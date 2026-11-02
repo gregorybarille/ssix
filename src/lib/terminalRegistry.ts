@@ -52,6 +52,21 @@ export function writeToSession(sessionId: string, text: string): boolean {
 }
 
 /**
+ * Whether the program in this session asked for bracketed paste (DECSET 2004),
+ * so line breaks inside a paste reach it as text instead of pressing Enter.
+ * A terminal that just remounted knows only what it has seen since: bash and
+ * zsh ask again at their next prompt.
+ */
+export function acceptsBracketedPaste(sessionId: string): boolean {
+  return terminals.get(sessionId)?.modes.bracketedPasteMode ?? false;
+}
+
+/** Give a session's terminal the keyboard. */
+export function focusSession(sessionId: string): void {
+  terminals.get(sessionId)?.focus();
+}
+
+/**
  * The live session of the active terminal tab: the pane that last had focus,
  * otherwise the tab's first live pane. `null` when the active tab has none
  * (no tab open, or only failed panes).
