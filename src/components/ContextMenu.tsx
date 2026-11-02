@@ -256,6 +256,14 @@ export function ContextMenu({
   return createPortal(menu, document.body);
 }
 
+export function isContextMenuKey(e: React.KeyboardEvent<HTMLElement>): boolean {
+  // Shift+F10 is the WCAG/AAA keyboard shortcut for opening a context
+  // menu and works across all desktop platforms. The ContextMenu key
+  // (key === "ContextMenu") is the dedicated physical key on most
+  // full-size keyboards. We treat both identically.
+  return (e.shiftKey && e.key === "F10") || e.key === "ContextMenu";
+}
+
 /**
  * Ergonomic hook for callers that just need to track open/position state
  * for a {@link ContextMenu}. Wire `onContextMenu={open}` on any element and
@@ -303,13 +311,7 @@ export function useContextMenu() {
     setState({ x: rect.left + 4, y: rect.bottom + 2 });
   };
   const onKeyDown = (e: React.KeyboardEvent<HTMLElement>) => {
-    // Shift+F10 is the WCAG/AAA keyboard shortcut for opening a context
-    // menu and works across all desktop platforms. The ContextMenu key
-    // (key === "ContextMenu") is the dedicated physical key on most
-    // full-size keyboards. We treat both identically.
-    const isShiftF10 = e.shiftKey && e.key === "F10";
-    const isMenuKey = e.key === "ContextMenu";
-    if (!isShiftF10 && !isMenuKey) return;
+    if (!isContextMenuKey(e)) return;
     e.preventDefault();
     e.stopPropagation();
     openAt(e.currentTarget);

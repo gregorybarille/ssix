@@ -377,6 +377,40 @@ describe("keyboard", () => {
     expect(within(menu).getByRole("menuitem", { name: "Collapse" })).toBeInTheDocument();
   });
 
+  describe("the folder menu", () => {
+    it("does not open on an empty no-folder row, then or on a later key", async () => {
+      show([direct("web", "prod")]);
+      fireEvent.contextMenu(noFolderRow()!);
+      expect(screen.queryByRole("menu")).not.toBeInTheDocument();
+
+      focus(noFolderRow()!);
+      await act(() => press("F10", { shiftKey: true }));
+      expect(screen.queryByRole("menu")).not.toBeInTheDocument();
+
+      focus(folderRow("prod")!);
+      await act(() => press("x"));
+      await act(() => press("ArrowDown"));
+      fireEvent.keyDown(folderRow("prod")!, { key: "y" });
+      expect(screen.queryByRole("menu")).not.toBeInTheDocument();
+    });
+
+    it("opens on a no-folder row that holds something", () => {
+      show();
+      fireEvent.contextMenu(noFolderRow()!);
+      const menu = screen.getByRole("menu", { name: "Actions for No folder" });
+      expect(within(menu).getByRole("menuitem", { name: "Collapse" })).toBeInTheDocument();
+    });
+
+    it("stays shut on ordinary keys after it has been closed", async () => {
+      show();
+      fireEvent.contextMenu(folderRow("prod")!);
+      fireEvent.keyDown(document, { key: "Escape" });
+      await waitFor(() => expect(screen.queryByRole("menu")).not.toBeInTheDocument());
+      fireEvent.keyDown(folderRow("prod/eu")!, { key: "x" });
+      expect(screen.queryByRole("menu")).not.toBeInTheDocument();
+    });
+  });
+
   it("leaves keys on a row's own buttons alone", () => {
     show();
     const button = within(connectionRow("top")!).getByRole("button", { name: "Edit top" });

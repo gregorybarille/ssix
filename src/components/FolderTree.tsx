@@ -31,7 +31,7 @@ import { useConnectionsStore } from "@/store/useConnectionsStore";
 import type { Connection, Credential } from "@/types";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { ConnectionRow, useConnectionRowMenu, type ConnectionRowActions } from "./ConnectionRow";
-import { ContextMenu, useContextMenu, type ContextMenuItem } from "./ContextMenu";
+import { ContextMenu, isContextMenuKey, useContextMenu, type ContextMenuItem } from "./ContextMenu";
 import { FolderPicker } from "./FolderPicker";
 import { Button } from "./ui/button";
 import { DragChip } from "./ui/drag-chip";
@@ -330,6 +330,16 @@ export function FolderTree({
     return items;
   };
 
+  /**
+   * A row with nothing to offer opens no menu: its state would linger with
+   * nothing on screen to clear it.
+   */
+  const openFolderMenu = (row: FolderTreeFolderRow, open: () => void) => {
+    if (folderMenuItems(row).length === 0) return;
+    setMenuFolder(row);
+    open();
+  };
+
   /** Show the folder a connection landed in, and the connection with it. */
   const reveal = (path: string | null) => updateCollapsed(collapsedWithRevealed(collapsed, path));
 
@@ -393,12 +403,16 @@ export function FolderTree({
                 onRename={() => setRenaming(row.path)}
                 onDelete={() => setDeleting(row.path)}
                 onContextMenu={(e) => {
-                  setMenuFolder(row);
-                  folderMenu.open(e);
+                  e.preventDefault();
+                  e.stopPropagation();
+                  openFolderMenu(row, () => folderMenu.open(e));
                 }}
                 onKeyDown={(e) => {
-                  setMenuFolder(row);
-                  folderMenu.onKeyDown(e);
+                  if (!isContextMenuKey(e)) return;
+                  e.preventDefault();
+                  e.stopPropagation();
+                  const element = e.currentTarget;
+                  openFolderMenu(row, () => folderMenu.openAt(element));
                 }}
               />
             ) : (
@@ -432,7 +446,7 @@ export function FolderTree({
       )}
       {drag.chip && <DragChip chip={drag.chip} testId="folder-drag-chip" />}
       {rowMenu}
-      {folderMenu.state && menuFolder && folderMenuItems(menuFolder).length > 0 && (
+      {folderMenu.state && menuFolder && (
         <ContextMenu
           position={folderMenu.state}
           onClose={() => {

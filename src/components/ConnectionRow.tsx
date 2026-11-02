@@ -21,7 +21,7 @@ import { cn } from "@/lib/utils";
 import type { Connection, Credential } from "@/types";
 import { Badge } from "./ui/badge";
 import { Button } from "./ui/button";
-import { ContextMenu, useContextMenu, type ContextMenuItem } from "./ContextMenu";
+import { ContextMenu, isContextMenuKey, useContextMenu, type ContextMenuItem } from "./ContextMenu";
 
 function ConnIcon({ conn, className }: { conn: Connection; className?: string }) {
   const cls = cn("h-5 w-5 text-muted-foreground", className);
@@ -274,7 +274,7 @@ export function useConnectionRowMenu(credentials: Credential[], actions: Connect
       // Keyboard alternative for the context menu (Shift+F10 or
       // the ContextMenu key). The container-level roving-focus
       // handler still runs on bubble for arrows / Home / End.
-      if ((e.shiftKey && e.key === "F10") || e.key === "ContextMenu") {
+      if (isContextMenuKey(e)) {
         e.preventDefault();
         e.stopPropagation();
         setCtxConn(conn);
