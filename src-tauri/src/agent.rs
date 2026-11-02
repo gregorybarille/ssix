@@ -1242,6 +1242,46 @@ mod live {
         assert!(!crate::reconnect::is_retryable_connect_error(&error));
     }
 
+    /// A close while keys are offered can be a server counting them against
+    /// `MaxAuthTries`, so it is not retried.
+    #[test]
+    #[ignore = "needs a Unix SSH server (SSIX_LIVE_SSH)"]
+    fn live_agent_login_closed_while_keys_are_offered_is_not_retried() {
+        let proxy = FreezingProxy::to(&password_endpoint().addr());
+        let session = proxy.session();
+        let refused = TestKey::new(random_seed(), false, "ssix-live-cut-off");
+        let agent = start_agent(vec![refused]);
+        proxy.freeze();
+        proxy.cut_after(Duration::from_millis(300));
+
+        let failure =
+            authenticate_via(&session, &username(), &debug(), Some(&agent.socket)).unwrap_err();
+
+        let error = failure.into_message();
+        assert!(error.contains("Agent auth failed"), "{error}");
+        assert!(!crate::reconnect::is_retryable_connect_error(&error));
+    }
+
+    /// More keys than `MaxAuthTries`: a real server hanging up on them.
+    #[test]
+    #[ignore = "needs a Unix SSH server (SSIX_LIVE_SSH)"]
+    fn live_agent_login_cut_off_by_too_many_refused_keys_is_not_retried() {
+        const MORE_THAN_SSHD_ALLOWS: usize = 8;
+        let keys = (0..MORE_THAN_SSHD_ALLOWS)
+            .map(|_| TestKey::new(random_seed(), false, "ssix-live-too-many"))
+            .collect();
+        let agent = start_agent(keys);
+        let session = unauthenticated_session();
+
+        let failure =
+            authenticate_via(&session, &username(), &debug(), Some(&agent.socket)).unwrap_err();
+
+        assert!(matches!(failure, CredentialFailure::Refused(_)));
+        let error = failure.into_message();
+        assert!(error.contains("Agent auth failed"), "{error}");
+        assert!(!crate::reconnect::is_retryable_connect_error(&error));
+    }
+
     /// A network that stops is not a refused key. With one key after another
     /// it used to end as "accepted none", which a reconnect does not retry.
     #[test]

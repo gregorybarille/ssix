@@ -127,7 +127,7 @@ pub async fn generate_ssh_key(input: GenerateSshKeyInput) -> Result<GeneratedKey
     blocking(move || generate_ssh_key_sync(input)).await
 }
 
-fn generate_ssh_key_sync(input: GenerateSshKeyInput) -> Result<GeneratedKey, String> {
+pub(crate) fn generate_ssh_key_sync(input: GenerateSshKeyInput) -> Result<GeneratedKey, String> {
     let mut private = PrivateKey::random(&mut OsRng, ssh_key::Algorithm::Ed25519)
         .map_err(|e| format!("Key generation failed: {}", e))?;
 

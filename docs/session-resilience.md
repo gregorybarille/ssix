@@ -146,9 +146,18 @@ when a session opens: changing the settings does not affect open sessions.
   each attempt asks in the pane and waits for you. Cancelling, a wrong answer or
   five minutes without one stops the retries and leaves **Retry**
   ([details](auth.md#during-a-reconnect)).
-- A network loss during a password or key login stops the retries and leaves
-  **Retry**: it reads as a failed login, and those are never retried. During a
-  keyboard-interactive or agent login SSIX can tell them apart, so a server that
-  goes silent there is retried.
+- A network loss during a login is retried only while nothing secret has gone
+  out: a connection that fails before the password or key is sent, or before a
+  keyboard-interactive question. Once the password or key is on its way, a
+  connection that closes or a reply that takes over 15 s stops the retries and
+  leaves **Retry**. It can be a server hanging up on a wrong password or still
+  checking it, and sending it again could lock an account or send another push.
+  So a network that fails in that moment, one round trip long, still needs **Retry**.
+- A connection that closes once a keyboard-interactive question has been asked
+  stops the retries the same way: it cannot be told from a server hanging up on a
+  wrong answer. An agent login that closes while keys are being offered stops too,
+  because that is how `MaxAuthTries` ends. A server that goes silent during a
+  keyboard-interactive or agent login is retried: nothing is sent again without
+  you, or only public keys are.
 - Windows has no readiness notification yet, so a session there checks the
   socket every 5 ms, as it already does for its output.
