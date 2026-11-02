@@ -38,6 +38,7 @@ const SOCKS_PORT = 23661;
 const REMOTE_PORT = 23662;
 const LOCAL_PORT = 23663;
 const RELAYED_SOCKS_PORT = 23664;
+const DELETED_SOCKS_PORT = 23665;
 
 const CMD_CONNECT = 1;
 const CMD_BIND = 2;
@@ -525,5 +526,26 @@ describe("Remote and dynamic forwards", () => {
 
     await stopForward("forward-16-remote");
     await stopForward("forward-16-socks");
+  });
+
+  it("stops a running forward that is deleted", async () => {
+    await createForward({
+      name: "forward-16-deleted",
+      kindTab: sel.connectionFormKindDynamicForward,
+      portField: sel.connectionFormSocksPort,
+      port: DELETED_SOCKS_PORT,
+    });
+    await startForward("forward-16-deleted");
+    expect(await canConnect("127.0.0.1", DELETED_SOCKS_PORT)).toBe(true);
+
+    const row = await rowOf("forward-16-deleted");
+    await (await row.$("button[aria-expanded]")).click();
+    const remove = await row.$('[data-testid^="forward-delete-"]');
+    await remove.waitForClickable({ timeout: 10_000 });
+    await remove.click();
+    await clickDialogFooterButton(sel.confirmDeleteConnectionConfirm);
+
+    await (await rowOf("forward-16-deleted")).waitForExist({ timeout: 10_000, reverse: true });
+    await waitUntilRefused("127.0.0.1", DELETED_SOCKS_PORT, "The deleted forward's port");
   });
 });

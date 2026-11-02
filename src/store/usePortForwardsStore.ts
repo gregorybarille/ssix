@@ -119,6 +119,8 @@ interface PortForwardsState {
    * session id rather than parading it as a live forward.
    */
   stopForward: (sessionId: string) => Promise<void>;
+  /** Stop whatever is running or starting for a connection about to be deleted. */
+  stopForwardsOf: (connectionId: string) => Promise<void>;
 }
 
 export const usePortForwardsStore = create<PortForwardsState>((set, get) => ({
@@ -258,5 +260,10 @@ export const usePortForwardsStore = create<PortForwardsState>((set, get) => ({
     set((state) => ({
       sessions: state.sessions.filter((s) => s.sessionId !== sessionId),
     }));
+  },
+
+  stopForwardsOf: async (connectionId) => {
+    const sessions = get().sessions.filter((s) => s.connection.id === connectionId);
+    await Promise.all(sessions.map((s) => get().stopForward(s.sessionId)));
   },
 }));

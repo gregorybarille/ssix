@@ -2,6 +2,7 @@ import { create } from "zustand";
 import { Connection, ConnectionInput } from "@/types";
 import { invoke } from "@/lib/tauri";
 import { runAsync, runAsyncRethrow } from "@/lib/asyncAction";
+import { usePortForwardsStore } from "./usePortForwardsStore";
 
 interface ConnectionsState {
   connections: Connection[];
@@ -56,6 +57,9 @@ export const useConnectionsStore = create<ConnectionsState>((set) => ({
 
   deleteConnection: (id) =>
     runAsyncRethrow(set, async () => {
+      // Its row holds the only Stop button, so a forward left running could
+      // not be stopped any more.
+      await usePortForwardsStore.getState().stopForwardsOf(id);
       await invoke("delete_connection", { id });
       set((state) => ({ connections: state.connections.filter((c) => c.id !== id) }));
     }, { recordError: false }),

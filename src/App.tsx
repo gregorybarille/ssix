@@ -574,6 +574,7 @@ function App() {
           }
           confirmLabel="Delete connection"
           variant="destructive"
+          testId="confirm-delete-connection"
           onConfirm={async () => {
             if (dialogs.confirmDeleteConn) {
               await performDeleteConnection(dialogs.confirmDeleteConn.id);

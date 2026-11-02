@@ -292,6 +292,7 @@ export const sel = {
   connectionFormRemotePort: '[data-testid="connection-form-remote-port"]',
   connectionFormSocksPort: '[data-testid="connection-form-socks-port"]',
   confirmStopForwardConfirm: '[data-testid="confirm-stop-forward-confirm"]',
+  confirmDeleteConnectionConfirm: '[data-testid="confirm-delete-connection-confirm"]',
   // roadmap:sftp
   // roadmap:snippets
   // roadmap:import

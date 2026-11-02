@@ -268,7 +268,12 @@ export function PortForwardsView({
                           <Copy className="mr-1.5 h-3.5 w-3.5" aria-hidden="true" />
                           Clone
                         </Button>
-                        <Button variant="outline" size="sm" onClick={() => onDelete(conn.id)}>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => onDelete(conn.id)}
+                          data-testid={`forward-delete-${conn.id}`}
+                        >
                           <Trash2 className="mr-1.5 h-3.5 w-3.5" aria-hidden="true" />
                           Delete
                         </Button>

@@ -13,6 +13,7 @@ Forwards are started and stopped from the Port forwards view, or with Connect
 on the connection. Starting one that is already running or starting only
 brings it into view. Starting one that was just stopped shows Connecting until
 the previous attempt has given back its port, rather than failing to bind.
+Deleting a connection stops its forward first.
 
 ## Where A Forward Listens
 
