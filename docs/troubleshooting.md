@@ -19,6 +19,12 @@ Older builds showed this as `TypeError: ... window.__TAURI_INTERNALS__ is undefi
 - Check whether a jump host connection has credentials for both the jump host and the target.
 - Set the connection's verbosity to -v (or -vv) and reconnect: the Logs view shows each step of the connection, like `ssh -v`, so the last line before the error tells you where it failed.
 
+## Agent Login Fails
+
+- "Could not list the SSH agent's keys" usually means SSIX cannot see the agent. An app started from the Dock or a desktop launcher may not have the `SSH_AUTH_SOCK` your terminal has. Start SSIX from that terminal, or set the variable for your desktop session.
+- "The SSH agent holds no keys" means the agent is running but empty: add a key with `ssh-add`, and check with `ssh-add -l`.
+- With a forwarded agent, an empty `$SSH_AUTH_SOCK` on the server means forwarding did not start. The Logs view says why; the server may have `AllowAgentForwarding no`. See [Authentication](auth.md) before enabling forwarding.
+
 ## Proxy Command Or WSL Connection Fails
 
 - Look in the Logs view for `proxy` entries: they are what the command printed on stderr (for example `nc: command not found`).

@@ -2,6 +2,7 @@
 
 > **Docs index** — keep all docs in sync with code; never leave documentation stale.
 > - `docs/architecture.md` — system diagrams and data-flow
+> - `docs/auth.md` — SSH agent login and forwarding, keyboard-interactive prompts, FIDO2 keys
 > - `docs/development.md` — prerequisites, dev setup, build pipeline
 > - `docs/features.md` — feature catalogue and keyboard shortcuts
 > - `docs/file-transfer.md` — SCP/file transfer behaviour and constraints

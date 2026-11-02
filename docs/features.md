@@ -26,6 +26,7 @@ Each shell-capable connection can also define:
 - verbosity level (see [Diagnostics](#diagnostics))
 - extra SSH arguments
 - a proxy command (see below)
+- SSH agent forwarding (see [Authentication](auth.md), which also covers agent login, keyboard-interactive prompts and FIDO2 keys)
 
 ### Proxy command and WSL
 
