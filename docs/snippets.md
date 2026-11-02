@@ -65,6 +65,14 @@ one field per variable and a preview of the result.
 | `{{a,b},c}` | Literal, so shell brace expansion pastes as written |
 | `{{{name}}}` | The variable, inside literal braces: `{value}` |
 | `\{{end}}` | Literal `{{end}}`, for a template word that looks like a name |
+| `C:\Users\\{{user}}\Documents` | One backslash, then the variable: `C:\Users\ann\Documents` |
+| `\\\{{end}}` | One backslash, then literal `{{end}}` |
+
+Backslashes right in front of a variable pair up: `\\` pastes as one backslash,
+and one left over keeps the braces literal. A single backslash therefore always
+escapes, so write a Windows path as `C:\Users\\{{user}}`. The form lists the
+variables it found, which shows whether a value will be asked for. Backslashes
+anywhere else are plain text.
 
 Every variable needs a value; a single space counts, for one you want to leave
 out. Values go in exactly as typed, without shell quoting, and are not expanded

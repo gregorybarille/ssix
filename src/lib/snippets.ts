@@ -9,10 +9,15 @@ import { acceptsBracketedPaste, activeSessionId } from "./terminalRegistry";
  *
  * Anything else stays literal text, so an unclosed `{{` and the templates of
  * other tools (`docker ps --format '{{.Names}}'`, `{{json .}}`) paste as
- * written. A template word that does look like a name (`{{end}}`) is kept
- * literal by a backslash in front: `\{{end}}` pastes `{{end}}`.
+ * written.
+ *
+ * Backslashes right in front of a variable pair up: `\\` is one backslash, and
+ * one left over keeps the braces literal, for a template word that looks like
+ * a name. So `\{{end}}` pastes `{{end}}`, and `C:\Users\\{{user}}` pastes one
+ * backslash and the value. Backslashes anywhere else are plain text: the second
+ * alternative takes such a run in one go, so a long one stays linear.
  */
-const PLACEHOLDER = /(\\?)\{\{[ \t]*([\p{L}_][\p{L}\p{N}_-]*)[ \t]*\}\}/gu;
+const PLACEHOLDER = /(\\*)\{\{[ \t]*([\p{L}_][\p{L}\p{N}_-]*)[ \t]*\}\}|\\+/gu;
 
 /** Control characters other than tab and line breaks. */
 const CONTROL_CHARS = /[^\P{Cc}\t\r\n]/gu;
@@ -20,8 +25,8 @@ const CONTROL_CHARS = /[^\P{Cc}\t\r\n]/gu;
 /** The variables of a command, each once, in order of first appearance. */
 export function snippetVariables(command: string): string[] {
   const names = new Set<string>();
-  for (const [, escape, name] of command.matchAll(PLACEHOLDER)) {
-    if (!escape) names.add(name);
+  for (const [, backslashes, name] of command.matchAll(PLACEHOLDER)) {
+    if (name && backslashes.length % 2 === 0) names.add(name);
   }
   return [...names];
 }
@@ -32,9 +37,12 @@ export function snippetVariables(command: string): string[] {
  * no value (or an empty one) stays as written, which is what the preview shows.
  */
 export function fillVariables(command: string, values: ReadonlyMap<string, string>): string {
-  return command.replace(PLACEHOLDER, (whole: string, escape: string, name: string) =>
-    escape ? whole.slice(escape.length) : values.get(name) || whole,
-  );
+  return command.replace(PLACEHOLDER, (whole: string, backslashes: string, name?: string) => {
+    if (!name) return whole;
+    const braces = whole.slice(backslashes.length);
+    const text = backslashes.length % 2 === 0 ? values.get(name) || braces : braces;
+    return "\\".repeat(Math.floor(backslashes.length / 2)) + text;
+  });
 }
 
 /**

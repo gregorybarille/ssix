@@ -97,8 +97,9 @@ export function SnippetForm({ snippet, onSubmit, onClose, onGuardChange }: Snipp
           </p>
         )}
         <p id="snippet-command-hint" className="text-xs text-muted-foreground">
-          Write <code>{"{{name}}"}</code> for a value to ask for when you paste it, and{" "}
-          <code>{"\\{{name}}"}</code> to keep those braces as they are.
+          Write <code>{"{{name}}"}</code> for a value to ask for when you paste it,{" "}
+          <code>{"\\{{name}}"}</code> to keep those braces as they are, and{" "}
+          <code>{"\\\\{{name}}"}</code> for a backslash before the value.
         </p>
         {variables.length > 0 && (
           <p className="text-xs text-muted-foreground" data-testid="snippet-form-variables">

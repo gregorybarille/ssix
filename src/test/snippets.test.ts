@@ -85,6 +85,14 @@ describe("snippetVariables", () => {
     expect(snippetVariables("\\{{end}} {{name}}")).toEqual(["name"]);
   });
 
+  it("pairs up the backslashes in front of a variable", () => {
+    expect(snippetVariables("\\\\{{a}} \\\\\\{{b}} \\\\\\\\{{c}}")).toEqual(["a", "c"]);
+  });
+
+  it("reads a long run of backslashes as plain text, without slowing down", () => {
+    expect(snippetVariables("\\".repeat(65_536))).toEqual([]);
+  });
+
   it("finds variables on every line", () => {
     expect(snippetVariables("a {{x}}\nb {{y}}")).toEqual(["x", "y"]);
   });
@@ -118,6 +126,36 @@ describe("fillVariables", () => {
     expect(fillVariables(command, new Map([["ns", "x"]]))).toBe(
       "go-template='{{range .items}}{{.name}}{{end}}' x",
     );
+  });
+
+  it("keeps a real backslash in front of a variable when it is doubled", () => {
+    const values = new Map([["user", "ann"]]);
+    expect(fillVariables("C:\\Users\\\\{{user}}\\Documents", values)).toBe(
+      "C:\\Users\\ann\\Documents",
+    );
+    expect(snippetVariables("C:\\Users\\\\{{user}}\\Documents")).toEqual(["user"]);
+  });
+
+  it.each([
+    ["one: the braces stay literal", "\\{{x}}", "{{x}}"],
+    ["two: a backslash and the value", "\\\\{{x}}", "\\v"],
+    ["three: a backslash and literal braces", "\\\\\\{{x}}", "\\{{x}}"],
+    ["four: two backslashes and the value", "\\\\\\\\{{x}}", "\\\\v"],
+  ])("reads backslashes in front of a variable: %s", (_label, command, pasted) => {
+    expect(fillVariables(command, new Map([["x", "v"]]))).toBe(pasted);
+  });
+
+  it("shows a doubled backslash before a variable with no value yet", () => {
+    expect(fillVariables("\\\\{{x}}", new Map())).toBe("\\{{x}}");
+  });
+
+  it.each([
+    ["inside a path", "C:\\\\Users\\Documents"],
+    ["at the end", "echo \\\\"],
+    ["before a template that is no variable", "\\\\{{a b}} \\{{.Names}}"],
+    ["before an unclosed {{", "\\\\{{name"],
+  ])("leaves backslashes elsewhere as written: %s", (_label, command) => {
+    expect(fillVariables(command, new Map([["name", "x"]]))).toBe(command);
   });
 
   it("does not confuse a name with something on Object.prototype", () => {

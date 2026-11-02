@@ -309,6 +309,22 @@ describe("Snippets", () => {
     await waitForTerminalContains("\n{{.Names}} {{open", 10_000);
   });
 
+  it("keeps a backslash in front of a variable when it is doubled", async () => {
+    await saveSnippet("snip-18-path", ["echo 'C:\\Users\\\\{{user}}\\Docs' '\\{{end}}'"]);
+    await pressPaletteShortcut();
+    await choose("snip-18-path");
+
+    const preview = await browser.$(sel.snippetVariablesPreview);
+    await preview.waitForExist({ timeout: 10_000 });
+    expect((await browser.$$(sel.snippetVariable)).length).toBe(1);
+    await fill(sel.snippetVariableByName("user"), "ann");
+    await click(sel.snippetVariablesSubmit);
+    await waitForPaletteClosed();
+
+    await waitForTerminalContains("echo 'C:\\Users\\ann\\Docs' '{{end}}'", 10_000);
+    await browser.keys(["Enter"]);
+  });
+
   it("refuses several lines where a line break would run them", async () => {
     await saveSnippet("snip-18-lines", ["echo multi-$((1+1))", "echo multi-$((2+2))"]);
     await click(sel.navTerminals);
