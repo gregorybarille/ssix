@@ -20,7 +20,9 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 uuid = { version = "1", features = ["v4"] }
 dirs = "7"
-ssh2 = "0.9"
+# OpenSSL on Windows too. libssh2's own Windows backend (WinCNG) has no ed25519,
+# ECDSA or curve25519, and about 1 login in 256 fails on it: see docs/architecture.md.
+ssh2 = { version = "0.9", features = ["openssl-on-win32"] }
 # The libssh2 that ssh2 links, for the calls ssh2 does not wrap: see
 # src/libssh2_ext.rs.
 libssh2-sys = "0.3"
