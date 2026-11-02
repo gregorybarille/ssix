@@ -19,7 +19,7 @@ interface SnippetsState {
    * Open the palette. Terminals are mounted only on their own view, so with
    * a tab open this goes there: a paste needs a live pane, and it shows where
    * the text lands. An editor with unsaved changes asks first, as it does for
-   * any change of view.
+   * any change of view, and the palette opens only once the view has changed.
    */
   openPalette: () => void;
   closePalette: () => void;
@@ -58,10 +58,12 @@ export const useSnippetsStore = create<SnippetsState>((set) => ({
     }, { recordError: false }),
 
   openPalette: () => {
+    const open = () => set({ paletteOpen: true });
     if (useTerminalsStore.getState().tabs.length > 0) {
-      useViewStore.getState().setView("terminals");
+      useViewStore.getState().setView("terminals", open);
+    } else {
+      open();
     }
-    set({ paletteOpen: true });
   },
 
   closePalette: () => set({ paletteOpen: false }),

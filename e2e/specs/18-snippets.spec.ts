@@ -439,4 +439,31 @@ describe("Snippets", () => {
     await waitForPane(2, "echo pane-$((8*8))");
     expect((await paneTexts())[1]).not.toContain("pane-");
   });
+
+  it("opens only once an editor with unsaved changes lets the view change", async () => {
+    await openSnippetsView();
+    await click(sel.addSnippetButton);
+    await (await browser.$(sel.snippetForm)).waitForExist({ timeout: 10_000 });
+    await fill(sel.snippetFormName, "snip-18-unsaved");
+
+    await browser.keys(["Control", "Shift", "s"]);
+    await (await browser.$(sel.snippetDiscardCancel)).waitForExist({ timeout: 10_000 });
+    expect(await (await browser.$(sel.snippetPalette)).isExisting()).toBe(false);
+
+    // Keep editing: the form stays, on its view, and no palette opens behind it.
+    await click(sel.snippetDiscardCancel);
+    await waitForGone(sel.snippetDiscardCancel);
+    expect(await (await browser.$(sel.snippetPalette)).isExisting()).toBe(false);
+    expect(await (await browser.$(sel.snippetFormName)).getValue()).toBe("snip-18-unsaved");
+    expect(await (await browser.$(sel.terminalContainer)).isExisting()).toBe(false);
+
+    await browser.keys(["Control", "Shift", "s"]);
+    await click(sel.snippetDiscardConfirm);
+    await (await browser.$(sel.snippetPalette)).waitForExist({ timeout: 10_000 });
+    await (await browser.$(sel.terminalContainer)).waitForExist({ timeout: 10_000 });
+    await waitForGone(sel.snippetForm);
+
+    await browser.keys(["Escape"]);
+    await waitForPaletteClosed();
+  });
 });

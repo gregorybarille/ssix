@@ -20,7 +20,7 @@ command.
 | Situation | What happens |
 |---|---|
 | No terminal is open, or every pane of the active tab failed | The palette says there is no live terminal. Nothing is sent and it stays open. |
-| Terminals are open but you are on another view | The palette goes to the Terminals view first, because a terminal exists only there. An editor with unsaved changes asks before leaving, as it does for any change of view. |
+| Terminals are open but you are on another view | The palette goes to the Terminals view first, because a terminal exists only there. An editor with unsaved changes asks before leaving, as it does for any change of view, and the palette opens only if you leave. |
 
 ## Line breaks and control characters
 

@@ -101,13 +101,28 @@ describe("useSnippetsStore", () => {
       expect(store().paletteOpen).toBe(true);
     });
 
-    it("lets an editor with unsaved changes ask first", () => {
+    it("lets an editor with unsaved changes ask first, and opens once it may leave", () => {
       useTerminalsStore.setState(oneTab);
       const guard = vi.fn();
       useViewStore.setState({ leaveGuard: guard });
       store().openPalette();
       expect(guard).toHaveBeenCalledOnce();
       expect(useViewStore.getState().view).toBe("connections");
+      expect(store().paletteOpen).toBe(false);
+
+      const leave = guard.mock.calls[0][0] as () => void;
+      leave();
+      expect(useViewStore.getState().view).toBe("terminals");
+      expect(store().paletteOpen).toBe(true);
+    });
+
+    it("does not ask to leave the view it is already on", () => {
+      useTerminalsStore.setState(oneTab);
+      const guard = vi.fn();
+      useViewStore.setState({ view: "terminals", leaveGuard: guard });
+      store().openPalette();
+      expect(guard).not.toHaveBeenCalled();
+      expect(store().paletteOpen).toBe(true);
     });
   });
 });
