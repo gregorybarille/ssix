@@ -58,8 +58,8 @@ top of the pane shows the attempt and the countdown, with **Cancel**. The
 Logs view has a line for each step.
 
 **Cancel** does not wait for a running attempt. The attempt stops before it logs
-in and before it runs the login command, and if it got further, its shell is
-closed.
+in, while a login prompt waits and before it runs the login command, and if it
+got further, its shell is closed.
 
 The count survives a reconnect until the new shell has stayed up for a minute,
 so a server that accepts the login and drops it straight away uses up the
@@ -141,9 +141,13 @@ when a session opens: changing the settings does not affect open sessions.
 - A server that ends a shell and hangs up in one go can lose its last output:
   libssh2 fails the read before those bytes can be read. The session still
   counts as ended by the server and does not reconnect.
-- A connection whose login needs a one-time code cannot reconnect by itself:
-  the attempt fails as a login failure and stops, leaving **Retry**.
-- A network loss during login stops the retries and leaves **Retry**: it reads
-  as a failed login, and those are never retried.
+- A connection whose login needs a one-time code cannot reconnect unattended:
+  each attempt asks in the pane and waits for you. Cancelling, a wrong answer or
+  five minutes without one stops the retries and leaves **Retry**
+  ([details](auth.md#during-a-reconnect)).
+- A network loss during a password or key login stops the retries and leaves
+  **Retry**: it reads as a failed login, and those are never retried. During a
+  keyboard-interactive or agent login SSIX can tell them apart, so a server that
+  goes silent there is retried.
 - Windows has no readiness notification yet, so a session there checks the
   socket every 5 ms, as it already does for its output.

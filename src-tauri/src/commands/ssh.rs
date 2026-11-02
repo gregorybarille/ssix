@@ -1,3 +1,4 @@
+use crate::auth_prompt::PromptScope;
 use crate::commands::blocking;
 use crate::forwards::start_port_forward;
 use crate::keychain;
@@ -202,6 +203,7 @@ fn shell_options(conn: &Connection, settings: &AppSettings) -> ShellOptions {
             .keepalive_interval
             .unwrap_or(settings.keepalive_interval),
         cancelled: None,
+        agent_forwarding: conn.agent_forwarding,
     }
 }
 
@@ -215,10 +217,16 @@ fn reconnect_policy(conn: &Connection, settings: &AppSettings) -> ReconnectPolic
 /// Open the shell of a saved connection again after it dropped. It reads the
 /// connection and its credentials afresh, so a changed password or edited
 /// host applies, and a connection deleted meanwhile stops the retries.
+///
+/// A login that needs answers asks in the session's pane again, on `output`.
+/// The prompt belongs to this thread, the one `reconnect::run_attempt` started
+/// for this attempt, and `cancelled` ends it.
 fn reopen_shell(
     connection_id: &str,
     cancelled: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    output: &Channel<InvokeResponseBody>,
 ) -> Result<OpenShell, String> {
+    let _prompts = PromptScope::enter(output, Some(cancelled.clone()));
     let (data, conn) = find_connection(connection_id)?;
     let opts = ShellOptions {
         cancelled: Some(cancelled),
@@ -242,6 +250,7 @@ fn shell_resilience(
     conn: &Connection,
     settings: &AppSettings,
     session_id: &str,
+    output: Channel<InvokeResponseBody>,
 ) -> ShellResilience {
     let (policy_id, reopen_id) = (conn.id.clone(), conn.id.clone());
     let fallback = reconnect_policy(conn, settings);
@@ -250,7 +259,7 @@ fn shell_resilience(
             Ok((data, conn)) => reconnect_policy(&conn, &data.settings),
             Err(_) => fallback,
         }),
-        reopen: std::sync::Arc::new(move |cancelled| reopen_shell(&reopen_id, cancelled)),
+        reopen: std::sync::Arc::new(move |cancelled| reopen_shell(&reopen_id, cancelled, &output)),
         log: SessionLogPlan::resolve(conn, settings, session_id),
     }
 }
@@ -270,13 +279,13 @@ pub async fn ssh_connect(
 ) -> Result<String, String> {
     let (data, conn) = find_connection(&connection_id)?;
     let session_id = uuid::Uuid::new_v4().to_string();
+    let opts = shell_options(&conn, &data.settings);
+    let resilience = shell_resilience(&conn, &data.settings, &session_id, on_output.clone());
     let ctx = SessionContext {
         app,
         session_id: session_id.clone(),
         output: on_output,
     };
-    let opts = shell_options(&conn, &data.settings);
-    let resilience = shell_resilience(&conn, &data.settings, &session_id);
 
     // The session registers itself (via `SessionContext::register`) before
     // its worker thread starts, so nothing is inserted here.
@@ -440,9 +449,188 @@ mod tests {
     #[test]
     fn a_deleted_connection_is_not_reopened() {
         crate::storage::test_support::with_isolated_data_dir(|| {
-            let error = reopen_shell("gone", Default::default()).err().unwrap();
+            let output = Channel::new(|_| Ok(()));
+            let error = reopen_shell("gone", Default::default(), &output)
+                .err()
+                .unwrap();
             assert_eq!(error, "Connection not found");
             assert!(!crate::reconnect::is_retryable_connect_error(&error));
+        });
+    }
+}
+
+/// A keyboard-interactive login surviving a reconnect, against a real server.
+/// A plain `cargo test` skips these, and CI's live job has no such server: the
+/// E2E suite covers this path there (spec 14). Needs `server-e` from
+/// `docker/docker-compose.yml`:
+///
+/// ```text
+/// SSIX_LIVE_KBDINT_SSH=127.0.0.1:2205 SSIX_LIVE_KBDINT_USER=usere \
+/// SSIX_LIVE_KBDINT_PASSWORD=passe cargo test live_reopen -- --ignored --test-threads=1
+/// ```
+#[cfg(test)]
+mod live {
+    use super::*;
+    use crate::auth_prompt;
+    use crate::reconnect::is_retryable_connect_error;
+    use crate::storage::test_support::with_isolated_data_dir;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::{Arc, Mutex};
+    use std::time::{Duration, Instant};
+
+    /// `Some` when a keyboard-interactive server is configured: its address
+    /// and the user and answer it wants.
+    fn server() -> Option<(String, u16, String, String)> {
+        let addr = std::env::var("SSIX_LIVE_KBDINT_SSH").ok()?;
+        let (host, port) = addr.rsplit_once(':').expect("host:port");
+        Some((
+            host.to_string(),
+            port.parse().expect("port"),
+            std::env::var("SSIX_LIVE_KBDINT_USER").ok()?,
+            std::env::var("SSIX_LIVE_KBDINT_PASSWORD").ok()?,
+        ))
+    }
+
+    /// Save a connection to that server, with a password it would never see.
+    fn save_connection(host: String, port: u16, username: String) -> String {
+        let credential = Credential::new(
+            "kbdint".to_string(),
+            username,
+            CredentialKind::Password {
+                password: "not-the-answer".to_string(),
+            },
+        );
+        let connection = Connection::new(
+            "kbdint".to_string(),
+            host,
+            port,
+            Some(credential.id.clone()),
+            ConnectionKind::Direct,
+        );
+        let id = connection.id.clone();
+        crate::storage::with_data_mut(|data| {
+            data.credentials.push(credential);
+            data.connections.push(connection);
+            Ok(())
+        })
+        .unwrap();
+        id
+    }
+
+    /// A pane's channel: its events land in a list, and `respond` sees each
+    /// prompt's id.
+    fn pane(
+        respond: impl Fn(String) + Send + Sync + 'static,
+    ) -> (
+        Channel<InvokeResponseBody>,
+        Arc<Mutex<Vec<serde_json::Value>>>,
+    ) {
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let seen = events.clone();
+        let channel = Channel::new(move |body| {
+            if let InvokeResponseBody::Json(json) = body {
+                let event: serde_json::Value = serde_json::from_str(&json).unwrap();
+                if event["kind"] == "auth_prompt" {
+                    respond(event["prompt_id"].as_str().unwrap().to_string());
+                }
+                seen.lock().unwrap().push(event);
+            }
+            Ok(())
+        });
+        (channel, events)
+    }
+
+    fn kinds(events: &Mutex<Vec<serde_json::Value>>) -> Vec<String> {
+        events
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|event| event["kind"].as_str().unwrap().to_string())
+            .collect()
+    }
+
+    /// `reopen_shell` runs on whatever thread `run_attempt` starts, so a thread
+    /// of its own here is the real situation, not a convenience.
+    #[test]
+    #[ignore = "needs a keyboard-interactive server (SSIX_LIVE_KBDINT_SSH)"]
+    fn live_reopen_asks_in_the_pane_again() {
+        let Some((host, port, username, answer)) = server() else {
+            return;
+        };
+        with_isolated_data_dir(|| {
+            let id = save_connection(host, port, username);
+            let (output, events) = pane(move |prompt_id| {
+                let answer = answer.clone();
+                std::thread::spawn(move || {
+                    auth_prompt::answer(&prompt_id, vec![answer]).unwrap();
+                });
+            });
+            let shell = std::thread::spawn(move || reopen_shell(&id, Default::default(), &output))
+                .join()
+                .unwrap();
+            assert!(shell.is_ok(), "{:?}", shell.err());
+            assert_eq!(kinds(&events), ["auth_prompt", "auth_prompt_closed"]);
+        });
+    }
+
+    /// What Cancel on the reconnect bar and closing the pane do: nothing else
+    /// answers this prompt, so a wait that did not notice would last minutes.
+    #[test]
+    #[ignore = "needs a keyboard-interactive server (SSIX_LIVE_KBDINT_SSH)"]
+    fn live_reopen_ends_a_waiting_prompt_when_cancelled() {
+        let Some((host, port, username, _)) = server() else {
+            return;
+        };
+        with_isolated_data_dir(|| {
+            let id = save_connection(host, port, username);
+            let cancelled = Arc::new(AtomicBool::new(false));
+            let flag = cancelled.clone();
+            let (output, events) = pane(move |_| flag.store(true, Ordering::SeqCst));
+            let started = Instant::now();
+            let error = std::thread::spawn(move || reopen_shell(&id, cancelled, &output))
+                .join()
+                .unwrap()
+                .err()
+                .expect("cancelled");
+            assert_eq!(error, auth_prompt::CANCELLED);
+            assert!(!is_retryable_connect_error(&error));
+            assert!(started.elapsed() < Duration::from_secs(10));
+            assert_eq!(kinds(&events), ["auth_prompt", "auth_prompt_closed"]);
+        });
+    }
+
+    /// The prompt's own Cancel button, and a wrong answer: both stop the
+    /// reconnect rather than asking again.
+    #[test]
+    #[ignore = "needs a keyboard-interactive server (SSIX_LIVE_KBDINT_SSH)"]
+    fn live_reopen_fails_for_good_on_cancel_and_on_a_wrong_answer() {
+        let Some((host, port, username, _)) = server() else {
+            return;
+        };
+        with_isolated_data_dir(|| {
+            let id = save_connection(host, port, username);
+            let (output, _) = pane(|prompt_id| auth_prompt::cancel(&prompt_id));
+            let cancel_id = id.clone();
+            let error =
+                std::thread::spawn(move || reopen_shell(&cancel_id, Default::default(), &output))
+                    .join()
+                    .unwrap()
+                    .err()
+                    .expect("cancelled");
+            assert_eq!(error, auth_prompt::CANCELLED);
+
+            let (output, _) = pane(|prompt_id| {
+                std::thread::spawn(move || {
+                    auth_prompt::answer(&prompt_id, vec!["wrong".to_string()]).unwrap();
+                });
+            });
+            let error = std::thread::spawn(move || reopen_shell(&id, Default::default(), &output))
+                .join()
+                .unwrap()
+                .err()
+                .expect("refused");
+            assert!(error.to_lowercase().contains("auth"), "{error}");
+            assert!(!is_retryable_connect_error(&error), "{error}");
         });
     }
 }

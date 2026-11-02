@@ -30,6 +30,11 @@ export function unregisterTerminal(sessionId: string): void {
   if (lastFocusedSessionId === sessionId) lastFocusedSessionId = null;
 }
 
+/** Give the keyboard to a session's terminal, when it can take it. */
+export function focusSession(sessionId: string): void {
+  terminals.get(sessionId)?.focus();
+}
+
 /**
  * Send text to a session as if it were typed: it goes straight to `ssh_write`,
  * like keyboard input, and the remote shell echoes it. Terminal extensions'

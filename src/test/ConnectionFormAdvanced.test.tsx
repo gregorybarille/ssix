@@ -187,8 +187,8 @@ describe("advanced helpers", () => {
 });
 
 describe("credential kinds", () => {
-  it("offers the same two tabs as before: the SSH agent is not one yet", () => {
-    expect(CREDENTIAL_KIND_TABS.map((tab) => tab.type)).toEqual(["password", "ssh_key"]);
+  it("offers password, SSH key and SSH agent", () => {
+    expect(CREDENTIAL_KIND_TABS.map((tab) => tab.type)).toEqual(["password", "ssh_key", "agent"]);
   });
 
   it("asks an agent credential for nothing beyond its name and username", () => {

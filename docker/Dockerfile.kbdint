@@ -3,13 +3,16 @@ FROM alpine:3.21
 # server-e: an sshd that only offers keyboard-interactive, the method 2FA and
 # OTP servers use. sshd needs PAM to ask anything over keyboard-interactive,
 # and Alpine ships that build separately as `sshd.pam`. The password method is
-# off, so a client has to answer the "Password:" prompt PAM sends.
+# off, so a client has to answer the "Password:" prompt PAM sends. Its tests fail
+# logins on purpose, all from one address, and sshd's penalty for that would turn
+# the tests after them away before their handshake.
 RUN apk add --no-cache openssh-server-pam openssh-sftp-server openssh && \
     ssh-keygen -A && \
     echo "PermitRootLogin no" >> /etc/ssh/sshd_config && \
     echo "UsePAM yes" >> /etc/ssh/sshd_config && \
     echo "PasswordAuthentication no" >> /etc/ssh/sshd_config && \
     echo "KbdInteractiveAuthentication yes" >> /etc/ssh/sshd_config && \
+    echo "PerSourcePenalties no" >> /etc/ssh/sshd_config && \
     sed -i 's/^AllowTcpForwarding no/AllowTcpForwarding yes/' /etc/ssh/sshd_config && \
     printf 'auth required pam_unix.so\naccount required pam_unix.so\nsession required pam_unix.so\n' > /etc/pam.d/sshd
 

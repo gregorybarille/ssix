@@ -1192,7 +1192,7 @@ export function ConnectionForm({
       </div>
 
       {/* Per-stream option sections (see connection-form/advanced.ts). */}
-      <AuthOptions advanced={advanced} onChange={updateAdvanced} />
+      <AuthOptions advanced={advanced} onChange={updateAdvanced} connectionType={connectionType} />
       <SessionOptions advanced={advanced} onChange={updateAdvanced} />
       <TerminalOptions advanced={advanced} onChange={updateAdvanced} />
 

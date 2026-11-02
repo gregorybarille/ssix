@@ -1,8 +1,12 @@
+mod agent;
+mod auth_prompt;
 mod backup;
 mod commands;
 mod forwards;
 mod keychain;
 mod known_hosts;
+mod libssh2_ext;
+mod login_wait;
 mod logs;
 mod models;
 mod proxy;
@@ -84,6 +88,8 @@ pub fn run() {
             // Roadmap streams append their commands under their anchor
             // (see docs/roadmap.md); keep each block together.
             // roadmap:auth
+            commands::auth::ssh_auth_answer,
+            commands::auth::ssh_auth_cancel,
             // roadmap:resilience
             commands::ssh::ssh_reconnect,
             commands::ssh::ssh_cancel_reconnect,

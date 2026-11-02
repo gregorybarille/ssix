@@ -43,13 +43,18 @@ import {
   waitForTerminalContains,
 } from "../helpers/flows.js";
 import { BOGUS_KEYS, plantBogusHostKeys } from "../helpers/known-hosts.js";
+import {
+  cutConnection,
+  expectReconnected,
+  NO_RETRY_WINDOW_MS,
+  RECONNECTED,
+  sshdPid,
+  waitForPhase,
+} from "../helpers/reconnect.js";
 import { sel } from "../helpers/selectors.js";
 
 const PROMPT = "server-a:~$";
 const CREDENTIAL = "cred-15-a";
-const RECONNECTED = "[SSIX] Reconnected.";
-/** Longer than the wait before a next attempt would start. */
-const NO_RETRY_WINDOW_MS = 6_000;
 
 function dataDir(): string {
   const dir = currentTestDataDir();
@@ -111,44 +116,6 @@ async function openShell(name: string): Promise<void> {
 async function expectShellAnswers(tag: string): Promise<void> {
   await typeIntoTerminal(`echo ${tag}-$((40+2))\n`);
   await waitForTerminalContains(`${tag}-42`, 15_000);
-}
-
-const cutConnection = () => typeIntoTerminal("kill -9 $PPID\n");
-
-/** The pid of the session's sshd, to clean up after freezing it. */
-async function sshdPid(): Promise<string> {
-  await typeIntoTerminal("echo PID=$PPID\n");
-  let pid: string | undefined;
-  await browser.waitUntil(
-    async () => {
-      pid = /^PID=(\d+)/m.exec(await readTerminalText())?.[1];
-      return !!pid;
-    },
-    { timeout: 15_000, timeoutMsg: "The shell did not print its parent's pid" },
-  );
-  return pid as string;
-}
-
-async function waitForPhase(phase: "waiting" | "stopped", timeoutMs = 30_000) {
-  const status = await browser.$(sel.reconnectStatusPhase(phase));
-  await status.waitForExist({ timeout: timeoutMs });
-  return status;
-}
-
-/**
- * The shell came back in this pane: one terminal, with what it held before
- * still above the reconnect line. A cursor sent back up the screen by the drop
- * would write that line over the old output.
- */
-async function expectReconnected(...kept: string[]): Promise<void> {
-  await waitForTerminalContains(RECONNECTED, 40_000);
-  await (await browser.$(sel.reconnectStatus)).waitForExist({ reverse: true, timeout: 10_000 });
-  expect(await browser.$$(sel.terminalContainer).length).toBe(1);
-  const text = await readTerminalText();
-  for (const line of kept) {
-    expect(text).toContain(line);
-    expect(text.indexOf(line)).toBeLessThan(text.indexOf(RECONNECTED));
-  }
 }
 
 /** Stays stopped for longer than a next attempt would take to start. */

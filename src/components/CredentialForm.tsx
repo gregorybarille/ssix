@@ -324,7 +324,7 @@ export function CredentialForm({
   const title = credential ? "Edit Credential" : "New Credential";
   const description = credential
     ? "Edit the username and authentication for this credential."
-    : "Configure a new credential: username and authentication (password or SSH key).";
+    : "Configure a new credential: username and authentication (password, SSH key or SSH agent).";
 
   const renderedForm = (
     <>
@@ -575,6 +575,14 @@ export function CredentialForm({
                   </div>
                 </div>
               )}
+            </TabsContent>
+            <TabsContent value="agent" className="mt-4">
+              <p className="text-xs text-muted-foreground" data-testid="credential-form-agent-hint">
+                Logs in with the keys in your running SSH agent, trying each until the server
+                accepts one. Nothing secret is stored here. SSIX finds the agent through{" "}
+                <code>SSH_AUTH_SOCK</code>, or the OpenSSH agent service and Pageant on Windows.
+                A security key (FIDO2) held by the agent works too, except on Windows.
+              </p>
             </TabsContent>
           </Tabs>
 

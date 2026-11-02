@@ -18,6 +18,7 @@ import { fileURLToPath } from "node:url";
 import { resolveBinaryPath } from "./helpers/app.js";
 import { setupTestDataDir, cleanupTestDataDir } from "./helpers/data-dir.js";
 import { fetchBackendLogs, formatBackendLogs } from "./helpers/backend-logs.js";
+import { startTestAgent, stopTestAgent } from "./helpers/ssh-agent.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = resolve(__dirname, "..");
@@ -69,6 +70,7 @@ export const config: WebdriverIO.Config = {
   // app it spawns) inherit the env var from this process.
   onPrepare() {
     setupTestDataDir();
+    startTestAgent();
     if (!existsSync(join(ROOT, "src-tauri", "target"))) {
       throw new Error(
         "src-tauri/target not found. Build the app first: `npm run tauri build -- --debug`",
@@ -108,6 +110,7 @@ export const config: WebdriverIO.Config = {
   },
 
   onComplete() {
+    stopTestAgent();
     cleanupTestDataDir();
   },
 

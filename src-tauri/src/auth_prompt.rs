@@ -1,0 +1,1301 @@
+//! Keyboard-interactive authentication, answered inside the terminal pane.
+//!
+//! This is how a 2FA or OTP server asks its questions. libssh2 calls back on
+//! the thread that is authenticating; the callback sends the questions to the
+//! pane over the session's output channel, as JSON next to its bytes (mirrored
+//! by `AuthEvent` in `src/lib/authPrompt.ts`), and waits for `ssh_auth_answer`
+//! or `ssh_auth_cancel`.
+//!
+//! Only a shell has a pane to ask in. `start_ssh_session`, `start_jump_shell`
+//! and a reconnect attempt (`reopen_shell`) enter a [`PromptScope`] for the
+//! thread doing the connecting, which is why `authenticate` needs no extra
+//! parameter and why SCP, script runs and forwards refuse such a server with a
+//! clear message.
+//!
+//! A reconnect attempt can be abandoned while a prompt waits: closing the pane
+//! or cancelling the reconnect sets its flag, which ends the wait as Cancel
+//! does. Every way out of a prompt fails the login with a message that says
+//! "auth" and is not retryable (`crate::reconnect`), so nobody is asked again
+//! and again by a connection they walked away from.
+//!
+//! The server going silent is different: nobody walked away, the network did.
+//! The exchange runs through `crate::login_wait`, so that silence is told apart
+//! from someone typing and ends the attempt as a connection failure.
+//!
+//! Answers are passed along and dropped. Nothing here logs, stores or formats
+//! them, and [`Reply`] has no `Debug` so that they cannot be logged by accident.
+
+use std::cell::RefCell;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
+use std::sync::{Arc, LazyLock};
+use std::time::{Duration, Instant};
+
+use dashmap::DashMap;
+use serde::Serialize;
+use ssh2::{KeyboardInteractivePrompt, Prompt, Session};
+use tauri::ipc::{Channel, InvokeResponseBody};
+
+use crate::login_wait::{LoginWait, REPLY_STALL, REQUEST_STALL};
+use crate::ssh::{is_eagain, wake, Endpoint};
+use crate::ssh_debug::SshDebug;
+
+/// How long a pane may wait for an answer. A server usually gives up first
+/// (OpenSSH's `LoginGraceTime` is two minutes).
+const ANSWER_TIMEOUT: Duration = Duration::from_secs(300);
+/// Longest server text passed on, per field and for instructions gathered over
+/// several rounds. Anything longer is not a prompt.
+const MAX_TEXT_CHARS: usize = 4096;
+/// Longest answers accepted over IPC, in total.
+const MAX_ANSWER_BYTES: usize = 64 * 1024;
+/// How often a waiting prompt looks at its attempt's cancel flag.
+const CANCEL_POLL: Duration = Duration::from_millis(100);
+
+pub(crate) const CANCELLED: &str = "Authentication cancelled";
+pub(crate) const TIMED_OUT: &str =
+    "Authentication timed out waiting for an answer to the server's prompt";
+
+enum Reply {
+    Answers(Vec<String>),
+    Cancelled,
+}
+
+struct Pending {
+    reply: Sender<Reply>,
+    fields: usize,
+}
+
+/// Prompts waiting for an answer, by the id sent to the pane.
+static PENDING: LazyLock<DashMap<String, Pending>> = LazyLock::new(DashMap::new);
+
+/// Deliver the answers for `prompt_id`. The prompt stays open when they are
+/// refused, so a pane can try again.
+pub(crate) fn answer(prompt_id: &str, answers: Vec<String>) -> Result<(), String> {
+    let pending = PENDING
+        .get(prompt_id)
+        .ok_or("This prompt is no longer waiting for an answer")?;
+    if answers.len() != pending.fields {
+        return Err(format!(
+            "The server asked for {} answers, not {}",
+            pending.fields,
+            answers.len()
+        ));
+    }
+    if answers.iter().map(String::len).sum::<usize>() > MAX_ANSWER_BYTES {
+        return Err("That answer is too long".to_string());
+    }
+    pending
+        .reply
+        .send(Reply::Answers(answers))
+        .map_err(|_| "This prompt is no longer waiting for an answer".to_string())
+}
+
+/// Stop waiting for `prompt_id`, which ends its connection attempt.
+pub(crate) fn cancel(prompt_id: &str) {
+    if let Some(pending) = PENDING.get(prompt_id) {
+        let _ = pending.reply.send(Reply::Cancelled);
+    }
+}
+
+/// Where a prompt goes: the JSON of one event for the pane.
+type Sink = Arc<dyn Fn(String) + Send + Sync>;
+
+/// The pane a login on this thread can ask in.
+#[derive(Clone)]
+pub(crate) struct Scope {
+    sink: Sink,
+    /// Set once nobody wants this attempt's result (`reconnect::OpenAttempt`).
+    cancelled: Option<Arc<AtomicBool>>,
+}
+
+thread_local! {
+    static SCOPE: RefCell<Option<Scope>> = const { RefCell::new(None) };
+}
+
+/// While this lives, connecting on this thread may ask questions in the pane
+/// behind `output`. `cancelled`, when given, ends a waiting prompt once set.
+pub(crate) struct PromptScope(());
+
+impl PromptScope {
+    pub(crate) fn enter(
+        output: &Channel<InvokeResponseBody>,
+        cancelled: Option<Arc<AtomicBool>>,
+    ) -> Self {
+        let output = output.clone();
+        let sink: Sink = Arc::new(move |json| {
+            let _ = output.send(InvokeResponseBody::Json(json));
+        });
+        Self::install(Scope { sink, cancelled })
+    }
+
+    fn install(scope: Scope) -> Self {
+        SCOPE.with(|current| *current.borrow_mut() = Some(scope));
+        Self(())
+    }
+}
+
+impl Drop for PromptScope {
+    fn drop(&mut self) {
+        SCOPE.with(|scope| *scope.borrow_mut() = None);
+    }
+}
+
+/// The pane this thread can ask in, when it has one.
+pub(crate) fn current_pane() -> Option<Scope> {
+    SCOPE.with(|scope| scope.borrow().clone())
+}
+
+/// The flag set once nobody wants the result of this thread's attempt.
+pub(crate) fn attempt_flag() -> Option<Arc<AtomicBool>> {
+    SCOPE.with(|scope| scope.borrow().as_ref().and_then(|s| s.cancelled.clone()))
+}
+
+/// How much silence from the server to accept during the exchange.
+#[derive(Clone, Copy)]
+struct Stalls {
+    before_a_question: Duration,
+    after_an_answer: Duration,
+}
+
+const STALLS: Stalls = Stalls {
+    before_a_question: REQUEST_STALL,
+    after_an_answer: REPLY_STALL,
+};
+
+/// Talk to the server until the exchange ends. Whatever stops it on our side
+/// lands in `prompter.given_up`. The session is dropped after that, so leaving
+/// libssh2 in the middle of the exchange cannot matter.
+fn exchange(
+    session: &Session,
+    username: &str,
+    prompter: &mut PanePrompter,
+    stalls: Stalls,
+) -> Result<(), ssh2::Error> {
+    let mut wait = LoginWait::begin(session, prompter.cancelled.clone());
+    loop {
+        match session.userauth_keyboard_interactive(username, prompter) {
+            Err(e) if is_eagain(&e) && prompter.given_up.is_none() => {
+                let stall = if prompter.asked {
+                    stalls.after_an_answer
+                } else {
+                    stalls.before_a_question
+                };
+                if let Err(stopped) = wait.pause(stall, prompter.answering) {
+                    prompter.give_up(stopped.message());
+                    return Err(e);
+                }
+            }
+            finished => return finished,
+        }
+    }
+}
+
+/// How keyboard-interactive authentication ended, when it did not log in.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum PromptFailure {
+    /// A server that advertises the method and then asks nothing (no PAM behind
+    /// it) has only refused the credential.
+    NothingAsked,
+    /// Something on our side ended it: one of [`CANCELLED`], [`TIMED_OUT`] or
+    /// `crate::login_wait::STALLED`.
+    GaveUp(&'static str),
+    /// The server did not accept the answers.
+    Refused(String),
+}
+
+/// Run keyboard-interactive authentication, asking in `pane`, which also shows
+/// `refused`: what the server already turned down, if it did.
+pub(crate) fn authenticate(
+    pane: Scope,
+    session: &Session,
+    endpoint: &Endpoint,
+    debug: &SshDebug,
+    refused: Option<&str>,
+) -> Result<(), PromptFailure> {
+    let Scope { sink, cancelled } = pane;
+    let mut prompter = PanePrompter {
+        sink,
+        cancelled,
+        asked: false,
+        refused: refused.map(str::to_string),
+        host: endpoint.addr(),
+        username: endpoint.username.clone(),
+        socket: Some(wake::fd_of(session)),
+        timeout: ANSWER_TIMEOUT,
+        answering: Duration::ZERO,
+        instructions: String::new(),
+        given_up: None,
+        debug: debug.clone(),
+    };
+    let result = exchange(session, &endpoint.username, &mut prompter, STALLS);
+    if let Some(reason) = prompter.given_up {
+        return Err(PromptFailure::GaveUp(reason));
+    }
+    match result {
+        Ok(()) => Ok(()),
+        Err(_) if !prompter.asked => Err(PromptFailure::NothingAsked),
+        Err(e) => Err(PromptFailure::Refused(e.to_string())),
+    }
+}
+
+#[derive(Serialize)]
+struct PromptField {
+    text: String,
+    echo: bool,
+}
+
+/// One message for the pane; `src/lib/authPrompt.ts` parses them.
+#[derive(Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+enum AuthEvent<'a> {
+    AuthPrompt {
+        prompt_id: &'a str,
+        host: &'a str,
+        username: &'a str,
+        instructions: &'a str,
+        prompts: Vec<PromptField>,
+        /// What the server turned down before asking.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        refused: Option<&'a str>,
+    },
+    AuthPromptClosed {
+        prompt_id: &'a str,
+    },
+}
+
+/// Characters that change how text around them is shown without showing
+/// anything themselves: Unicode's format category (bidi overrides and isolates,
+/// zero-width characters, tag characters) and the line and paragraph separators.
+/// Text that needs a joiner to look right still reads without it.
+fn is_invisible_formatting(c: char) -> bool {
+    matches!(
+        c as u32,
+        0xAD | 0x600..=0x605
+            | 0x61C
+            | 0x6DD
+            | 0x70F
+            | 0x890..=0x891
+            | 0x8E2
+            | 0x180E
+            | 0x200B..=0x200F
+            | 0x2028..=0x202E
+            | 0x2060..=0x2064
+            | 0x2066..=0x206F
+            | 0xFEFF
+            | 0xFFF9..=0xFFFB
+            | 0x110BD
+            | 0x110CD
+            | 0x13430..=0x1343F
+            | 0x1BCA0..=0x1BCA3
+            | 0x1D173..=0x1D17A
+            | 0xE0001
+            | 0xE0020..=0xE007F
+    )
+}
+
+/// Server text as the pane shows it: control and formatting characters, which
+/// could only disguise what is being asked, go. Line breaks and tabs stay.
+fn printable(text: &str) -> String {
+    text.chars()
+        .filter(|&c| (!c.is_control() || matches!(c, '\n' | '\t')) && !is_invisible_formatting(c))
+        .take(MAX_TEXT_CHARS)
+        .collect()
+}
+
+/// Add a round's text to what earlier rounds left, up to the cap.
+fn keep_instructions(kept: &mut String, more: &str) {
+    let room = MAX_TEXT_CHARS.saturating_sub(kept.chars().count());
+    kept.extend(printable(more).chars().take(room));
+}
+
+struct PanePrompter {
+    sink: Sink,
+    /// Set once nobody wants this attempt's result.
+    cancelled: Option<Arc<AtomicBool>>,
+    /// Whether the server put a question to the user.
+    asked: bool,
+    /// What the server turned down before asking, for the pane to say.
+    refused: Option<String>,
+    host: String,
+    username: String,
+    /// The session's socket, to end the conversation when giving up.
+    socket: Option<wake::Fd>,
+    timeout: Duration,
+    /// How long the exchange has been waiting for the user so far.
+    answering: Duration,
+    /// Text of a round with no questions, kept for the next one that has some.
+    instructions: String,
+    /// Set when something on our side ended the exchange.
+    given_up: Option<&'static str>,
+    debug: SshDebug,
+}
+
+impl PanePrompter {
+    fn send(&self, event: &AuthEvent<'_>) {
+        if let Ok(json) = serde_json::to_string(event) {
+            (self.sink)(json);
+        }
+    }
+
+    /// Ask one round's questions and wait. `None` means the exchange is over.
+    fn ask(&mut self, instructions: &str, prompts: &[Prompt<'_>]) -> Option<Vec<String>> {
+        let prompt_id = uuid::Uuid::new_v4().to_string();
+        let (reply, answers) = mpsc::channel();
+        PENDING.insert(
+            prompt_id.clone(),
+            Pending {
+                reply,
+                fields: prompts.len(),
+            },
+        );
+        let mut shown = std::mem::take(&mut self.instructions);
+        keep_instructions(&mut shown, instructions);
+        self.send(&AuthEvent::AuthPrompt {
+            prompt_id: &prompt_id,
+            host: &self.host,
+            username: &self.username,
+            instructions: &shown,
+            prompts: prompts
+                .iter()
+                .map(|prompt| PromptField {
+                    text: printable(&prompt.text),
+                    echo: prompt.echo,
+                })
+                .collect(),
+            refused: self.refused.as_deref(),
+        });
+        let waiting = Instant::now();
+        let received = self.wait_for_reply(&answers);
+        self.answering += waiting.elapsed();
+        PENDING.remove(&prompt_id);
+        self.send(&AuthEvent::AuthPromptClosed {
+            prompt_id: &prompt_id,
+        });
+        match received {
+            Ok(answers) => Some(answers),
+            Err(reason) => {
+                self.give_up(reason);
+                None
+            }
+        }
+    }
+
+    /// The answers, or why there will be none.
+    fn wait_for_reply(&self, replies: &Receiver<Reply>) -> Result<Vec<String>, &'static str> {
+        let deadline = Instant::now() + self.timeout;
+        while !self.attempt_abandoned() {
+            let left = deadline.saturating_duration_since(Instant::now());
+            match replies.recv_timeout(left.min(CANCEL_POLL)) {
+                Ok(Reply::Answers(answers)) => return Ok(answers),
+                Ok(Reply::Cancelled) | Err(RecvTimeoutError::Disconnected) => break,
+                Err(RecvTimeoutError::Timeout) if left <= CANCEL_POLL => return Err(TIMED_OUT),
+                Err(RecvTimeoutError::Timeout) => {}
+            }
+        }
+        Err(CANCELLED)
+    }
+
+    fn attempt_abandoned(&self) -> bool {
+        self.cancelled
+            .as_ref()
+            .is_some_and(|flag| flag.load(Ordering::SeqCst))
+    }
+
+    /// End the conversation by closing the socket: libssh2 cannot abort from
+    /// inside its callback, and sending blank answers instead would cost the
+    /// user a failed attempt on servers that lock accounts after a few.
+    fn give_up(&mut self, reason: &'static str) {
+        self.given_up = Some(reason);
+        if let Some(socket) = self.socket {
+            wake::shutdown(socket);
+        }
+    }
+}
+
+impl KeyboardInteractivePrompt for PanePrompter {
+    fn prompt<'a>(
+        &mut self,
+        _username: &str,
+        instructions: &str,
+        prompts: &[Prompt<'a>],
+    ) -> Vec<String> {
+        let blank = || vec![String::new(); prompts.len()];
+        if self.attempt_abandoned() {
+            self.give_up(CANCELLED);
+        }
+        if self.given_up.is_some() {
+            return blank();
+        }
+        if prompts.is_empty() {
+            // Nothing to answer, and no way to show it yet: libssh2 goes back
+            // to the server as soon as this returns.
+            keep_instructions(&mut self.instructions, instructions);
+            return Vec::new();
+        }
+        self.asked = true;
+        self.debug.at(1, || {
+            format!("The server asks {} question(s).", prompts.len())
+        });
+        self.ask(instructions, prompts).unwrap_or_else(blank)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::borrow::Cow;
+    use std::sync::Mutex;
+    use std::thread;
+
+    fn prompts(fields: &[(&'static str, bool)]) -> Vec<Prompt<'static>> {
+        fields
+            .iter()
+            .map(|&(text, echo)| Prompt {
+                text: Cow::Borrowed(text),
+                echo,
+            })
+            .collect()
+    }
+
+    /// A prompter whose events land in a list, and that list.
+    fn prompter(timeout: Duration) -> (PanePrompter, Arc<Mutex<Vec<serde_json::Value>>>) {
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let sink_events = events.clone();
+        let prompter = PanePrompter {
+            sink: Arc::new(move |json| {
+                let event = serde_json::from_str(&json).unwrap();
+                sink_events.lock().unwrap().push(event);
+            }),
+            cancelled: None,
+            asked: false,
+            refused: None,
+            host: "host:22".into(),
+            username: "me".into(),
+            socket: None,
+            timeout,
+            answering: Duration::ZERO,
+            instructions: String::new(),
+            given_up: None,
+            debug: SshDebug::new(0, "host:22"),
+        };
+        (prompter, events)
+    }
+
+    /// Wait for the next prompt event and return its id.
+    fn wait_for_prompt(events: &Mutex<Vec<serde_json::Value>>) -> String {
+        for _ in 0..500 {
+            let found = events
+                .lock()
+                .unwrap()
+                .iter()
+                .rev()
+                .find(|e| e["kind"] == "auth_prompt")
+                .map(|e| e["prompt_id"].as_str().unwrap().to_string());
+            if let Some(id) = found {
+                if PENDING.contains_key(&id) {
+                    return id;
+                }
+            }
+            thread::sleep(Duration::from_millis(5));
+        }
+        panic!("no prompt was sent");
+    }
+
+    #[test]
+    fn sends_the_questions_and_returns_the_answers() {
+        let (mut prompter, events) = prompter(Duration::from_secs(5));
+        let watcher = events.clone();
+        let responder = thread::spawn(move || {
+            let id = wait_for_prompt(&watcher);
+            answer(&id, vec!["alice".into(), "123456".into()]).unwrap();
+        });
+
+        let answers = prompter.prompt(
+            "ignored",
+            "Enter both",
+            &prompts(&[("Login: ", true), ("OTP: ", false)]),
+        );
+        responder.join().unwrap();
+
+        assert_eq!(answers, ["alice", "123456"]);
+        assert!(prompter.given_up.is_none());
+        let events = events.lock().unwrap();
+        assert_eq!(events[0]["kind"], "auth_prompt");
+        assert_eq!(events[0]["host"], "host:22");
+        assert_eq!(events[0]["username"], "me");
+        assert_eq!(events[0]["instructions"], "Enter both");
+        assert_eq!(events[0]["prompts"][0]["text"], "Login: ");
+        assert_eq!(events[0]["prompts"][0]["echo"], true);
+        assert_eq!(events[0]["prompts"][1]["echo"], false);
+        assert_eq!(events[1]["kind"], "auth_prompt_closed");
+        assert_eq!(events[1]["prompt_id"], events[0]["prompt_id"]);
+    }
+
+    #[test]
+    fn says_what_the_server_refused_only_when_it_did() {
+        let (mut prompter, events) = prompter(Duration::from_secs(5));
+        let watcher = events.clone();
+        let responder = thread::spawn(move || cancel(&wait_for_prompt(&watcher)));
+        prompter.prompt("", "", &prompts(&[("OTP: ", false)]));
+        responder.join().unwrap();
+        assert!(events.lock().unwrap()[0].get("refused").is_none());
+    }
+
+    #[test]
+    fn answers_never_reach_the_pane() {
+        let (mut prompter, events) = prompter(Duration::from_secs(5));
+        let watcher = events.clone();
+        let responder = thread::spawn(move || {
+            let id = wait_for_prompt(&watcher);
+            answer(&id, vec!["hunter2-secret".into()]).unwrap();
+        });
+        prompter.prompt("", "", &prompts(&[("OTP: ", false)]));
+        responder.join().unwrap();
+        let sent = serde_json::to_string(&*events.lock().unwrap()).unwrap();
+        assert!(!sent.contains("hunter2-secret"));
+    }
+
+    #[test]
+    fn refuses_the_wrong_number_of_answers_and_keeps_waiting() {
+        let (mut prompter, events) = prompter(Duration::from_secs(5));
+        let watcher = events.clone();
+        let responder = thread::spawn(move || {
+            let id = wait_for_prompt(&watcher);
+            let refused = answer(&id, vec![]).unwrap_err();
+            assert!(refused.contains("asked for 1 answers"));
+            let oversized = answer(&id, vec!["x".repeat(MAX_ANSWER_BYTES + 1)]).unwrap_err();
+            assert!(oversized.contains("too long"));
+            answer(&id, vec!["ok".into()]).unwrap();
+        });
+        let answers = prompter.prompt("", "", &prompts(&[("OTP: ", false)]));
+        responder.join().unwrap();
+        assert_eq!(answers, ["ok"]);
+    }
+
+    /// The blank answers libssh2 still tries to send must go nowhere. This is
+    /// the one path with its own Windows code, so the check that counts for it
+    /// is CI's Windows job: on Unix it has always passed.
+    #[test]
+    fn giving_up_closes_the_connection_rather_than_answering() {
+        use std::io::{Read, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let client = std::net::TcpStream::connect(listener.local_addr().unwrap()).unwrap();
+        let (mut server, _) = listener.accept().unwrap();
+        server
+            .set_read_timeout(Some(Duration::from_secs(5)))
+            .unwrap();
+
+        let (mut prompter, _events) = prompter(Duration::from_secs(5));
+        prompter.socket = Some(wake::fd_of(&client));
+        prompter.give_up(CANCELLED);
+
+        let mut received = Vec::new();
+        assert_eq!(server.read_to_end(&mut received).unwrap(), 0);
+        assert!((&client).write_all(b"blank answers").is_err());
+    }
+
+    #[test]
+    fn cancel_ends_the_exchange_with_blank_answers() {
+        let (mut prompter, events) = prompter(Duration::from_secs(5));
+        let watcher = events.clone();
+        let responder = thread::spawn(move || cancel(&wait_for_prompt(&watcher)));
+        let answers = prompter.prompt("", "", &prompts(&[("OTP: ", false)]));
+        responder.join().unwrap();
+
+        assert_eq!(answers, [""]);
+        assert_eq!(prompter.given_up, Some(CANCELLED));
+        // The server may ask again before it sees the socket close: nothing
+        // more reaches the pane.
+        let count = events.lock().unwrap().len();
+        assert_eq!(prompter.prompt("", "", &prompts(&[("OTP: ", false)])), [""]);
+        assert_eq!(events.lock().unwrap().len(), count);
+    }
+
+    #[test]
+    fn stops_waiting_after_the_timeout_and_forgets_the_prompt() {
+        let (mut prompter, events) = prompter(Duration::from_millis(20));
+        let answers = prompter.prompt("", "", &prompts(&[("OTP: ", false)]));
+        assert_eq!(answers, [""]);
+        assert_eq!(prompter.given_up, Some(TIMED_OUT));
+        let id = events.lock().unwrap()[0]["prompt_id"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        assert!(answer(&id, vec!["late".into()])
+            .unwrap_err()
+            .contains("no longer waiting"));
+        assert_eq!(events.lock().unwrap().len(), 2);
+    }
+
+    #[test]
+    fn a_cancelled_attempt_ends_a_waiting_prompt_and_closes_it() {
+        let (mut prompter, events) = prompter(Duration::from_secs(60));
+        let flag = Arc::new(AtomicBool::new(false));
+        prompter.cancelled = Some(flag.clone());
+        let watcher = events.clone();
+        let canceller = thread::spawn(move || {
+            let id = wait_for_prompt(&watcher);
+            flag.store(true, Ordering::SeqCst);
+            id
+        });
+
+        let started = Instant::now();
+        let answers = prompter.prompt("", "", &prompts(&[("OTP: ", false)]));
+        let id = canceller.join().unwrap();
+
+        assert!(started.elapsed() < Duration::from_secs(5));
+        assert_eq!(answers, [""]);
+        assert_eq!(prompter.given_up, Some(CANCELLED));
+        assert!(!PENDING.contains_key(&id));
+        let events = events.lock().unwrap();
+        assert_eq!(events.len(), 2);
+        assert_eq!(events[1]["kind"], "auth_prompt_closed");
+        assert_eq!(events[1]["prompt_id"], id.as_str());
+    }
+
+    #[test]
+    fn a_cancelled_attempt_asks_nothing() {
+        let (mut prompter, events) = prompter(Duration::from_secs(60));
+        prompter.cancelled = Some(Arc::new(AtomicBool::new(true)));
+        assert_eq!(prompter.prompt("", "", &prompts(&[("OTP: ", false)])), [""]);
+        assert_eq!(prompter.given_up, Some(CANCELLED));
+        assert!(events.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn an_attempt_still_wanted_can_be_answered() {
+        let (mut prompter, events) = prompter(Duration::from_secs(5));
+        prompter.cancelled = Some(Arc::new(AtomicBool::new(false)));
+        let watcher = events.clone();
+        let responder = thread::spawn(move || {
+            answer(&wait_for_prompt(&watcher), vec!["ok".into()]).unwrap();
+        });
+        assert_eq!(
+            prompter.prompt("", "", &prompts(&[("OTP: ", false)])),
+            ["ok"]
+        );
+        responder.join().unwrap();
+        assert!(prompter.asked);
+        assert!(prompter.given_up.is_none());
+    }
+
+    /// Whatever ends a prompt ends the reconnect too: asking again would have
+    /// the pane nagging someone who already left, and each round can count
+    /// against the account.
+    #[test]
+    fn giving_up_is_an_auth_failure_that_is_not_retried() {
+        for reason in [CANCELLED, TIMED_OUT] {
+            assert!(reason.to_lowercase().contains("auth"), "{reason}");
+            assert!(!crate::reconnect::is_retryable_connect_error(reason));
+        }
+    }
+
+    #[test]
+    fn the_time_spent_answering_is_kept_apart() {
+        let (mut prompter, events) = prompter(Duration::from_secs(5));
+        let watcher = events.clone();
+        let responder = thread::spawn(move || {
+            let id = wait_for_prompt(&watcher);
+            thread::sleep(Duration::from_millis(50));
+            answer(&id, vec!["1".into()]).unwrap();
+        });
+        prompter.prompt("", "", &prompts(&[("OTP: ", false)]));
+        responder.join().unwrap();
+        assert!(prompter.answering >= Duration::from_millis(50));
+    }
+
+    #[test]
+    fn a_round_without_questions_is_not_asking() {
+        let (mut prompter, _events) = prompter(Duration::from_secs(5));
+        assert!(prompter.prompt("", "Nothing to ask.", &[]).is_empty());
+        assert!(!prompter.asked);
+    }
+
+    #[test]
+    fn a_round_without_questions_carries_its_text_to_the_next_one() {
+        let (mut prompter, events) = prompter(Duration::from_secs(5));
+        assert!(prompter
+            .prompt("", "Your code expires soon.\n", &[])
+            .is_empty());
+        assert!(events.lock().unwrap().is_empty());
+
+        let watcher = events.clone();
+        let responder = thread::spawn(move || {
+            let id = wait_for_prompt(&watcher);
+            answer(&id, vec!["1".into()]).unwrap();
+        });
+        prompter.prompt("", "Enter it.", &prompts(&[("OTP: ", false)]));
+        responder.join().unwrap();
+        assert_eq!(
+            events.lock().unwrap()[0]["instructions"],
+            "Your code expires soon.\nEnter it."
+        );
+    }
+
+    #[test]
+    fn strips_control_characters_from_server_text() {
+        assert_eq!(
+            printable("\u{1b}[31mPass\u{7}word:\r\n\tnext"),
+            "[31mPassword:\n\tnext"
+        );
+        assert_eq!(
+            printable(&"x".repeat(MAX_TEXT_CHARS + 5)).len(),
+            MAX_TEXT_CHARS
+        );
+    }
+
+    /// A bidi override can show `password` as something else, and zero-width
+    /// characters can make text that looks the same say something different.
+    #[test]
+    fn strips_formatting_that_could_disguise_server_text() {
+        assert_eq!(
+            printable("\u{202E}drowssaP\u{202C}\u{200B}:\u{2066} x\u{2069}\u{FEFF}\u{E0041}\u{AD}"),
+            "drowssaP: x"
+        );
+        assert_eq!(printable("a\u{2028}b\u{2029}c\u{200F}d\u{61C}e"), "abcde");
+        assert_eq!(
+            printable("Code de vérification 確認\n"),
+            "Code de vérification 確認\n"
+        );
+    }
+
+    /// Each round can bring the full length of text, and nothing limits the
+    /// number of rounds a server starts.
+    #[test]
+    fn rounds_without_questions_stay_within_the_cap() {
+        let (mut prompter, events) = prompter(Duration::from_secs(5));
+        let long = "x".repeat(MAX_TEXT_CHARS);
+        for _ in 0..3 {
+            assert!(prompter.prompt("", &long, &[]).is_empty());
+            assert_eq!(prompter.instructions.chars().count(), MAX_TEXT_CHARS);
+        }
+        let watcher = events.clone();
+        let responder = thread::spawn(move || {
+            answer(&wait_for_prompt(&watcher), vec!["1".into()]).unwrap();
+        });
+        prompter.prompt("", &long, &prompts(&[("OTP: ", false)]));
+        responder.join().unwrap();
+        let events = events.lock().unwrap();
+        let shown = events[0]["instructions"].as_str().unwrap();
+        assert_eq!(shown.chars().count(), MAX_TEXT_CHARS);
+    }
+
+    #[test]
+    fn answering_or_cancelling_an_unknown_prompt_is_harmless() {
+        assert!(answer("no-such-prompt", vec![]).is_err());
+        cancel("no-such-prompt");
+    }
+
+    #[test]
+    fn a_scope_lasts_as_long_as_its_guard_and_only_on_its_thread() {
+        let has_pane = || current_pane().is_some();
+        assert!(!has_pane());
+        let scope = PromptScope::install(Scope {
+            sink: Arc::new(|_| {}),
+            cancelled: None,
+        });
+        assert!(has_pane());
+        assert!(!thread::spawn(has_pane).join().unwrap());
+        drop(scope);
+        assert!(!has_pane());
+    }
+}
+
+/// Runs against a real server, so a plain `cargo test` skips it. Needs
+/// `server-e` from `docker/docker-compose.yml` (keyboard-interactive only):
+///
+/// ```text
+/// SSIX_LIVE_KBDINT_SSH=127.0.0.1:2205 SSIX_LIVE_KBDINT_USER=usere \
+/// SSIX_LIVE_KBDINT_PASSWORD=passe cargo test live_keyboard -- --ignored --test-threads=1
+/// ```
+#[cfg(test)]
+mod live {
+    use super::*;
+    use crate::login_wait::test_support::FreezingProxy;
+    use crate::login_wait::STALLED;
+    use crate::ssh::{connect_endpoint, open_authenticated_session_over_stream, AuthMethod};
+    use crate::storage::test_support::with_isolated_data_dir;
+    use std::sync::Mutex;
+    use std::thread;
+
+    struct Target {
+        host: String,
+        port: u16,
+        username: String,
+        password: String,
+    }
+
+    /// The server to talk to, or `None` to skip: CI only starts `server-a`
+    /// for the live tests, and the E2E suite covers this path on `server-e`.
+    fn target() -> Option<Target> {
+        let addr = std::env::var("SSIX_LIVE_KBDINT_SSH").ok()?;
+        let (host, port) = addr.rsplit_once(':').expect("host:port");
+        Some(Target {
+            host: host.to_string(),
+            port: port.parse().expect("port"),
+            username: std::env::var("SSIX_LIVE_KBDINT_USER").ok()?,
+            password: std::env::var("SSIX_LIVE_KBDINT_PASSWORD").ok()?,
+        })
+    }
+
+    /// Connect with a credential whose password the server's password method
+    /// would never see, answering each prompt with `respond`.
+    fn connect(
+        target: &Target,
+        respond: impl Fn(&str) + Send + Sync + 'static,
+    ) -> (Result<Session, String>, Vec<serde_json::Value>) {
+        connect_with_password(target, "not-the-password", respond)
+    }
+
+    fn connect_with_password(
+        target: &Target,
+        saved_password: &str,
+        respond: impl Fn(&str) + Send + Sync + 'static,
+    ) -> (Result<Session, String>, Vec<serde_json::Value>) {
+        connect_with_credential(target, AuthMethod::Password(saved_password.into()), respond)
+    }
+
+    fn connect_with_credential(
+        target: &Target,
+        auth: AuthMethod,
+        respond: impl Fn(&str) + Send + Sync + 'static,
+    ) -> (Result<Session, String>, Vec<serde_json::Value>) {
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let sink_events = events.clone();
+        let sink: Sink = Arc::new(move |json: String| {
+            let event: serde_json::Value = serde_json::from_str(&json).unwrap();
+            if event["kind"] == "auth_prompt" {
+                let id = event["prompt_id"].as_str().unwrap().to_string();
+                respond(&id);
+            }
+            sink_events.lock().unwrap().push(event);
+        });
+        let endpoint = Endpoint {
+            host: target.host.clone(),
+            port: target.port,
+            username: target.username.clone(),
+            auth,
+            proxy_command: None,
+        };
+        let mut result = None;
+        with_isolated_data_dir(|| {
+            let _scope = PromptScope::install(Scope {
+                sink,
+                cancelled: None,
+            });
+            let tcp = connect_endpoint(&endpoint, 0).expect("tcp connect");
+            result = Some(open_authenticated_session_over_stream(
+                tcp, &endpoint, 0, None,
+            ));
+        });
+        let sent = events.lock().unwrap().clone();
+        (result.unwrap(), sent)
+    }
+
+    #[test]
+    #[ignore = "needs a keyboard-interactive server (SSIX_LIVE_KBDINT_SSH)"]
+    fn live_keyboard_interactive_answered_in_the_pane() {
+        let Some(target) = target() else { return };
+        let password = target.password.clone();
+        let (session, events) = connect(&target, move |id| {
+            let (id, password) = (id.to_string(), password.clone());
+            thread::spawn(move || answer(&id, vec![password]).unwrap());
+        });
+        let session = session.expect("authenticated");
+        assert!(session.authenticated());
+        let prompt = &events[0];
+        assert_eq!(prompt["kind"], "auth_prompt");
+        assert_eq!(prompt["prompts"][0]["echo"], false);
+        assert!(prompt["prompts"][0]["text"]
+            .as_str()
+            .unwrap()
+            .to_lowercase()
+            .contains("password"));
+        assert_eq!(events[1]["kind"], "auth_prompt_closed");
+    }
+
+    #[test]
+    #[ignore = "needs a keyboard-interactive server (SSIX_LIVE_KBDINT_SSH)"]
+    fn live_keyboard_interactive_wrong_answer_fails() {
+        let Some(target) = target() else { return };
+        let (session, _) = connect(&target, |id| {
+            let id = id.to_string();
+            thread::spawn(move || answer(&id, vec!["wrong".into()]).unwrap());
+        });
+        let error = session.err().expect("refused");
+        assert!(
+            error.contains("Keyboard-interactive auth failed"),
+            "{error}"
+        );
+        assert!(!crate::reconnect::is_retryable_connect_error(&error));
+    }
+
+    #[test]
+    #[ignore = "needs a keyboard-interactive server (SSIX_LIVE_KBDINT_SSH)"]
+    fn live_keyboard_interactive_cancel_ends_at_once() {
+        let Some(target) = target() else { return };
+        let started = std::time::Instant::now();
+        let (session, _) = connect(&target, |id| {
+            let id = id.to_string();
+            thread::spawn(move || cancel(&id));
+        });
+        assert_eq!(session.err().as_deref(), Some(CANCELLED));
+        assert!(started.elapsed() < Duration::from_secs(10));
+    }
+
+    /// A login without a pane, as SCP, script runs and forwards do it.
+    fn connect_without_a_pane(endpoint: &Endpoint) -> Result<Session, String> {
+        let mut result = None;
+        with_isolated_data_dir(|| {
+            let tcp = connect_endpoint(endpoint, 0).expect("tcp connect");
+            result = Some(open_authenticated_session_over_stream(
+                tcp, endpoint, 0, None,
+            ));
+        });
+        result.unwrap()
+    }
+
+    fn endpoint_of(target: &Target, auth: AuthMethod) -> Endpoint {
+        Endpoint {
+            host: target.host.clone(),
+            port: target.port,
+            username: target.username.clone(),
+            auth,
+            proxy_command: None,
+        }
+    }
+
+    /// A key the server has never heard of, in OpenSSH's format, encrypted when
+    /// given a passphrase.
+    fn generated_key(passphrase: Option<&str>) -> String {
+        use ssh_key::rand_core::OsRng;
+        let key = ssh_key::PrivateKey::random(&mut OsRng, ssh_key::Algorithm::Ed25519).unwrap();
+        let key = match passphrase {
+            Some(passphrase) => key.encrypt(&mut OsRng, passphrase).unwrap(),
+            None => key,
+        };
+        key.to_openssh(ssh_key::LineEnding::LF).unwrap().to_string()
+    }
+
+    fn refused_key() -> AuthMethod {
+        AuthMethod::KeyMemory {
+            private_key: generated_key(None),
+            passphrase: None,
+        }
+    }
+
+    fn no_prompt_expected(_: &str) {
+        panic!("no prompt expected");
+    }
+
+    /// Nothing the server could ask would help with any of these, and asking
+    /// would hide what is actually wrong.
+    #[test]
+    #[ignore = "needs a keyboard-interactive server (SSIX_LIVE_KBDINT_SSH)"]
+    fn live_keyboard_local_failures_report_directly_in_a_pane() {
+        let Some(target) = target() else { return };
+        let dir = std::env::temp_dir().join(format!("ssix-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let encrypted = dir.join("encrypted");
+        std::fs::write(&encrypted, generated_key(Some("the-passphrase"))).unwrap();
+
+        let missing = AuthMethod::Key {
+            path: dir.join("missing").display().to_string(),
+            passphrase: None,
+        };
+        let wrong_passphrase = AuthMethod::Key {
+            path: encrypted.display().to_string(),
+            passphrase: Some("not-the-passphrase".into()),
+        };
+        for auth in [missing, wrong_passphrase] {
+            let (session, events) = connect_with_credential(&target, auth, no_prompt_expected);
+            let error = session.err().expect("refused");
+            assert!(error.contains("Key auth failed"), "{error}");
+            assert!(!error.contains("Keyboard"), "{error}");
+            assert!(events.is_empty());
+        }
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    #[ignore = "needs a keyboard-interactive server (SSIX_LIVE_KBDINT_SSH)"]
+    fn live_keyboard_refused_credential_is_named_and_survives_a_cancel() {
+        let Some(target) = target() else { return };
+        let (session, events) = connect_with_credential(&target, refused_key(), |id| {
+            let id = id.to_string();
+            thread::spawn(move || cancel(&id));
+        });
+        let error = session.err().expect("cancelled");
+        assert!(error.contains("Key auth failed"), "{error}");
+        assert!(error.contains(CANCELLED), "{error}");
+        assert!(!crate::reconnect::is_retryable_connect_error(&error));
+        assert_eq!(events[0]["refused"], "The server refused the stored key.");
+    }
+
+    #[test]
+    #[ignore = "needs a keyboard-interactive server (SSIX_LIVE_KBDINT_SSH)"]
+    fn live_keyboard_refused_credential_survives_a_wrong_answer() {
+        let Some(target) = target() else { return };
+        let (session, _) = connect_with_credential(&target, refused_key(), |id| {
+            let id = id.to_string();
+            thread::spawn(move || answer(&id, vec!["wrong".into()]).unwrap());
+        });
+        let error = session.err().expect("refused");
+        assert!(error.contains("Key auth failed"), "{error}");
+        assert!(
+            error.contains("Keyboard-interactive auth failed"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    #[ignore = "needs a keyboard-interactive server (SSIX_LIVE_KBDINT_SSH)"]
+    fn live_keyboard_refused_credential_can_still_be_answered() {
+        let Some(target) = target() else { return };
+        let password = target.password.clone();
+        let (session, events) = connect_with_credential(&target, refused_key(), move |id| {
+            let (id, password) = (id.to_string(), password.clone());
+            thread::spawn(move || answer(&id, vec![password]).unwrap());
+        });
+        assert!(session.expect("logged in").authenticated());
+        assert_eq!(events[0]["refused"], "The server refused the stored key.");
+    }
+
+    /// With no pane there is nothing to offer: the refusal is the whole story,
+    /// and a suggestion to open a shell would send the user the wrong way.
+    #[test]
+    #[ignore = "needs a keyboard-interactive server (SSIX_LIVE_KBDINT_SSH)"]
+    fn live_keyboard_refused_credential_without_a_pane_is_only_refused() {
+        let Some(target) = target() else { return };
+        let error = connect_without_a_pane(&endpoint_of(&target, refused_key()))
+            .err()
+            .expect("refused");
+        assert!(error.contains("Key auth failed"), "{error}");
+        assert!(!error.contains("terminal pane"), "{error}");
+    }
+
+    /// `server-a`, which CI runs, offers keyboard-interactive and then asks
+    /// nothing, so this also holds without `server-e`.
+    #[test]
+    #[ignore = "needs a Unix SSH server (SSIX_LIVE_SSH)"]
+    fn live_wrong_password_without_a_pane_is_only_refused() {
+        let addr = std::env::var("SSIX_LIVE_SSH").expect("SSIX_LIVE_SSH");
+        let (host, port) = addr.rsplit_once(':').expect("host:port");
+        let error = connect_without_a_pane(&Endpoint {
+            host: host.to_string(),
+            port: port.parse().expect("port"),
+            username: std::env::var("SSIX_LIVE_USER").expect("SSIX_LIVE_USER"),
+            auth: AuthMethod::Password("not-the-password".into()),
+            proxy_command: None,
+        })
+        .err()
+        .expect("refused");
+        assert!(error.contains("Password auth failed"), "{error}");
+        assert!(!error.contains("terminal pane"), "{error}");
+    }
+
+    /// SCP, script runs and forwards have no pane to ask in. A server whose only
+    /// way in is a prompt is worth a word on why that matters.
+    #[test]
+    #[ignore = "needs a keyboard-interactive server (SSIX_LIVE_KBDINT_SSH)"]
+    fn live_keyboard_interactive_without_a_pane_says_why() {
+        let Some(target) = target() else { return };
+        let auth = AuthMethod::Password(target.password.clone());
+        let error = connect_without_a_pane(&endpoint_of(&target, auth))
+            .err()
+            .expect("refused");
+        assert!(
+            error.contains("does not accept password"),
+            "the saved password must not be tried: {error}"
+        );
+        assert!(error.contains("only a terminal pane"), "{error}");
+    }
+
+    /// Run the exchange through `proxy` with short limits, handing each prompt's
+    /// id to `respond`. Returns why it stopped, if it was stopped, what libssh2
+    /// said, and how long it all took.
+    fn exchange_through(
+        target: &Target,
+        proxy: &FreezingProxy,
+        cancelled: Option<Arc<AtomicBool>>,
+        stalls: Stalls,
+        respond: impl Fn(&str) + Send + Sync + 'static,
+    ) -> (Option<&'static str>, Result<(), ssh2::Error>, Duration) {
+        let session = session_up_to_login(proxy, target);
+        let sink: Sink = Arc::new(move |json: String| {
+            let event: serde_json::Value = serde_json::from_str(&json).unwrap();
+            if event["kind"] == "auth_prompt" {
+                respond(event["prompt_id"].as_str().unwrap());
+            }
+        });
+        let mut prompter = prompter_for(target, &session, cancelled, sink);
+        let started = Instant::now();
+        let result = exchange(&session, &target.username, &mut prompter, stalls);
+        (prompter.given_up, result, started.elapsed())
+    }
+
+    /// A session through `proxy` that got as far as a real login does before its
+    /// exchange: the method list.
+    fn session_up_to_login(proxy: &FreezingProxy, target: &Target) -> Session {
+        let session = proxy.session();
+        let _ = crate::libssh2_ext::userauth_list(&session, &target.username);
+        session
+    }
+
+    fn prompter_for(
+        target: &Target,
+        session: &Session,
+        cancelled: Option<Arc<AtomicBool>>,
+        sink: Sink,
+    ) -> PanePrompter {
+        PanePrompter {
+            sink,
+            cancelled,
+            asked: false,
+            refused: None,
+            host: "proxied".into(),
+            username: target.username.clone(),
+            socket: Some(wake::fd_of(session)),
+            timeout: Duration::from_secs(30),
+            answering: Duration::ZERO,
+            instructions: String::new(),
+            given_up: None,
+            debug: SshDebug::new(0, "proxied"),
+        }
+    }
+
+    /// For a server that must not get as far as asking.
+    fn silent_prompter(
+        target: &Target,
+        session: &Session,
+        cancelled: Option<Arc<AtomicBool>>,
+    ) -> PanePrompter {
+        let sink: Sink = Arc::new(|_| panic!("the server should not get to ask"));
+        prompter_for(target, session, cancelled, sink)
+    }
+
+    const SHORT_STALLS: Stalls = Stalls {
+        before_a_question: Duration::from_secs(1),
+        after_an_answer: Duration::from_secs(1),
+    };
+
+    fn proxy_to(target: &Target) -> FreezingProxy {
+        FreezingProxy::to(&format!("{}:{}", target.host, target.port))
+    }
+
+    fn assert_stalled(given_up: Option<&'static str>, took: Duration) {
+        assert_eq!(given_up, Some(STALLED));
+        assert!(crate::reconnect::is_retryable_connect_error(STALLED));
+        assert!(took < Duration::from_secs(10), "took {took:?}");
+    }
+
+    #[test]
+    #[ignore = "needs a keyboard-interactive server (SSIX_LIVE_KBDINT_SSH)"]
+    fn live_keyboard_stall_before_the_question_can_be_retried() {
+        let Some(target) = target() else { return };
+        let proxy = proxy_to(&target);
+        let session = session_up_to_login(&proxy, &target);
+        proxy.freeze();
+        let mut prompter = silent_prompter(&target, &session, None);
+        let started = Instant::now();
+        let _ = exchange(&session, &target.username, &mut prompter, SHORT_STALLS);
+        assert_stalled(prompter.given_up, started.elapsed());
+    }
+
+    #[test]
+    #[ignore = "needs a keyboard-interactive server (SSIX_LIVE_KBDINT_SSH)"]
+    fn live_keyboard_stall_after_the_answer_can_be_retried() {
+        let Some(target) = target() else { return };
+        let proxy = proxy_to(&target);
+        let frozen = proxy.frozen.clone();
+        let (given_up, _, took) =
+            exchange_through(&target, &proxy, None, SHORT_STALLS, move |id| {
+                frozen.store(true, Ordering::SeqCst);
+                let id = id.to_string();
+                thread::spawn(move || answer(&id, vec!["anything".into()]).unwrap());
+            });
+        assert_stalled(given_up, took);
+    }
+
+    /// The other half of the finding: nothing used to notice a cancelled attempt
+    /// while libssh2 waited for a server that said nothing.
+    #[test]
+    #[ignore = "needs a keyboard-interactive server (SSIX_LIVE_KBDINT_SSH)"]
+    fn live_keyboard_stall_notices_a_cancelled_attempt() {
+        let Some(target) = target() else { return };
+        let proxy = proxy_to(&target);
+        let session = session_up_to_login(&proxy, &target);
+        proxy.freeze();
+        let flag = Arc::new(AtomicBool::new(false));
+        let mut prompter = silent_prompter(&target, &session, Some(flag.clone()));
+        let canceller = thread::spawn(move || {
+            thread::sleep(Duration::from_millis(300));
+            flag.store(true, Ordering::SeqCst);
+        });
+        let started = Instant::now();
+        let _ = exchange(&session, &target.username, &mut prompter, STALLS);
+        canceller.join().unwrap();
+        assert_eq!(prompter.given_up, Some(CANCELLED));
+        assert!(started.elapsed() < Duration::from_secs(5));
+    }
+
+    #[test]
+    #[ignore = "needs a keyboard-interactive server (SSIX_LIVE_KBDINT_SSH)"]
+    fn live_keyboard_slow_answer_is_not_a_stall() {
+        let Some(target) = target() else { return };
+        let proxy = proxy_to(&target);
+        let password = target.password.clone();
+        let (given_up, result, took) =
+            exchange_through(&target, &proxy, None, SHORT_STALLS, move |id| {
+                let (id, password) = (id.to_string(), password.clone());
+                thread::spawn(move || {
+                    thread::sleep(Duration::from_secs(3));
+                    answer(&id, vec![password]).unwrap();
+                });
+            });
+        assert_eq!(given_up, None);
+        result.expect("logged in");
+        assert!(took >= Duration::from_secs(3));
+    }
+
+    /// The shape of a real 2FA login: a first factor the server accepts only
+    /// partially, then its prompt. `server-e` does not do this by default, so
+    /// this needs a second container from its image, off by default in CI:
+    ///
+    /// ```text
+    /// docker run -d --rm --name ssix-2fa -p 2316:22 <server-e image> /usr/sbin/sshd.pam -D -e \
+    ///   -o PasswordAuthentication=yes -o AuthenticationMethods=password,keyboard-interactive
+    /// SSIX_LIVE_2FA_SSH=127.0.0.1:2316 cargo test live_keyboard_interactive_as_second -- \
+    ///   --ignored --test-threads=1
+    /// ```
+    #[test]
+    #[ignore = "needs a two-factor server (SSIX_LIVE_2FA_SSH)"]
+    fn live_keyboard_interactive_as_second_factor() {
+        let Ok(addr) = std::env::var("SSIX_LIVE_2FA_SSH") else {
+            return;
+        };
+        let (host, port) = addr.rsplit_once(':').expect("host:port");
+        let target = Target {
+            host: host.to_string(),
+            port: port.parse().expect("port"),
+            username: "usere".to_string(),
+            password: "passe".to_string(),
+        };
+
+        // The right first factor leads to the prompt, then to a login.
+        let (session, events) = connect_with_password(&target, &target.password, |id| {
+            let id = id.to_string();
+            thread::spawn(move || answer(&id, vec!["passe".into()]).unwrap());
+        });
+        assert!(session.expect("authenticated").authenticated());
+        assert_eq!(events[0]["kind"], "auth_prompt");
+
+        // A wrong first factor leads nowhere: the server does not offer the
+        // second step, so the pane is never asked and the password's own
+        // error comes back.
+        let (session, events) = connect(&target, |_| panic!("no prompt expected"));
+        let error = session.err().expect("refused");
+        assert!(error.contains("Password auth failed"), "{error}");
+        assert!(events.is_empty());
+    }
+}

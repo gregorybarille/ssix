@@ -5,8 +5,9 @@
 //!
 //! An attempt runs on a helper thread because connecting can block for tens
 //! of seconds, and Cancel and closing the pane must not wait for it. A
-//! cancelled attempt is told to stop, which it checks before logging in and
-//! before running the login command. Whatever it still opens is dropped.
+//! cancelled attempt is told to stop, which it checks before logging in, while
+//! a login prompt waits, and before running the login command. Whatever it
+//! still opens is dropped.
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, RecvTimeoutError, TryRecvError};
@@ -29,7 +30,7 @@ pub(crate) const STABLE_SHELL: Duration = Duration::from_secs(60);
 /// an allow-list, a failure nobody thought of is never retried against a
 /// server that may lock the account. Each entry is part of a message from
 /// `ssh.rs`; jump hosts wrap them, so they are searched anywhere.
-const RETRYABLE_ERRORS: [&str; 11] = [
+const RETRYABLE_ERRORS: [&str; 12] = [
     "Failed to resolve",
     "No addresses resolved",
     "TCP connect to",
@@ -41,6 +42,7 @@ const RETRYABLE_ERRORS: [&str; 11] = [
     "Failed to connect inner SSH session",
     "via jump host timed out",
     "forwarder exited",
+    crate::login_wait::STALLED,
 ];
 
 pub(crate) fn is_retryable_connect_error(message: &str) -> bool {
@@ -399,6 +401,7 @@ mod tests {
             "Target connect via jump host timed out after 25s",
             "Target connect via jump host failed: forwarder exited",
             "Failed to connect inner SSH session: refused",
+            crate::login_wait::STALLED,
         ] {
             assert!(is_retryable_connect_error(retryable), "{retryable}");
         }
@@ -409,6 +412,13 @@ mod tests {
             "SSH agent authentication is not available yet",
             "Jump host j:22: Password auth failed: x",
             "Target connect via jump host failed: Key auth failed: x",
+            "Keyboard-interactive auth failed: [Session(-18)] Authentication failed",
+            "Keyboard-interactive auth failed: [Session(-13)] socket disconnect",
+            crate::auth_prompt::CANCELLED,
+            crate::auth_prompt::TIMED_OUT,
+            "Agent auth failed: Could not reach an SSH agent: refused",
+            "Agent auth failed: The SSH agent holds no keys. Add one with ssh-add",
+            "Agent auth failed: the server accepted none of the 1 key(s) in the SSH agent (x)",
             HOST_KEY_FAILURE,
             "Jump host j:22: HOST_KEY_MISMATCH host=j port=22 fingerprint=x",
             "h:22 did not present a host key",
@@ -430,6 +440,27 @@ mod tests {
         assert_eq!(h.opens(), 1);
         assert!(h.events().last().unwrap().contains("Password auth failed"));
         h.close();
+    }
+
+    /// Someone who walks away from a prompt, cancels it or gets it wrong is
+    /// not asked again until they press Retry. Each of these is what a spec
+    /// (`/auth/i`) and the status bar read, so each has to say "auth" too.
+    #[test]
+    fn a_login_that_needed_an_answer_or_an_agent_is_never_retried() {
+        for failure in [
+            crate::auth_prompt::CANCELLED,
+            crate::auth_prompt::TIMED_OUT,
+            "Keyboard-interactive auth failed: [Session(-18)] Authentication failed",
+            "Agent auth failed: The SSH agent holds no keys. Add one with ssh-add",
+        ] {
+            assert!(failure.to_lowercase().contains("auth"), "{failure}");
+            let h = Harness::start(FIVE_TRIES, instantly, move |_| Err(failure.to_string()));
+            h.wait_for_event("reconnect_stopped");
+            thread::sleep(Duration::from_millis(50));
+            assert_eq!(h.opens(), 1, "{failure}");
+            assert!(h.events().last().unwrap().contains(failure), "{failure}");
+            h.close();
+        }
     }
 
     #[test]

@@ -164,6 +164,7 @@ export function ConnectPicker({
           */}
           <Input
             ref={inputRef}
+            data-testid="connect-picker-input"
             type="search"
             // Autofocus is intentional: the picker is invoked via Cmd+K /
             // the + tab button as a "go now" affordance.

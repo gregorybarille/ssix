@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from "vitest";
 import { act, render, screen, fireEvent, within } from "@testing-library/react";
 import { Sidebar } from "@/components/Sidebar";
+import { useAuthPromptStore } from "@/store/useAuthPromptStore";
 
 describe("Sidebar", () => {
   it("renders nav items", () => {
@@ -21,6 +22,33 @@ describe("Sidebar", () => {
     render(<Sidebar active="connections" onNavigate={onNavigate} />);
     fireEvent.click(screen.getByRole("button", { name: "Credentials" }));
     expect(onNavigate).toHaveBeenCalledWith("credentials");
+  });
+
+  it("shows from any view that a login prompt is waiting, also to a screen reader", () => {
+    useAuthPromptStore.setState({ prompts: {} });
+    render(<Sidebar active="connections" onNavigate={vi.fn()} terminalCount={1} />);
+    expect(screen.queryByTestId("nav-terminals-waiting")).toBeNull();
+    expect(screen.getByTestId("nav-terminals")).toHaveAccessibleName("Terminals, 1 active");
+
+    act(() =>
+      useAuthPromptStore.getState().receive("pane", {
+        kind: "auth_prompt",
+        prompt_id: "p1",
+        host: "h:22",
+        username: "me",
+        instructions: "",
+        prompts: [{ text: "Code: ", echo: false }],
+      }),
+    );
+    expect(screen.getByTestId("nav-terminals-waiting")).toBeInTheDocument();
+    expect(screen.getByTestId("nav-terminals")).toHaveAccessibleName(
+      "Terminals, 1 active, login prompt waiting",
+    );
+
+    act(() =>
+      useAuthPromptStore.getState().receive("pane", { kind: "auth_prompt_closed", prompt_id: "p1" }),
+    );
+    expect(screen.queryByTestId("nav-terminals-waiting")).toBeNull();
   });
 
   it("does not show terminal icon when terminalCount is 0", () => {

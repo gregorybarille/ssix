@@ -24,7 +24,7 @@ Host machine
 - **server-d** is reachable through **server-b** via the `private_b` internal network.
 - All servers have `AllowTcpForwarding yes` in sshd, which local forwards and jump host connections need.
 - **server-a** also has `GatewayPorts clientspecified`, set by its `command:` in `docker-compose.yml`, so a remote forward can choose the address it binds on the server.
-- **server-e** offers keyboard-interactive and refuses the password method. It is built from `Dockerfile.kbdint`, which runs Alpine's PAM build of sshd (`sshd.pam`); the other servers share `Dockerfile`.
+- **server-e** offers keyboard-interactive and refuses the password method. It is built from `Dockerfile.kbdint`, which runs Alpine's PAM build of sshd (`sshd.pam`); the other servers share `Dockerfile`. It has `PerSourcePenalties` off: its tests fail logins on purpose, all from one address, and the penalty would turn the tests after them away before their handshake.
 
 ## Usage
 

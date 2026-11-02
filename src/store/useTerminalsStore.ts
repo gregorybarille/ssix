@@ -10,6 +10,7 @@ import type {
   TerminalTab,
   TerminalSession,
 } from "@/components/TerminalTabs";
+import { useAuthPromptStore } from "./useAuthPromptStore";
 import { useViewStore } from "./useViewStore";
 import { usePortForwardsStore } from "./usePortForwardsStore";
 import { useSettingsStore } from "./useSettingsStore";
@@ -188,7 +189,13 @@ export const useTerminalsStore = create<TerminalsState>((set, get) => {
       try {
         // The output channel must exist before the backend starts the
         // session; its sink buffers bytes until the <Terminal> mounts.
-        const { channel, sink } = await createOutputChannel();
+        // A login asks under the placeholder; a reconnect, later, under the session.
+        let paneId = placeholderId;
+        const { channel, sink } = await createOutputChannel((event) => {
+          const prompts = useAuthPromptStore.getState();
+          if (findPane(paneId)) prompts.receive(paneId, event);
+          else prompts.refuse(event);
+        });
         const sessionId = await invoke<string>("ssh_connect", {
           connectionId: conn.id,
           onOutput: channel,
@@ -199,6 +206,7 @@ export const useTerminalsStore = create<TerminalsState>((set, get) => {
           return;
         }
         registerOutputSink(sessionId, sink);
+        paneId = sessionId;
         // Replace placeholder identity in-place so the pane keeps its slot.
         set((state) => ({
           tabs: state.tabs.map((t) => ({
@@ -238,6 +246,7 @@ export const useTerminalsStore = create<TerminalsState>((set, get) => {
 
     closePane: async (sessionId) => {
       const { tabs, activeTabId } = get();
+      useAuthPromptStore.getState().cancel(sessionId);
       let tabClosed: string | null = null;
       for (const tab of tabs) {
         const pane = tab.panes.find((p) => p.sessionId === sessionId);
@@ -287,6 +296,7 @@ export const useTerminalsStore = create<TerminalsState>((set, get) => {
       const tab = tabs.find((t) => t.id === tabId);
       if (!tab) return;
       tab.panes.forEach(markIfStillConnecting);
+      for (const pane of tab.panes) useAuthPromptStore.getState().cancel(pane.sessionId);
       set((state) => {
         const remaining = state.tabs.filter((t) => t.id !== tabId);
         let nextActive = state.activeTabId;

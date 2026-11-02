@@ -1,23 +1,27 @@
 import { useEffect } from "react";
+import type { Terminal as XTerm } from "@xterm/xterm";
 import { act, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { FailedTerminal } from "@/components/FailedTerminal";
 import { TerminalTabs, type TerminalSession } from "@/components/TerminalTabs";
 import { invoke } from "@/lib/tauri";
 import type { ReconnectState } from "@/lib/reconnect";
+import { registerTerminal, unregisterTerminal } from "@/lib/terminalRegistry";
+import { useAuthPromptStore } from "@/store/useAuthPromptStore";
 import type { Connection } from "@/types";
+import { terminalTabsCallbacks } from "./terminalTabsCallbacks";
 
 vi.mock("@/lib/tauri", () => ({ invoke: vi.fn() }));
 const invokeMock = vi.mocked(invoke);
 
 const mounts = vi.fn();
 vi.mock("@/components/Terminal", () => ({
-  Terminal: ({ sessionId }: { sessionId: string }) => {
+  Terminal: ({ sessionId, isVisible }: { sessionId: string; isVisible: boolean }) => {
     useEffect(() => {
       mounts(sessionId);
     }, []);
-    return <div data-testid="terminal" data-session-id={sessionId} />;
+    return <div data-testid="terminal" data-session-id={sessionId} data-visible={isVisible} />;
   },
 }));
 
@@ -43,6 +47,7 @@ beforeEach(() => {
   mounts.mockClear();
   invokeMock.mockReset();
   invokeMock.mockResolvedValue(undefined);
+  useAuthPromptStore.setState({ prompts: {} });
 });
 
 function renderStatus(reconnect: ReconnectState, error?: string) {
@@ -154,7 +159,7 @@ describe("the status of a shell that lost its connection", () => {
 });
 
 describe("a pane's terminal", () => {
-  function tabs(pane: Partial<TerminalSession>) {
+  function tabs(pane: Partial<TerminalSession>, onClosePane = vi.fn()) {
     return (
       <TerminalTabs
         tabs={[
@@ -165,15 +170,100 @@ describe("a pane's terminal", () => {
           },
         ]}
         activeTabId="t1"
-        onSelectTab={vi.fn()}
-        onCloseTab={vi.fn()}
-        onClosePane={vi.fn()}
-        onNewTab={vi.fn()}
-        onRetry={vi.fn()}
-        onEdit={vi.fn()}
+        {...terminalTabsCallbacks()}
+        onClosePane={onClosePane}
       />
     );
   }
+
+  const askForCode = () =>
+    act(() =>
+      useAuthPromptStore.getState().receive("s1", {
+        kind: "auth_prompt",
+        prompt_id: "p1",
+        host: "web.example:22",
+        username: "me",
+        instructions: "",
+        prompts: [{ text: "Code: ", echo: false }],
+      }),
+    );
+
+  it("gives way to a login prompt during a reconnect and comes back after it", () => {
+    render(tabs({ retrying: true, reconnect: WAITING }));
+    expect(screen.getByTestId("terminal")).toHaveAttribute("data-visible", "true");
+
+    askForCode();
+    expect(screen.getByTestId("auth-prompt-reconnecting")).toBeInTheDocument();
+    expect(screen.getByTestId("auth-prompt-input-0")).toHaveFocus();
+    expect(screen.queryByTestId("failed-terminal")).not.toBeInTheDocument();
+    // Hiding it would make it take the focus back whenever the prompt went.
+    expect(screen.getByTestId("terminal")).toHaveAttribute("data-visible", "true");
+    expect(screen.getByTestId("terminal").parentElement).toHaveAttribute("inert");
+
+    act(() =>
+      useAuthPromptStore.getState().receive("s1", { kind: "auth_prompt_closed", prompt_id: "p1" }),
+    );
+    expect(screen.queryByTestId("auth-prompt")).not.toBeInTheDocument();
+    expect(screen.getByTestId("failed-terminal")).toHaveAttribute("data-reconnect-phase", "waiting");
+    expect(screen.getByTestId("terminal")).toHaveAttribute("data-visible", "true");
+    expect(screen.getByTestId("terminal").parentElement).not.toHaveAttribute("inert");
+    expect(mounts).toHaveBeenCalledTimes(1);
+  });
+
+  describe("the keyboard around a prompt", () => {
+    const fakeTerminal = () => {
+      const term = { focus: vi.fn(), textarea: undefined } as unknown as XTerm;
+      registerTerminal("s1", term);
+      return term;
+    };
+    const closePrompt = () =>
+      act(() =>
+        useAuthPromptStore.getState().receive("s1", { kind: "auth_prompt_closed", prompt_id: "p1" }),
+      );
+
+    afterEach(() => unregisterTerminal("s1"));
+
+    it("hands it to the terminal when the prompt goes and nothing else holds it", () => {
+      const term = fakeTerminal();
+      render(tabs({ retrying: true, reconnect: WAITING }));
+      askForCode();
+      expect(screen.getByTestId("auth-prompt-input-0")).toHaveFocus();
+      closePrompt();
+      expect(term.focus).toHaveBeenCalledTimes(1);
+    });
+
+    it("leaves it with someone typing elsewhere, both when the prompt comes and goes", () => {
+      const term = fakeTerminal();
+      render(
+        <>
+          <input data-testid="elsewhere" />
+          {tabs({ retrying: true, reconnect: WAITING })}
+        </>,
+      );
+      const elsewhere = screen.getByTestId("elsewhere");
+      elsewhere.focus();
+
+      askForCode();
+      expect(elsewhere).toHaveFocus();
+
+      closePrompt();
+      expect(elsewhere).toHaveFocus();
+      expect(term.focus).not.toHaveBeenCalled();
+    });
+  });
+
+  it("keeps its pane when Cancel ends a reconnect's prompt", async () => {
+    const onClosePane = vi.fn();
+    render(tabs({ retrying: true, reconnect: WAITING }, onClosePane));
+    askForCode();
+
+    await userEvent.click(screen.getByTestId("auth-prompt-cancel"));
+
+    expect(invokeMock).toHaveBeenCalledWith("ssh_auth_cancel", { promptId: "p1" });
+    expect(onClosePane).not.toHaveBeenCalled();
+    expect(screen.queryByTestId("auth-prompt")).not.toBeInTheDocument();
+    expect(screen.getByTestId("failed-terminal")).toBeInTheDocument();
+  });
 
   it("stays mounted through a whole reconnect, so its scrollback survives", () => {
     const { rerender } = render(tabs({}));

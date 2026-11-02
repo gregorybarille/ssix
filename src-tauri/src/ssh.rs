@@ -41,7 +41,7 @@ const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 /// libssh2 timeout for blocking calls during setup (handshake, auth, channel open).
 pub(crate) const SESSION_TIMEOUT_MS: u32 = 15_000;
 /// Longest an idle worker waits for socket readiness before re-checking its queue.
-/// Idle wait for a forwarder that shares its session with other clients.
+/// Idle wait for a thread that shares its session with another that reads it.
 const SHARED_WAIT_MAX: Duration = Duration::from_millis(10);
 /// Longest single park while waiting for a socket to become writable.
 const WRITE_WAIT_MAX: Duration = Duration::from_millis(50);
@@ -83,8 +83,7 @@ pub enum AuthMethod {
         private_key: String,
         passphrase: Option<String>,
     },
-    /// Keys held by the SSH agent. Not implemented yet (roadmap: auth):
-    /// `authenticate` refuses it with a clear message.
+    /// Keys held by the SSH agent, FIDO2 keys included (see `crate::agent`).
     Agent,
 }
 
@@ -125,6 +124,8 @@ pub struct ShellOptions {
     pub keepalive_interval: u16,
     /// Set by a reconnect attempt's owner once nobody wants the result.
     pub cancelled: Option<Arc<AtomicBool>>,
+    /// Let this shell's server use the local SSH agent (`ssh -A`).
+    pub agent_forwarding: bool,
 }
 
 /// Everything a worker needs to talk back to the app.
@@ -346,6 +347,16 @@ pub(crate) mod wake {
     pub fn is_writable(fd: Fd) -> bool {
         ready_now(fd, libc::POLLOUT)
     }
+
+    /// End the connection behind `fd` both ways, keeping the descriptor open
+    /// for whoever owns it.
+    pub fn shutdown(fd: Fd) {
+        // SAFETY: `shutdown` takes a descriptor by value and does not close it;
+        // on one that is no longer a socket it only returns an error.
+        unsafe {
+            libc::shutdown(fd, libc::SHUT_RDWR);
+        }
+    }
 }
 
 #[cfg(windows)]
@@ -421,6 +432,22 @@ pub(crate) mod wake {
         // SAFETY: `poll` is a valid one-element array that outlives the call,
         // and a timeout of 0 returns at once.
         unsafe { WSAPoll(&mut poll, 1, 0) > 0 }
+    }
+
+    /// End the connection behind `fd` both ways, keeping the socket open for
+    /// whoever owns it.
+    pub fn shutdown(fd: Fd) {
+        /// `SD_BOTH` in `winsock2.h`.
+        const SD_BOTH: i32 = 2;
+        #[link(name = "ws2_32")]
+        extern "system" {
+            fn shutdown(socket: usize, how: i32) -> i32;
+        }
+        // SAFETY: `shutdown` takes a socket handle by value and does not close
+        // it; on a handle that is no longer a socket it only returns an error.
+        unsafe {
+            shutdown(fd as usize, SD_BOTH);
+        }
     }
 }
 
@@ -612,6 +639,181 @@ fn open_session_unless_cancelled(
     Ok(session)
 }
 
+/// The method names a server offers (`publickey,keyboard-interactive`). `None`
+/// when it could not be asked, which offers nothing but rules nothing out.
+fn list_auth_methods(session: &Session, username: &str, debug: &SshDebug) -> Option<String> {
+    match crate::libssh2_ext::userauth_list(session, username) {
+        Ok(methods) => {
+            debug.at(1, || {
+                format!("Authentications that can continue: {}", methods)
+            });
+            // An empty list goes with a server that just accepted "none".
+            (!methods.is_empty()).then_some(methods)
+        }
+        Err(e) => {
+            debug.at(1, || {
+                format!("Could not list authentication methods: {}", e)
+            });
+            None
+        }
+    }
+}
+
+fn offers_method(methods: &str, method: &str) -> bool {
+    methods.split(',').any(|offered| offered.trim() == method)
+}
+
+/// Why a credential did not finish the login.
+#[derive(Debug)]
+pub(crate) enum CredentialFailure {
+    /// It never got to the server's judgement: no key file, a wrong passphrase,
+    /// an agent out of reach, a connection that failed. Nothing the server could
+    /// ask would help, and asking would hide what is actually wrong.
+    Local(String),
+    /// The server said no. libssh2 says the same for a first factor it accepted.
+    Refused(String),
+}
+
+impl CredentialFailure {
+    /// Sorted by what libssh2 reports. It also uses the two refusal codes for
+    /// failures of its own, which only their text tells apart.
+    pub(crate) fn from_error(error: &ssh2::Error, message: String) -> Self {
+        let refusal_code = matches!(
+            error.code(),
+            ssh2::ErrorCode::Session(
+                libssh2_sys::LIBSSH2_ERROR_AUTHENTICATION_FAILED
+                    | libssh2_sys::LIBSSH2_ERROR_PUBLICKEY_UNVERIFIED
+            )
+        );
+        let reason = error.message();
+        if refusal_code
+            && !reason.starts_with("Waiting for")
+            && !reason.starts_with("Invalid public key")
+            && reason != "Callback returned error"
+        {
+            Self::Refused(message)
+        } else {
+            Self::Local(message)
+        }
+    }
+
+    pub(crate) fn into_message(self) -> String {
+        match self {
+            Self::Local(message) | Self::Refused(message) => message,
+        }
+    }
+}
+
+/// Whether two method lists name the same methods.
+fn same_methods(one: &str, other: &str) -> bool {
+    let names = |list: &'_ str| {
+        list.split(',')
+            .map(|name| name.trim().to_string())
+            .collect::<std::collections::BTreeSet<_>>()
+    };
+    names(one) == names(other)
+}
+
+/// Whether a refused credential was in fact accepted as a first factor, which
+/// libssh2 cannot say. A server that took it moves on to other methods, while
+/// one that refused it still offers what it offered before.
+fn accepted_as_first_factor(before: Option<&str>, after: Option<&str>) -> bool {
+    matches!((before, after), (Some(before), Some(after)) if !same_methods(before, after))
+}
+
+/// What the pane says the server refused.
+fn credential_label(auth: &AuthMethod) -> String {
+    match auth {
+        AuthMethod::Password(_) => "the saved password".to_string(),
+        AuthMethod::Key { path, .. } => format!("the key {}", path),
+        AuthMethod::KeyMemory { .. } => "the stored key".to_string(),
+        AuthMethod::Agent => "the keys in the SSH agent".to_string(),
+    }
+}
+
+/// The error for a login that ended at the prompt. `first_step` is why the
+/// credential did not finish it, and `refused` whether the server turned it down.
+/// A refusal is the thing to fix, so it stays in the message, and it must not be
+/// retried: a reconnect would send that credential again, so a server going silent
+/// does not use the wording that a reconnect takes for a network failure.
+fn prompt_failure_message(
+    first_step: &str,
+    refused: bool,
+    failure: crate::auth_prompt::PromptFailure,
+) -> String {
+    use crate::auth_prompt::PromptFailure;
+    use crate::login_wait::STALLED;
+    match failure {
+        PromptFailure::NothingAsked => first_step.to_string(),
+        PromptFailure::GaveUp(reason) if !refused => reason.to_string(),
+        PromptFailure::GaveUp(STALLED) => {
+            format!("{}. The server then stopped answering", first_step)
+        }
+        PromptFailure::GaveUp(reason) => format!("{}. {}", first_step, reason),
+        PromptFailure::Refused(reason) if !refused => {
+            format!("Keyboard-interactive auth failed: {}", reason)
+        }
+        PromptFailure::Refused(reason) => {
+            format!(
+                "{}. Keyboard-interactive auth failed: {}",
+                first_step, reason
+            )
+        }
+    }
+}
+
+/// Where a login goes once the credential left it unfinished. `error` says why,
+/// `tried` whether the server got to judge the credential, and `offered` and
+/// `remaining` are its methods before and after.
+fn continue_after_credential(
+    session: &Session,
+    endpoint: &Endpoint,
+    debug: &SshDebug,
+    error: String,
+    tried: bool,
+    offered: Option<&str>,
+    remaining: Option<&str>,
+) -> Result<(), String> {
+    if !remaining.is_some_and(|methods| offers_method(methods, "keyboard-interactive")) {
+        return Err(error);
+    }
+    let refused = tried && !accepted_as_first_factor(offered, remaining);
+    let Some(pane) = crate::auth_prompt::current_pane() else {
+        // A server that only turned the credential down has no question waiting:
+        // saying a shell would help would send the user the wrong way.
+        return Err(if refused {
+            error
+        } else {
+            format!(
+                "{}. The server asks for keyboard-interactive answers, which only a \
+                 terminal pane can collect: open this connection as a shell",
+                error
+            )
+        });
+    };
+    debug.at(1, || {
+        format!(
+            "Next authentication method: keyboard-interactive as {}",
+            endpoint.username
+        )
+    });
+    let note = refused.then(|| format!("The server refused {}.", credential_label(&endpoint.auth)));
+    crate::auth_prompt::authenticate(pane, session, endpoint, debug, note.as_deref())
+        .map_err(|failure| prompt_failure_message(&error, refused, failure))?;
+    if session.authenticated() {
+        Ok(())
+    } else {
+        Err("Authentication failed".to_string())
+    }
+}
+
+/// Log in with the endpoint's credential; a server may then still ask for a
+/// second factor. Keyboard-interactive covers both a server that takes nothing
+/// else and that second step, as it does with `ssh`, and may follow a refused
+/// credential in a shell, whose user can still answer. A method the server does
+/// not offer is skipped, so a saved password never goes to a server that
+/// refuses passwords, and a saved password never answers a prompt: only the
+/// user does, in the pane (see `crate::auth_prompt`).
 pub(crate) fn authenticate(
     session: &Session,
     endpoint: &Endpoint,
@@ -620,55 +822,90 @@ pub(crate) fn authenticate(
     let username = &endpoint.username;
     // Listing the methods sends a "none" request, as `ssh -v` does. A
     // server that accepts it leaves nothing else to do.
-    if debug.enabled(1) {
-        match session.auth_methods(username) {
-            Ok(methods) => debug.at(1, || {
-                format!("Authentications that can continue: {}", methods)
-            }),
-            Err(e) => debug.at(1, || {
-                format!("Could not list authentication methods: {}", e)
-            }),
-        }
-        if session.authenticated() {
-            debug.at(1, || "Authentication succeeded (none).".to_string());
-            return Ok(());
-        }
-    }
-    let method = match &endpoint.auth {
-        AuthMethod::Password(_) => "password".to_string(),
-        AuthMethod::Key { path, .. } => format!("publickey ({})", path),
-        AuthMethod::KeyMemory { .. } => "publickey (stored key)".to_string(),
-        AuthMethod::Agent => "publickey (agent)".to_string(),
-    };
-    debug.at(1, || {
-        format!("Next authentication method: {} as {}", method, username)
-    });
-    let started = Instant::now();
-    match &endpoint.auth {
-        AuthMethod::Password(pw) => session
-            .userauth_password(username, pw)
-            .map_err(|e| format!("Password auth failed: {}", e))?,
-        AuthMethod::Key { path, passphrase } => session
-            .userauth_pubkey_file(username, None, Path::new(path), passphrase.as_deref())
-            .map_err(|e| format!("Key auth failed: {}", e))?,
-        AuthMethod::KeyMemory {
-            private_key,
-            passphrase,
-        } => authenticate_pubkey_memory(session, username, private_key, passphrase.as_deref())
-            .map_err(|e| format!("Key auth failed: {}", e))?,
-        AuthMethod::Agent => {
-            return Err("SSH agent authentication is not available yet".to_string());
-        }
+    let offered = list_auth_methods(session, username, debug);
+    if session.authenticated() {
+        debug.at(1, || "Authentication succeeded (none).".to_string());
+        return Ok(());
     }
 
-    if !session.authenticated() {
-        return Err("Authentication failed".to_string());
-    }
+    let (wire_name, method) = match &endpoint.auth {
+        AuthMethod::Password(_) => ("password", "password".to_string()),
+        AuthMethod::Key { path, .. } => ("publickey", format!("publickey ({})", path)),
+        AuthMethod::KeyMemory { .. } => ("publickey", "publickey (stored key)".to_string()),
+        AuthMethod::Agent => ("publickey", "publickey (agent)".to_string()),
+    };
+    let started = Instant::now();
+    // Why the credential left the login unfinished, and whether the server
+    // got to judge it. `None` when it finished the login.
+    let unfinished = match offered.as_deref() {
+        Some(methods) if !offers_method(methods, wire_name) => Some((
+            format!(
+                "The server does not accept {} authentication (it offers: {})",
+                wire_name, methods
+            ),
+            false,
+        )),
+        _ => {
+            debug.at(1, || {
+                format!("Next authentication method: {} as {}", method, username)
+            });
+            match authenticate_with_credential(session, endpoint, debug) {
+                Ok(()) if session.authenticated() => None,
+                Ok(()) => Some(("Authentication failed".to_string(), true)),
+                Err(CredentialFailure::Refused(error)) => Some((error, true)),
+                Err(CredentialFailure::Local(error)) => return Err(error),
+            }
+        }
+    };
+    let method = match unfinished {
+        None => method,
+        Some((error, tried)) => {
+            let remaining = list_auth_methods(session, username, debug);
+            if session.authenticated() {
+                method
+            } else {
+                continue_after_credential(
+                    session,
+                    endpoint,
+                    debug,
+                    error,
+                    tried,
+                    offered.as_deref(),
+                    remaining.as_deref(),
+                )?;
+                "keyboard-interactive".to_string()
+            }
+        }
+    };
     debug.at(1, || format!("Authentication succeeded ({}).", method));
     debug.at(3, || {
         format!("Authentication took {} ms", started.elapsed().as_millis())
     });
     Ok(())
+}
+
+fn authenticate_with_credential(
+    session: &Session,
+    endpoint: &Endpoint,
+    debug: &SshDebug,
+) -> Result<(), CredentialFailure> {
+    let username = &endpoint.username;
+    let key_failure =
+        |e: ssh2::Error| CredentialFailure::from_error(&e, format!("Key auth failed: {}", e));
+    match &endpoint.auth {
+        AuthMethod::Password(pw) => session
+            .userauth_password(username, pw)
+            .map_err(|e| CredentialFailure::from_error(&e, format!("Password auth failed: {}", e))),
+        AuthMethod::Key { path, passphrase } => session
+            .userauth_pubkey_file(username, None, Path::new(path), passphrase.as_deref())
+            .map_err(key_failure),
+        AuthMethod::KeyMemory {
+            private_key,
+            passphrase,
+        } => authenticate_pubkey_memory(session, username, private_key, passphrase.as_deref())
+            .map_err(key_failure),
+        AuthMethod::Agent => crate::agent::authenticate(session, username, debug),
+    }
 }
 
 #[cfg(not(windows))]
@@ -749,6 +986,9 @@ fn start_shell(
     channel
         .request_pty("xterm-256color", None, Some((80, 24, 0, 0)))
         .map_err(|e| format!("PTY request failed: {}", e))?;
+    if opts.agent_forwarding {
+        crate::agent::request_forwarding(&session, &mut channel, &debug);
+    }
     debug.at(1, || "Requesting a shell.".to_string());
     channel
         .shell()
@@ -816,6 +1056,7 @@ pub fn start_ssh_session(
     ctx: SessionContext,
     resilience: ShellResilience,
 ) -> Result<SessionHandle, String> {
+    let _prompts = crate::auth_prompt::PromptScope::enter(&ctx.output, None);
     let shell = open_shell(&target, &opts)?;
     let (handle, control) = control_channel()?;
     ctx.register(handle.clone())?;
@@ -1149,6 +1390,8 @@ fn run_io_loop(shell: OpenShell, io: &mut ShellIo) -> ShellEnd {
         mut channel,
         keepalive_interval,
     } = shell;
+    // Serves a forwarded agent for as long as this shell's connection lives.
+    let agent_pump = crate::agent::ForwardPump::start(&session);
     let mut buf = vec![0u8; 32 * 1024];
     let mut pending: Vec<u8> = Vec::with_capacity(OUTPUT_COALESCE_MAX);
     let fds = [wake::fd_of(&session), io.control.wake.fd()];
@@ -1166,8 +1409,13 @@ fn run_io_loop(shell: OpenShell, io: &mut ShellIo) -> ShellEnd {
         pending.clear();
 
         // Bytes on the socket prove the server is there, even when libssh2
-        // consumes them without producing shell output (a keepalive reply).
-        if watchdog.enabled() && wake::is_readable(fds[0]) {
+        // consumes them without producing shell output (a keepalive reply). The
+        // agent pump may have got to them first, and says so. Asked every pass,
+        // so that what it says is never old news.
+        let pump_heard = agent_pump
+            .as_ref()
+            .is_some_and(crate::agent::ForwardPump::take_heard);
+        if watchdog.enabled() && (pump_heard || wake::is_readable(fds[0])) {
             watchdog.heard(Instant::now());
         }
 
@@ -1239,9 +1487,23 @@ fn run_io_loop(shell: OpenShell, io: &mut ShellIo) -> ShellEnd {
         }
 
         if !active {
-            wake::wait_readable(&fds, WAIT_MAX);
+            let shared = agent_pump
+                .as_ref()
+                .is_some_and(crate::agent::ForwardPump::serving);
+            wake::wait_readable(&fds, idle_wait(shared));
             io.control.wake.drain();
         }
+    }
+}
+
+/// How long an idle reader of a session may sleep. Another thread reading the
+/// same session can pull its packet into libssh2's queue without the socket ever
+/// turning readable for the sleeper, so then it cannot sleep for long.
+fn idle_wait(shared: bool) -> Duration {
+    if shared {
+        SHARED_WAIT_MAX
+    } else {
+        WAIT_MAX
     }
 }
 
@@ -1250,7 +1512,7 @@ fn run_io_loop(shell: OpenShell, io: &mut ShellIo) -> ShellEnd {
 /// queued, and until the next one comes due every other packet is refused as
 /// "try again". A write waiting on that would never see the next one, and
 /// would time out on a healthy connection.
-fn send_due_keepalive(session: &Session, fd: wake::Fd) -> Result<(), ssh2::Error> {
+pub(crate) fn send_due_keepalive(session: &Session, fd: wake::Fd) -> Result<(), ssh2::Error> {
     if !wake::is_writable(fd) {
         return Ok(());
     }
@@ -1303,10 +1565,7 @@ fn open_hop_unless_cancelled(
 /// channel. Both ends are non-blocking; the thread sleeps in `poll(2)` on
 /// both sockets while idle, so neither direction can stall the other and an
 /// idle forward costs no CPU.
-/// `clients` counts the forwarders sharing `session`. With more than one,
-/// a sibling's read can pull this channel's packet into libssh2's buffer
-/// without the socket ever becoming readable for us, so the idle wait is
-/// kept short in that case instead of parking for the full `WAIT_MAX`.
+/// `clients` counts the forwarders sharing `session`: see [`idle_wait`].
 pub(crate) fn forward_bidi(
     mut local: TcpStream,
     mut channel: ssh2::Channel,
@@ -1370,12 +1629,7 @@ pub(crate) fn forward_bidi(
         }
 
         if idle {
-            let timeout = if clients.load(Ordering::Relaxed) > 1 {
-                SHARED_WAIT_MAX
-            } else {
-                WAIT_MAX
-            };
-            wake::wait_readable(&fds, timeout);
+            wake::wait_readable(&fds, idle_wait(clients.load(Ordering::Relaxed) > 1));
         }
     }
 }
@@ -1480,6 +1734,7 @@ pub fn start_jump_shell(
     ctx: SessionContext,
     resilience: ShellResilience,
 ) -> Result<SessionHandle, String> {
+    let _prompts = crate::auth_prompt::PromptScope::enter(&ctx.output, None);
     let shell = open_jump_shell(&gateway, &destination, &opts)?;
     let (handle, control) = control_channel()?;
     ctx.register(handle.clone())?;
@@ -1506,6 +1761,122 @@ pub fn start_jump_shell(
     };
     spawn_shell_worker(shell, ctx, control, banner, "jump_host", resilience);
     Ok(handle)
+}
+
+#[cfg(test)]
+mod idle_wait_tests {
+    use super::*;
+
+    #[test]
+    fn a_reader_with_company_cannot_sleep_for_long() {
+        assert_eq!(idle_wait(false), WAIT_MAX);
+        assert_eq!(idle_wait(true), SHARED_WAIT_MAX);
+        assert!(SHARED_WAIT_MAX < WAIT_MAX);
+    }
+}
+
+#[cfg(test)]
+mod credential_failure_tests {
+    use super::*;
+    use crate::auth_prompt::{PromptFailure, CANCELLED, TIMED_OUT};
+    use crate::login_wait::STALLED;
+    use crate::reconnect::is_retryable_connect_error;
+
+    fn failure(code: i32, reason: &'static str) -> CredentialFailure {
+        let error = ssh2::Error::new(ssh2::ErrorCode::Session(code), reason);
+        CredentialFailure::from_error(&error, reason.to_string())
+    }
+
+    #[test]
+    fn only_the_servers_judgement_counts_as_a_refusal() {
+        for (code, reason) in [
+            (-18, "Authentication failed (username/password)"),
+            (-18, "Username/PublicKey combination invalid"),
+            (-19, "Invalid signature for supplied public key"),
+        ] {
+            assert!(
+                matches!(failure(code, reason), CredentialFailure::Refused(_)),
+                "{reason}"
+            );
+        }
+        for (code, reason) in [
+            (-16, "Unable to extract public key from private key file"),
+            (-15, "Password expired, and callback failed"),
+            (-13, "socket disconnect"),
+            (-9, "Timed out waiting on socket"),
+            (-19, "Waiting for USERAUTH response"),
+            (-19, "Callback returned error"),
+            (-19, "Invalid public key, too short"),
+            (-1, "failed to write temporary SSH key"),
+        ] {
+            assert!(
+                matches!(failure(code, reason), CredentialFailure::Local(_)),
+                "{reason}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_method_list_that_changed_means_the_first_factor_was_accepted() {
+        let accepted = |before, after| accepted_as_first_factor(before, after);
+        assert!(accepted(Some("password"), Some("keyboard-interactive")));
+        assert!(accepted(
+            Some("publickey,password"),
+            Some("keyboard-interactive")
+        ));
+        assert!(!accepted(
+            Some("publickey,keyboard-interactive"),
+            Some("keyboard-interactive, publickey")
+        ));
+        assert!(!accepted(None, Some("keyboard-interactive")));
+        assert!(!accepted(Some("password"), None));
+    }
+
+    #[test]
+    fn a_refusal_stays_in_the_message_whatever_ends_the_prompt() {
+        let first = "Key auth failed: combination invalid";
+        let with_refusal = |failure| prompt_failure_message(first, true, failure);
+        assert_eq!(with_refusal(PromptFailure::NothingAsked), first);
+        for reason in [CANCELLED, TIMED_OUT] {
+            let message = with_refusal(PromptFailure::GaveUp(reason));
+            assert!(
+                message.starts_with(first) && message.contains(reason),
+                "{message}"
+            );
+            assert!(!is_retryable_connect_error(&message));
+        }
+        let wrong = with_refusal(PromptFailure::Refused("no".to_string()));
+        assert!(wrong.starts_with(first), "{wrong}");
+        assert!(
+            wrong.contains("Keyboard-interactive auth failed: no"),
+            "{wrong}"
+        );
+    }
+
+    /// A retry would send the credential the server just refused.
+    #[test]
+    fn a_silent_server_after_a_refusal_is_not_retried() {
+        let first = "Key auth failed: combination invalid";
+        let message = prompt_failure_message(first, true, PromptFailure::GaveUp(STALLED));
+        assert!(message.starts_with(first), "{message}");
+        assert!(!is_retryable_connect_error(&message), "{message}");
+    }
+
+    #[test]
+    fn without_a_refusal_the_prompt_speaks_for_itself() {
+        let first = "The server does not accept password authentication (it offers: publickey)";
+        let on_its_own = |failure| prompt_failure_message(first, false, failure);
+        assert_eq!(on_its_own(PromptFailure::GaveUp(CANCELLED)), CANCELLED);
+        assert_eq!(on_its_own(PromptFailure::GaveUp(STALLED)), STALLED);
+        assert!(is_retryable_connect_error(&on_its_own(
+            PromptFailure::GaveUp(STALLED)
+        )));
+        assert_eq!(
+            on_its_own(PromptFailure::Refused("no".to_string())),
+            "Keyboard-interactive auth failed: no"
+        );
+        assert_eq!(on_its_own(PromptFailure::NothingAsked), first);
+    }
 }
 
 #[cfg(test)]
