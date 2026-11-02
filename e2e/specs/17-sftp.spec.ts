@@ -52,6 +52,8 @@ const REMOTE_DIR = `ssix-17-${process.pid}`;
 let workDir: string;
 let uploads: string;
 let downloads: string;
+/** The login folder, which the delete tests must name rather than infer. */
+let remoteHome: string;
 
 async function paneIs(side: Side, path: string): Promise<void> {
   const pane = await browser.$(sel.filesPane(side));
@@ -284,7 +286,8 @@ describe("Files view (SFTP)", () => {
       timeout: 60_000,
       timeoutMsg: "The Files view never connected",
     });
-    expect(await panePath("remote")).toMatch(/^\//);
+    remoteHome = await panePath("remote");
+    expect(remoteHome).toBe(`/home/${TARGETS.a.user}`);
     expect(await panePath("local")).toMatch(/^\//);
   });
 
@@ -392,7 +395,10 @@ describe("Files view (SFTP)", () => {
     await openFolder("remote", "tree");
     const inner = await rowAppears("remote", "inner");
     expect(await rowNames("remote")).toEqual(["inner"]);
-    expect(await inner.getAttribute("data-mode")).toBe("700");
+    // Only the permission bits: a new folder under a setgid one gets that bit
+    // from the server's file system.
+    const innerMode = Number.parseInt((await inner.getAttribute("data-mode")) ?? "", 8);
+    expect(innerMode & 0o777).toBe(0o700);
     await openFolder("remote", "inner");
     await rowAppears("remote", "deep.txt");
     await click(sel.filesUp("remote"));
@@ -635,18 +641,18 @@ describe("Files view (SFTP)", () => {
   });
 
   it("removes its work from the server", async () => {
-    await click(sel.filesUp("remote"));
+    await goTo("remote", remoteHome);
     await rowAppears("remote", REMOTE_DIR);
     await deleteRow("remote", REMOTE_DIR);
     await deleteRow("remote", `${REMOTE_DIR}-new`);
   });
 
   it("refuses to delete the login folder and the folders that hold it", async () => {
-    const home = await panePath("remote");
+    await goTo("remote", remoteHome);
     const kept = `${REMOTE_DIR}-kept`;
     await makeFolder("remote", kept);
 
-    const parts = home.split("/").filter(Boolean);
+    const parts = remoteHome.split("/").filter(Boolean);
     const refusals: [string, string][] = [
       [`/${parts.slice(0, -1).join("/")}`, parts[parts.length - 1]],
       ["/", parts[0]],
@@ -662,11 +668,12 @@ describe("Files view (SFTP)", () => {
       await click(sel.filesDeleteCancel);
     }
 
-    await goTo("remote", home);
+    await goTo("remote", remoteHome);
     await rowAppears("remote", kept);
   });
 
   it("closes an open dialog when the connection closes, and deletes nothing", async () => {
+    await goTo("remote", remoteHome);
     const kept = `${REMOTE_DIR}-kept`;
     await pick("remote", kept);
     await click(sel.filesDelete("remote"));

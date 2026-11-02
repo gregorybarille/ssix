@@ -66,7 +66,8 @@ cancelled.
 - **Folders keep their permissions**, as files do and as `scp -r` does, so a `0700`
   folder stays private on the other side. A read-only source folder stays writable
   until its contents are in, and if the transfer stops first it keeps its owner's
-  write access. The target's umask still applies. A folder that already exists keeps
+  write access. The target's umask still applies, and a setgid parent still passes its
+  bit on to a new folder. A folder that already exists keeps
   its own mode, as a replaced file does.
 
 ### Symlinks
