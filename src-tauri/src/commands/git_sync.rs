@@ -458,6 +458,7 @@ fn render_summary(data: &AppData) -> String {
     out.push_str(&format!("- Connections: {}\n", data.connections.len()));
     out.push_str(&format!("- Credentials: {}\n", data.credentials.len()));
     out.push_str(&format!("- Scripts: {}\n", data.scripts.len()));
+    out.push_str(&format!("- Snippets: {}\n", data.snippets.len()));
     out.push_str(&format!("- Theme: {}\n", data.settings.theme));
     out
 }
@@ -588,6 +589,7 @@ mod tests {
         ));
         let summary = render_summary(&data);
         assert!(summary.contains("Connections: 1"));
+        assert!(summary.contains("Snippets: 0"));
     }
 
     #[test]
