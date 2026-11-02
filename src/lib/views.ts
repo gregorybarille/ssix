@@ -13,6 +13,7 @@ import {
 // roadmap:sftp
 import { FolderOpen } from "lucide-react";
 // roadmap:snippets
+import { Braces } from "lucide-react";
 
 /**
  * Where a view's button sits. `main` is the sidebar's list, `sessions` shows
@@ -94,6 +95,16 @@ const VIEW_TABLE = [
     ),
   },
   // roadmap:snippets
+  {
+    id: "snippets",
+    label: "Snippets",
+    description: "Saved commands to paste into a terminal",
+    icon: Braces,
+    placement: "main",
+    component: lazy(() =>
+      import("@/components/views/SnippetsView").then((m) => ({ default: m.SnippetsView })),
+    ),
+  },
   {
     id: "terminals",
     label: "Terminals",

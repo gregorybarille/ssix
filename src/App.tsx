@@ -54,6 +54,9 @@ const ScpDialog = lazy(() =>
 const BulkScpDialog = lazy(() =>
   import("./components/BulkScpDialog").then((m) => ({ default: m.BulkScpDialog })),
 );
+const SnippetPalette = lazy(() =>
+  import("./components/SnippetPalette").then((m) => ({ default: m.SnippetPalette })),
+);
 
 /**
  * App is the composition layer. Terminal pane lifecycle, port forward session
@@ -541,6 +544,11 @@ function App() {
             connections={dialogs.bulkScpConnections}
             groupLabel={dialogs.bulkScpLabel}
           />
+        </Suspense>
+
+        {/* Snippet palette (Cmd/Ctrl+Shift+S) */}
+        <Suspense fallback={null}>
+          <SnippetPalette />
         </Suspense>
 
         {/* Custom context menu */}
