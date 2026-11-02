@@ -754,6 +754,79 @@ describe("editing in place", () => {
     expect(edit()).toMatchObject({ saving: false, saveError: "Permission denied" });
   });
 
+  describe("an answer about an edit that has since closed", () => {
+    const later = { ...session, edit_id: "e2", name: "g.txt" };
+
+    /** With the edit open and `command` unanswered, move on to another edit. */
+    async function replacedWhile(command: string, start: () => Promise<void>) {
+      await editing();
+      let answer: { resolve: (value: unknown) => void; reject: (why: unknown) => void } = {
+        resolve: () => {},
+        reject: () => {},
+      };
+      invokeMock.mockImplementation(async (name: string) => {
+        if (name === command) {
+          return new Promise((resolve, reject) => (answer = { resolve, reject })) as never;
+        }
+        if (name === "sftp_edit_open") return later as never;
+        return undefined as never;
+      });
+      const pending = start();
+      await flush();
+      await useSftpStore.getState().closeEdit();
+      backend({ sftp_edit_open: () => later });
+      await useSftpStore.getState().openEdit(file("/home/me/g.txt"));
+      expect(edit()?.session.edit_id).toBe("e2");
+      return { answer, pending };
+    }
+
+    const untouched = () =>
+      expect(edit()).toMatchObject({
+        saving: false,
+        saveError: null,
+        remoteChange: null,
+        savedAt: null,
+        launchError: null,
+        modified: false,
+      });
+
+    it("a finished save leaves the new edit alone", async () => {
+      const { answer, pending } = await replacedWhile("sftp_edit_save", () =>
+        useSftpStore.getState().saveEdit(false),
+      );
+      answer.resolve({ outcome: "saved", size: 9 });
+      await pending;
+      untouched();
+    });
+
+    it("a change on the server leaves the new edit alone", async () => {
+      const { answer, pending } = await replacedWhile("sftp_edit_save", () =>
+        useSftpStore.getState().saveEdit(false),
+      );
+      answer.resolve({ outcome: "remote_changed", deleted: true, size: null, modified: null });
+      await pending;
+      untouched();
+    });
+
+    it("a failed save leaves the new edit alone", async () => {
+      const { answer, pending } = await replacedWhile("sftp_edit_save", () =>
+        useSftpStore.getState().saveEdit(false),
+      );
+      answer.reject("Permission denied");
+      await pending;
+      untouched();
+    });
+
+    it("a failed launch leaves the new edit alone", async () => {
+      const { answer, pending } = await replacedWhile("sftp_edit_launch", () =>
+        useSftpStore.getState().launchEditor(),
+      );
+      answer.reject("No editor");
+      await pending;
+      untouched();
+    });
+  });
+
   it("closing removes the copy", async () => {
     await editing();
     await useSftpStore.getState().closeEdit();

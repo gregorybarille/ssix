@@ -170,8 +170,11 @@ export const useSftpStore = create<SftpState>((set, get) => {
   const patchPane = (side: PaneSide, patch: Partial<PaneState>) =>
     set((state) => ({ [side]: { ...state[side], ...patch } }) as Partial<SftpState>);
 
-  const patchEdit = (patch: Partial<EditState>) =>
-    set((state) => (state.edit ? { edit: { ...state.edit, ...patch } } : {}));
+  /** Patch this edit if it is still the open one: an answer can outlive it. */
+  const patchEdit = (editId: string, patch: Partial<EditState>) =>
+    set((state) =>
+      state.edit?.session.edit_id === editId ? { edit: { ...state.edit, ...patch } } : {},
+    );
 
   /**
    * A lost session is replaced in the background; the caller reports the
@@ -556,24 +559,21 @@ export const useSftpStore = create<SftpState>((set, get) => {
     },
 
     launchEditor: async () => {
-      const edit = get().edit;
-      if (!edit) return;
+      const editId = get().edit?.session.edit_id;
+      if (!editId) return;
       try {
-        await invoke("sftp_edit_launch", { editId: edit.session.edit_id });
-        patchEdit({ launchError: null });
+        await invoke("sftp_edit_launch", { editId });
+        patchEdit(editId, { launchError: null });
       } catch (err) {
-        patchEdit({ launchError: errorMessage(err) });
+        patchEdit(editId, { launchError: errorMessage(err) });
       }
     },
 
     pollEdit: async () => {
-      const edit = get().edit;
-      if (!edit) return;
+      const editId = get().edit?.session.edit_id;
+      if (!editId) return;
       try {
-        const status = await invoke<EditStatus>("sftp_edit_status", {
-          editId: edit.session.edit_id,
-        });
-        if (get().edit?.session.edit_id === edit.session.edit_id) patchEdit(status);
+        patchEdit(editId, await invoke<EditStatus>("sftp_edit_status", { editId }));
       } catch {
         // The next poll tries again; saving reports anything that lasts.
       }
@@ -582,18 +582,16 @@ export const useSftpStore = create<SftpState>((set, get) => {
     saveEdit: async (force) => {
       const edit = get().edit;
       if (!edit || edit.saving) return;
-      patchEdit({ saving: true, saveError: null, remoteChange: null });
+      const editId = edit.session.edit_id;
+      patchEdit(editId, { saving: true, saveError: null, remoteChange: null });
       try {
-        const result = await invoke<EditSaveOutcome>("sftp_edit_save", {
-          editId: edit.session.edit_id,
-          force,
-        });
+        const result = await invoke<EditSaveOutcome>("sftp_edit_save", { editId, force });
         if (result.outcome === "saved") {
-          patchEdit({ saving: false, modified: false, savedAt: Date.now() });
+          patchEdit(editId, { saving: false, modified: false, savedAt: Date.now() });
           const { connectionId, remote } = get();
           if (connectionId === edit.connectionId && remote.path) await get().refresh("remote");
         } else {
-          patchEdit({
+          patchEdit(editId, {
             saving: false,
             remoteChange: {
               deleted: result.deleted,
@@ -603,7 +601,7 @@ export const useSftpStore = create<SftpState>((set, get) => {
           });
         }
       } catch (err) {
-        patchEdit({ saving: false, saveError: readableSftpError(errorMessage(err)) });
+        patchEdit(editId, { saving: false, saveError: readableSftpError(errorMessage(err)) });
       }
     },
 
@@ -616,7 +614,10 @@ export const useSftpStore = create<SftpState>((set, get) => {
       });
     },
 
-    dismissRemoteChange: () => patchEdit({ remoteChange: null }),
+    dismissRemoteChange: () => {
+      const editId = get().edit?.session.edit_id;
+      if (editId) patchEdit(editId, { remoteChange: null });
+    },
 
     dismissEditError: () => set({ editError: null }),
 
