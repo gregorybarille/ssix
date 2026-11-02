@@ -46,7 +46,7 @@ the hot files into registries so the streams never touch the same lines.
    `src/components/settings/`.
 3. **Terminal extension registry** (`src/components/terminal/extensions.ts`):
    `Terminal.tsx` runs a list of `TerminalExtension` objects
-   (`onCreate`, `onData`, `onOutput`, `dispose`). `terminalRegistry.ts`
+   (`onCreate`, which returns its cleanup, `onData`, `onOutput`). `terminalRegistry.ts`
    gains `writeToSession(id, text)` and `activeSessionId()`.
 4. **Backend extension points.** Local-forward code moves from `ssh.rs`
    to `forwards.rs`; auth and direct-tcpip helpers become `pub(crate)`.
@@ -80,14 +80,21 @@ Notes the foundation review left for the streams:
   `forwards.rs`. Stopping a forward leaves clients already inside
   `forward_bidi` tunnelling on their own session clone. An idle forward
   never notices a dead SSH session, so it stays "running" and keeps
-  accepting clients it cannot serve.
+  accepting clients it cannot serve. The frontend has the same gap:
+  nothing listens to `forwardStatusEvent`, and `startForward` drops the
+  output sink, so a forward that ended keeps showing as running.
 - **C Forwards** rebases on B, then edits only the two refusal arms in
   `commands/ssh.rs`, which B owns. It no longer needs `useTerminalsStore`:
   the foundation already routes every forward kind to the forwards store
   and lists them in `PortForwardsView`. C still updates that view's
   `ssh -L` heading and empty state, and `CONNECTION_KIND_TABS`.
+  `ForwardKinds` must show the remote and SOCKS port inputs with their
+  errors: until then, a bad stored port blocks the save with no message.
 - **A and C** update `src/test/ConnectionFormAdvanced.test.tsx` when they
   add tabs, because it pins today's lists.
+- **F Snippets** tells users that Git Sync exports snippets as written,
+  like scripts, because a saved command may hold a secret. The foundation
+  already exports them and says so in `docs/git-sync.md`.
 - **E Terminal UX** checks `color_scheme` against its palette list in
   `ConnectionAdvanced::validate`; the foundation checks only its shape.
 
