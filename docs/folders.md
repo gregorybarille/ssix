@@ -101,13 +101,16 @@ Both are one backend call and one save, and answer with every connection, so a
 failure leaves everything as it was.
 
 **Rename** takes a whole path, so it can also move a folder under another. Onto an
-existing folder it merges the two, and the dialog says so first. Into itself is
+existing folder it merges the two, and the dialog says so first. What the folder
+moved into opens so that it can be seen, and so does a folder it merged into; a
+plain rename keeps the folder itself open or closed as it was. Into itself is
 refused. If a path that results would be too long or too deep, the whole rename
 is refused and names it.
 
 **Delete** removes the folder and its subfolders and never a connection.
 Everything in them moves to the parent folder, or out of any folder at the top
-level, and `<ConfirmDialog>` says how many first. Subfolders are flattened rather
+level, and `<ConfirmDialog>` says how many first. Where they moved to opens, No
+folder included, and takes the focus. Subfolders are flattened rather
 than kept, because a folder the user asked to delete should not stay behind under
 another name.
 

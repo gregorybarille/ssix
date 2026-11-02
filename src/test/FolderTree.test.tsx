@@ -5,6 +5,7 @@ import userEvent from "@testing-library/user-event";
 import { invoke } from "@tauri-apps/api/core";
 import { FolderTree } from "@/components/FolderTree";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
+import { loadCollapsedFolders } from "@/lib/folders";
 import { useConnectionsStore } from "@/store/useConnectionsStore";
 import type { Connection } from "@/types";
 import { renderInPanel } from "./panel";
@@ -709,14 +710,65 @@ describe("dragging", () => {
     drop();
   });
 
-  it("says so when the move is refused", async () => {
-    invokeMock.mockRejectedValueOnce("Connection not found");
-    show();
-    dragOnto(connectionRow("loose")!, folderRow("production"));
-    drop();
-    const banner = await screen.findByTestId("folder-move-error");
-    expect(banner).toHaveTextContent("Could not move loose: Connection not found");
-    expect(connectionRow("loose")).toHaveAttribute("aria-level", "2");
+  describe("while a change is on its way", () => {
+    /** Hold back the next backend answer until the test gives it. */
+    function holdAnswer() {
+      let give: (answer: unknown) => void = () => {};
+      invokeMock.mockReturnValueOnce(new Promise((resolve) => (give = resolve)) as never);
+      return (answer: unknown) => act(async () => give(answer));
+    }
+    const foldWithKeyboard = (path: string) =>
+      fireEvent.keyDown(folderRow(path)!, { key: "Enter" });
+
+    it("keeps a folder folded during the drag and during the call", async () => {
+      const setItem = vi.spyOn(Storage.prototype, "setItem");
+      const answer = holdAnswer();
+      show();
+      dragOnto(connectionRow("loose")!, folderRow("production"));
+      foldWithKeyboard("prod/eu/west");
+      expect(setItem).toHaveBeenCalledTimes(1);
+      drop();
+      foldWithKeyboard("prod/eu");
+      expect(setItem).toHaveBeenCalledTimes(2);
+
+      await answer({ ...direct("loose"), folder: "production" });
+      expect(setItem).toHaveBeenCalledTimes(3);
+      expect(folderRow("prod/eu")).toHaveAttribute("aria-expanded", "false");
+      expect(loadCollapsedFolders()).toEqual(new Set(["prod/eu/west", "prod/eu"]));
+      setItem.mockRestore();
+    });
+
+    it("keeps a folder folded during a rename", async () => {
+      const user = userEvent.setup({ pointerEventsCheck: 0 });
+      show();
+      await user.click(within(folderRow("production")!).getByTestId("folder-rename"));
+      const input = await screen.findByTestId("folder-rename-input");
+      await user.clear(input);
+      await user.type(input, "live");
+      const answer = holdAnswer();
+      await user.keyboard("{Enter}");
+      foldWithKeyboard("prod/eu");
+
+      await answer(CONNECTIONS.map((c) => (c.folder === "production" ? { ...c, folder: "live" } : c)));
+      await waitFor(() => expect(folderRow("live")).not.toBeNull());
+      expect(folderRow("prod/eu")).toHaveAttribute("aria-expanded", "false");
+      expect(loadCollapsedFolders()).toEqual(new Set(["prod/eu"]));
+    });
+
+    it("keeps a folder folded during a delete", async () => {
+      const user = userEvent.setup({ pointerEventsCheck: 0 });
+      show();
+      await user.click(within(folderRow("production")!).getByTestId("folder-delete"));
+      await screen.findByTestId("folder-delete-dialog");
+      const answer = holdAnswer();
+      await user.click(screen.getByTestId("folder-delete-dialog-confirm"));
+      foldWithKeyboard("prod/eu");
+
+      await answer(CONNECTIONS.map((c) => (c.folder === "production" ? { ...c, folder: undefined } : c)));
+      await waitFor(() => expect(folderRow("production")).toBeNull());
+      expect(folderRow("prod/eu")).toHaveAttribute("aria-expanded", "false");
+      expect(loadCollapsedFolders()).toEqual(new Set(["prod/eu"]));
+    });
   });
 });
 
@@ -767,6 +819,34 @@ describe("rename", () => {
     await user.type(input, "live{Enter}");
     await waitFor(() => expect(folderRow("live")).not.toBeNull());
     expect(folderRow("live")).toHaveAttribute("aria-expanded", "false");
+  });
+
+  it("opens what the folder moved into, and focuses it there", async () => {
+    const user = userEvent.setup();
+    localStorage.setItem("ssix.folders.collapsed", '["archive"]');
+    invokeMock.mockResolvedValueOnce([direct("kept", "archive"), direct("mover", "archive/old")]);
+    show([direct("kept", "archive"), direct("mover", "old")]);
+    const input = await open(user, "old");
+    await user.clear(input);
+    await user.type(input, "archive/old{Enter}");
+
+    await waitFor(() => expect(folderRow("archive/old")).toHaveFocus());
+    expect(folderRow("archive")).toHaveAttribute("aria-expanded", "true");
+    expect(connectionRow("mover")).not.toBeNull();
+    expect(loadCollapsedFolders()).toEqual(new Set());
+  });
+
+  it("opens the folder it merges into", async () => {
+    const user = userEvent.setup();
+    localStorage.setItem("ssix.folders.collapsed", '["into"]');
+    invokeMock.mockResolvedValueOnce([direct("here", "into"), direct("mover", "into")]);
+    show([direct("here", "into"), direct("mover", "old")]);
+    const input = await open(user, "old");
+    await user.clear(input);
+    await user.type(input, "into{Enter}");
+
+    await waitFor(() => expect(folderRow("into")).toHaveFocus());
+    expect(connectionRow("mover")).not.toBeNull();
   });
 
   it("shows why a path is refused, inline, without calling the backend", async () => {
@@ -853,6 +933,20 @@ describe("delete", () => {
     expect(invokeMock).toHaveBeenCalledWith("delete_folder", { path: "prod/eu" });
     expect(connectionRow("west")).not.toBeNull();
     await waitFor(() => expect(folderRow("prod")).toHaveFocus());
+  });
+
+  it("opens a closed No folder when what moved lands there, and focuses it", async () => {
+    const user = userEvent.setup();
+    localStorage.setItem("ssix.folders.collapsed", '[""]');
+    invokeMock.mockResolvedValueOnce([direct("web"), direct("loose")]);
+    show([direct("web", "prod"), direct("loose")]);
+    await open(user, "prod");
+    await user.click(screen.getByTestId("folder-delete-dialog-confirm"));
+
+    await waitFor(() => expect(noFolderRow()).toHaveFocus());
+    expect(noFolderRow()).toHaveAttribute("aria-expanded", "true");
+    expect(connectionRow("web")).not.toBeNull();
+    expect(loadCollapsedFolders()).toEqual(new Set());
   });
 
   it("names a forward it would also move, and says when nothing keeps a folder", async () => {

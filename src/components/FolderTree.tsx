@@ -6,7 +6,8 @@ import { errorMessage } from "@/lib/errors";
 import {
   NO_FOLDER,
   buildFolderTree,
-  collapsedAfterMove,
+  collapsedAfterDelete,
+  collapsedAfterRename,
   collapsedWithRevealed,
   connectionRowKey,
   describeFolderContents,
@@ -175,6 +176,9 @@ export function FolderTree({
   const deleteFolder = useConnectionsStore((s) => s.deleteFolder);
 
   const [collapsed, setCollapsed] = React.useState(loadCollapsedFolders);
+  // What a change starts from. It can land after an await, or from the closure
+  // of a drag that began a while ago, when a render's `collapsed` is old news.
+  const latestCollapsed = React.useRef(collapsed);
   const [foldedInSearch, setFoldedInSearch] = React.useState<{ query: string; paths: Set<string> }>(
     { query, paths: new Set() },
   );
@@ -201,7 +205,9 @@ export function FolderTree({
   );
   const knownFolders = React.useMemo(() => knownFolderPaths(connections), [connections]);
 
-  const updateCollapsed = (next: Set<string>) => {
+  const changeCollapsed = (change: (current: Set<string>) => Set<string>) => {
+    const next = change(latestCollapsed.current);
+    latestCollapsed.current = next;
     setCollapsed(next);
     saveCollapsedFolders(next);
   };
@@ -213,7 +219,7 @@ export function FolderTree({
       return next;
     };
     if (searching) setFoldedInSearch({ query, paths: flip(foldedPaths ?? new Set()) });
-    else updateCollapsed(flip(collapsed));
+    else changeCollapsed(flip);
   };
 
   // A row whose folder is renamed or deleted loses its element, so the dialog's
@@ -340,12 +346,10 @@ export function FolderTree({
     open();
   };
 
-  /** Show the folder a connection landed in, and the connection with it. */
-  const reveal = (path: string | null) => updateCollapsed(collapsedWithRevealed(collapsed, path));
-
   const moveTo = async (connection: Connection, path: string | null) => {
     await moveConnectionToFolder(connection.id, path);
-    reveal(path);
+    // Show the folder it landed in, and the connection with it.
+    changeCollapsed((current) => collapsedWithRevealed(current, path));
   };
 
   const drag = usePointerDrag<string>(dropFolderAt);
@@ -498,8 +502,9 @@ export function FolderTree({
             if (why) throw new Error(why);
             const to = parseFolderPath(text).path ?? renaming;
             if (to !== renaming) {
+              const merges = knownFolders.includes(to);
               await renameFolder(renaming, to);
-              updateCollapsed(collapsedAfterMove(collapsed, renaming, to));
+              changeCollapsed((current) => collapsedAfterRename(current, renaming, to, merges));
             }
             focusAfterClose.current = folderRowKey(to);
           }}
@@ -532,7 +537,7 @@ export function FolderTree({
         onConfirm={async () => {
           if (deleting === null) return;
           await deleteFolder(deleting);
-          updateCollapsed(collapsedAfterMove(collapsed, deleting, null));
+          changeCollapsed((current) => collapsedAfterDelete(current, deleting));
           focusAfterClose.current = folderRowKey(deletingParent ?? NO_FOLDER);
         }}
         onCloseAutoFocus={closeAutoFocus}

@@ -338,6 +338,28 @@ export function collapsedAfterMove(
   return next;
 }
 
+/**
+ * `collapsed` after a rename. The folder keeps its own state where it lands,
+ * but everything above it opens so that it can be seen. Merging into a folder
+ * opens that too: what moved would otherwise be out of sight inside it.
+ */
+export function collapsedAfterRename(
+  collapsed: Set<string>,
+  from: string,
+  to: string,
+  merges: boolean,
+): Set<string> {
+  const moved = collapsedAfterMove(collapsed, from, to);
+  if (merges) return collapsedWithRevealed(moved, to);
+  const parent = folderParent(to);
+  return parent === null ? moved : collapsedWithRevealed(moved, parent);
+}
+
+/** `collapsed` after deleting `path`, with the place its contents moved to open. */
+export function collapsedAfterDelete(collapsed: Set<string>, path: string): Set<string> {
+  return collapsedWithRevealed(collapsedAfterMove(collapsed, path, null), folderParent(path));
+}
+
 /** `collapsed` with `path` and every folder above it open, so `path` shows. */
 export function collapsedWithRevealed(collapsed: Set<string>, path: string | null): Set<string> {
   const next = new Set(collapsed);

@@ -2,7 +2,9 @@ import { beforeEach, describe, expect, it } from "vitest";
 import {
   NO_FOLDER,
   buildFolderTree,
+  collapsedAfterDelete,
   collapsedAfterMove,
+  collapsedAfterRename,
   collapsedWithRevealed,
   connectionRowKey,
   describeFolderContents,
@@ -339,6 +341,41 @@ describe("remembered folders", () => {
     expect(collapsedAfterMove(collapsed, "prod", null)).toEqual(
       new Set(["production", NO_FOLDER]),
     );
+  });
+
+  describe("after a rename", () => {
+    it("keeps the folder's own state, and opens what it moved into", () => {
+      const collapsed = new Set(["archive", "old", "old/sub", "other"]);
+      expect(collapsedAfterRename(collapsed, "old", "archive/old", false)).toEqual(
+        new Set(["archive/old", "archive/old/sub", "other"]),
+      );
+    });
+
+    it("touches nothing else when it stays at the top", () => {
+      const collapsed = new Set(["old", "other", NO_FOLDER]);
+      expect(collapsedAfterRename(collapsed, "old", "new", false)).toEqual(
+        new Set(["new", "other", NO_FOLDER]),
+      );
+    });
+
+    it("opens a folder it merges into, whatever either was", () => {
+      expect(collapsedAfterRename(new Set(["into"]), "old", "into", true)).toEqual(new Set());
+      expect(collapsedAfterRename(new Set(["old"]), "old", "into", true)).toEqual(new Set());
+      expect(collapsedAfterRename(new Set(["a", "a/into"]), "old", "a/into", true)).toEqual(new Set());
+    });
+  });
+
+  describe("after a delete", () => {
+    it("opens the parent the contents moved to", () => {
+      const collapsed = new Set(["a", "a/b", "a/b/c", "other", NO_FOLDER]);
+      expect(collapsedAfterDelete(collapsed, "a/b")).toEqual(new Set(["other", NO_FOLDER]));
+    });
+
+    it("opens No folder when a top-level folder goes", () => {
+      expect(collapsedAfterDelete(new Set(["a", "a/b", "other", NO_FOLDER]), "a")).toEqual(
+        new Set(["other"]),
+      );
+    });
   });
 
   it("reveals a folder by opening it and everything above it", () => {
