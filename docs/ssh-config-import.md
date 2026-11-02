@@ -43,8 +43,10 @@ share one slot, and `none` counts as the first value.
 - **Forwards SSIX cannot represent**: a forward on a host that goes through a
   `ProxyJump`, a Unix socket, or a `RemoteForward` with no destination (a
   reverse SOCKS proxy).
-- **A `ProxyCommand` that does not validate**: SSIX expands `%h`, `%p`, `%r` and
-  `%%`; any other token is refused, as it is in the connection form.
+- **A `ProxyCommand` that would fail on connect**: SSIX expands `%h`, `%p`, `%r`
+  and `%%` and refuses any other token, as the connection form does. A token whose
+  host or user holds characters that are not safe in a command line is refused too.
+  The preview expands the command with this host's real values to find out.
 - **Bad values**: a port that is not 1 to 65535, a host name holding shell
   characters or starting with `-`, a line over 4096 bytes, an unbalanced quote,
   control characters, or text that is not UTF-8. An unreadable line takes the

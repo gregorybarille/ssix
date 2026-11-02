@@ -541,6 +541,7 @@ fn route(
     config: &ParsedConfig,
     alias: &str,
     resolved: &ResolvedHost,
+    server: &ServerPlan,
 ) -> Result<Route, Refusal> {
     let Some(proxy) = &resolved.proxy else {
         return Ok(Route::Direct);
@@ -552,8 +553,15 @@ fn route(
         Proxy::Command(value) => {
             value.args.as_ref().map_err(Refusal::invalid)?;
             let command = value.raw.trim();
-            crate::proxy::validate(command)
-                .map_err(|why| Refusal::unsupported(format!("{why} (on {})", value.at)))?;
+            // With the real values: connecting expands it the same way, and
+            // refuses a host or user that is not safe in a command line.
+            crate::proxy::expand(
+                command,
+                &server.host,
+                server.port,
+                &server.credential.username,
+            )
+            .map_err(|why| Refusal::unsupported(format!("{why} (on {})", value.at)))?;
             Ok(Route::Command(command.to_string()))
         }
         Proxy::Jump(value) => {
@@ -957,12 +965,13 @@ fn plan_alias(
         );
         return vec![Err(refusal.skip(alias, at))];
     }
-    let (server, route) = match (
-        server_plan(env, alias, &resolved, None, None),
-        route(env, config, alias, &resolved),
-    ) {
-        (Ok(server), Ok(route)) => (server, route),
-        (Err(refusal), _) | (_, Err(refusal)) => return vec![Err(refusal.skip(alias, at))],
+    let planned = server_plan(env, alias, &resolved, None, None).and_then(|server| {
+        let route = route(env, config, alias, &resolved, &server)?;
+        Ok((server, route))
+    });
+    let (server, route) = match planned {
+        Ok(planned) => planned,
+        Err(refusal) => return vec![Err(refusal.skip(alias, at))],
     };
 
     let mut planned = vec![Ok(main_connection(alias, at, &server, &route))];
@@ -1778,6 +1787,44 @@ mod tests {
                 stored("good").proxy_command.as_deref(),
                 Some("nc -X connect -x proxy:3128 %h %p")
             );
+        });
+    }
+
+    #[test]
+    fn a_proxy_command_that_would_refuse_this_host_is_skipped() {
+        in_data_dir(|f| {
+            let preview = f.preview(
+                "Host odd-user\n  HostName s\n  User me+x\n  ProxyCommand nc %r@%h %p\nHost odd+host\n  User u\n  ProxyCommand nc %h %p\nHost odd-unused\n  HostName s\n  User me+x\n  ProxyCommand nc %h %p\nHost odd+literal\n  User u\n  ProxyCommand nc relay 22\n",
+            );
+            let user = skip(&preview, "odd-user");
+            assert_eq!(user.category, ImportSkipCategory::Unsupported);
+            assert!(user.reason.contains("me+x"), "{}", user.reason);
+            assert!(user.reason.contains("~/.ssh/config:4"), "{}", user.reason);
+            assert!(skip(&preview, "odd+host").reason.contains("odd+host"));
+            // Only the tokens it uses have to be safe, as when connecting.
+            assert_eq!(names(&preview), ["odd-unused", "odd+literal"]);
+        });
+    }
+
+    #[test]
+    fn what_a_preview_offers_with_a_proxy_command_expands_when_connecting() {
+        in_data_dir(|f| {
+            let preview = f.preview(
+                "Host web\n  HostName 10.0.0.1\n  Port 2200\n  User deploy\n  ProxyCommand nc %r@%h %p\n  LocalForward 8080 db:1\n",
+            );
+            f.apply_all(&preview);
+            let direct = stored("web");
+            assert_eq!(
+                crate::proxy::expand(
+                    direct.proxy_command.as_deref().unwrap(),
+                    &direct.host,
+                    direct.port,
+                    "deploy",
+                )
+                .unwrap(),
+                "nc deploy@10.0.0.1 2200"
+            );
+            assert!(stored("web (-L 8080)").proxy_command.is_some());
         });
     }
 
