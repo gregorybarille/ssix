@@ -180,6 +180,7 @@ export function FailedTerminal({
                 variant="outline"
                 disabled={retrying}
                 onClick={() => onEdit(connection)}
+                data-testid="failed-terminal-edit"
               >
                 <Pencil aria-hidden="true" className="h-3.5 w-3.5 mr-1.5" />
                 Edit Connection

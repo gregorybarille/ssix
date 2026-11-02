@@ -66,6 +66,10 @@ Connection** and **Close terminal**, plus **Trust new host key** for a changed
 key. The pane stays until you close it. With auto-reconnect off, a dropped
 session goes straight to this state.
 
+**Edit Connection** keeps the session: save, go back to Terminals and press
+**Retry** to use the new values. The form is in another view, so opening it
+clears the terminal's scrollback (see Known limits).
+
 Each attempt reads the connection and its credentials again, so a password or
 host edited meanwhile applies, and a deleted connection stops the retries. The
 choice of whether to reconnect and how many times is read when the session

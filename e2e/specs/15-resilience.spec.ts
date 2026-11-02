@@ -33,6 +33,7 @@ import {
   openCredentialEditor,
   pickOption,
   readTerminalText,
+  saveConnectionForm,
   textContentOf,
   typeIntoTerminal,
   waitForFailedTerminalError,
@@ -435,6 +436,36 @@ describe("Session resilience", () => {
 
     await expectReconnected("BEFORE-OFF-42");
     await expectShellAnswers("AFTER-OFF");
+  });
+
+  it("keeps a dropped session through Edit Connection, and retries with what was saved", async () => {
+    await createShellConnection("conn-15-edit", { autoReconnect: "Off" });
+    await openShell("conn-15-edit");
+    await expectShellAnswers("BEFORE-EDIT");
+
+    await cutConnection();
+    await waitForPhase("stopped");
+
+    // Nothing listens on this port, so the failure proves the edit applied.
+    await click(sel.failedTerminalEdit);
+    await fill(sel.connectionFormPort, "1");
+    await saveConnectionForm();
+    await click(sel.navTerminals);
+    await click(sel.failedTerminalRetry);
+    await waitForFailedTerminalError("TCP connect to");
+
+    // The form starts from what was saved, not from the pane's older copy.
+    await click(sel.failedTerminalEdit);
+    expect(await (await browser.$(sel.connectionFormPort)).getValue()).toBe("1");
+    await fill(sel.connectionFormPort, String(TARGETS.a.sshPort));
+    await saveConnectionForm();
+    await click(sel.navTerminals);
+    await click(sel.failedTerminalRetry);
+
+    // Nothing to expect from before: leaving the Terminals view clears a
+    // terminal's scrollback, reconnect or not.
+    await expectReconnected();
+    await expectShellAnswers("AFTER-EDIT");
   });
 
   it("logs a session to a private file that its name cannot move out of the folder", async () => {

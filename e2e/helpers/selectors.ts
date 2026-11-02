@@ -256,6 +256,7 @@ export const sel = {
   reconnectCancelButton: '[data-testid="reconnect-cancel-button"]',
   failedTerminalRetry: '[data-testid="failed-terminal-retry"]',
   failedTerminalDismiss: '[data-testid="failed-terminal-dismiss"]',
+  failedTerminalEdit: '[data-testid="failed-terminal-edit"]',
   connectionFormKeepalive: '[data-testid="connection-form-keepalive"]',
   connectionFormAutoReconnect: '[data-testid="connection-form-auto-reconnect"]',
   connectionFormLogSession: '[data-testid="connection-form-log-session"]',
