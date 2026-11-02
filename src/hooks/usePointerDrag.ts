@@ -35,11 +35,35 @@ function swallowTrailingClick() {
 }
 
 /**
+ * A drag cancelled with the button still down: its release is still to come,
+ * and the click that goes with it must not count either. A cancel or a new
+ * press means that release was lost, and nothing may stay behind to eat a
+ * later, real click.
+ */
+function swallowClickOfComingRelease() {
+  const onRelease = () => {
+    stopWaiting();
+    swallowTrailingClick();
+  };
+  const stopWaiting = () => {
+    window.removeEventListener("pointerup", onRelease, true);
+    window.removeEventListener("pointercancel", stopWaiting, true);
+    window.removeEventListener("pointerdown", stopWaiting, true);
+  };
+  window.addEventListener("pointerup", onRelease, true);
+  window.addEventListener("pointercancel", stopWaiting, true);
+  window.addEventListener("pointerdown", stopWaiting, true);
+}
+
+/**
  * Dragging inside the page. Pointer events rather than HTML5 drag and drop:
  * dropping files from the desktop needs Tauri's `dragDropEnabled`, which on
  * Windows turns HTML5 drag and drop off inside the page.
  *
- * `targetAt` says what a point would drop onto. Escape cancels a drag.
+ * `targetAt` says what a point would drop onto. Escape cancels a drag, and
+ * goes no further: Radix hears it on the document on its way down, where it
+ * would also close the side panel. A press that has not become a drag leaves
+ * Escape alone.
  */
 export function usePointerDrag<T>(targetAt: (x: number, y: number) => T | null) {
   const [chip, setChip] = useState<PointerDragChip<T> | null>(null);
@@ -59,8 +83,11 @@ export function usePointerDrag<T>(targetAt: (x: number, y: number) => T | null) 
       let dragging = false;
 
       const onMove = (e: PointerEvent) => {
-        if (!dragging && Math.hypot(e.clientX - startX, e.clientY - startY) < DRAG_THRESHOLD) return;
-        dragging = true;
+        if (!dragging) {
+          if (Math.hypot(e.clientX - startX, e.clientY - startY) < DRAG_THRESHOLD) return;
+          dragging = true;
+          window.addEventListener("keydown", onKey, true);
+        }
         const target = latestTargetAt.current(e.clientX, e.clientY);
         setChip({
           x: e.clientX,
@@ -77,20 +104,23 @@ export function usePointerDrag<T>(targetAt: (x: number, y: number) => T | null) 
         if (target !== null) onDrop(target);
       };
       const onKey = (e: KeyboardEvent) => {
-        if (e.key === "Escape") end();
+        if (e.key !== "Escape") return;
+        e.stopPropagation();
+        e.preventDefault();
+        end();
+        swallowClickOfComingRelease();
       };
       const end = () => {
         window.removeEventListener("pointermove", onMove);
         window.removeEventListener("pointerup", onUp);
         window.removeEventListener("pointercancel", end);
-        window.removeEventListener("keydown", onKey);
+        window.removeEventListener("keydown", onKey, true);
         endDrag.current = null;
         setChip(null);
       };
       window.addEventListener("pointermove", onMove);
       window.addEventListener("pointerup", onUp);
       window.addEventListener("pointercancel", end);
-      window.addEventListener("keydown", onKey);
       endDrag.current = end;
     },
     [],

@@ -80,7 +80,9 @@ untouched. The delete dialog still counts the whole folder.
   path that resembles an existing folder is not replaced by it. A bad path shows
   inline as it is typed, and refuses the save.
 - **Drag:** drop a row on a folder, on a row in that folder, or on No folder.
-  Escape cancels. The destination opens so the row stays in sight.
+  Escape cancels the drag and nothing else, so a side panel stays open, and the
+  release that follows does nothing. A press that has not moved yet leaves
+  Escape alone. The destination opens so the row stays in sight.
 - **Keyboard:** the row's menu has **Move to folder…**. This is only in the tree,
   as the list has no folders to see the result in.
 

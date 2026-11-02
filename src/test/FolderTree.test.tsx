@@ -4,8 +4,10 @@ import { act, fireEvent, render, screen, waitFor, within } from "@testing-librar
 import userEvent from "@testing-library/user-event";
 import { invoke } from "@tauri-apps/api/core";
 import { FolderTree } from "@/components/FolderTree";
+import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
 import { useConnectionsStore } from "@/store/useConnectionsStore";
 import type { Connection } from "@/types";
+import { renderInPanel } from "./panel";
 import { withPointerCoordinates } from "./pointerEvents";
 
 const direct = (name: string, folder?: string, tags?: string[]): Connection => ({
@@ -481,14 +483,96 @@ describe("dragging", () => {
     expect(invokeMock).not.toHaveBeenCalled();
   });
 
-  it("cancels with Escape", async () => {
+  const cancelWithEscape = () => fireEvent.keyDown(document.body, { key: "Escape" });
+  const nextTask = () => act(() => new Promise<void>((resolve) => setTimeout(resolve)));
+
+  it("cancels with Escape, and neither the release nor its click does anything", async () => {
     show();
-    dragOnto(connectionRow("top")!, noFolderRow());
-    fireEvent.keyDown(window, { key: "Escape" });
+    const row = connectionRow("top")!;
+    dragOnto(row, noFolderRow());
+    cancelWithEscape();
     expect(screen.queryByTestId("folder-drag-chip")).not.toBeInTheDocument();
+    await nextTask();
     drop();
+    fireEvent.click(row);
     await act(async () => {});
     expect(invokeMock).not.toHaveBeenCalled();
+    expect(handlers.onConnect).not.toHaveBeenCalled();
+  });
+
+  it("still takes a later click after a cancelled drag", async () => {
+    show();
+    const row = connectionRow("top")!;
+    dragOnto(row, row);
+    cancelWithEscape();
+    drop();
+    await nextTask();
+    fireEvent.click(row);
+    expect(handlers.onConnect).toHaveBeenCalledTimes(1);
+  });
+
+  it("leaves nothing waiting for a release a pointercancel took away", () => {
+    show();
+    const row = connectionRow("top")!;
+    dragOnto(row, row);
+    cancelWithEscape();
+    fireEvent.pointerCancel(window);
+
+    fireEvent.pointerUp(window, { clientX: 0, clientY: 0 });
+    fireEvent.click(row);
+    expect(handlers.onConnect).toHaveBeenCalledTimes(1);
+  });
+
+  it("takes the click of a new press when the release never came", () => {
+    show();
+    const row = connectionRow("top")!;
+    dragOnto(row, row);
+    cancelWithEscape();
+
+    fireEvent.pointerDown(row, { button: 0, clientX: 0, clientY: 0 });
+    fireEvent.pointerUp(window, { clientX: 0, clientY: 0 });
+    fireEvent.click(row);
+    expect(handlers.onConnect).toHaveBeenCalledTimes(1);
+  });
+
+  describe("with the side panel open", () => {
+    const onOpenChange = vi.fn();
+
+    beforeEach(() => {
+      onOpenChange.mockReset();
+      act(() => {
+        useConnectionsStore.setState({ connections: CONNECTIONS, error: null, isLoading: false });
+      });
+      renderInPanel(
+        <>
+          <Harness />
+          <Dialog open onOpenChange={onOpenChange}>
+            <DialogContent>
+              <DialogTitle>Beside the tree</DialogTitle>
+              <DialogDescription>A form with unsaved changes, perhaps.</DialogDescription>
+            </DialogContent>
+          </Dialog>
+        </>,
+      );
+    });
+
+    it("keeps Escape from the panel while it cancels a drag", () => {
+      dragOnto(connectionRow("top")!, noFolderRow());
+      cancelWithEscape();
+      expect(screen.queryByTestId("folder-drag-chip")).not.toBeInTheDocument();
+      expect(onOpenChange).not.toHaveBeenCalled();
+      drop();
+
+      cancelWithEscape();
+      expect(onOpenChange).toHaveBeenCalledWith(false);
+    });
+
+    it("leaves Escape to the panel for a press that has not moved", () => {
+      fireEvent.pointerDown(connectionRow("top")!, { button: 0, clientX: 0, clientY: 0 });
+      cancelWithEscape();
+      expect(onOpenChange).toHaveBeenCalledWith(false);
+      fireEvent.pointerUp(window, { clientX: 0, clientY: 0 });
+    });
   });
 
   it("does not connect when the release lands back on the row", () => {

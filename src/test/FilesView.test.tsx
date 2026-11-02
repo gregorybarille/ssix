@@ -687,6 +687,28 @@ describe("dragging", () => {
   });
 });
 
+describe("a drag cancelled with Escape", () => {
+  withPointerCoordinates();
+
+  it("does not select the row the release lands on", async () => {
+    await show();
+    fireEvent.click(row("local", "b.txt"));
+    fireEvent.pointerDown(row("local", "a.txt"), { button: 0, clientX: 0, clientY: 0 });
+    document.elementFromPoint = vi.fn(() => screen.getByTestId("files-list-remote"));
+    fireEvent.pointerMove(window, { clientX: 50, clientY: 50 });
+    fireEvent.keyDown(document.body, { key: "Escape" });
+    expect(screen.queryByTestId("files-drag-chip")).not.toBeInTheDocument();
+
+    // The button stays down for a while after Escape.
+    await act(() => new Promise<void>((resolve) => setTimeout(resolve)));
+    fireEvent.pointerUp(window, { clientX: 0, clientY: 0 });
+    fireEvent.click(row("local", "a.txt"));
+
+    expect(row("local", "a.txt")).not.toHaveAttribute("aria-current");
+    expect(row("local", "b.txt")).toHaveAttribute("aria-current", "true");
+  });
+});
+
 describe("files dropped from the desktop", () => {
   const drop = (paths: string[]) =>
     act(() =>
