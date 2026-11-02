@@ -240,10 +240,11 @@ interface ImportDialogProps {
  * the Import button stores anything, and only the rows left ticked.
  */
 export function ImportDialog({ open, onOpenChange }: ImportDialogProps) {
-  const { preview, isLoading, error, loadPreview, applyImport, reset } = useImportStore(
+  const { preview, isLoading, isApplying, error, loadPreview, applyImport, reset } = useImportStore(
     useShallow((s) => ({
       preview: s.preview,
       isLoading: s.isLoading,
+      isApplying: s.isApplying,
       error: s.error,
       loadPreview: s.loadPreview,
       applyImport: s.applyImport,
@@ -256,6 +257,9 @@ export function ImportDialog({ open, onOpenChange }: ImportDialogProps) {
   const [ticks, setTicks] = React.useState<ReadonlyMap<string, boolean>>(new Map());
   const [applyError, setApplyError] = React.useState<string | null>(null);
   const [result, setResult] = React.useState<ImportResult | null>(null);
+  // Moves on when the panel closes: an import still running when it does has
+  // nothing to say to whatever is on screen when it ends.
+  const session = React.useRef(0);
 
   React.useEffect(() => {
     if (!open) return;
@@ -264,7 +268,10 @@ export function ImportDialog({ open, onOpenChange }: ImportDialogProps) {
     setApplyError(null);
     setResult(null);
     void loadPreview(DEFAULT_CONFIG_PATH);
-    return reset;
+    return () => {
+      session.current += 1;
+      reset();
+    };
   }, [open, loadPreview, reset]);
 
   const load = (nextPath: string) => {
@@ -286,6 +293,7 @@ export function ImportDialog({ open, onOpenChange }: ImportDialogProps) {
 
   const confirm = async () => {
     if (!preview) return;
+    const started = session.current;
     setApplyError(null);
     setResult(null);
     // The file on screen, even if the path box has been edited since.
@@ -295,8 +303,10 @@ export function ImportDialog({ open, onOpenChange }: ImportDialogProps) {
         shownPath,
         picked.map((item) => item.key),
       );
+      if (started !== session.current) return;
       setResult(imported);
     } catch (err) {
+      if (started !== session.current) return;
       setApplyError(errorMessage(err));
     }
     // Either way the preview is out of date: what was imported now shows as
@@ -305,7 +315,13 @@ export function ImportDialog({ open, onOpenChange }: ImportDialogProps) {
   };
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog
+      open={open}
+      onOpenChange={(next) => {
+        // An import under way cannot be stopped, so nothing may suggest it can.
+        if (next || !isApplying) onOpenChange(next);
+      }}
+    >
       <DialogContent className="overflow-hidden" data-testid="import-dialog">
         <DialogHeader>
           <DialogTitle>Import from SSH config</DialogTitle>
@@ -334,6 +350,7 @@ export function ImportDialog({ open, onOpenChange }: ImportDialogProps) {
               size="icon"
               aria-label="Browse for an SSH config file"
               title="Browse for an SSH config file"
+              disabled={isApplying}
               onClick={async () => {
                 const chosen = await pickFile({ title: "Select an SSH config file" });
                 if (chosen) {
@@ -344,7 +361,12 @@ export function ImportDialog({ open, onOpenChange }: ImportDialogProps) {
             >
               <FolderOpen className="h-4 w-4" aria-hidden="true" />
             </Button>
-            <Button type="submit" variant="outline" disabled={isLoading} data-testid="import-load">
+            <Button
+              type="submit"
+              variant="outline"
+              disabled={isLoading || isApplying}
+              data-testid="import-load"
+            >
               Read file
             </Button>
           </div>
@@ -388,6 +410,7 @@ export function ImportDialog({ open, onOpenChange }: ImportDialogProps) {
           <Button
             type="button"
             variant="outline"
+            disabled={isApplying}
             onClick={() => onOpenChange(false)}
             data-testid="import-close"
           >
@@ -395,12 +418,12 @@ export function ImportDialog({ open, onOpenChange }: ImportDialogProps) {
           </Button>
           <Button
             type="button"
-            disabled={isLoading || picked.length === 0}
-            aria-busy={isLoading}
+            disabled={isLoading || isApplying || picked.length === 0}
+            aria-busy={isLoading || isApplying}
             onClick={() => void confirm()}
             data-testid="import-confirm"
           >
-            Import {pluralize(picked.length, "connection")}
+            {isApplying ? "Importing…" : `Import ${pluralize(picked.length, "connection")}`}
           </Button>
         </DialogFooter>
       </DialogContent>

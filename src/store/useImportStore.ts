@@ -1,7 +1,6 @@
 import { create } from "zustand";
 import type { ImportPreview, ImportResult } from "@/types";
 import { invoke } from "@/lib/tauri";
-import { runAsyncRethrow } from "@/lib/asyncAction";
 import { errorMessage } from "@/lib/errors";
 import { useConnectionsStore } from "./useConnectionsStore";
 import { useCredentialsStore } from "./useCredentialsStore";
@@ -10,6 +9,11 @@ interface ImportState {
   /** The last preview loaded. Dropped when the dialog closes. */
   preview: ImportPreview | null;
   isLoading: boolean;
+  /**
+   * An import is being stored. Kept apart from `isLoading`, and through `reset`:
+   * it cannot be stopped, and a panel opened meanwhile must not start another.
+   */
+  isApplying: boolean;
   /** Why the last preview could not be loaded; apply failures go to the caller. */
   error: string | null;
   /** Read the config at `path` (blank means `~/.ssh/config`); saves nothing. */
@@ -34,6 +38,7 @@ let latestLoad = 0;
 export const useImportStore = create<ImportState>((set) => ({
   preview: null,
   isLoading: false,
+  isApplying: false,
   error: null,
 
   loadPreview: async (path) => {
@@ -50,21 +55,21 @@ export const useImportStore = create<ImportState>((set) => ({
     }
   },
 
-  applyImport: (path, keys) =>
-    runAsyncRethrow(
-      set,
-      async () => {
-        const result = await invoke<ImportResult>("import_ssh_config_apply", {
-          input: { path: pathArgument(path), keys },
-        });
-        await Promise.all([
-          useConnectionsStore.getState().fetchConnections(),
-          useCredentialsStore.getState().fetchCredentials(),
-        ]);
-        return result;
-      },
-      { recordError: false },
-    ),
+  applyImport: async (path, keys) => {
+    set({ isApplying: true });
+    try {
+      const result = await invoke<ImportResult>("import_ssh_config_apply", {
+        input: { path: pathArgument(path), keys },
+      });
+      await Promise.all([
+        useConnectionsStore.getState().fetchConnections(),
+        useCredentialsStore.getState().fetchCredentials(),
+      ]);
+      return result;
+    } finally {
+      set({ isApplying: false });
+    }
+  },
 
   reset: () => {
     latestLoad++;

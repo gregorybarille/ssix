@@ -5,6 +5,7 @@
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, waitFor, within } from "@testing-library/react";
+import { PanelSlot, PanelSlotProvider } from "@/components/ui/panel-slot";
 import userEvent from "@testing-library/user-event";
 import { ImportButton, ImportDialog } from "@/components/ImportDialog";
 import { ConnectionsView } from "@/components/views/ConnectionsView";
@@ -127,7 +128,7 @@ describe("ImportDialog", () => {
   beforeEach(() => {
     vi.mocked(invoke).mockReset();
     vi.mocked(pickFile).mockReset();
-    useImportStore.setState({ preview: null, isLoading: false, error: null });
+    useImportStore.setState({ preview: null, isLoading: false, isApplying: false, error: null });
   });
 
   it("reads ~/.ssh/config on opening and writes nothing", async () => {
@@ -505,6 +506,126 @@ describe("ImportDialog", () => {
     await settle();
     expect(useImportStore.getState().preview).toBeNull();
     expect(screen.getByTestId("import-load-error")).toBeInTheDocument();
+  });
+
+  /** An import that answers when the test says so. */
+  function importThatWaits() {
+    const answer: {
+      resolve: (result: ImportResult) => void;
+      reject: (reason: unknown) => void;
+    } = { resolve: () => {}, reject: () => {} };
+    mockBackend({
+      import_ssh_config_preview: () => PREVIEW,
+      import_ssh_config_apply: () =>
+        new Promise((resolve, reject) => {
+          answer.resolve = resolve as (result: ImportResult) => void;
+          answer.reject = reject;
+        }),
+      get_connections: () => [],
+      get_credentials: () => [],
+    });
+    return answer;
+  }
+
+  function Panel({ open }: { open: boolean }) {
+    return (
+      <PanelSlotProvider>
+        <ImportDialog open={open} onOpenChange={vi.fn()} />
+        <PanelSlot />
+      </PanelSlotProvider>
+    );
+  }
+
+  /** The panel with an import under way, and a way to close and reopen it. */
+  async function panelMidImport() {
+    const user = userEvent.setup();
+    const answer = importThatWaits();
+    const { rerender } = render(<Panel open />);
+    await screen.findAllByTestId("import-item");
+    await waitFor(() => expect(screen.getByTestId("import-confirm")).toBeEnabled());
+    await user.click(screen.getByTestId("import-confirm"));
+    await waitFor(() => expect(calls("import_ssh_config_apply")).toHaveLength(1));
+    return {
+      answer,
+      close: async () => {
+        rerender(<Panel open={false} />);
+        await waitFor(() => expect(screen.queryByTestId("import-dialog")).toBeNull());
+      },
+      reopen: async () => {
+        rerender(<Panel open />);
+        await screen.findAllByTestId("import-item");
+      },
+    };
+  }
+
+  const importDone = () =>
+    waitFor(() => expect(useImportStore.getState().isApplying).toBe(false));
+
+  it("offers no way to cancel an import under way", async () => {
+    const user = userEvent.setup();
+    const answer = importThatWaits();
+    const { onOpenChange } = await renderLoaded();
+    await waitFor(() => expect(screen.getByTestId("import-confirm")).toBeEnabled());
+    await user.click(screen.getByTestId("import-confirm"));
+
+    await waitFor(() => expect(screen.getByTestId("import-close")).toBeDisabled());
+    expect(screen.getByTestId("import-confirm")).toBeDisabled();
+    expect(screen.getByTestId("import-confirm")).toHaveTextContent("Importing…");
+    expect(screen.getByTestId("import-load")).toBeDisabled();
+    expect(screen.getByRole("button", { name: /browse/i })).toBeDisabled();
+    await user.keyboard("{Escape}");
+    expect(onOpenChange).not.toHaveBeenCalled();
+
+    answer.resolve(RESULT);
+    await screen.findByTestId("import-result");
+    await waitFor(() => expect(screen.getByTestId("import-close")).toBeEnabled());
+    await user.click(screen.getByTestId("import-close"));
+    expect(onOpenChange).toHaveBeenCalledWith(false);
+  });
+
+  it("does not refill the store when an import ends after the panel closed", async () => {
+    const { answer, close } = await panelMidImport();
+    await close();
+    const reads = calls("import_ssh_config_preview").length;
+
+    answer.resolve(RESULT);
+    await importDone();
+    await settle();
+    expect(calls("import_ssh_config_preview")).toHaveLength(reads);
+    expect(useImportStore.getState().preview).toBeNull();
+    // What was stored is still real, so the lists catch up all the same.
+    expect(calls("get_connections")).toHaveLength(1);
+    expect(calls("get_credentials")).toHaveLength(1);
+  });
+
+  it("keeps a late result out of a panel opened since", async () => {
+    const { answer, close, reopen } = await panelMidImport();
+    await close();
+    await reopen();
+    // It is still running, so the new panel must not start another.
+    expect(screen.getByTestId("import-confirm")).toBeDisabled();
+    const reads = calls("import_ssh_config_preview").length;
+
+    answer.resolve(RESULT);
+    await importDone();
+    await settle();
+    expect(screen.queryByTestId("import-result")).toBeNull();
+    expect(screen.getByTestId("import-close")).toHaveTextContent("Cancel");
+    expect(calls("import_ssh_config_preview")).toHaveLength(reads);
+    expect(screen.getByTestId("import-confirm")).toBeEnabled();
+  });
+
+  it("keeps a late failure out of a panel opened since", async () => {
+    const { answer, close, reopen } = await panelMidImport();
+    await close();
+    await reopen();
+    const reads = calls("import_ssh_config_preview").length;
+
+    answer.reject("The config changed since this preview.");
+    await importDone();
+    await settle();
+    expect(screen.queryByTestId("import-apply-error")).toBeNull();
+    expect(calls("import_ssh_config_preview")).toHaveLength(reads);
   });
 
   it("describes itself for assistive technology", async () => {

@@ -166,3 +166,8 @@ key the new plan does not contain means the file or your connections changed sin
 the preview: the whole import is refused, nothing is saved, and the panel shows the
 fresh preview. `path` exists for this panel and for `e2e/specs/19-import.spec.ts`,
 which needs a config it controls.
+
+An import under way cannot be stopped, so the panel cannot be closed from its
+buttons or with Escape until it ends. If it closes some other way, as when you
+leave the view, the import still finishes and the connection lists update, but its
+result never reaches a panel opened since.
