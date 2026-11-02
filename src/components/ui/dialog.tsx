@@ -120,6 +120,7 @@ function DialogContent({
   children,
   showCloseButton = true,
   kind = "panel",
+  onOpenAutoFocus,
   onCloseAutoFocus,
   onInteractOutside,
   ...props
@@ -130,26 +131,7 @@ function DialogContent({
   const triggerRef = React.useRef<HTMLElement | null>(null);
   const slot = usePanelSlot();
 
-  // Best-effort: capture the trigger as soon as we know about it. We
-  // try at render time, then again in a layout effect (after the dom
-  // has settled), then update on every render until we find a stable,
-  // connected candidate. This covers three real cases:
-  //   1. Trigger had focus when dialog opened (activeElement = trigger).
-  //   2. Trigger was clicked but didn't keep focus (lastNonDialogFocus).
-  //   3. Stale reference from a previous render/test (isConnected=false).
-  if (typeof document !== "undefined") {
-    ensureFocusTrackerInstalled();
-    if (!triggerRef.current || !triggerRef.current.isConnected) {
-      const candidate =
-        readLastNonDialogFocus() ??
-        (document.activeElement instanceof HTMLElement
-          ? document.activeElement
-          : null);
-      if (candidate && candidate !== document.body && candidate.isConnected) {
-        triggerRef.current = candidate;
-      }
-    }
-  }
+  ensureFocusTrackerInstalled();
 
   return (
     <DialogPortal data-slot="dialog-portal" container={kind === "palette" ? undefined : slot}>
@@ -163,9 +145,25 @@ function DialogContent({
           // the close button do.
           if (kind !== "palette") event.preventDefault();
         }}
+        onOpenAutoFocus={(event) => {
+          // Only now: this stays mounted with its <Dialog> while closed, so what had
+          // focus at its first render says nothing about what opened it. A click need
+          // not leave focus on what was clicked, hence the tracker first.
+          const active = document.activeElement;
+          triggerRef.current =
+            readLastNonDialogFocus() ??
+            (active instanceof HTMLElement && active !== document.body ? active : null);
+          onOpenAutoFocus?.(event);
+        }}
         onCloseAutoFocus={(event) => {
           onCloseAutoFocus?.(event);
           if (event.defaultPrevented) return;
+          // Its content is gone by now, so focus left <body> because something took
+          // it while this closed, such as a terminal that just connected.
+          if (document.activeElement && document.activeElement !== document.body) {
+            event.preventDefault();
+            return;
+          }
           // Final attempt: if we never captured a stable trigger, try
           // the live tracker one more time.
           if (!triggerRef.current || !triggerRef.current.isConnected) {
