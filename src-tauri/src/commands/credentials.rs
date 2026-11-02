@@ -123,7 +123,11 @@ fn split_secrets(kind: &CredentialKind) -> Result<(CredentialKind, CredentialSec
 ///
 /// `is_private` credentials skip the name check because they use
 /// auto-generated UUID-based names invisible to the user.
-fn validate_credential_fields(name: &str, username: &str, is_private: bool) -> Result<(), String> {
+pub(crate) fn validate_credential_fields(
+    name: &str,
+    username: &str,
+    is_private: bool,
+) -> Result<(), String> {
     if !is_private {
         let trimmed = name.trim();
         if trimmed.is_empty() {

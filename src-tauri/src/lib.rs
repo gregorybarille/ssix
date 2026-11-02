@@ -14,6 +14,7 @@ mod reconnect;
 mod remote_script;
 mod session_log;
 mod ssh;
+mod ssh_config;
 mod ssh_debug;
 mod storage;
 
@@ -117,6 +118,8 @@ pub fn run() {
             commands::snippets::update_snippet,
             commands::snippets::delete_snippet,
             // roadmap:import
+            commands::import_config::import_ssh_config_preview,
+            commands::import_config::import_ssh_config_apply,
             // roadmap:terminal-ux
             // roadmap:folders
         ])
