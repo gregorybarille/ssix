@@ -332,7 +332,7 @@ and (on Windows / Linux) the minimize / maximize / close window controls.
 ## Side Panel
 
 Nothing in SSIX opens a floating window. Editors (connection,
-credential and script forms), SCP and bulk SCP, key generation and key install open
+credential, script and snippet forms), the snippet palette, SCP and bulk SCP, key generation and key install open
 in a panel column on the right of the app, beside the current view, so
 the list you came from stays visible and usable. Confirmations appear as
 a compact card at the top of that column, above the panel they are about.
