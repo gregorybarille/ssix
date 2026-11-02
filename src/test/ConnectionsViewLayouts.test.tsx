@@ -56,6 +56,12 @@ describe("the Connections view's layouts", () => {
     expect(onLayoutChange).toHaveBeenCalledWith("folders");
   });
 
+  it.each(["list", "tile"] as const)("keeps the row's buttons in the tab order for %s", (layout) => {
+    renderView(layout);
+    expect(screen.getByTestId("connect-button-a").tabIndex).toBe(0);
+    expect(screen.getByTestId("edit-connection-a").tabIndex).toBe(0);
+  });
+
   it("still shows every row for a layout it does not know", () => {
     renderView("from-the-future" as ConnectionLayout);
     expect(screen.queryByTestId("folder-tree")).not.toBeInTheDocument();

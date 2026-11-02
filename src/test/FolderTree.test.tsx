@@ -220,10 +220,45 @@ describe("keyboard", () => {
 
   const focus = (element: HTMLElement) => act(() => element.focus());
 
-  it("has one tab stop", () => {
+  it("is one tab stop, whatever the rows hold", () => {
     show();
-    const stops = screen.getAllByRole("treeitem").filter((item) => item.tabIndex === 0);
+    const inTree = screen.getByRole("tree").querySelectorAll<HTMLElement>("*");
+    const stops = [...inTree].filter((element) => element.tabIndex >= 0);
     expect(stops).toHaveLength(1);
+    expect(stops[0]).toHaveAttribute("role", "treeitem");
+    // The buttons taken out of the order are still there for the pointer.
+    expect(within(folderRow("prod")!).getByTestId("folder-rename")).toBeInTheDocument();
+    expect(screen.getByTestId("connect-button-top")).toBeInTheDocument();
+  });
+
+  it("offers everything a row's buttons do in its menu", () => {
+    show();
+    const row = connectionRow("top")!;
+    const buttons = within(row)
+      .getAllByRole("button")
+      .map((button) => button.getAttribute("aria-label"));
+    expect(buttons).toEqual([
+      "Connect to top",
+      "Browse files on top",
+      "Transfer files to top",
+      "Clone top",
+      "Edit top",
+      "Delete top",
+    ]);
+    fireEvent.contextMenu(row);
+    const rowMenu = screen.getByRole("menu", { name: "Actions for top" });
+    for (const name of ["Connect", "Browse files", "Transfer files", "Clone", "Edit", "Delete"]) {
+      expect(within(rowMenu).getByRole("menuitem", { name })).toBeInTheDocument();
+    }
+    fireEvent.keyDown(document, { key: "Escape" });
+
+    const folder = folderRow("prod")!;
+    expect(within(folder).getAllByRole("button")).toHaveLength(2);
+    fireEvent.contextMenu(folder);
+    const folderMenu = screen.getByRole("menu", { name: "Actions for prod" });
+    for (const name of ["Rename folder…", "Delete folder…"]) {
+      expect(within(folderMenu).getByRole("menuitem", { name })).toBeInTheDocument();
+    }
   });
 
   it("walks the visible rows with Up, Down, Home and End", async () => {

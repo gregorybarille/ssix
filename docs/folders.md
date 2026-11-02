@@ -53,7 +53,9 @@ forwards too, the delete dialog counts them, and the picker offers their paths.
 
 ### Keyboard
 
-The tree is one tab stop, following the ARIA tree pattern.
+The tree is one tab stop, following the ARIA tree pattern. The buttons on its
+rows are for the pointer and Tab does not visit them: each row's menu offers the
+same actions.
 
 | Key | On a folder | On a connection |
 |---|---|---|

@@ -126,6 +126,7 @@ function FolderRow({
             variant="ghost"
             size="icon"
             className="h-7 w-7"
+            tabIndex={-1}
             aria-label={`Rename folder ${row.path}`}
             data-testid="folder-rename"
             onClick={(e) => {
@@ -139,6 +140,7 @@ function FolderRow({
             variant="ghost"
             size="icon"
             className="h-7 w-7 text-destructive hover:text-destructive"
+            tabIndex={-1}
             aria-label={`Delete folder ${row.path}`}
             data-testid="folder-delete"
             onClick={(e) => {
@@ -158,7 +160,9 @@ function FolderRow({
  * The Folders layout: connections grouped by their folder path, as an ARIA
  * tree. A search opens every folder that holds a match and hides the rest, and
  * what it folds is forgotten with the search, so the viewer's remembered state
- * comes back untouched when it is cleared. See `docs/folders.md`.
+ * comes back untouched when it is cleared. The tree is one tab stop, so the
+ * buttons on its rows are for the pointer: each row's menu offers the same
+ * actions to the keyboard. See `docs/folders.md`.
  */
 export function FolderTree({
   connections,
@@ -433,6 +437,7 @@ export function FolderTree({
                 conn={row.connection}
                 credentials={credentials}
                 actions={actions}
+                actionTabIndex={-1}
                 onActivate={() => activateRow(index)}
                 onPointerDown={(e) => {
                   // A press on one of the row's own buttons is that button's.

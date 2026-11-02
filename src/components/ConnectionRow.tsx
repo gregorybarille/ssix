@@ -99,17 +99,19 @@ export interface ConnectionRowActions {
 function RowActions({
   conn,
   actions: { onEdit, onDelete, onClone, onConnect, onScp, onBrowse },
+  tabIndex,
 }: {
   conn: Connection;
   actions: ConnectionRowActions;
+  tabIndex?: number;
 }) {
   const scpBlocked = isForwardConnection(conn);
+  const button = { variant: "ghost", size: "icon", tabIndex } as const;
   return (
     <div className="flex items-center gap-1">
       {onConnect && (
         <Button
-          variant="ghost"
-          size="icon"
+          {...button}
           className={cn(ACTION_BUTTON, "text-green-500 hover:text-green-600")}
           onClick={stop(onConnect, conn)}
           aria-label={`Connect to ${conn.name}`}
@@ -120,8 +122,7 @@ function RowActions({
       )}
       {onBrowse && !isForwardConnection(conn) && (
         <Button
-          variant="ghost"
-          size="icon"
+          {...button}
           className={ACTION_BUTTON}
           onClick={stop(onBrowse, conn)}
           aria-label={`Browse files on ${conn.name}`}
@@ -136,8 +137,7 @@ function RowActions({
           className="inline-flex"
         >
           <Button
-            variant="ghost"
-            size="icon"
+            {...button}
             className={ACTION_BUTTON}
             disabled={scpBlocked}
             onClick={stop((c: Connection) => {
@@ -155,8 +155,7 @@ function RowActions({
         </span>
       )}
       <Button
-        variant="ghost"
-        size="icon"
+        {...button}
         className={ACTION_BUTTON}
         onClick={stop(onClone, conn)}
         aria-label={`Clone ${conn.name}`}
@@ -165,8 +164,7 @@ function RowActions({
         <Copy className="h-3.5 w-3.5" aria-hidden="true" />
       </Button>
       <Button
-        variant="ghost"
-        size="icon"
+        {...button}
         className={ACTION_BUTTON}
         onClick={stop(onEdit, conn)}
         aria-label={`Edit ${conn.name}`}
@@ -175,8 +173,7 @@ function RowActions({
         <Edit className="h-3.5 w-3.5" aria-hidden="true" />
       </Button>
       <Button
-        variant="ghost"
-        size="icon"
+        {...button}
         className={cn(ACTION_BUTTON, "text-destructive hover:text-destructive")}
         onClick={stop(onDelete, conn.id)}
         aria-label={`Delete ${conn.name}`}
@@ -308,6 +305,11 @@ interface ConnectionRowProps extends Omit<React.ComponentProps<"div">, "onClick"
   actions: ConnectionRowActions;
   /** Click on the row itself. */
   onActivate: () => void;
+  /**
+   * `tabIndex` of the row's action buttons, for a layout that is one tab stop.
+   * Everything they do must then also be in the row's context menu.
+   */
+  actionTabIndex?: number;
 }
 
 /**
@@ -322,6 +324,7 @@ export function ConnectionRow({
   selected = false,
   actions,
   onActivate,
+  actionTabIndex,
   className,
   style,
   ...rowProps
@@ -371,7 +374,7 @@ export function ConnectionRow({
             <TagBadges tags={conn.tags} />
           </div>
           <div className="flex items-center justify-start mt-auto">
-            <RowActions conn={conn} actions={actions} />
+            <RowActions conn={conn} actions={actions} tabIndex={actionTabIndex} />
           </div>
         </>
       ) : (
@@ -392,7 +395,7 @@ export function ConnectionRow({
               )}
             </p>
           </div>
-          <RowActions conn={conn} actions={actions} />
+          <RowActions conn={conn} actions={actions} tabIndex={actionTabIndex} />
           <ChevronRight
             className="h-4 w-4 text-muted-foreground-soft shrink-0"
             aria-hidden="true"
