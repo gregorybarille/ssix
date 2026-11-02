@@ -477,7 +477,7 @@ describe("Keyboard-interactive login", () => {
     expect(focused).toBe("auth-prompt-input-0");
 
     await answerAuthPrompt(TARGETS.e.password);
-    await expectReconnected();
+    await expectReconnected("before-away-42");
     await (await browser.$(sel.navTerminalsWaiting)).waitForExist({ reverse: true, timeout: 10_000 });
     expect(await (await browser.$(sel.terminalTabPromptWaiting)).isExisting()).toBe(false);
   });
