@@ -168,6 +168,26 @@ async function makeFolder(side: Side, name: string): Promise<void> {
   await rowAppears(side, name);
 }
 
+async function deleteRow(side: Side, name: string): Promise<void> {
+  await pick(side, name);
+  await click(sel.filesDelete(side));
+  await click(sel.filesDeleteConfirm);
+  await rowGoes(side, name);
+}
+
+/** A new connection's form, reaching server-c through server-a. */
+async function fillThroughServerA(name: string, kind: string): Promise<void> {
+  await navigateTo("connections");
+  await click(sel.addConnectionButton);
+  await fill(sel.connectionFormName, name);
+  await click(kind);
+  await fill(sel.connectionFormHopHost, TARGETS.a.host);
+  await fill(sel.connectionFormHopPort, String(TARGETS.a.sshPort));
+  await pickOption(sel.connectionFormHopCredential, "cred-17-a");
+  await fill(sel.connectionFormTargetHost, "server-c");
+  await fill(sel.connectionFormTargetPort, "22");
+}
+
 async function backToFiles(): Promise<void> {
   await click(sel.navFiles);
   await (await browser.$(sel.filesPane("remote"))).waitForExist({ timeout: 10_000 });
@@ -269,15 +289,7 @@ describe("Files view (SFTP)", () => {
   });
 
   it("offers neither the row action nor the picker for a forward", async () => {
-    await navigateTo("connections");
-    await click(sel.addConnectionButton);
-    await fill(sel.connectionFormName, "forward-17");
-    await click(sel.connectionFormKindLocalForward);
-    await fill(sel.connectionFormHopHost, TARGETS.a.host);
-    await fill(sel.connectionFormHopPort, String(TARGETS.a.sshPort));
-    await pickOption(sel.connectionFormHopCredential, "cred-17-a");
-    await fill(sel.connectionFormTargetHost, "server-c");
-    await fill(sel.connectionFormTargetPort, "22");
+    await fillThroughServerA("forward-17", sel.connectionFormKindLocalForward);
     await fill(sel.connectionFormLocalPort, "23417");
     await saveConnectionForm();
 
@@ -528,10 +540,7 @@ describe("Files view (SFTP)", () => {
     expect(readFileSync(join(dir, "big-down.bin"), "utf8")).toBe("previous\n");
 
     await goTo("local", home);
-    await pick("remote", "big-down.bin");
-    await click(sel.filesDelete("remote"));
-    await click(sel.filesDeleteConfirm);
-    await rowGoes("remote", "big-down.bin");
+    await deleteRow("remote", "big-down.bin");
   });
 
   it("deletes a folder on the server without following a symlink in it", async () => {
@@ -543,10 +552,7 @@ describe("Files view (SFTP)", () => {
     await refreshPane("remote");
     await rowAppears("remote", "doomed");
 
-    await pick("remote", "doomed");
-    await click(sel.filesDelete("remote"));
-    await click(sel.filesDeleteConfirm);
-    await rowGoes("remote", "doomed");
+    await deleteRow("remote", "doomed");
     await rowAppears("remote", "keep.txt");
     expect((await downloaded("keep.txt")).toString()).toBe("keep\n");
   });
@@ -559,10 +565,7 @@ describe("Files view (SFTP)", () => {
     symlinkSync(kept, join(uploads, "doomed-local", "link"));
     await refreshPane("local");
 
-    await pick("local", "doomed-local");
-    await click(sel.filesDelete("local"));
-    await click(sel.filesDeleteConfirm);
-    await rowGoes("local", "doomed-local");
+    await deleteRow("local", "doomed-local");
     expect(existsSync(join(uploads, "doomed-local"))).toBe(false);
     expect(readFileSync(join(kept, "file.txt"), "utf8")).toBe("kept\n");
   });
@@ -634,14 +637,8 @@ describe("Files view (SFTP)", () => {
   it("removes its work from the server", async () => {
     await click(sel.filesUp("remote"));
     await rowAppears("remote", REMOTE_DIR);
-    await pick("remote", REMOTE_DIR);
-    await click(sel.filesDelete("remote"));
-    await click(sel.filesDeleteConfirm);
-    await rowGoes("remote", REMOTE_DIR);
-    await pick("remote", `${REMOTE_DIR}-new`);
-    await click(sel.filesDelete("remote"));
-    await click(sel.filesDeleteConfirm);
-    await rowGoes("remote", `${REMOTE_DIR}-new`);
+    await deleteRow("remote", REMOTE_DIR);
+    await deleteRow("remote", `${REMOTE_DIR}-new`);
   });
 
   it("refuses to delete the login folder and the folders that hold it", async () => {
@@ -685,10 +682,7 @@ describe("Files view (SFTP)", () => {
       timeoutMsg: "The Files view never connected again",
     });
     await rowAppears("remote", kept);
-    await pick("remote", kept);
-    await click(sel.filesDelete("remote"));
-    await click(sel.filesDeleteConfirm);
-    await rowGoes("remote", kept);
+    await deleteRow("remote", kept);
   });
 
   it("refuses a changed host key until the user trusts the new one", async () => {
@@ -731,15 +725,7 @@ describe("Files view (SFTP)", () => {
       username: TARGETS.c.user,
       password: TARGETS.c.password,
     });
-    await navigateTo("connections");
-    await click(sel.addConnectionButton);
-    await fill(sel.connectionFormName, "jump-17-c");
-    await click(sel.connectionFormKindJumpHost);
-    await fill(sel.connectionFormHopHost, TARGETS.a.host);
-    await fill(sel.connectionFormHopPort, String(TARGETS.a.sshPort));
-    await pickOption(sel.connectionFormHopCredential, "cred-17-a");
-    await fill(sel.connectionFormTargetHost, "server-c");
-    await fill(sel.connectionFormTargetPort, "22");
+    await fillThroughServerA("jump-17-c", sel.connectionFormKindJumpHost);
     await pickOption(sel.connectionFormTargetCredential, "cred-17-c");
     await saveConnectionForm();
 
@@ -764,10 +750,7 @@ describe("Files view (SFTP)", () => {
 
     await click(sel.filesUp("remote"));
     await rowAppears("remote", REMOTE_DIR);
-    await pick("remote", REMOTE_DIR);
-    await click(sel.filesDelete("remote"));
-    await click(sel.filesDeleteConfirm);
-    await rowGoes("remote", REMOTE_DIR);
+    await deleteRow("remote", REMOTE_DIR);
 
     await click(sel.filesDisconnect);
     await browser.waitUntil(

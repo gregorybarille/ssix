@@ -730,6 +730,41 @@ fn walk_remote(
     Ok(())
 }
 
+/// Go through a plan in order on either side: `ensure_dir` says where a folder
+/// is and whether it had to be created, and `seal` gives a created folder its
+/// final mode once everything is in.
+fn carry_out<'a, P>(
+    run: &mut Run<'a>,
+    plan: &Plan,
+    ensure_dir: impl Fn(&str, Option<u32>) -> Result<(P, bool), String>,
+    mut copy_file: impl FnMut(&mut Run<'a>, &str, Option<u32>) -> Result<(), Stop>,
+    seal: impl Fn(&P, u32) -> Result<(), String>,
+) -> Result<(), Stop> {
+    run.begin(plan);
+    let mut to_seal = Vec::new();
+    for item in &plan.items {
+        run.check()?;
+        match item {
+            PlanItem::Dir { rel, mode } => {
+                let (path, created) = ensure_dir(rel, *mode)?;
+                if created {
+                    to_seal.extend(lacks_owner_bits(*mode).map(|source| (path, source)));
+                }
+            }
+            PlanItem::File { rel, mode } => {
+                run.start_file(rel);
+                copy_file(run, rel, *mode)?;
+                run.finish_file();
+            }
+        }
+    }
+    // Deepest first: a parent that loses its owner's access would block the rest.
+    for (path, source) in to_seal.iter().rev() {
+        seal(path, *source)?;
+    }
+    Ok(())
+}
+
 // ---------------------------------------------------------------------
 // Upload
 // ---------------------------------------------------------------------
@@ -752,34 +787,25 @@ fn run_upload(sftp: &Sftp, input: &TransferInput, run: &mut Run<'_>) -> Result<S
         }
     }
 
-    run.begin(&plan);
-    let mut to_seal = Vec::new();
-    for item in &plan.items {
-        run.check()?;
-        match item {
-            PlanItem::Dir { rel, mode } => {
-                let path = remote_under(&target, rel);
-                if ensure_remote_dir(sftp, &path, *mode)? {
-                    to_seal.extend(lacks_owner_bits(*mode).map(|source| (path, source)));
-                }
-            }
-            PlanItem::File { rel, mode } => {
-                run.start_file(rel);
-                let mut file = fs::File::open(local_under(source, rel))
-                    .map_err(|e| format!("Could not read {}: {}", input.source, e))?;
-                let destination = RemoteTarget::resolve(sftp, &remote_under(&target, rel))?;
-                let staged = stage_upload(sftp, &mut file, &destination, *mode, &mut |n| {
-                    run.on_chunk(n)
-                })?;
-                commit_upload(sftp, &staged, &destination)?;
-                run.finish_file();
-            }
-        }
-    }
-    // Deepest first: a parent that loses its owner's access would block the rest.
-    for (path, source) in to_seal.iter().rev() {
-        seal_remote_dir(sftp, path, *source)?;
-    }
+    carry_out(
+        run,
+        &plan,
+        |rel, mode| {
+            let path = remote_under(&target, rel);
+            let created = ensure_remote_dir(sftp, &path, mode)?;
+            Ok((path, created))
+        },
+        |run, rel, mode| {
+            let mut file = fs::File::open(local_under(source, rel))
+                .map_err(|e| format!("Could not read {}: {}", input.source, e))?;
+            let destination = RemoteTarget::resolve(sftp, &remote_under(&target, rel))?;
+            let staged = stage_upload(sftp, &mut file, &destination, mode, &mut |n| {
+                run.on_chunk(n)
+            })?;
+            commit_upload(sftp, &staged, &destination)
+        },
+        |path, source| seal_remote_dir(sftp, path, source),
+    )?;
     Ok(target)
 }
 
@@ -1055,35 +1081,26 @@ fn run_download(sftp: &Sftp, input: &TransferInput, run: &mut Run<'_>) -> Result
         });
     }
 
-    run.begin(&plan);
-    let mut to_seal = Vec::new();
-    for item in &plan.items {
-        run.check()?;
-        match item {
-            PlanItem::Dir { rel, mode } => {
-                let path = local_under(&target, rel);
-                if ensure_local_dir(&path, *mode)? {
-                    to_seal.extend(lacks_owner_bits(*mode).map(|source| (path, source)));
-                }
-            }
-            PlanItem::File { rel, mode } => {
-                run.start_file(rel);
-                let remote_path = remote_under(&input.source, rel);
-                let mut remote = sftp
-                    .open(Path::new(&remote_path))
-                    .map_err(|e| call_error("Could not read", &remote_path, &e))?;
-                let destination = local_target(&local_under(&target, rel))?;
-                write_partial(&destination, *mode, |file| {
-                    copy_stream(&mut remote, file, &mut |n| run.on_chunk(n))
-                })?;
-                run.finish_file();
-            }
-        }
-    }
-    // Deepest first: a parent that loses its owner's access would block the rest.
-    for (path, source) in to_seal.iter().rev() {
-        seal_local_dir(path, *source)?;
-    }
+    carry_out(
+        run,
+        &plan,
+        |rel, mode| {
+            let path = local_under(&target, rel);
+            let created = ensure_local_dir(&path, mode)?;
+            Ok((path, created))
+        },
+        |run, rel, mode| {
+            let remote_path = remote_under(&input.source, rel);
+            let mut remote = sftp
+                .open(Path::new(&remote_path))
+                .map_err(|e| call_error("Could not read", &remote_path, &e))?;
+            let destination = local_target(&local_under(&target, rel))?;
+            write_partial(&destination, mode, |file| {
+                copy_stream(&mut remote, file, &mut |n| run.on_chunk(n))
+            })
+        },
+        |path, source| seal_local_dir(path, source),
+    )?;
     Ok(target_text)
 }
 

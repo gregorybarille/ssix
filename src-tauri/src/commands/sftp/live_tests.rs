@@ -506,7 +506,8 @@ fn live_sftp_queued_transfers_share_their_logins() {
                 let _ = sender.send(event);
             }
         });
-        let start_all = |overwrite: bool| {
+        let upload_all_expecting = |wanted: fn(&TransferEvent) -> bool| {
+            let logins = LOGINS.load(Ordering::SeqCst);
             for i in 0..count {
                 let source = local.0.join(format!("f{}.txt", i));
                 fs::write(&source, format!("file {}", i)).unwrap();
@@ -515,32 +516,23 @@ fn live_sftp_queued_transfers_share_their_logins() {
                     direction: TransferDirection::Upload,
                     source: source.to_str().unwrap().to_string(),
                     target_dir: dir.path.clone(),
-                    overwrite,
+                    overwrite: false,
                 };
                 start_transfer(input, emit.clone()).unwrap();
             }
+            for _ in 0..count {
+                let end = ends.recv_timeout(Duration::from_secs(60)).unwrap();
+                assert!(wanted(&end), "{:?}", end);
+            }
+            let used = LOGINS.load(Ordering::SeqCst) - logins;
+            assert!(used <= MAX_ACTIVE, "{} logins for {} files", used, count);
         };
-        let wait = Duration::from_secs(60);
 
-        let logins = LOGINS.load(Ordering::SeqCst);
-        start_all(false);
-        for _ in 0..count {
-            let end = ends.recv_timeout(wait).unwrap();
-            assert!(matches!(end, TransferEvent::Done { .. }), "{:?}", end);
-        }
-        let used = LOGINS.load(Ordering::SeqCst) - logins;
-        assert!(used <= MAX_ACTIVE, "{} logins for {} files", used, count);
+        upload_all_expecting(|end| matches!(end, TransferEvent::Done { .. }));
         assert_eq!(remote_names(id, &dir.path).len(), count);
         assert_eq!(sh(id, &format!("cat {}", dir.child("f7.txt"))), "file 7");
 
-        let logins = LOGINS.load(Ordering::SeqCst);
-        start_all(false);
-        for _ in 0..count {
-            let end = ends.recv_timeout(wait).unwrap();
-            assert!(matches!(end, TransferEvent::Conflict { .. }), "{:?}", end);
-        }
-        let used = LOGINS.load(Ordering::SeqCst) - logins;
-        assert!(used <= MAX_ACTIVE, "{} logins for {} files", used, count);
+        upload_all_expecting(|end| matches!(end, TransferEvent::Conflict { .. }));
     });
 }
 
