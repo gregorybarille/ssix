@@ -219,6 +219,14 @@ export async function ensureConnectionRowsLayout(): Promise<void> {
   }
 }
 
+/** Open a saved connection's form from its row in the Connections view. */
+export async function openConnectionEditor(name: string): Promise<void> {
+  await navigateTo("connections");
+  await ensureConnectionRowsLayout();
+  await clickDialogFooterButton(`${sel.connectionRowByName(name)} ${sel.connectionRowEditButton}`);
+  await (await browser.$(sel.connectionForm)).waitForExist({ timeout: 10_000 });
+}
+
 export async function connectToConnection(name: string): Promise<void> {
   await ensureConnectionRowsLayout();
   const row = await browser.$(sel.connectionRowByName(name));

@@ -8,6 +8,7 @@ import {
 import { useConnectionsStore } from "@/store/useConnectionsStore";
 import { useTerminalsStore } from "@/store/useTerminalsStore";
 import type { Connection } from "@/types";
+import { terminalTabsCallbacks } from "./terminalTabsCallbacks";
 
 vi.mock("@/components/Terminal", () => ({
   Terminal: ({
@@ -26,20 +27,7 @@ vi.mock("@/components/Terminal", () => ({
     />
   ),
 }));
-vi.mock("react-resizable-panels", () => ({
-  Group: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
-  Panel: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
-  Separator: () => <div role="separator" />,
-}));
-
-const callbacks = {
-  onSelectTab: vi.fn(),
-  onCloseTab: vi.fn(),
-  onClosePane: vi.fn(),
-  onNewTab: vi.fn(),
-  onRetry: vi.fn(),
-  onEdit: vi.fn(),
-};
+const callbacks = terminalTabsCallbacks();
 
 const live = (sessionId: string): TerminalSession => ({ sessionId, connectionName: sessionId });
 const split = (panes: TerminalSession[], broadcast = false): TerminalTab => ({

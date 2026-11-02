@@ -29,9 +29,9 @@ import {
   connectToConnection,
   createDirectConnection,
   createPasswordCredential,
-  ensureConnectionRowsLayout,
   fill,
   navigateTo,
+  openConnectionEditor,
   pickOption,
   reveal,
   saveConnectionForm,
@@ -157,18 +157,6 @@ const findShortcut = () => browser.keys(["Control", "Shift", "f"]);
 async function expectGone(selector: string): Promise<void> {
   await browser.pause(SETTLE_MS);
   expect(await (await browser.$(selector)).isExisting()).toBe(false);
-}
-
-async function openConnectionEditor(name: string): Promise<void> {
-  await ensureConnectionRowsLayout();
-  const row = await browser.$(sel.connectionRowByName(name));
-  await row.waitForExist({ timeout: 10_000 });
-  // The action strip is hidden until the row is hovered or focused.
-  await browser.execute((el: HTMLElement) => el.focus(), row as unknown as HTMLElement);
-  const edit = await row.$(sel.connectionRowEditButton);
-  await edit.waitForClickable({ timeout: 10_000 });
-  await edit.click();
-  await (await browser.$(sel.connectionForm)).waitForExist({ timeout: 10_000 });
 }
 
 const lastTick = (text: string) =>
