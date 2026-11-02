@@ -70,7 +70,7 @@ Empty answers are allowed, since some servers only want Enter.
 - A wrong answer ends in the failure view with **Retry**, which asks again.
 - **Cancel**, or closing the pane or tab, ends the connection attempt by closing
   its socket rather than sending blank answers, so it costs no failed attempt
-  on a server that locks accounts. On Windows blank answers are sent instead.
+  on a server that locks accounts.
 - A prompt left unanswered for five minutes ends the attempt. Most servers give
   up sooner (OpenSSH's `LoginGraceTime` is two minutes).
 

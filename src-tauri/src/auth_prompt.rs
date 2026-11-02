@@ -338,17 +338,9 @@ impl PanePrompter {
     /// user a failed attempt on servers that lock accounts after a few.
     fn give_up(&mut self, reason: &'static str) {
         self.given_up = Some(reason);
-        #[cfg(unix)]
         if let Some(socket) = self.socket {
-            // SAFETY: the socket belongs to the session this exchange runs on,
-            // which is alive for the whole `userauth_keyboard_interactive` call
-            // this runs inside. `shutdown` does not close the descriptor.
-            unsafe {
-                libc::shutdown(socket, libc::SHUT_RDWR);
-            }
+            wake::shutdown(socket);
         }
-        #[cfg(not(unix))]
-        let _ = self.socket;
     }
 }
 
@@ -498,6 +490,28 @@ mod tests {
         let answers = prompter.prompt("", "", &prompts(&[("OTP: ", false)]));
         responder.join().unwrap();
         assert_eq!(answers, ["ok"]);
+    }
+
+    /// The blank answers libssh2 still tries to send must go nowhere. This is
+    /// the one path with its own Windows code, so the check that counts for it
+    /// is CI's Windows job: on Unix it has always passed.
+    #[test]
+    fn giving_up_closes_the_connection_rather_than_answering() {
+        use std::io::{Read, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let client = std::net::TcpStream::connect(listener.local_addr().unwrap()).unwrap();
+        let (mut server, _) = listener.accept().unwrap();
+        server
+            .set_read_timeout(Some(Duration::from_secs(5)))
+            .unwrap();
+
+        let (mut prompter, _events) = prompter(Duration::from_secs(5));
+        prompter.socket = Some(wake::fd_of(&client));
+        prompter.give_up(CANCELLED);
+
+        let mut received = Vec::new();
+        assert_eq!(server.read_to_end(&mut received).unwrap(), 0);
+        assert!((&client).write_all(b"blank answers").is_err());
     }
 
     #[test]

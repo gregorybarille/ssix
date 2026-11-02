@@ -347,6 +347,16 @@ pub(crate) mod wake {
     pub fn is_writable(fd: Fd) -> bool {
         ready_now(fd, libc::POLLOUT)
     }
+
+    /// End the connection behind `fd` both ways, keeping the descriptor open
+    /// for whoever owns it.
+    pub fn shutdown(fd: Fd) {
+        // SAFETY: `shutdown` takes a descriptor by value and does not close it;
+        // on one that is no longer a socket it only returns an error.
+        unsafe {
+            libc::shutdown(fd, libc::SHUT_RDWR);
+        }
+    }
 }
 
 #[cfg(windows)]
@@ -422,6 +432,22 @@ pub(crate) mod wake {
         // SAFETY: `poll` is a valid one-element array that outlives the call,
         // and a timeout of 0 returns at once.
         unsafe { WSAPoll(&mut poll, 1, 0) > 0 }
+    }
+
+    /// End the connection behind `fd` both ways, keeping the socket open for
+    /// whoever owns it.
+    pub fn shutdown(fd: Fd) {
+        /// `SD_BOTH` in `winsock2.h`.
+        const SD_BOTH: i32 = 2;
+        #[link(name = "ws2_32")]
+        extern "system" {
+            fn shutdown(socket: usize, how: i32) -> i32;
+        }
+        // SAFETY: `shutdown` takes a socket handle by value and does not close
+        // it; on a handle that is no longer a socket it only returns an error.
+        unsafe {
+            shutdown(fd as usize, SD_BOTH);
+        }
     }
 }
 
