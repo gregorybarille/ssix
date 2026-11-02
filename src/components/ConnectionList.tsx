@@ -126,6 +126,18 @@ function RowActions({ conn, onEdit, onDelete, onClone, onConnect, onScp, onBrows
           <Play className="h-3.5 w-3.5" aria-hidden="true" />
         </Button>
       )}
+      {onBrowse && !isForwardConnection(conn) && (
+        <Button
+          variant="ghost"
+          size="icon"
+          className={ACTION_BUTTON}
+          onClick={stop(onBrowse, conn)}
+          aria-label={`Browse files on ${conn.name}`}
+          data-testid={`browse-files-${conn.id}`}
+        >
+          <FolderOpen className="h-3.5 w-3.5" aria-hidden="true" />
+        </Button>
+      )}
       {onScp && (
         <span
           title={scpBlocked ? "SCP not available for port forwards" : undefined}
@@ -149,18 +161,6 @@ function RowActions({ conn, onEdit, onDelete, onClone, onConnect, onScp, onBrows
             <ArrowUpDown className="h-3.5 w-3.5" aria-hidden="true" />
           </Button>
         </span>
-      )}
-      {onBrowse && !isForwardConnection(conn) && (
-        <Button
-          variant="ghost"
-          size="icon"
-          className={ACTION_BUTTON}
-          onClick={stop(onBrowse, conn)}
-          aria-label={`Browse files on ${conn.name}`}
-          data-testid={`browse-files-${conn.id}`}
-        >
-          <FolderOpen className="h-3.5 w-3.5" aria-hidden="true" />
-        </Button>
       )}
       <Button
         variant="ghost"

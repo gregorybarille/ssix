@@ -32,14 +32,12 @@ import { currentTestDataDir } from "../helpers/data-dir.js";
 import { TARGETS, waitForServers } from "../helpers/docker.js";
 import {
   click,
-  connectToConnection,
   createDirectConnection,
   createPasswordCredential,
   ensureConnectionRowsLayout,
   fill,
   navigateTo,
   pickOption,
-  waitForTerminalContains,
 } from "../helpers/flows.js";
 import { sel } from "../helpers/selectors.js";
 
@@ -163,45 +161,27 @@ async function backToFiles(): Promise<void> {
   await (await browser.$(sel.filesPane("remote"))).waitForExist({ timeout: 10_000 });
 }
 
-/** The terminal on screen: those of earlier specs stay mounted, hidden. */
-async function visibleTerminal(): Promise<WebdriverIO.Element> {
-  let found: WebdriverIO.Element | undefined;
-  await browser.waitUntil(
-    async () => {
-      for (const terminal of await browser.$$(sel.terminalContainer)) {
-        if (await terminal.isDisplayed()) {
-          found = terminal as unknown as WebdriverIO.Element;
-          return true;
-        }
-      }
-      return false;
-    },
-    { timeout: 30_000, timeoutMsg: "No terminal came up" },
-  );
-  return found as WebdriverIO.Element;
-}
-
 /**
- * Run an idempotent shell line on server-a in a new terminal. Keys sent
- * before the shell is up are lost, so it is typed again until the marker
- * answers; the marker's arithmetic makes the echoed command not match.
+ * Run a line of shell on server-a, as a saved script: the Files view cannot
+ * make a symlink, and a script takes the line whole where a terminal takes it
+ * one key at a time.
  */
-async function onServer(command: string): Promise<void> {
-  const stamp = Date.now();
-  await navigateTo("connections");
-  await connectToConnection("conn-17-a");
-  const terminal = await visibleTerminal();
-  await browser.waitUntil(
-    async () => {
-      await terminal.click();
-      await browser.keys(`${command}; echo ran-$((${stamp}+1))\n`.split(""));
-      return waitForTerminalContains(`ran-${stamp + 1}`, 5_000).then(
-        () => true,
-        () => false,
-      );
-    },
-    { timeout: 60_000, timeoutMsg: `The server never ran: ${command}` },
-  );
+async function onServer(name: string, line: string): Promise<void> {
+  await navigateTo("scripts");
+  await click(sel.addScriptButton);
+  const form = await browser.$(sel.scriptForm);
+  await form.waitForExist({ timeout: 10_000 });
+  await fill(sel.scriptFormName, name);
+  await fill(sel.scriptFormBody, line);
+  await click(sel.scriptFormSubmit);
+  await form.waitForExist({ reverse: true, timeout: 10_000 });
+  const row = await browser.$(sel.scriptRowByName(name));
+  await row.waitForExist({ timeout: 10_000 });
+  await (await row.$(sel.scriptRowSelect)).click();
+  await click(sel.scriptHostByName("conn-17-a"));
+  await click(sel.scriptRun);
+  const done = await browser.$(`${sel.scriptResultByName("conn-17-a")}[data-status="success"]`);
+  await done.waitForExist({ timeout: 30_000, timeoutMsg: `The server never ran: ${line}` });
   await backToFiles();
 }
 
@@ -483,6 +463,7 @@ describe("Files view (SFTP)", () => {
   it("deletes a folder on the server without following a symlink in it", async () => {
     const remoteDir = await panePath("remote");
     await onServer(
+      "script-17-links",
       `mkdir -p ${remoteDir}/doomed/sub && echo keep > ${remoteDir}/keep.txt && ln -s ${remoteDir}/keep.txt ${remoteDir}/doomed/sub/link.txt && ln -s ${remoteDir} ${remoteDir}/doomed/up`,
     );
     await refreshPane("remote");
