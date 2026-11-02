@@ -110,6 +110,9 @@ when a session opens: changing the settings does not affect open sessions.
 
 ## Known limits
 
+- Scrollback survives a reconnect, not a change of view: going from Terminals
+  to another view and back clears it, with or without a drop. What the session
+  printed meanwhile is kept.
 - libssh2 keeps each keepalive answer in memory until the session ends, about
   100 bytes each: some 300 KB a day per session at the default interval.
   Reconnecting or reopening a session frees it.

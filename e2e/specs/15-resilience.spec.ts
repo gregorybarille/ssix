@@ -349,7 +349,9 @@ describe("Session resilience", () => {
     await click(sel.navTerminals);
     await click(sel.failedTerminalRetry);
 
-    await expectReconnected("BEFORE-AUTH-42");
+    // Nothing to expect from before: leaving the Terminals view clears a
+    // terminal's scrollback, reconnect or not.
+    await expectReconnected();
     await expectShellAnswers("AFTER-AUTH");
   });
 
