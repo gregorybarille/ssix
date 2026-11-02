@@ -27,6 +27,16 @@ export function focusIsFreeFor(container: Element | null): boolean {
 }
 
 /**
+ * Whether something took the focus while a dialog or menu closed, such as a
+ * terminal that just connected. Its content is gone by then, so focus left `<body>`
+ * for that reason alone, and returning it would take the keyboard from whoever has it.
+ */
+export function focusWasTaken(): boolean {
+  const active = document.activeElement;
+  return !!active && active !== document.body;
+}
+
+/**
  * Whether a terminal that just opened may take the keyboard. The user asked for
  * it, perhaps seconds ago: a connection takes its time. So it gives way to someone
  * typing elsewhere, and to nothing else, not even the button that asked for it.

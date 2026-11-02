@@ -2,6 +2,7 @@ import * as React from "react";
 import { XIcon } from "lucide-react";
 import { Dialog as DialogPrimitive } from "radix-ui";
 
+import { focusWasTaken } from "@/lib/focus";
 import { cn } from "@/lib/utils";
 import { usePanelSlot } from "./panel-slot";
 
@@ -76,6 +77,8 @@ function DialogOverlay({
  * focus or a pointer press. On dialog close we restore focus to that
  * element if it's still connected to the document.
  */
+/** Gone as soon as they have been used, so never what focus returns to. */
+const PASSING_THROUGH = "[role='dialog'], [role='menu']";
 let lastNonDialogFocus: HTMLElement | null = null;
 let listenerInstalled = false;
 function ensureFocusTrackerInstalled() {
@@ -86,7 +89,7 @@ function ensureFocusTrackerInstalled() {
     (event) => {
       const target = event.target as HTMLElement | null;
       if (!target || target === document.body) return;
-      if (target.closest("[role='dialog']")) return;
+      if (target.closest(PASSING_THROUGH)) return;
       lastNonDialogFocus = target;
     },
     true,
@@ -99,7 +102,7 @@ function ensureFocusTrackerInstalled() {
       const focusable = target.closest<HTMLElement>(
         "button, [href], [tabindex]:not([tabindex='-1']), input, select, textarea",
       );
-      if (focusable && !focusable.closest("[role='dialog']")) {
+      if (focusable && !focusable.closest(PASSING_THROUGH)) {
         lastNonDialogFocus = focusable;
       }
     },
@@ -158,9 +161,7 @@ function DialogContent({
         onCloseAutoFocus={(event) => {
           onCloseAutoFocus?.(event);
           if (event.defaultPrevented) return;
-          // Its content is gone by now, so focus left <body> because something took
-          // it while this closed, such as a terminal that just connected.
-          if (document.activeElement && document.activeElement !== document.body) {
+          if (focusWasTaken()) {
             event.preventDefault();
             return;
           }
