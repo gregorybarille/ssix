@@ -434,6 +434,62 @@ fn live_sftp_round_trips_a_folder_without_following_links() {
     });
 }
 
+#[cfg(unix)]
+#[test]
+#[ignore]
+fn live_sftp_carries_folder_modes_both_ways() {
+    use std::os::unix::fs::PermissionsExt;
+    with_connection(|id| {
+        let dir = RemoteDir::new(id);
+        let local = TempDir::new("live-modes");
+        let tree = local.0.join("tree");
+        fs::create_dir_all(tree.join("private")).unwrap();
+        fs::create_dir(tree.join("sealed")).unwrap();
+        fs::write(tree.join("private/f.txt"), "x").unwrap();
+        fs::write(tree.join("sealed/f.txt"), "y").unwrap();
+        let set_mode = |path: &Path, mode: u32| {
+            fs::set_permissions(path, fs::Permissions::from_mode(mode)).unwrap()
+        };
+        let local_mode = |path: &Path| fs::metadata(path).unwrap().permissions().mode() & 0o777;
+        set_mode(&tree, 0o750);
+        set_mode(&tree.join("private"), 0o700);
+        set_mode(&tree.join("sealed"), 0o500);
+
+        assert_done(upload(id, &tree, &dir.path, false));
+        let up = dir.child("tree");
+        let remote_mode = |path: &str| {
+            sh(id, &format!("stat -c %a {}", path))
+                .trim_end()
+                .to_string()
+        };
+        assert_eq!(remote_mode(&up), "750");
+        assert_eq!(remote_mode(&format!("{}/private", up)), "700");
+        assert_eq!(remote_mode(&format!("{}/sealed", up)), "500");
+        assert_eq!(sh(id, &format!("cat {}/sealed/f.txt", up)), "y");
+
+        let down = TempDir::new("live-modes-down");
+        assert_done(download(id, &up, &down.0, false));
+        let got = down.0.join("tree");
+        assert_eq!(local_mode(&got), 0o750);
+        assert_eq!(local_mode(&got.join("private")), 0o700);
+        assert_eq!(local_mode(&got.join("sealed")), 0o500);
+        assert_eq!(fs::read_to_string(got.join("sealed/f.txt")).unwrap(), "y");
+
+        // Into folders that exist, each keeps its own mode.
+        sh(id, &format!("chmod -R u+w {up} && chmod 755 {up}/private"));
+        set_mode(&got.join("sealed"), 0o700);
+        set_mode(&got.join("private"), 0o755);
+        assert_done(upload(id, &tree, &dir.path, true));
+        assert_eq!(remote_mode(&format!("{}/private", up)), "755");
+        assert_done(download(id, &up, &down.0, true));
+        assert_eq!(local_mode(&got.join("private")), 0o755);
+
+        // Both temporary folders can be removed again.
+        sh(id, &format!("chmod -R u+w {}", up));
+        set_mode(&tree.join("sealed"), 0o700);
+    });
+}
+
 /// libssh2 sessions are not safe to share between threads. Here each
 /// transfer and the browsing pane have a session of their own, so running
 /// them all at once must not disturb any of them.

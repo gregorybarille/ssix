@@ -61,6 +61,11 @@ cancelled.
   names where the old file and the new copy are, and neither is removed.
 - **A target that is a symlink is written through**, so the link stays and the
   file it points to changes.
+- **Folders keep their permissions**, as files do and as `scp -r` does, so a `0700`
+  folder stays private on the other side. A read-only source folder stays writable
+  until its contents are in, and if the transfer stops first it keeps its owner's
+  write access. The target's umask still applies. A folder that already exists keeps
+  its own mode, as a replaced file does.
 
 ### Symlinks
 

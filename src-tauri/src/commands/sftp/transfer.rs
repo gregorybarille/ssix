@@ -384,7 +384,7 @@ pub(super) fn copy_stream(
 /// entry itself. Every component has passed a name check.
 #[derive(Debug, PartialEq)]
 enum PlanItem {
-    Dir { rel: String },
+    Dir { rel: String, mode: Option<u32> },
     File { rel: String, mode: Option<u32> },
 }
 
@@ -443,6 +443,24 @@ fn file_mode(meta: &fs::Metadata) -> Option<u32> {
     }
 }
 
+/// The mode a new folder starts with: the source's, plus what its owner needs
+/// to fill it, as `scp -r` does for a read-only source. The system's umask
+/// still applies, so a copy is never more open than this machine allows.
+fn new_folder_mode(source: u32) -> u32 {
+    (source & 0o777) | 0o700
+}
+
+/// A source mode whose owner bits `new_folder_mode` had to add.
+fn lacks_owner_bits(source: Option<u32>) -> Option<u32> {
+    source.filter(|mode| mode & 0o700 != 0o700)
+}
+
+/// A filled folder's final mode: the source's owner bits, with the group and
+/// other bits its creation left.
+fn sealed_folder_mode(created: u32, source: u32) -> u32 {
+    super::permission_bits(created) & !(0o700 & !source)
+}
+
 /// Every folder of a walk starts here: the walk may be cancelled, or too deep.
 fn enter_folder(
     dir: impl std::fmt::Display,
@@ -471,7 +489,10 @@ fn plan_local(root: &Path, cancel: &AtomicBool) -> Result<Plan, Stop> {
     if meta.is_file() {
         plan.add_file(String::new(), meta.len(), file_mode(&meta));
     } else if meta.is_dir() {
-        plan.items.push(PlanItem::Dir { rel: String::new() });
+        plan.items.push(PlanItem::Dir {
+            rel: String::new(),
+            mode: file_mode(&meta),
+        });
         walk_local(root, "", &mut plan, cancel, 0)?;
     } else {
         return Err(Stop::Failed(format!(
@@ -505,7 +526,10 @@ fn walk_local(
             .map_err(|e| format!("Could not read {}: {}", entry.path().display(), e))?;
         let child = join_rel(rel, name);
         if meta.is_dir() {
-            plan.items.push(PlanItem::Dir { rel: child.clone() });
+            plan.items.push(PlanItem::Dir {
+                rel: child.clone(),
+                mode: file_mode(&meta),
+            });
             walk_local(&entry.path(), &child, plan, cancel, depth + 1)?;
         } else if meta.is_file() {
             plan.add_file(child, meta.len(), file_mode(&meta));
@@ -524,7 +548,10 @@ fn plan_remote(sftp: &Sftp, root: &str, cancel: &AtomicBool) -> Result<Plan, Sto
     if stat.is_file() {
         plan.add_file(String::new(), stat.size.unwrap_or(0), stat.perm);
     } else if stat.is_dir() {
-        plan.items.push(PlanItem::Dir { rel: String::new() });
+        plan.items.push(PlanItem::Dir {
+            rel: String::new(),
+            mode: stat.perm,
+        });
         walk_remote(sftp, root, "", &mut plan, cancel, 0)?;
     } else {
         return Err(Stop::Failed(format!(
@@ -554,7 +581,10 @@ fn walk_remote(
         };
         let child = join_rel(rel, name);
         if stat.is_dir() {
-            plan.items.push(PlanItem::Dir { rel: child.clone() });
+            plan.items.push(PlanItem::Dir {
+                rel: child.clone(),
+                mode: stat.perm,
+            });
             walk_remote(
                 sftp,
                 &join_remote(dir, name),
@@ -595,10 +625,16 @@ fn run_upload(sftp: &Sftp, input: &TransferInput, run: &mut Run<'_>) -> Result<S
     }
 
     run.begin(&plan);
+    let mut to_seal = Vec::new();
     for item in &plan.items {
         run.check()?;
         match item {
-            PlanItem::Dir { rel } => ensure_remote_dir(sftp, &remote_under(&target, rel))?,
+            PlanItem::Dir { rel, mode } => {
+                let path = remote_under(&target, rel);
+                if ensure_remote_dir(sftp, &path, *mode)? {
+                    to_seal.extend(lacks_owner_bits(*mode).map(|source| (path, source)));
+                }
+            }
             PlanItem::File { rel, mode } => {
                 run.start_file(rel);
                 let mut file = fs::File::open(local_under(source, rel))
@@ -612,19 +648,44 @@ fn run_upload(sftp: &Sftp, input: &TransferInput, run: &mut Run<'_>) -> Result<S
             }
         }
     }
+    // Deepest first: a parent that loses its owner's access would block the rest.
+    for (path, source) in to_seal.iter().rev() {
+        seal_remote_dir(sftp, path, *source)?;
+    }
     Ok(target)
 }
 
-fn ensure_remote_dir(sftp: &Sftp, path: &str) -> Result<(), String> {
+/// Make sure a folder is there, and say whether it had to be created. One
+/// that exists keeps its mode, as a replaced file does.
+fn ensure_remote_dir(sftp: &Sftp, path: &str, mode: Option<u32>) -> Result<bool, String> {
     match missing_or(sftp.stat(Path::new(path)))
         .map_err(|e| call_error("Could not read", path, &e))?
     {
-        Some(stat) if stat.is_dir() => Ok(()),
+        Some(stat) if stat.is_dir() => Ok(false),
         Some(_) => Err(format!("{} is in the way of a folder", path)),
         None => sftp
-            .mkdir(Path::new(path), 0o755)
+            .mkdir(Path::new(path), mode.map_or(0o755, new_folder_mode) as i32)
+            .map(|()| true)
             .map_err(|e| call_error("Could not create", path, &e)),
     }
+}
+
+fn seal_remote_dir(sftp: &Sftp, path: &str, source: u32) -> Result<(), String> {
+    let created = sftp
+        .stat(Path::new(path))
+        .map_err(|e| call_error("Could not read", path, &e))?
+        .perm
+        .unwrap_or_else(|| new_folder_mode(source));
+    let change = FileStat {
+        size: None,
+        uid: None,
+        gid: None,
+        perm: Some(sealed_folder_mode(created, source)),
+        atime: None,
+        mtime: None,
+    };
+    sftp.setstat(Path::new(path), change)
+        .map_err(|e| call_error("Could not set the permissions of", path, &e))
 }
 
 /// Where an upload's bytes finally go, and what is there now.
@@ -867,10 +928,16 @@ fn run_download(sftp: &Sftp, input: &TransferInput, run: &mut Run<'_>) -> Result
     }
 
     run.begin(&plan);
+    let mut to_seal = Vec::new();
     for item in &plan.items {
         run.check()?;
         match item {
-            PlanItem::Dir { rel } => ensure_local_dir(&local_under(&target, rel))?,
+            PlanItem::Dir { rel, mode } => {
+                let path = local_under(&target, rel);
+                if ensure_local_dir(&path, *mode)? {
+                    to_seal.extend(lacks_owner_bits(*mode).map(|source| (path, source)));
+                }
+            }
             PlanItem::File { rel, mode } => {
                 run.start_file(rel);
                 let remote_path = remote_under(&input.source, rel);
@@ -885,17 +952,53 @@ fn run_download(sftp: &Sftp, input: &TransferInput, run: &mut Run<'_>) -> Result
             }
         }
     }
+    // Deepest first: a parent that loses its owner's access would block the rest.
+    for (path, source) in to_seal.iter().rev() {
+        seal_local_dir(path, *source)?;
+    }
     Ok(target_text)
 }
 
-fn ensure_local_dir(path: &Path) -> Result<(), String> {
+/// Make sure a folder is there, and say whether it had to be created. One
+/// that exists keeps its mode, as a replaced file does.
+fn ensure_local_dir(path: &Path, mode: Option<u32>) -> Result<bool, String> {
     if path.is_dir() {
-        return Ok(());
+        return Ok(false);
     }
     if fs::symlink_metadata(path).is_ok() {
         return Err(format!("{} is in the way of a folder", path.display()));
     }
-    fs::create_dir_all(path).map_err(|e| format!("Could not create {}: {}", path.display(), e))
+    let mut builder = fs::DirBuilder::new();
+    builder.recursive(true);
+    #[cfg(unix)]
+    if let Some(mode) = mode {
+        use std::os::unix::fs::DirBuilderExt;
+        builder.mode(new_folder_mode(mode));
+    }
+    #[cfg(not(unix))]
+    let _ = mode;
+    builder
+        .create(path)
+        .map(|()| true)
+        .map_err(|e| format!("Could not create {}: {}", path.display(), e))
+}
+
+fn seal_local_dir(path: &Path, source: u32) -> Result<(), String> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let fail = |e: std::io::Error| {
+            format!("Could not set the permissions of {}: {}", path.display(), e)
+        };
+        let created = fs::metadata(path).map_err(fail)?.permissions().mode();
+        let sealed = sealed_folder_mode(created, source);
+        fs::set_permissions(path, fs::Permissions::from_mode(sealed)).map_err(fail)
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = (path, source);
+        Ok(())
+    }
 }
 
 /// Where a download's bytes finally go. A symlink is written through, as
@@ -1206,10 +1309,10 @@ mod tests {
         let plan = plan_local(&root, &AtomicBool::new(false)).unwrap();
         assert_eq!(plan.files, 2);
         assert_eq!(plan.bytes, 5);
-        assert_eq!(plan.items[0], PlanItem::Dir { rel: String::new() });
+        assert!(matches!(&plan.items[0], PlanItem::Dir { rel, .. } if rel.is_empty()));
         let position = |rel: &str| {
             plan.items.iter().position(|item| match item {
-                PlanItem::Dir { rel: r } | PlanItem::File { rel: r, .. } => r == rel,
+                PlanItem::Dir { rel: r, .. } | PlanItem::File { rel: r, .. } => r == rel,
             })
         };
         assert!(position("sub") < position("sub/b.txt"));
@@ -1236,6 +1339,70 @@ mod tests {
         symlink(tmp.0.join("outside/secret"), tmp.0.join("picked")).unwrap();
         let plan = plan_local(&tmp.0.join("picked"), &AtomicBool::new(false)).unwrap();
         assert_eq!(plan.files, 1, "the entry the user picked is followed");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_folder_plan_carries_each_folders_mode() {
+        use std::os::unix::fs::PermissionsExt;
+        let tmp = TempDir::new("planmodes");
+        let root = tmp.0.join("tree");
+        fs::create_dir_all(root.join("private")).unwrap();
+        fs::set_permissions(&root, fs::Permissions::from_mode(0o750)).unwrap();
+        fs::set_permissions(root.join("private"), fs::Permissions::from_mode(0o700)).unwrap();
+
+        let plan = plan_local(&root, &AtomicBool::new(false)).unwrap();
+        let mode_of = |wanted: &str| {
+            plan.items.iter().find_map(|item| match item {
+                PlanItem::Dir { rel, mode } if rel == wanted => *mode,
+                _ => None,
+            })
+        };
+        assert_eq!(mode_of("").map(|m| m & 0o777), Some(0o750));
+        assert_eq!(mode_of("private").map(|m| m & 0o777), Some(0o700));
+    }
+
+    #[test]
+    fn a_new_folder_can_be_filled_and_ends_with_the_sources_owner_bits() {
+        // The file-type bits a server reports do not reach the new mode.
+        assert_eq!(new_folder_mode(0o040700), 0o700);
+        assert_eq!(new_folder_mode(0o755), 0o755);
+        assert_eq!(new_folder_mode(0o500), 0o700);
+
+        assert_eq!(lacks_owner_bits(Some(0o755)), None);
+        assert_eq!(lacks_owner_bits(Some(0o040700)), None);
+        assert_eq!(lacks_owner_bits(Some(0o555)), Some(0o555));
+        assert_eq!(lacks_owner_bits(None), None);
+
+        assert_eq!(sealed_folder_mode(0o700, 0o500), 0o500);
+        assert_eq!(sealed_folder_mode(0o040755, 0o555), 0o555);
+        // Group and other stay as creating it left them, after the umask.
+        assert_eq!(sealed_folder_mode(0o755, 0o577), 0o555);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_new_local_folder_keeps_a_private_mode_and_an_existing_one_is_left_alone() {
+        use std::os::unix::fs::PermissionsExt;
+        let tmp = TempDir::new("foldermodes");
+        let mode = |path: &Path| fs::metadata(path).unwrap().permissions().mode() & 0o777;
+
+        let private = tmp.0.join("private");
+        assert!(ensure_local_dir(&private, Some(0o040700)).unwrap());
+        assert_eq!(mode(&private), 0o700);
+
+        // Fillable until sealed, then what the source was.
+        let sealed = tmp.0.join("sealed");
+        assert!(ensure_local_dir(&sealed, Some(0o500)).unwrap());
+        assert_eq!(mode(&sealed), 0o700);
+        fs::write(sealed.join("f"), "x").unwrap();
+        seal_local_dir(&sealed, 0o500).unwrap();
+        assert_eq!(mode(&sealed), 0o500);
+        fs::set_permissions(&sealed, fs::Permissions::from_mode(0o700)).unwrap();
+
+        fs::set_permissions(&private, fs::Permissions::from_mode(0o750)).unwrap();
+        assert!(!ensure_local_dir(&private, Some(0o700)).unwrap());
+        assert_eq!(mode(&private), 0o750, "a merge keeps the folder's own mode");
     }
 
     #[test]
