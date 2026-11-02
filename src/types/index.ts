@@ -480,3 +480,83 @@ export const FONT_FAMILIES = [
 ] as const;
 
 export const FONT_SIZES = [10, 12, 13, 14, 16, 18, 20] as const;
+
+// Files view: mirrors `src-tauri/src/commands/sftp.rs` and its submodules.
+export type FileKind = "file" | "dir" | "symlink" | "other";
+
+export interface FileEntry {
+  name: string;
+  path: string;
+  kind: FileKind;
+  /** A symlink to a folder, which opens like a folder. */
+  target_is_dir: boolean;
+  size: number | null;
+  /** Seconds since the Unix epoch. */
+  modified: number | null;
+  /** The permission bits, when the system has them. */
+  mode: number | null;
+}
+
+export interface FileListing {
+  path: string;
+  parent: string | null;
+  entries: FileEntry[];
+  /** Entries left out because their name cannot be represented safely. */
+  omitted: number;
+  /** The folder holds more entries than a pane shows. */
+  truncated: boolean;
+}
+
+export interface SftpSessionInfo {
+  session_id: string;
+  start_path: string;
+  label: string;
+}
+
+/**
+ * The side a Files view command acts on. Mirrors `PaneTarget` in
+ * `src-tauri/src/commands/sftp/browse.rs`: a remote one always has its session.
+ */
+export type PaneTarget = { side: "local" } | { side: "remote"; session_id: string };
+
+export type TransferDirection = "upload" | "download";
+
+export interface TransferInput {
+  connection_id: string;
+  direction: TransferDirection;
+  source: string;
+  target_dir: string;
+  overwrite: boolean;
+}
+
+export type TransferEvent =
+  | {
+      type: "progress";
+      id: string;
+      bytes_done: number;
+      bytes_total: number;
+      files_done: number;
+      files_total: number;
+      current: string;
+    }
+  | { type: "done"; id: string; bytes: number; files: number; skipped: number; target: string }
+  | { type: "cancelled"; id: string }
+  | { type: "conflict"; id: string; target: string; target_is_dir: boolean }
+  | { type: "failed"; id: string; error: string };
+
+export interface EditSession {
+  edit_id: string;
+  name: string;
+  remote_path: string;
+  temp_path: string;
+  size: number;
+}
+
+export interface EditStatus {
+  modified: boolean;
+  missing: boolean;
+}
+
+export type EditSaveOutcome =
+  | { outcome: "saved"; size: number }
+  | { outcome: "remote_changed"; deleted: boolean; size: number | null; modified: number | null };

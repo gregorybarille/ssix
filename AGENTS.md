@@ -7,6 +7,7 @@
 > - `docs/features.md` — feature catalogue and keyboard shortcuts
 > - `docs/file-transfer.md` — SCP/file transfer behaviour and constraints
 > - `docs/forwards.md` — port forwards: kinds, lifecycle, SOCKS replies and limits
+> - `docs/sftp.md` — Files view (SFTP): browsing, transfers, edit in place, and how it differs from SCP
 > - `docs/git-sync.md` — git-sync export feature
 > - `docs/roadmap.md` — validated feature roadmap, stream ownership and rules
 > - `docs/session-resilience.md` — keepalive, auto-reconnect and session logs

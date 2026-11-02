@@ -11,6 +11,7 @@ import {
   Cable,
   CornerDownRight,
   ChevronRight,
+  FolderOpen,
   Play,
   ArrowUpDown,
   Terminal as TerminalIcon,
@@ -32,6 +33,7 @@ interface ConnectionListProps {
   onSelect?: (connection: Connection) => void;
   onConnect?: (connection: Connection) => void;
   onScp?: (connection: Connection) => void;
+  onBrowse?: (connection: Connection) => void;
   selectedId?: string;
   /** "tile" renders a grid of cards; "list" (default) renders rows. */
   layout?: LayoutMode;
@@ -104,10 +106,11 @@ interface RowActionsProps {
   onClone: (connection: Connection) => void;
   onConnect?: (connection: Connection) => void;
   onScp?: (connection: Connection) => void;
+  onBrowse?: (connection: Connection) => void;
 }
 
 /** The per-row action cluster, identical in row and tile layouts. */
-function RowActions({ conn, onEdit, onDelete, onClone, onConnect, onScp }: RowActionsProps) {
+function RowActions({ conn, onEdit, onDelete, onClone, onConnect, onScp, onBrowse }: RowActionsProps) {
   const scpBlocked = isForwardConnection(conn);
   return (
     <div className="flex items-center gap-1">
@@ -121,6 +124,18 @@ function RowActions({ conn, onEdit, onDelete, onClone, onConnect, onScp }: RowAc
           data-testid={`connect-button-${conn.id}`}
         >
           <Play className="h-3.5 w-3.5" aria-hidden="true" />
+        </Button>
+      )}
+      {onBrowse && !isForwardConnection(conn) && (
+        <Button
+          variant="ghost"
+          size="icon"
+          className={ACTION_BUTTON}
+          onClick={stop(onBrowse, conn)}
+          aria-label={`Browse files on ${conn.name}`}
+          data-testid={`browse-files-${conn.id}`}
+        >
+          <FolderOpen className="h-3.5 w-3.5" aria-hidden="true" />
         </Button>
       )}
       {onScp && (
@@ -189,6 +204,7 @@ export function ConnectionList({
   onSelect,
   onConnect,
   onScp,
+  onBrowse,
   selectedId,
   layout = "list",
 }: ConnectionListProps) {
@@ -246,6 +262,13 @@ export function ConnectionList({
         onClick: () => onScp(conn),
       });
     }
+    if (onBrowse && !isForwardConnection(conn)) {
+      items.push({
+        label: "Browse files",
+        icon: <FolderOpen className="h-3.5 w-3.5" />,
+        onClick: () => onBrowse(conn),
+      });
+    }
     items.push({ separator: true });
     items.push({
       label: "Copy SSH command",
@@ -279,7 +302,7 @@ export function ConnectionList({
     );
   }
 
-  const actionProps = { onEdit, onDelete, onClone, onConnect, onScp };
+  const actionProps = { onEdit, onDelete, onClone, onConnect, onScp, onBrowse };
 
   return (
     <>

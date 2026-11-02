@@ -9,6 +9,7 @@ import { ViewFallback } from "../ViewFallback";
 import { useShallow } from "zustand/react/shallow";
 import { useDialogsStore } from "@/store/useDialogsStore";
 import { useConnectionsStore } from "@/store/useConnectionsStore";
+import { browseFiles } from "@/store/useSftpStore";
 import { ErrorBanner } from "../ui/error-banner";
 import { filterConnections } from "@/lib/search";
 import type { TagGroup } from "@/lib/tags";
@@ -129,6 +130,7 @@ export function ConnectionsView({
             onClone={(conn) => dialogs.openCloneConnection(conn)}
             onConnect={onConnect}
             onScp={(conn) => dialogs.openScp(conn)}
+            onBrowse={browseFiles}
           />
         )}
       </div>

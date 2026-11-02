@@ -115,8 +115,8 @@ A dropped shell that needs answers asks again in the same pane
 
 Only a shell has a pane to ask in, so it is the only thing that can answer. The
 shell of a jump host connection can ask for either hop, and the pane says which
-host is asking. SCP, script runs and port forwards refuse such a server with a
-message saying so; use a key or the agent for those.
+host is asking. SCP, script runs, port forwards and the Files view refuse such a server with
+a message saying so; use a key or the agent for those.
 
 ## FIDO2 security keys
 

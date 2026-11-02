@@ -28,6 +28,7 @@ pub fn run() {
         .setup(|app| {
             logs::init(app.handle().clone());
             backup::spawn_scheduler();
+            tauri::async_runtime::spawn_blocking(commands::sftp::edit::purge_stale_copies);
             // Write any load-time repair once, off the UI thread.
             tauri::async_runtime::spawn_blocking(|| {
                 if let Err(e) = storage::persist_migrations() {
@@ -95,11 +96,31 @@ pub fn run() {
             commands::ssh::ssh_cancel_reconnect,
             // roadmap:forwards
             // roadmap:sftp
+            commands::sftp::browse::sftp_connect,
+            commands::sftp::browse::sftp_disconnect,
+            commands::sftp::browse::sftp_local_home,
+            commands::sftp::browse::sftp_list,
+            commands::sftp::browse::sftp_mkdir,
+            commands::sftp::browse::sftp_rename,
+            commands::sftp::browse::sftp_delete,
+            commands::sftp::browse::sftp_chmod,
+            commands::sftp::transfer::sftp_start_transfer,
+            commands::sftp::transfer::sftp_cancel_transfer,
+            commands::sftp::edit::sftp_edit_open,
+            commands::sftp::edit::sftp_edit_status,
+            commands::sftp::edit::sftp_edit_launch,
+            commands::sftp::edit::sftp_edit_save,
+            commands::sftp::edit::sftp_edit_close,
             // roadmap:snippets
             // roadmap:import
             // roadmap:terminal-ux
             // roadmap:folders
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while running tauri application")
+        .run(|_app, event| {
+            if matches!(event, tauri::RunEvent::Exit) {
+                commands::sftp::edit::remove_open_copies();
+            }
+        });
 }

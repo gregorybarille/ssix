@@ -7,6 +7,7 @@ pub mod scp;
 pub mod screenshot;
 pub mod scripts;
 pub mod settings;
+pub mod sftp;
 pub mod ssh;
 pub mod ssh_keygen;
 
