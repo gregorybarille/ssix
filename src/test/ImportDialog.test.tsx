@@ -433,6 +433,80 @@ describe("ImportDialog", () => {
     expect(screen.getByText("latest")).toBeInTheDocument();
   });
 
+  /** A preview on screen, then two reads in flight: the older one answers first. */
+  async function overlappingReads() {
+    const user = userEvent.setup();
+    const answers: {
+      resolve: (preview: ImportPreview) => void;
+      reject: (reason: unknown) => void;
+    }[] = [];
+    let previews = 0;
+    mockBackend({
+      import_ssh_config_preview: () =>
+        previews++ === 0
+          ? PREVIEW
+          : new Promise((resolve, reject) => {
+              answers.push({ resolve, reject });
+            }),
+    });
+    vi.mocked(pickFile).mockResolvedValue("/picked/config");
+    await renderLoaded();
+    await waitFor(() => expect(screen.getByTestId("import-confirm")).toBeEnabled());
+
+    // Read file is disabled while loading; the picker is not.
+    await user.click(screen.getByTestId("import-load"));
+    await user.click(screen.getByRole("button", { name: /browse/i }));
+    await waitFor(() => expect(answers).toHaveLength(2));
+    return { older: answers[0], newer: answers[1] };
+  }
+
+  const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
+
+  it("stays busy until the latest read answers, so the older preview cannot be applied", async () => {
+    const { older, newer } = await overlappingReads();
+
+    older.resolve({ ...PREVIEW, items: [item("older")] });
+    await settle();
+    expect(useImportStore.getState().isLoading).toBe(true);
+    expect(screen.getByTestId("import-confirm")).toBeDisabled();
+    expect(screen.getByTestId("import-load")).toBeDisabled();
+    expect(screen.queryByText("older")).toBeNull();
+
+    newer.resolve({ ...PREVIEW, items: [item("newer")] });
+    await screen.findByText("newer");
+    expect(useImportStore.getState().isLoading).toBe(false);
+    expect(screen.getByTestId("import-confirm")).toBeEnabled();
+  });
+
+  it("ignores a failure of a read the user has moved on from", async () => {
+    const { older, newer } = await overlappingReads();
+
+    older.reject("the older file went away");
+    await settle();
+    expect(useImportStore.getState().isLoading).toBe(true);
+    expect(screen.queryByTestId("import-load-error")).toBeNull();
+    expect(screen.getByTestId("import-confirm")).toBeDisabled();
+
+    newer.resolve({ ...PREVIEW, items: [item("newer")] });
+    await screen.findByText("newer");
+    expect(screen.queryByTestId("import-load-error")).toBeNull();
+  });
+
+  it("reports a failure of the latest read and ends the busy state", async () => {
+    const { older, newer } = await overlappingReads();
+
+    newer.reject("the newer file went away");
+    expect(await screen.findByTestId("import-load-error")).toHaveTextContent("went away");
+    expect(useImportStore.getState().isLoading).toBe(false);
+    expect(useImportStore.getState().preview).toBeNull();
+
+    // The older read coming back afterwards changes nothing.
+    older.resolve({ ...PREVIEW, items: [item("older")] });
+    await settle();
+    expect(useImportStore.getState().preview).toBeNull();
+    expect(screen.getByTestId("import-load-error")).toBeInTheDocument();
+  });
+
   it("describes itself for assistive technology", async () => {
     backendWith();
     await renderLoaded();

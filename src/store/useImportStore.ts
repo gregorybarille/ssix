@@ -1,7 +1,8 @@
 import { create } from "zustand";
 import type { ImportPreview, ImportResult } from "@/types";
 import { invoke } from "@/lib/tauri";
-import { runAsync, runAsyncRethrow } from "@/lib/asyncAction";
+import { runAsyncRethrow } from "@/lib/asyncAction";
+import { errorMessage } from "@/lib/errors";
 import { useConnectionsStore } from "./useConnectionsStore";
 import { useCredentialsStore } from "./useCredentialsStore";
 
@@ -25,7 +26,9 @@ interface ImportState {
 const pathArgument = (path: string) => path.trim() || null;
 
 // Each load has a number so that a preview for a path the user has moved on
-// from (or a dialog they closed) can never overwrite the current one.
+// from (or a dialog they closed) can never overwrite the current one, and only
+// the latest load ends the busy state: `runAsync` would end it for whichever
+// answers first, and Import would come back while a newer read is running.
 let latestLoad = 0;
 
 export const useImportStore = create<ImportState>((set) => ({
@@ -33,21 +36,18 @@ export const useImportStore = create<ImportState>((set) => ({
   isLoading: false,
   error: null,
 
-  loadPreview: (path) => {
+  loadPreview: async (path) => {
     const load = ++latestLoad;
-    return runAsync(set, async () => {
-      try {
-        const preview = await invoke<ImportPreview>("import_ssh_config_preview", {
-          path: pathArgument(path),
-        });
-        if (load === latestLoad) set({ preview });
-      } catch (err) {
-        if (load !== latestLoad) return;
-        // A file that can no longer be read has no preview to act on.
-        set({ preview: null });
-        throw err;
-      }
-    }).then(() => undefined);
+    set({ isLoading: true, error: null });
+    try {
+      const preview = await invoke<ImportPreview>("import_ssh_config_preview", {
+        path: pathArgument(path),
+      });
+      if (load === latestLoad) set({ preview, isLoading: false });
+    } catch (err) {
+      // A file that can no longer be read has no preview to act on.
+      if (load === latestLoad) set({ preview: null, error: errorMessage(err), isLoading: false });
+    }
   },
 
   applyImport: (path, keys) =>
