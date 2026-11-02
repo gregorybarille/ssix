@@ -16,6 +16,18 @@ export async function fill(selector: string, value: string): Promise<void> {
   await el.setValue(value);
 }
 
+/**
+ * Wait until nothing matches. Linux tauri-driver/WebKit throws a stale element
+ * error when WebDriver's search lands on a node as React removes it, and
+ * `browser.$` is such a search, so look from inside the page.
+ */
+export async function waitForNoMatch(selector: string): Promise<void> {
+  await browser.waitUntil(
+    () => browser.execute((s: string) => document.querySelector(s) === null, selector),
+    { timeout: 10_000, timeoutMsg: `${selector} is still there` },
+  );
+}
+
 export async function click(selector: string): Promise<void> {
   const el = await browser.$(selector);
   await el.waitForClickable({ timeout: 10_000 });

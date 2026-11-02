@@ -29,6 +29,7 @@ import {
   saveConnectionForm,
   textContentOf,
   typeIntoTerminal,
+  waitForNoMatch,
   waitForTerminalContains,
 } from "../helpers/flows.js";
 import { sel } from "../helpers/selectors.js";
@@ -75,8 +76,7 @@ const folderOf = (path: string) => browser.$(sel.folderRow(path));
 
 const waitForRow = async (name: string) =>
   (await rowOf(name)).waitForExist({ timeout: 10_000 });
-const waitForNoRow = async (name: string) =>
-  (await rowOf(name)).waitForExist({ reverse: true, timeout: 10_000 });
+const waitForNoRow = (name: string) => waitForNoMatch(sel.connectionRowByName(name));
 
 async function showTree(): Promise<void> {
   await navigateTo("connections");
@@ -148,7 +148,7 @@ const openDelete = (path: string) => openFolderDialog(path, sel.folderDelete, se
 
 async function closeRenameWithEscape(): Promise<void> {
   await browser.keys(["Escape"]);
-  await (await browser.$(sel.folderRenameDialog)).waitForExist({ reverse: true, timeout: 10_000 });
+  await waitForNoMatch(sel.folderRenameDialog);
 }
 
 const waitForTextIn = (selector: string, needle: string) =>
@@ -195,10 +195,7 @@ describe("Folders", () => {
         await waitForTextIn(sel.connectionFormError, "highlighted fields");
 
         await fillFolderField(` /${PROD}//eu/ `);
-        await (await browser.$(sel.connectionFormFolderError)).waitForExist({
-          reverse: true,
-          timeout: 10_000,
-        });
+        await waitForNoMatch(sel.connectionFormFolderError);
       });
       expect(storedFolder(WEB)).toBe(EU);
     });
@@ -225,10 +222,7 @@ describe("Folders", () => {
       await fillFolderField(EU);
 
       await click(sel.connectionFormKindLocalForward);
-      await (await browser.$(sel.connectionFormFolder)).waitForExist({
-        reverse: true,
-        timeout: 10_000,
-      });
+      await waitForNoMatch(sel.connectionFormFolder);
       await fill(sel.connectionFormHopHost, TARGETS.a.host);
       await fill(sel.connectionFormHopPort, String(TARGETS.a.sshPort));
       await pickOption(sel.connectionFormHopCredential, CREDENTIAL);
@@ -317,7 +311,7 @@ describe("Folders", () => {
       await fill(sel.connectionSearchInput, WEB);
       await waitForRow(WEB);
       await waitForNoRow(DB);
-      await (await browser.$(sel.folderNoFolder)).waitForExist({ reverse: true, timeout: 10_000 });
+      await waitForNoMatch(sel.folderNoFolder);
       expect(await countOf(PROD)).toBe("1");
 
       await click(sel.connectionSearchClear);
@@ -353,7 +347,7 @@ describe("Folders", () => {
       await clone.click();
       await (await browser.$(sel.connectionForm)).waitForExist({ timeout: 10_000 });
       await click(sel.connectionFormCancel);
-      await (await browser.$(sel.connectionForm)).waitForExist({ reverse: true, timeout: 10_000 });
+      await waitForNoMatch(sel.connectionForm);
 
       await showTree();
       await click(sel.folderRow(PROD));
@@ -413,10 +407,7 @@ describe("Folders", () => {
       await waitForFocusOn(sel.folderMoveInput);
       await fill(sel.folderMoveInput, PROD);
       await browser.keys(["Enter"]);
-      await (await browser.$(sel.folderMoveDialog)).waitForExist({
-        reverse: true,
-        timeout: 10_000,
-      });
+      await waitForNoMatch(sel.folderMoveDialog);
       await waitForStoredFolder(LOOSE, PROD);
       await waitForFocusOn(sel.connectionRowByName(LOOSE));
       await click(sel.connectionSearchClear);
@@ -445,7 +436,7 @@ describe("Folders", () => {
       await fill(sel.folderRenameInput, LIVE);
       await clickDialogFooterButton(sel.folderRenameSubmit);
       await (await folderOf(LIVE)).waitForExist({ timeout: 10_000 });
-      await (await folderOf(PROD)).waitForExist({ reverse: true, timeout: 10_000 });
+      await waitForNoMatch(sel.folderRow(PROD));
 
       expect(storedFolder(WEB)).toBe(`${LIVE}/eu`);
       expect(storedFolder(DB)).toBe(LIVE);
@@ -460,7 +451,7 @@ describe("Folders", () => {
       await waitForTextIn(sel.folderDeleteContents, "1 connection and 1 port forward");
       await waitForTextIn(sel.folderDeleteDialog, `to ${LIVE}.`);
       await clickDialogFooterButton(sel.folderDeleteConfirm);
-      await (await folderOf(`${LIVE}/eu`)).waitForExist({ reverse: true, timeout: 10_000 });
+      await waitForNoMatch(sel.folderRow(`${LIVE}/eu`));
 
       expect(storedFolder(WEB)).toBe(LIVE);
       expect(storedFolder(TUNNEL)).toBe(LIVE);
@@ -470,7 +461,7 @@ describe("Folders", () => {
       await waitForTextIn(sel.folderDeleteContents, "3 connections and 1 port forward");
       await waitForTextIn(sel.folderDeleteDialog, "out of any folder");
       await clickDialogFooterButton(sel.folderDeleteConfirm);
-      await (await folderOf(LIVE)).waitForExist({ reverse: true, timeout: 10_000 });
+      await waitForNoMatch(sel.folderRow(LIVE));
 
       for (const name of [WEB, DB, LOOSE, TUNNEL]) expect(storedFolder(name)).toBeNull();
       await waitForRow(DB);
@@ -495,10 +486,7 @@ describe("Folders", () => {
       await showTree();
       await (await folderOf("e2e21-synced/repaired")).waitForExist({ timeout: 10_000 });
       await waitForRow(DB);
-      await (await browser.$(sel.connectionsLoadError)).waitForExist({
-        reverse: true,
-        timeout: 10_000,
-      });
+      await waitForNoMatch(sel.connectionsLoadError);
     });
   });
 });
