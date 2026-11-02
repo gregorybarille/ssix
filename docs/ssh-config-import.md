@@ -87,14 +87,21 @@ that the rows you ticked use are created.
 ## Duplicates and name clashes
 
 Connections are compared by destination: the kind, the hosts and ports, the proxy
-command and the usernames. The name and the credential do not count, so renaming
-an imported connection or switching it to a password does not make it new.
+command, and who signs in, meaning each username with its key path or the SSH
+agent. Two hosts on one server with different keys are therefore two accounts, as
+in the usual `github-work` and `github-personal`, and both are imported.
+
+The name does not count, so renaming an imported connection does not make it new.
+The key does: a stored connection answers with its credential's path, so one you
+moved to a password or another key no longer matches the config. Under its own
+name it shows as a name clash and stays as it is. Under a new name, the host is
+offered again.
 
 | The config has | SSIX has | Result |
 |---|---|---|
 | A name and destination | The same name and destination | Skipped: already imported |
 | A name and destination | That destination under another name | Skipped: already imported as that name |
-| A name and destination | That name, with another destination | Skipped: **name clash**. The existing connection is left as it is |
+| A name and destination | That name, with another destination or key | Skipped: **name clash**. The existing connection is left as it is |
 | Two aliases with one destination | | The first is created, the second skipped as a duplicate |
 
 Importing the same file again therefore creates nothing. To import a host whose

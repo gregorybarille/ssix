@@ -262,24 +262,29 @@ impl CredentialSpec {
         }
     }
 
+    /// What a stored credential says, in the terms a config can say it. `None`
+    /// for a password or an inline key, which a config never describes.
+    fn of_stored(credential: &Credential) -> Option<Self> {
+        let key_path = match &credential.kind {
+            CredentialKind::SshKey {
+                private_key_path: Some(path),
+                ..
+            } => Some(path.clone()),
+            CredentialKind::Agent {} => None,
+            _ => return None,
+        };
+        Some(Self {
+            username: credential.username.clone(),
+            key_path,
+        })
+    }
+
     /// A named credential that already says the same thing. Private ones
     /// belong to their connection and are never shared.
     fn find_in<'a>(&self, credentials: &'a [Credential]) -> Option<&'a Credential> {
-        credentials.iter().find(|c| {
-            !c.is_private
-                && c.username == self.username
-                && match (&c.kind, &self.key_path) {
-                    (
-                        CredentialKind::SshKey {
-                            private_key_path: Some(have),
-                            ..
-                        },
-                        Some(want),
-                    ) => have == want,
-                    (CredentialKind::Agent {}, None) => true,
-                    _ => false,
-                }
-        })
+        credentials
+            .iter()
+            .find(|c| !c.is_private && Self::of_stored(c).as_ref() == Some(self))
     }
 }
 
@@ -623,10 +628,8 @@ impl PlannedConnection {
             self.host.as_str(),
             self.port,
             self.proxy_command.as_deref(),
-            self.target_credential.as_ref().map(|c| c.username.as_str()),
-            self.gateway_credential
-                .as_ref()
-                .map(|c| c.username.as_str()),
+            json!(self.target_credential),
+            json!(self.gateway_credential),
         )
     }
 
@@ -653,16 +656,18 @@ impl PlannedConnection {
     }
 }
 
-/// Where a connection goes and as whom, whatever it is called and whichever
-/// credential it signs in with: a user who renames an imported connection,
-/// or gives it a password instead of the key, still has that destination.
+/// Where a connection goes and who it signs in as, whatever it is called. Two
+/// hosts for one server with different keys are two accounts, as in the classic
+/// `github-work` and `github-personal`. A stored connection answers with its
+/// credential's key path, so one the user moved to a password no longer matches;
+/// `KnownConnections` still refuses its name, which keeps it from being overwritten.
 fn signature(
     kind: &ConnectionKind,
     host: &str,
     port: u16,
     proxy_command: Option<&str>,
-    target_user: Option<&str>,
-    gateway_user: Option<&str>,
+    target: Json,
+    gateway: Json,
 ) -> Json {
     let mut kind_json = serde_json::to_value(kind).unwrap_or(Json::Null);
     if let Some(fields) = kind_json.as_object_mut() {
@@ -675,39 +680,45 @@ fn signature(
         "host": direct.then_some(host),
         "port": direct.then_some(port),
         "proxy": proxy_command.map(str::trim).filter(|p| !p.is_empty()),
-        "target_user": target_user,
-        "gateway_user": gateway_user,
+        "target": target,
+        "gateway": gateway,
     })
 }
 
 fn connection_signature(connection: &Connection, credentials: &[Credential]) -> Json {
-    let username = |id: &str| {
-        credentials
-            .iter()
-            .find(|c| c.id == id)
-            .map(|c| c.username.as_str())
+    let identity = |id: &str| {
+        let Some(credential) = credentials.iter().find(|c| c.id == id) else {
+            return Json::Null;
+        };
+        match CredentialSpec::of_stored(credential) {
+            Some(spec) => json!(spec),
+            None => json!({ "username": credential.username, "by_hand": true }),
+        }
     };
-    let gateway_user = serde_json::to_value(&connection.kind)
+    let gateway = serde_json::to_value(&connection.kind)
         .ok()
         .and_then(|kind| {
             kind.get("gateway_credential_id")
                 .and_then(Json::as_str)
                 .map(str::to_string)
         })
-        .and_then(|id| username(&id));
+        .map_or(Json::Null, |id| identity(&id));
     // A forward only signs in to its SSH server; its `credential_id` is unused.
-    let target_user = if connection.kind.is_forward() {
-        None
+    let target = if connection.kind.is_forward() {
+        Json::Null
     } else {
-        connection.credential_id.as_deref().and_then(username)
+        connection
+            .credential_id
+            .as_deref()
+            .map_or(Json::Null, &identity)
     };
     signature(
         &connection.kind,
         &connection.host,
         connection.port,
         connection.proxy_command.as_deref(),
-        target_user,
-        gateway_user,
+        target,
+        gateway,
     )
 }
 
@@ -1034,7 +1045,7 @@ impl KnownConnections {
                 (true, false) => refuse(
                     ImportSkipCategory::NameClash,
                     format!(
-                        "A connection named '{}' already exists with another destination. It stays as it is; rename it or the Host to import this one",
+                        "A connection named '{}' already exists with another destination or key. It stays as it is; rename it or the Host to import this one",
                         planned.name
                     ),
                 ),
@@ -2132,30 +2143,129 @@ mod tests {
         });
     }
 
+    const ACCOUNTS: &str = "Host github-work\n  HostName github.com\n  User git\n  IdentityFile ~/.ssh/id_work\nHost github-personal\n  HostName github.com\n  User git\n  IdentityFile ~/.ssh/id_personal\n";
+
+    /// Point a stored connection at a new password credential.
+    fn move_to_password(name: &str) {
+        with_data_mut(|data| {
+            let id = Uuid::new_v4().to_string();
+            data.credentials.push(Credential {
+                id: id.clone(),
+                name: "typed by hand".to_string(),
+                username: "deploy".to_string(),
+                kind: CredentialKind::Password {
+                    password: String::new(),
+                },
+                is_private: false,
+            });
+            let connection = data.connections.iter_mut().find(|c| c.name == name);
+            connection.unwrap().credential_id = Some(id);
+            Ok(())
+        })
+        .unwrap();
+    }
+
     #[test]
-    fn a_connection_with_its_credential_changed_is_still_recognised() {
+    fn hosts_with_different_keys_for_one_server_are_different_accounts() {
+        in_data_dir(|f| {
+            let preview = f.preview(ACCOUNTS);
+            assert_eq!(names(&preview), ["github-work", "github-personal"]);
+            assert!(preview.skipped.is_empty(), "{:#?}", preview.skipped);
+
+            let result = f.apply_all(&preview);
+            assert_eq!(result.connections, ["github-work", "github-personal"]);
+            assert_eq!(result.credentials, ["git@id_work", "git@id_personal"]);
+            let key_of = |name: &str| {
+                let id = stored(name).credential_id.unwrap();
+                CredentialSpec::of_stored(&credential_of(&id))
+                    .unwrap()
+                    .key_path
+            };
+            assert_eq!(key_of("github-work"), Some(f.key_path(".ssh/id_work")));
+            assert_eq!(
+                key_of("github-personal"),
+                Some(f.key_path(".ssh/id_personal"))
+            );
+
+            // Each one still recognises itself, so importing again adds nothing.
+            let again = f.preview(ACCOUNTS);
+            assert!(again.items.is_empty(), "{:#?}", again.items);
+            for name in ["github-work", "github-personal"] {
+                assert_eq!(
+                    skip(&again, name).category,
+                    ImportSkipCategory::AlreadyImported
+                );
+            }
+        });
+    }
+
+    #[test]
+    fn a_key_and_the_agent_are_different_accounts_too() {
+        in_data_dir(|f| {
+            let preview = f.preview(
+                "Host with-key\n  HostName s\n  User u\n  IdentityFile ~/.ssh/id\nHost with-agent\n  HostName s\n  User u\n",
+            );
+            assert_eq!(names(&preview), ["with-key", "with-agent"]);
+        });
+    }
+
+    #[test]
+    fn forwards_and_jump_hosts_compare_their_keys_as_well() {
+        in_data_dir(|f| {
+            let preview = f.preview(
+                "Host a\n  HostName s\n  User u\n  IdentityFile ~/.ssh/one\n  LocalForward 1 d:1\nHost b\n  HostName s\n  User u\n  IdentityFile ~/.ssh/two\n  LocalForward 1 d:1\nHost c\n  HostName t\n  User u\n  IdentityFile ~/.ssh/t\n  ProxyJump a\nHost d\n  HostName t\n  User u\n  IdentityFile ~/.ssh/t\n  ProxyJump b\n",
+            );
+            assert_eq!(
+                names(&preview),
+                ["a", "a (-L 1)", "b", "b (-L 1)", "c", "d"]
+            );
+        });
+    }
+
+    #[test]
+    fn a_stored_connection_is_compared_by_its_key_path() {
+        in_data_dir(|f| {
+            f.import(
+                "Host mine\n  HostName github.com\n  User git\n  IdentityFile ~/.ssh/id_work\n",
+            );
+
+            let preview = f.preview(ACCOUNTS);
+            let work = skip(&preview, "github-work");
+            assert_eq!(work.category, ImportSkipCategory::AlreadyImported);
+            assert!(work.reason.contains("'mine'"), "{}", work.reason);
+            // The same server under the other key is an account SSIX lacks.
+            assert_eq!(names(&preview), ["github-personal"]);
+        });
+    }
+
+    #[test]
+    fn a_connection_moved_to_a_password_is_never_overwritten() {
+        in_data_dir(|f| {
+            f.import(BASIC);
+            move_to_password("web");
+            let before = stored("web");
+
+            let preview = f.preview(BASIC);
+            assert!(preview.items.is_empty());
+            assert_eq!(
+                skip(&preview, "web").category,
+                ImportSkipCategory::NameClash
+            );
+            assert_eq!(stored("web").credential_id, before.credential_id);
+        });
+    }
+
+    #[test]
+    fn a_renamed_connection_moved_to_a_password_no_longer_matches() {
         in_data_dir(|f| {
             f.import(BASIC);
             with_data_mut(|data| {
-                let id = Uuid::new_v4().to_string();
-                data.credentials.push(Credential {
-                    id: id.clone(),
-                    name: "typed by hand".to_string(),
-                    username: "deploy".to_string(),
-                    kind: CredentialKind::Password {
-                        password: String::new(),
-                    },
-                    is_private: false,
-                });
-                data.connections[0].credential_id = Some(id);
+                data.connections[0].name = "my web".to_string();
                 Ok(())
             })
             .unwrap();
-            let preview = f.preview(BASIC);
-            assert_eq!(
-                skip(&preview, "web").category,
-                ImportSkipCategory::AlreadyImported
-            );
+            move_to_password("my web");
+            assert_eq!(names(&f.preview(BASIC)), ["web"]);
         });
     }
 
