@@ -2361,6 +2361,23 @@ mod tests {
         });
     }
 
+    /// libssh2's own Windows backend (WinCNG) has no curve25519, ed25519 or
+    /// ECDSA, and loses about 1 login in 256: it keeps a leading zero on the
+    /// Diffie-Hellman secret, so its exchange hash differs from the server's.
+    /// A login that negotiates curve25519 is not on that backend.
+    #[test]
+    #[ignore]
+    fn live_logins_use_curve25519_and_know_ed25519_on_every_platform() {
+        let target = crate::remote_script::live::Target::from_env();
+        crate::storage::test_support::with_isolated_data_dir(|| {
+            let session = open_authenticated_session(&target.endpoint, 0, None).unwrap();
+            let kex = session.methods(ssh2::MethodType::Kex).unwrap_or_default();
+            assert!(kex.starts_with("curve25519-sha256"), "negotiated {kex}");
+            let host_keys = session.supported_algs(ssh2::MethodType::HostKey).unwrap();
+            assert!(host_keys.contains(&"ssh-ed25519"), "{host_keys:?}");
+        });
+    }
+
     /// A shell that exits over a healthy connection reads as 0.
     #[test]
     #[ignore]
