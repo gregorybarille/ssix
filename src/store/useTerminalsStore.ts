@@ -58,6 +58,12 @@ interface TerminalsState {
   /** Stop a dropped shell's automatic reconnect. Its pane stays, ready to retry. */
   cancelReconnect: (sessionId: string) => Promise<void>;
 
+  /** Turn broadcast input on or off for a tab with several panes. */
+  toggleBroadcast: (tabId: string) => void;
+
+  /** The session's shell ended by itself: its pane stays, but nothing can reach it any more. */
+  markSessionEnded: (sessionId: string) => void;
+
   /** Close one pane. If it's the only pane in its tab, the tab closes too. */
   closePane: (sessionId: string) => Promise<void>;
 
@@ -90,10 +96,11 @@ export const useTerminalsStore = create<TerminalsState>((set, get) => {
       addSessionToNewTab(session);
       return;
     }
+    // A pane the user did not choose to broadcast to never joins by itself.
     set((state) => ({
       tabs: state.tabs.map((t) =>
         t.id === activeTabId
-          ? { ...t, mode: splitMode, panes: [...t.panes, session] }
+          ? { ...t, mode: splitMode, panes: [...t.panes, session], broadcast: false }
           : t,
       ),
     }));
@@ -244,6 +251,16 @@ export const useTerminalsStore = create<TerminalsState>((set, get) => {
       }
     },
 
+    toggleBroadcast: (tabId) => {
+      set((state) => ({
+        tabs: state.tabs.map((t) =>
+          t.id === tabId && t.panes.length >= 2 ? { ...t, broadcast: !t.broadcast } : t,
+        ),
+      }));
+    },
+
+    markSessionEnded: (sessionId) => updateSessionEverywhere(sessionId, { ended: true }),
+
     closePane: async (sessionId) => {
       const { tabs, activeTabId } = get();
       useAuthPromptStore.getState().cancel(sessionId);
@@ -266,8 +283,14 @@ export const useTerminalsStore = create<TerminalsState>((set, get) => {
               (p) => p.sessionId !== sessionId,
             );
             if (remainingPanes.length === 0) return null;
-            const newMode = remainingPanes.length === 1 ? "single" : t.mode;
-            return { ...t, mode: newMode, panes: remainingPanes } as TerminalTab;
+            const single = remainingPanes.length === 1;
+            // Off with one pane left, so a pane split in later does not inherit it.
+            return {
+              ...t,
+              mode: single ? "single" : t.mode,
+              panes: remainingPanes,
+              broadcast: !single && t.broadcast,
+            } as TerminalTab;
           })
           .filter((t): t is TerminalTab => t !== null);
 

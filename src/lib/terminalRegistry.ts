@@ -9,8 +9,8 @@ import { invoke } from "./tauri";
  * has to reach one: sending text to a session, finding the active one.
  *
  * The WebGL renderer draws to a canvas, so a terminal's text is no longer
- * in the DOM. The e2e suite reads it through `window.__ssixTerminalText`
- * instead; nothing else should depend on that.
+ * in the DOM. The e2e suite reads it through `window.__ssixTerminalText` and
+ * `window.__ssixTerminalState` instead; nothing else should depend on those.
  */
 const terminals = new Map<string, XTerm>();
 
@@ -125,12 +125,43 @@ export function terminalText(sessionId?: string): string | null {
   return [...terminals.values()].map(bufferText).join("\n");
 }
 
+/** What the e2e suite checks of a terminal. */
+export interface TerminalState {
+  cols: number;
+  rows: number;
+  fontSize: number | undefined;
+  fontFamily: string | undefined;
+  background: string | undefined;
+  bracketedPaste: boolean;
+  focused: boolean;
+  /** The buffer line at the top of the screen. */
+  viewportY: number;
+}
+
+/** One terminal's state, or null when the session is unknown. */
+export function terminalState(sessionId: string): TerminalState | null {
+  const term = terminals.get(sessionId);
+  if (!term) return null;
+  return {
+    cols: term.cols,
+    rows: term.rows,
+    fontSize: term.options.fontSize,
+    fontFamily: term.options.fontFamily,
+    background: term.options.theme?.background,
+    bracketedPaste: term.modes.bracketedPasteMode,
+    focused: document.activeElement === term.textarea,
+    viewportY: term.buffer.active.viewportY,
+  };
+}
+
 declare global {
   interface Window {
     __ssixTerminalText?: (sessionId?: string) => string | null;
+    __ssixTerminalState?: (sessionId: string) => TerminalState | null;
   }
 }
 
 if (typeof window !== "undefined") {
   window.__ssixTerminalText = terminalText;
+  window.__ssixTerminalState = terminalState;
 }

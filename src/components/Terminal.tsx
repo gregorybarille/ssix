@@ -1,15 +1,18 @@
-import { useEffect, useRef } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef } from "react";
 import { Terminal as XTerm } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { WebglAddon } from "@xterm/addon-webgl";
+import { isPanelOpen } from "@/lib/focus";
 import { invoke } from "@/lib/tauri";
 import { attachOutput } from "@/lib/terminalOutput";
-import { isHeldEnter, registerTerminal, unregisterTerminal } from "@/lib/terminalRegistry";
-import { terminalTheme } from "@/lib/terminalTheme";
+import { activeSessionId, isHeldEnter, registerTerminal, unregisterTerminal } from "@/lib/terminalRegistry";
+import { terminalAppearance } from "@/lib/terminalTheme";
+import { useTerminalsStore } from "@/store/useTerminalsStore";
 import { AppSettings, Connection } from "@/types";
 import {
   runTerminalCreate,
   runTerminalData,
+  runTerminalKey,
   runTerminalOutput,
   type TerminalExtensionContext,
 } from "./terminal/extensions";
@@ -22,16 +25,19 @@ const SCROLLBACK_LINES = 10_000;
 interface TerminalProps {
   sessionId: string;
   connectionName: string;
+  /**
+   * Whether this pane is on screen: its tab is active and the Terminals view is
+   * showing. A hidden terminal stays mounted, so it keeps its scrollback and
+   * modes and goes on receiving output.
+   */
   isVisible: boolean;
   onDisconnect: () => void;
   settings?: AppSettings;
-  /** The saved connection behind this session, passed on to terminal extensions. */
+  /**
+   * The saved connection behind this session, as it is now: its font and
+   * colours apply live. Also passed on to terminal extensions.
+   */
   connection?: Connection;
-}
-
-/** A panel keeps the keyboard: a terminal behind it takes neither focus nor keys. */
-function isPanelOpen(): boolean {
-  return document.querySelector('[data-slot="app-panel-content"]') !== null;
 }
 
 export interface TerminalPasteDetail {
@@ -56,39 +62,72 @@ export function Terminal({ sessionId, isVisible, onDisconnect, settings, connect
   useEffect(() => {
     settingsRef.current = settings;
   }, [settings]);
+  // For the listeners of the [sessionId] effect below. A layout effect, because
+  // the resize that hiding a terminal causes fires before a plain effect would.
+  const isVisibleRef = useRef(isVisible);
+  useLayoutEffect(() => {
+    isVisibleRef.current = isVisible;
+  }, [isVisible]);
+  // The shell ended while this terminal was off screen; see the `closed` event.
+  const endedWhileHiddenRef = useRef(false);
 
-  // Refit when becoming visible
-  useEffect(() => {
-    if (isVisible && fitAddonRef.current && xtermRef.current) {
-      // Small delay so the DOM has painted with display:block
-      const timer = setTimeout(() => {
-        try {
-          fitAddonRef.current?.fit();
-          const term = xtermRef.current;
-          if (term) {
-            invoke("ssh_resize", { sessionId, cols: term.cols, rows: term.rows }).catch(() => {});
-          }
-          if (!isPanelOpen()) xtermRef.current?.focus();
-        } catch {
-          // ignore
-        }
-      }, 50);
-      return () => clearTimeout(timer);
+  /**
+   * Fit xterm to its pane and tell the server. A hidden pane has no size: the
+   * fit addon's minimum would make it 2x1, reflow the scrollback to that and
+   * resize the shell under a running program. So a hidden terminal keeps its
+   * size, and the fit on showing it catches up.
+   */
+  const fitToPane = useCallback(() => {
+    const term = xtermRef.current;
+    const pane = termRef.current;
+    if (!term || !pane || !isVisibleRef.current) return;
+    if (pane.clientWidth === 0 || pane.clientHeight === 0) return;
+    try {
+      fitAddonRef.current?.fit();
+      invoke("ssh_resize", { sessionId, cols: term.cols, rows: term.rows }).catch(() => {});
+    } catch {
+      // ignore resize errors
     }
-  }, [isVisible, sessionId]);
+  }, [sessionId]);
 
-  // Update xterm font options when settings change
+  // On screen: refit, and take the keyboard. Off screen: let go of the keyboard,
+  // or typing in the view that replaced this terminal would reach its shell.
   useEffect(() => {
     const term = xtermRef.current;
-    if (!term || !settings) return;
-    const safeFontFamily = settings.font_family.replace(/['"\\]/g, "");
-    term.options.fontSize = settings.font_size;
-    term.options.fontFamily = `'${safeFontFamily}', monospace`;
-    fitAddonRef.current?.fit();
-  }, [settings?.font_size, settings?.font_family]);
+    if (!term) return;
+    if (!isVisible) {
+      term.textarea?.blur();
+      return;
+    }
+    if (endedWhileHiddenRef.current) {
+      endedWhileHiddenRef.current = false;
+      onDisconnectRef.current();
+    }
+    // Small delay so the DOM has painted with display:block
+    const timer = setTimeout(() => {
+      fitToPane();
+      // A split tab shows two terminals: the keyboard goes back to the one that
+      // had it, and a panel beside them keeps it.
+      const active = activeSessionId();
+      if (!isPanelOpen() && (active === null || active === sessionId)) term.focus();
+    }, 50);
+    return () => clearTimeout(timer);
+  }, [isVisible, sessionId, fitToPane]);
 
-  // Swap the colour scheme live when the app theme changes.
-  const theme = terminalTheme(settings?.theme);
+  const { fontFamily, fontSize, theme } = terminalAppearance(connection, settings);
+
+  // Font changes need a measurement, which a hidden terminal cannot take (xterm
+  // keeps the old cell size), so they wait until it is shown.
+  useEffect(() => {
+    const term = xtermRef.current;
+    if (!term || !isVisible) return;
+    if (term.options.fontSize === fontSize && term.options.fontFamily === fontFamily) return;
+    term.options.fontSize = fontSize;
+    term.options.fontFamily = fontFamily;
+    fitToPane();
+  }, [fontSize, fontFamily, isVisible, fitToPane]);
+
+  // Swap the colour scheme live when the app theme or the connection's scheme changes.
   useEffect(() => {
     const term = xtermRef.current;
     if (term) term.options.theme = theme;
@@ -97,17 +136,12 @@ export function Terminal({ sessionId, isVisible, onDisconnect, settings, connect
   useEffect(() => {
     if (!termRef.current) return;
 
-    const safeFontFamily = settings?.font_family
-      ? settings.font_family.replace(/['"\\]/g, "")
-      : null;
     const term = new XTerm({
       cursorBlink: true,
       scrollback: SCROLLBACK_LINES,
-      fontSize: settings?.font_size ?? 14,
-      fontFamily: safeFontFamily
-        ? `'${safeFontFamily}', monospace`
-        : "'JetBrains Mono', 'Fira Code', monospace",
-      theme: terminalTheme(settings?.theme),
+      fontSize,
+      fontFamily,
+      theme,
     });
 
     const fitAddon = new FitAddon();
@@ -124,14 +158,10 @@ export function Terminal({ sessionId, isVisible, onDisconnect, settings, connect
       // WebGL unavailable — DOM renderer.
     }
 
-    fitAddon.fit();
-
     xtermRef.current = term;
     fitAddonRef.current = fitAddon;
     registerTerminal(sessionId, term);
-
-    const { cols, rows } = term;
-    invoke("ssh_resize", { sessionId, cols, rows }).catch(() => {});
+    fitToPane();
 
     /**
      * Cmd/Ctrl+C copies the active xterm selection to the system clipboard
@@ -145,8 +175,8 @@ export function Terminal({ sessionId, isVisible, onDisconnect, settings, connect
      *
      * In-app panels are non-modal, so xterm's hidden textarea can keep
      * focus while a panel is open. Never forward keystrokes in that state,
-     * on keypress as well: xterm sends printable keys and Enter from there
-     * when it was told to skip their keydown.
+     * nor to a terminal off screen, on keypress as well: xterm sends printable
+     * keys and Enter from there when it was told to skip their keydown.
      */
     term.attachCustomKeyEventHandler((e) => {
       if (isHeldEnter(sessionId, e)) {
@@ -155,11 +185,12 @@ export function Terminal({ sessionId, isVisible, onDisconnect, settings, connect
         return false;
       }
       if (e.type === "keyup") return true;
-      if (isPanelOpen()) {
+      if (isPanelOpen() || !isVisibleRef.current) {
         if (e.type === "keypress") e.preventDefault();
         return false;
       }
       if (e.type !== "keydown") return true;
+      if (!runTerminalKey(extensionContext, e)) return false;
       const mod = e.metaKey || e.ctrlKey;
       if (!mod || e.altKey) return true;
       const key = e.key.toLowerCase();
@@ -233,20 +264,17 @@ export function Terminal({ sessionId, isVisible, onDisconnect, settings, connect
           term.write(`\r\n\x1b[31mSSH Error: ${event.message}\x1b[0m\r\n`);
         } else {
           term.write("\r\n\x1b[33mConnection closed.\x1b[0m\r\n");
-          onDisconnectRef.current();
+          useTerminalsStore.getState().markSessionEnded(sessionId);
+          // Closing asks for confirmation in the side panel. A terminal off
+          // screen does not interrupt what the user is doing for that: it asks
+          // when it is shown again.
+          if (isVisibleRef.current) onDisconnectRef.current();
+          else endedWhileHiddenRef.current = true;
         }
       },
     });
 
-    const resizeObserver = new ResizeObserver(() => {
-      try {
-        fitAddon.fit();
-        const { cols, rows } = term;
-        invoke("ssh_resize", { sessionId, cols, rows }).catch(() => {});
-      } catch {
-        // ignore resize errors
-      }
-    });
+    const resizeObserver = new ResizeObserver(fitToPane);
     resizeObserver.observe(termRef.current);
 
     return () => {

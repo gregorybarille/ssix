@@ -1,4 +1,4 @@
-import React, { useRef, useState } from "react";
+import React, { useState } from "react";
 import { Terminal } from "./Terminal";
 import { FailedTerminal } from "./FailedTerminal";
 import { AuthPrompt } from "./AuthPrompt";
@@ -8,6 +8,7 @@ import {
   KeyRound,
   X,
   Plus,
+  Radio,
   SplitSquareHorizontal,
   SplitSquareVertical,
   ChevronDown,
@@ -17,7 +18,11 @@ import { AppSettings, Connection, OpenMode } from "@/types";
 import { getColorHex } from "@/lib/colors";
 import { focusSession } from "@/lib/terminalRegistry";
 import type { ReconnectState } from "@/lib/reconnect";
+import { useConnectionsStore } from "@/store/useConnectionsStore";
 import { useTerminalsStore } from "@/store/useTerminalsStore";
+import { BroadcastToggle } from "./terminal/BroadcastToggle";
+import { TerminalLinkConfirm } from "./terminal/TerminalLinkConfirm";
+import { TerminalPaneOverlays } from "./terminal/TerminalPaneOverlays";
 import { Group, Panel, Separator as PanelSeparator } from "react-resizable-panels";
 import {
   DropdownMenu,
@@ -41,6 +46,8 @@ export interface TerminalSession {
   retrying?: boolean;
   /** Set while this pane's live shell has lost its connection. */
   reconnect?: ReconnectState;
+  /** The shell ended by itself; the pane stays until the user closes it. */
+  ended?: boolean;
   /** The originating Connection, kept so Retry / Edit can reuse it. */
   connection?: Connection;
 }
@@ -51,6 +58,8 @@ export interface TerminalTab {
   id: string;
   mode: SplitMode;
   panes: TerminalSession[]; // length 1 or 2
+  /** What is typed in one pane also goes to the others. See `terminal/broadcastInput.ts`. */
+  broadcast?: boolean;
 }
 
 interface TerminalTabsProps {
@@ -63,6 +72,22 @@ interface TerminalTabsProps {
   onRetry: (conn: Connection, sessionId: string) => void;
   onEdit: (conn: Connection, sessionId: string) => void;
   settings?: AppSettings;
+  /**
+   * Another view is showing. Everything stays mounted, so terminals keep their
+   * scrollback and go on receiving output, but nothing here takes space or keys.
+   */
+  hidden?: boolean;
+}
+
+/** The frame that says broadcast is on, around everything it reaches. */
+function BroadcastFrame() {
+  return (
+    <div
+      aria-hidden="true"
+      data-testid="broadcast-indicator"
+      className="pointer-events-none absolute inset-0 z-30 border-2 border-destructive"
+    />
+  );
 }
 
 function PaneRenderer({
@@ -84,9 +109,10 @@ function PaneRenderer({
   // this position in the tree, so its scrollback survives the reconnect.
   const neverConnected = !session.reconnect && (session.error || session.retrying);
   const authPrompt = useAuthPromptStore((state) => state.prompts[session.sessionId]);
-  // This view is only mounted while it is shown, so a prompt that is already up
-  // as a pane mounts is one the user just came to.
-  const promptAtMount = useRef(authPrompt?.prompt_id);
+  // The pane holds the connection as it was opened; its look follows later edits.
+  const saved = useConnectionsStore((s) =>
+    s.connections.find((c) => c.id === session.connection?.id),
+  );
   // A login prompt has the whole pane until it closes, also over a shell that is
   // reconnecting. Its terminal stays where it is underneath, inert: it keeps its
   // scrollback, and cannot take the focus and an answer with it from the prompt.
@@ -101,7 +127,12 @@ function PaneRenderer({
             isVisible={isVisible}
             onDisconnect={onClose}
             settings={settings}
-            connection={session.connection}
+            connection={saved ?? session.connection}
+          />
+          <TerminalPaneOverlays
+            sessionId={session.sessionId}
+            isVisible={isVisible && !authPrompt}
+            statusShown={!!session.reconnect}
           />
         </div>
       )}
@@ -111,7 +142,6 @@ function PaneRenderer({
           request={authPrompt}
           isVisible={isVisible}
           reconnecting={!!session.reconnect}
-          userCameToIt={authPrompt.prompt_id === promptAtMount.current}
           onFocusReleased={() => focusSession(session.sessionId)}
           onAnswer={(answers) => useAuthPromptStore.getState().answer(session.sessionId, answers)}
           // A dropped shell keeps its pane: Cancel ends the attempt, which stops
@@ -154,8 +184,10 @@ export function TerminalTabs({
   onRetry,
   onEdit,
   settings,
+  hidden = false,
 }: TerminalTabsProps) {
   const [menuOpen, setMenuOpen] = useState(false);
+  const activeTab = tabs.find((t) => t.id === activeTabId);
   const tabRefs = React.useRef(new Map<string, HTMLButtonElement>());
   const prompts = useAuthPromptStore((state) => state.prompts);
 
@@ -234,7 +266,7 @@ export function TerminalTabs({
   };
 
   return (
-    <div className="flex flex-col h-full">
+    <div className="flex flex-col h-full" style={hidden ? { display: "none" } : undefined}>
       {/* Tab bar */}
       <div
         role="tablist"
@@ -274,6 +306,7 @@ export function TerminalTabs({
           const closeHintSuffix = isActive
             ? " — press Delete to close"
             : "";
+          const broadcastSuffix = tab.broadcast ? " — broadcasting input" : "";
           return (
             <button
               key={tab.id}
@@ -286,7 +319,7 @@ export function TerminalTabs({
               id={`terminal-tab-${tab.id}`}
               aria-controls={`terminal-panel-${tab.id}`}
               aria-selected={isActive}
-              aria-label={`Terminal ${label}${splitSuffix}${failureSuffix}${promptSuffix}${closeHintSuffix}`}
+              aria-label={`Terminal ${label}${splitSuffix}${failureSuffix}${promptSuffix}${broadcastSuffix}${closeHintSuffix}`}
               tabIndex={isActive ? 0 : -1}
               className={cn(
                 "group flex items-center gap-1.5 px-3 py-1.5 text-xs cursor-pointer border-r border-border/80 shadow-[inset_-1px_0_0_hsl(var(--border))] shrink-0 max-w-[200px] transition-colors text-left",
@@ -316,6 +349,9 @@ export function TerminalTabs({
                 >
                   <KeyRound className="h-3 w-3" />
                 </span>
+              )}
+              {tab.broadcast && (
+                <Radio aria-hidden="true" className="h-3.5 w-3.5 shrink-0 text-destructive" />
               )}
               <span className="truncate">{label}</span>
               {tab.mode !== "single" && (
@@ -389,6 +425,7 @@ export function TerminalTabs({
             </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
+        {activeTab && <BroadcastToggle tab={activeTab} />}
       </div>
 
       {/* Tab bodies — all mounted, only active is visible */}
@@ -409,7 +446,7 @@ export function TerminalTabs({
                 {pane && (
                   <PaneRenderer
                     session={pane}
-                    isVisible={isActiveTab}
+                    isVisible={isActiveTab && !hidden}
                     onClose={() => onClosePane(tab.id, pane.sessionId)}
                     onRetry={(c) => onRetry(c, pane.sessionId)}
                     onEdit={(c) => onEdit(c, pane.sessionId)}
@@ -429,6 +466,7 @@ export function TerminalTabs({
               className="absolute inset-0"
               style={{ display: isActiveTab ? "block" : "none" }}
             >
+              {tab.broadcast && <BroadcastFrame />}
               <Group orientation={direction} className="h-full">
                 {tab.panes.map((pane, idx) => (
                   <React.Fragment key={pane.sessionId}>
@@ -444,7 +482,7 @@ export function TerminalTabs({
                       <div className="h-full w-full relative">
                         <PaneRenderer
                           session={pane}
-                          isVisible={isActiveTab}
+                          isVisible={isActiveTab && !hidden}
                           onClose={() => onClosePane(tab.id, pane.sessionId)}
                           onRetry={(c) => onRetry(c, pane.sessionId)}
                           onEdit={(c) => onEdit(c, pane.sessionId)}
@@ -470,6 +508,7 @@ export function TerminalTabs({
           items={buildTabItems(ctxTabId)}
         />
       )}
+      <TerminalLinkConfirm />
     </div>
   );
 }
