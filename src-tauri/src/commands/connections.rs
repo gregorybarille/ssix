@@ -584,22 +584,22 @@ mod tests {
     use crate::models::{Connection, ConnectionKind, Credential, CredentialKind};
     use crate::storage::test_support::with_isolated_data_dir;
 
-    fn remote_forward() -> ConnectionKind {
+    fn remote_forward(gateway_credential_id: &str) -> ConnectionKind {
         ConnectionKind::RemoteForward {
             gateway_host: "bastion".to_string(),
             gateway_port: 22,
-            gateway_credential_id: "cred".to_string(),
+            gateway_credential_id: gateway_credential_id.to_string(),
             remote_port: 9000,
             destination_host: "127.0.0.1".to_string(),
             destination_port: 3000,
         }
     }
 
-    fn dynamic_forward() -> ConnectionKind {
+    fn dynamic_forward(gateway_credential_id: &str) -> ConnectionKind {
         ConnectionKind::DynamicForward {
             gateway_host: "bastion".to_string(),
             gateway_port: 22,
-            gateway_credential_id: "cred".to_string(),
+            gateway_credential_id: gateway_credential_id.to_string(),
             local_port: 1080,
         }
     }
@@ -607,13 +607,13 @@ mod tests {
     #[test]
     fn test_kind_validation_accepts_complete_kinds() {
         assert!(validate_connection_kind(&ConnectionKind::Direct).is_ok());
-        assert!(validate_connection_kind(&remote_forward()).is_ok());
-        assert!(validate_connection_kind(&dynamic_forward()).is_ok());
+        assert!(validate_connection_kind(&remote_forward("cred")).is_ok());
+        assert!(validate_connection_kind(&dynamic_forward("cred")).is_ok());
     }
 
     #[test]
     fn test_kind_validation_refuses_blank_hosts_and_port_zero() {
-        let mut blank_gateway = remote_forward();
+        let mut blank_gateway = remote_forward("cred");
         if let ConnectionKind::RemoteForward { gateway_host, .. } = &mut blank_gateway {
             *gateway_host = "  ".to_string();
         }
@@ -622,7 +622,7 @@ mod tests {
             "SSH server host is required"
         );
 
-        let mut no_remote_port = remote_forward();
+        let mut no_remote_port = remote_forward("cred");
         if let ConnectionKind::RemoteForward { remote_port, .. } = &mut no_remote_port {
             *remote_port = 0;
         }
@@ -631,7 +631,7 @@ mod tests {
             "Remote port must be between 1 and 65535"
         );
 
-        let mut no_local_port = dynamic_forward();
+        let mut no_local_port = dynamic_forward("cred");
         if let ConnectionKind::DynamicForward { local_port, .. } = &mut no_local_port {
             *local_port = 0;
         }
@@ -728,31 +728,11 @@ mod tests {
         }
     }
 
-    fn remote_forward_kind(gateway_credential_id: &str) -> ConnectionKind {
-        ConnectionKind::RemoteForward {
-            gateway_host: "gw".to_string(),
-            gateway_port: 22,
-            gateway_credential_id: gateway_credential_id.to_string(),
-            remote_port: 8080,
-            destination_host: "127.0.0.1".to_string(),
-            destination_port: 3000,
-        }
-    }
-
-    fn dynamic_forward_kind(gateway_credential_id: &str) -> ConnectionKind {
-        ConnectionKind::DynamicForward {
-            gateway_host: "gw".to_string(),
-            gateway_port: 22,
-            gateway_credential_id: gateway_credential_id.to_string(),
-            local_port: 1080,
-        }
-    }
-
     #[test]
     fn test_validate_credentials_for_new_forward_kinds_needs_only_the_gateway() {
         let creds = vec![password_credential("a")];
         let id = creds[0].id.as_str();
-        for make in [remote_forward_kind, dynamic_forward_kind] {
+        for make in [remote_forward, dynamic_forward] {
             assert!(validate_connection_credentials(&creds, None, &make(id)).is_ok());
             assert_eq!(
                 validate_connection_credentials(&creds, None, &make("")),
