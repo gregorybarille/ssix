@@ -11,6 +11,7 @@ import {
   type LucideIcon,
 } from "lucide-react";
 // roadmap:sftp
+import { FolderOpen } from "lucide-react";
 // roadmap:snippets
 
 /**
@@ -82,6 +83,16 @@ const VIEW_TABLE = [
     component: lazy(() => import("@/components/LogsView").then((m) => ({ default: m.LogsView }))),
   },
   // roadmap:sftp
+  {
+    id: "files",
+    label: "Files",
+    description: "Browse, copy and edit files on a connection",
+    icon: FolderOpen,
+    placement: "main",
+    component: lazy(() =>
+      import("@/components/views/FilesView").then((m) => ({ default: m.FilesView })),
+    ),
+  },
   // roadmap:snippets
   {
     id: "terminals",
