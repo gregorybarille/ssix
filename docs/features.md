@@ -89,6 +89,8 @@ changes, because the unsaved-changes baseline follows the fetched values.
 - tabbed shell sessions
 - split right
 - split down
+- a split's divider keeps each pane at 15% of the tab or more
+- closing a split pane gives the keyboard to the pane that stays, once any question about it is answered
 - retry failed sessions
 - edit source connection from failure UI
 - GPU-accelerated rendering (xterm WebGL addon) when the WebView supports it, 10 000 lines of scrollback

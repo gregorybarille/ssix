@@ -403,6 +403,41 @@ describe("Terminal UX", () => {
       });
     }
 
+    it("gives the keyboard to the terminal that stays once the question is answered", async () => {
+      await createConnectionA("conn-20-keys");
+      await createConnectionA("conn-20-keys-beside");
+      const first = await openShell("conn-20-keys");
+      await splitWith("conn-20-keys-beside");
+      await closePane(await secondPane(first));
+
+      await browser.waitUntil(
+        () =>
+          browser.execute(
+            (target: string) => !!document.activeElement?.closest(target),
+            sel.terminalContainerBySession(first),
+          ),
+        { timeout: 10_000, timeoutMsg: "The terminal that stayed never got the keyboard" },
+      );
+      await press("echo KEYS-$((40+2))\n");
+      await waitForText(first, "KEYS-42");
+    });
+
+    it("keeps a pane at 15% of its tab when the divider is pushed to the edge", async () => {
+      await createConnectionA("conn-20-edge");
+      await createConnectionA("conn-20-edge-beside");
+      const first = await openShell("conn-20-edge");
+      await splitWith("conn-20-edge-beside");
+      await secondPane(first);
+      await waitForShare(first, 0.5, 1);
+
+      await browser.execute(
+        (target: string) => document.querySelector<HTMLElement>(target)?.focus(),
+        sel.terminalSplitSeparator,
+      );
+      await browser.keys(["Home"]);
+      await waitForShare(first, 0.15, 1);
+    });
+
     it("keeps the terminal that stays, in full, when split to the right and put back", async () => {
       await createConnectionA("conn-20-keep");
       await createConnectionA("conn-20-keep-beside");

@@ -20,6 +20,7 @@ import { isPanelOpen, nobodyTypingElsewhere } from "@/lib/focus";
 import { focusSession } from "@/lib/terminalRegistry";
 import type { ReconnectState } from "@/lib/reconnect";
 import { useConnectionsStore } from "@/store/useConnectionsStore";
+import { useDialogsStore } from "@/store/useDialogsStore";
 import { useTerminalsStore } from "@/store/useTerminalsStore";
 import { BroadcastToggle } from "./terminal/BroadcastToggle";
 import { TerminalLinkConfirm } from "./terminal/TerminalLinkConfirm";
@@ -120,15 +121,20 @@ function PaneRenderer({
     s.connections.find((c) => c.id === session.connection?.id),
   );
   // Closing a split leaves this terminal as it was, and the keyboard with a pane
-  // that is gone: it comes here, unless a panel or someone typing has it.
+  // that is gone: it comes here, unless a panel or someone typing has it. The
+  // question that closed the pane is still open then, so it waits for the answer.
+  const askingToClose = useDialogsStore((state) => state.confirmClosePane !== null);
   const wasAlone = React.useRef(alone);
+  const keyboardOwed = React.useRef(false);
   React.useEffect(() => {
-    const leftAlone = alone && !wasAlone.current;
+    if (alone && !wasAlone.current) keyboardOwed.current = true;
     wasAlone.current = alone;
-    if (leftAlone && isVisible && !isPanelOpen() && nobodyTypingElsewhere(null)) {
+    if (!keyboardOwed.current || askingToClose) return;
+    keyboardOwed.current = false;
+    if (isVisible && !isPanelOpen() && nobodyTypingElsewhere(null)) {
       focusSession(session.sessionId);
     }
-  }, [alone, isVisible, session.sessionId]);
+  }, [alone, askingToClose, isVisible, session.sessionId]);
   // A login prompt has the whole pane until it closes, also over a shell that is
   // reconnecting. Its terminal stays where it is underneath, inert: it keeps its
   // scrollback, and cannot take the focus and an answer with it from the prompt.
@@ -467,13 +473,14 @@ export function TerminalTabs({
                   <React.Fragment key={pane.sessionId}>
                     {idx > 0 && (
                       <PanelSeparator
+                        data-testid="terminal-split-separator"
                         className={cn(
                           "bg-border hover:bg-primary/30 transition-colors",
                           direction === "horizontal" ? "w-px" : "h-px",
                         )}
                       />
                     )}
-                    <Panel id={pane.sessionId} minSize={15}>
+                    <Panel id={pane.sessionId} minSize="15%">
                       <div className="h-full w-full relative">
                         <PaneRenderer
                           session={pane}
