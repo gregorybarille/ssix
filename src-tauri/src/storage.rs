@@ -350,6 +350,33 @@ mod tests {
         });
     }
 
+    /// A stored folder path the rules refuse is repaired like any other
+    /// migration: it never stops a load, and is saved once at startup.
+    #[test]
+    fn a_folder_path_the_rules_refuse_is_repaired_and_saved_once() {
+        test_support::with_isolated_data_dir(|| {
+            let mut data = AppData::default();
+            let mut connection = crate::models::Connection::new(
+                "web".into(),
+                "h".into(),
+                22,
+                None,
+                crate::models::ConnectionKind::Direct,
+            );
+            connection.folder = Some("prod/../eu".into());
+            data.connections.push(connection);
+            write_raw(&data);
+
+            assert_eq!(
+                load_data().unwrap().connections[0].folder.as_deref(),
+                Some("prod/eu")
+            );
+            assert!(persist_migrations().unwrap());
+            assert!(!fs::read_to_string(get_data_path()).unwrap().contains(".."));
+            assert!(!persist_migrations().unwrap());
+        });
+    }
+
     /// An unstamped (v0) file is stamped even when nothing else changed.
     #[test]
     fn persist_migrations_stamps_an_unversioned_file() {

@@ -570,6 +570,33 @@ mod tests {
     }
 
     #[test]
+    fn a_restore_brings_folders_back_and_repairs_a_path_the_rules_refuse() {
+        with_isolated_data_dir(|| {
+            let mut data = crate::models::AppData::default();
+            for (name, folder) in [("kept", "prod/eu"), ("repaired", "prod/../eu")] {
+                let mut connection = crate::models::Connection::new(
+                    name.into(),
+                    "h".into(),
+                    22,
+                    None,
+                    crate::models::ConnectionKind::Direct,
+                );
+                connection.folder = Some(folder.into());
+                data.connections.push(connection);
+            }
+            write_live("data.json", &serde_json::to_string(&data).unwrap());
+            let backup = create(BackupReason::Manual).unwrap();
+            write_live("data.json", &data_json(20));
+
+            restore(&backup.name).unwrap();
+            let restored = crate::storage::load_data().unwrap();
+            let folder = |index: usize| restored.connections[index].folder.as_deref();
+            assert_eq!(folder(0), Some("prod/eu"));
+            assert_eq!(folder(1), Some("prod/eu"));
+        });
+    }
+
+    #[test]
     fn backup_then_restore_brings_every_file_back() {
         with_isolated_data_dir(|| {
             write_live("data.json", &data_json(15));

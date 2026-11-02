@@ -33,6 +33,7 @@ fn validate_session_log_dir(dir: Option<&str>) -> Result<(), String> {
 }
 
 fn save_settings_sync(settings: AppSettings) -> Result<AppSettings, String> {
+    settings.check_layouts()?;
     validate_git_remote(&settings.git_sync_remote)?;
     validate_keepalive_interval(settings.keepalive_interval)?;
     if !(1..=20).contains(&settings.reconnect_max_attempts) {
@@ -60,6 +61,7 @@ fn save_settings_sync(settings: AppSettings) -> Result<AppSettings, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::storage::test_support::with_isolated_data_dir;
 
     #[test]
     fn test_default_settings() {
@@ -105,6 +107,45 @@ mod tests {
                 "{relative}"
             );
         }
+    }
+
+    #[test]
+    fn only_the_connection_list_can_store_the_folders_layout() {
+        with_isolated_data_dir(|| {
+            for layout in ["list", "tile", "tags", "folders"] {
+                let s = AppSettings {
+                    connection_layout: layout.to_string(),
+                    ..AppSettings::default()
+                };
+                assert_eq!(save_settings_sync(s).unwrap().connection_layout, layout);
+            }
+            for layout in ["list", "tile", "tags"] {
+                let s = AppSettings {
+                    credential_layout: layout.to_string(),
+                    tunnel_layout: layout.to_string(),
+                    ..AppSettings::default()
+                };
+                assert!(save_settings_sync(s).is_ok(), "{layout}");
+            }
+            for s in [
+                AppSettings {
+                    credential_layout: "folders".to_string(),
+                    ..AppSettings::default()
+                },
+                AppSettings {
+                    tunnel_layout: "folders".to_string(),
+                    ..AppSettings::default()
+                },
+                AppSettings {
+                    connection_layout: "matrix".to_string(),
+                    ..AppSettings::default()
+                },
+            ] {
+                assert!(save_settings_sync(s).is_err());
+            }
+            assert_eq!(load_data().unwrap().settings.credential_layout, "tags");
+            assert_eq!(load_data().unwrap().settings.tunnel_layout, "tags");
+        });
     }
 
     #[test]

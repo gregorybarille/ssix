@@ -578,6 +578,24 @@ mod tests {
     }
 
     #[test]
+    fn test_the_export_keeps_a_connections_folder() {
+        let mut data = AppData::default();
+        let mut connection = Connection::new(
+            "prod".into(),
+            "host".into(),
+            22,
+            None,
+            ConnectionKind::Direct,
+        );
+        connection.folder = Some("prod/eu".into());
+        data.connections.push(connection);
+        let sanitized = sanitize_app_data(&data).unwrap();
+        assert_eq!(sanitized.connections[0].folder.as_deref(), Some("prod/eu"));
+        let exported = serde_json::to_string_pretty(&sanitized).unwrap();
+        assert!(exported.contains(r#""folder": "prod/eu""#), "{exported}");
+    }
+
+    #[test]
     fn test_render_summary_mentions_counts() {
         let mut data = AppData::default();
         data.connections.push(Connection::new(
