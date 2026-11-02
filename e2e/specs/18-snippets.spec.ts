@@ -466,4 +466,25 @@ describe("Snippets", () => {
     await browser.keys(["Escape"]);
     await waitForPaletteClosed();
   });
+
+  it("follows a change of tab, keeping the keyboard and dropping a refusal", async () => {
+    await pressPaletteShortcut();
+    await choose("snip-18-lines");
+    await (await browser.$(sel.snippetPaletteError)).waitForExist({ timeout: 10_000 });
+
+    // From inside the page, like a shortcut: WebDriver's click would focus the tab itself.
+    await clickDialogFooterButton(sel.terminalTabByName("conn-18-a"));
+    await waitForGone(sel.snippetPaletteError);
+    expect(await textContentOf(await browser.$(sel.snippetPaletteTarget))).toContain("conn-18-a");
+
+    // A terminal that becomes visible takes focus after a short delay, if it may.
+    await browser.pause(QUIET_MS);
+    const focused = await browser.execute(
+      () => document.activeElement?.getAttribute("data-testid") ?? null,
+    );
+    expect(focused).toBe("snippet-palette-search");
+
+    await browser.keys(["Escape"]);
+    await waitForPaletteClosed();
+  });
 });

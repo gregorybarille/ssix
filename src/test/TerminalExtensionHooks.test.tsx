@@ -12,7 +12,8 @@ import type { AppSettings, Connection } from "@/types";
 
 /**
  * xterm.js cannot run in jsdom, so a stand-in records what `Terminal` does
- * with it. This pins where the component calls the extension hooks.
+ * with it. This pins where the component calls the extension hooks, and when it
+ * lets the terminal have the keyboard.
  */
 const mocks = vi.hoisted(() => ({
   invoke: vi.fn(),
@@ -22,6 +23,8 @@ const mocks = vi.hoisted(() => ({
     onDataListener: (data: string) => void;
     onSelectionListener: () => void;
     selection: string;
+    focused: number;
+    keyHandler: (event: KeyboardEvent) => boolean;
   },
 }));
 
@@ -47,6 +50,9 @@ vi.mock("@xterm/xterm", () => ({
     onDataListener: (data: string) => void = () => {};
     onSelectionListener: () => void = () => {};
     selection = "";
+    focused = 0;
+    keyHandler: (event: KeyboardEvent) => boolean = () => true;
+    modes = { bracketedPasteMode: false };
     constructor() {
       mocks.term = this;
     }
@@ -54,12 +60,16 @@ vi.mock("@xterm/xterm", () => ({
     open() {
       mocks.events.push("open");
     }
-    focus() {}
+    focus() {
+      this.focused += 1;
+    }
     paste() {}
     getSelection() {
       return this.selection;
     }
-    attachCustomKeyEventHandler() {}
+    attachCustomKeyEventHandler(handler: (event: KeyboardEvent) => boolean) {
+      this.keyHandler = handler;
+    }
     onData(listener: (data: string) => void) {
       this.onDataListener = listener;
       return { dispose() {} };
@@ -125,6 +135,37 @@ describe("Terminal extension hooks", () => {
         {...props}
       />,
     );
+
+  describe("becoming visible", () => {
+    const props = {
+      sessionId: "s1",
+      connectionName: "prod",
+      onDisconnect: vi.fn(),
+      settings,
+      connection,
+    };
+
+    async function show() {
+      const view = render(<Terminal {...props} isVisible={false} />);
+      view.rerender(<Terminal {...props} isVisible />);
+      // The terminal waits for the DOM to paint before it refits and takes focus.
+      await new Promise((resolve) => setTimeout(resolve, 80));
+    }
+
+    it("takes the keyboard when nothing else holds it", async () => {
+      await show();
+      expect(mocks.term?.focused).toBe(1);
+    });
+
+    it("leaves the keyboard with an open panel", async () => {
+      const panel = document.createElement("div");
+      panel.dataset.slot = "app-panel-content";
+      document.body.appendChild(panel);
+      await show();
+      panel.remove();
+      expect(mocks.term?.focused).toBe(0);
+    });
+  });
 
   it("runs onCreate with the terminal, session and connection, after open and before output", () => {
     let seen: TerminalExtensionContext | undefined;

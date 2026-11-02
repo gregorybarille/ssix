@@ -365,6 +365,7 @@ export const sel = {
   snippetVariablesSubmit: '[data-testid="snippet-variables-submit"]',
   snippetDiscardCancel: '[data-testid="snippet-discard-cancel"]',
   snippetDiscardConfirm: '[data-testid="snippet-discard-confirm"]',
+  terminalTabByName: (name: string) => `[role="tab"][aria-label^="Terminal ${name}"]`,
   terminalNewMenu: '[aria-label="Open a new tab or split"]',
   terminalSplitRight: '//*[@role="menuitem"][contains(., "Split right")]',
   connectPickerOption: (name: string) => `[role="option"][data-name="${name}"]`,

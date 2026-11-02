@@ -29,6 +29,11 @@ interface TerminalProps {
   connection?: Connection;
 }
 
+/** A panel keeps the keyboard: a terminal behind it takes neither focus nor keys. */
+function isPanelOpen(): boolean {
+  return document.querySelector('[data-slot="app-panel-content"]') !== null;
+}
+
 export interface TerminalPasteDetail {
   text: string;
   /** Session under the cursor when the paste was requested. */
@@ -63,7 +68,7 @@ export function Terminal({ sessionId, isVisible, onDisconnect, settings, connect
           if (term) {
             invoke("ssh_resize", { sessionId, cols: term.cols, rows: term.rows }).catch(() => {});
           }
-          xtermRef.current?.focus();
+          if (!isPanelOpen()) xtermRef.current?.focus();
         } catch {
           // ignore
         }
@@ -143,7 +148,7 @@ export function Terminal({ sessionId, isVisible, onDisconnect, settings, connect
      */
     term.attachCustomKeyEventHandler((e) => {
       if (e.type !== "keydown") return true;
-      if (document.querySelector('[data-slot="app-panel-content"]')) {
+      if (isPanelOpen()) {
         return false;
       }
       const mod = e.metaKey || e.ctrlKey;
