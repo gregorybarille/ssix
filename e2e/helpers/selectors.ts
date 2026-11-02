@@ -335,6 +335,34 @@ export const sel = {
   filesEditDiscardCancel: '[data-testid="files-edit-discard-cancel"]',
   filesFooter: (side: "local" | "remote") => `[data-testid="files-footer-${side}"]`,
   // roadmap:snippets
+  navSnippets: '[data-testid="nav-snippets"]',
+  navTerminals: '[data-testid="nav-terminals"]',
+  addSnippetButton: '[data-testid="add-snippet-button"]',
+  snippetForm: '[data-testid="snippet-form"]',
+  snippetFormName: '[data-testid="snippet-form-name"]',
+  snippetFormCommand: '[data-testid="snippet-form-command"]',
+  snippetFormTags: "#snippet-tags",
+  snippetFormVariables: '[data-testid="snippet-form-variables"]',
+  snippetFormGitSyncNotice: '[data-testid="snippet-form-git-sync-notice"]',
+  snippetFormSubmit: '[data-testid="snippet-form-submit"]',
+  snippetFormError: '[data-testid="snippet-form-error"]',
+  snippetRowByName: (name: string) => `[data-testid="snippet-row"][data-name="${name}"]`,
+  // Scoped under a snippet row.
+  snippetRowEdit: '[data-testid="snippet-row-edit"]',
+  snippetRowDelete: '[data-testid="snippet-row-delete"]',
+  snippetDeleteConfirm: '[data-testid="snippet-delete-dialog-confirm"]',
+  // The Snippets view's Paste button; Mod+Shift+S opens the same palette.
+  snippetPaletteButton: '[data-testid="snippet-palette-button"]',
+  snippetPalette: '[data-testid="snippet-palette"]',
+  snippetPaletteTarget: '[data-testid="snippet-palette-target"]',
+  snippetPaletteSearch: '[data-testid="snippet-palette-search"]',
+  snippetPaletteError: '[data-testid="snippet-palette-error"]',
+  snippetPaletteOptionByName: (name: string) =>
+    `[data-testid="snippet-palette-option"][data-name="${name}"]`,
+  snippetVariable: '[data-testid="snippet-variable"]',
+  snippetVariableByName: (name: string) => `[data-testid="snippet-variable"][data-name="${name}"]`,
+  snippetVariablesPreview: '[data-testid="snippet-variables-preview"]',
+  snippetVariablesSubmit: '[data-testid="snippet-variables-submit"]',
   // roadmap:import
   // roadmap:terminal-ux
   // roadmap:folders
