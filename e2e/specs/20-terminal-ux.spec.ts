@@ -177,8 +177,8 @@ const lastTick = (text: string) =>
 /**
  * Send the mouse to the line of a terminal that reads exactly `line`. Events
  * are dispatched where xterm listens for them, at the pixels of a cell in that
- * line: its renderer draws to a canvas, and WebDriver cannot hold Ctrl through
- * a click on WebKitGTK.
+ * line, since its renderer draws to a canvas and leaves no element to aim at.
+ * That also lets a test say outright which modifier a click carries.
  */
 async function mouseOnLine(
   id: string,
