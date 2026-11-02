@@ -414,6 +414,36 @@ describe("changing files", () => {
     );
   });
 
+  it("closes an open dialog when the connection closes", async () => {
+    await show();
+    fireEvent.click(row("remote", "conf.txt"));
+    fireEvent.click(screen.getByTestId("files-delete-remote"));
+    await screen.findByTestId("files-delete-confirm");
+    act(() => useSftpStore.getState().disconnect());
+    await waitFor(() =>
+      expect(screen.queryByTestId("files-delete-confirm")).not.toBeInTheDocument(),
+    );
+    expect(calls("sftp_delete")).toEqual([]);
+  });
+
+  it("says a lost session stopped a change, since its dialog closes", async () => {
+    answer({
+      sftp_delete: () => {
+        throw "SFTP_SESSION_LOST\nThe connection to the server was lost.";
+      },
+    });
+    await show();
+    fireEvent.click(row("remote", "conf.txt"));
+    fireEvent.click(screen.getByTestId("files-delete-remote"));
+    fireEvent.click(await screen.findByTestId("files-delete-confirm-confirm"));
+    expect(await screen.findByTestId("files-change-error")).toHaveTextContent(
+      "That change did not finish",
+    );
+    expect(screen.queryByTestId("files-delete-confirm")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByTestId("files-change-error-dismiss"));
+    expect(screen.queryByTestId("files-change-error")).not.toBeInTheDocument();
+  });
+
   it("offers no change to the server's files while it has no session", async () => {
     await show();
     fireEvent.click(row("remote", "conf.txt"));

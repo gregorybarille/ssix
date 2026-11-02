@@ -93,6 +93,8 @@ interface SftpState {
   editOpening: boolean;
   editError: string | null;
   dialog: FileDialog | null;
+  /** A change the lost session stopped, whose dialog closed with that session. */
+  changeError: string | null;
 
   initLocal: () => Promise<void>;
   /** Open a session to the connection and show `path`, or where it starts. */
@@ -129,6 +131,7 @@ interface SftpState {
   closeEdit: () => Promise<void>;
   dismissRemoteChange: () => void;
   dismissEditError: () => void;
+  dismissChangeError: () => void;
 }
 
 const emptyPane = (): PaneState => ({
@@ -192,8 +195,15 @@ export const useSftpStore = create<SftpState>((set, get) => {
       await change();
     } catch (err) {
       const message = errorMessage(err);
-      if (side === "remote") reconnectIfLost(message);
-      throw new Error(readableSftpError(message));
+      const readable = readableSftpError(message);
+      if (side === "remote") {
+        reconnectIfLost(message);
+        // Reconnecting closes the dialog that would have shown this.
+        if (get().dialog === null && isSessionLost(message)) {
+          set({ changeError: `That change did not finish. ${readable}` });
+        }
+      }
+      throw new Error(readable);
     }
     await get().refresh(side);
   };
@@ -294,6 +304,7 @@ export const useSftpStore = create<SftpState>((set, get) => {
     editOpening: false,
     editError: null,
     dialog: null,
+    changeError: null,
 
     initLocal: async () => {
       if (get().local.path) return;
@@ -315,6 +326,9 @@ export const useSftpStore = create<SftpState>((set, get) => {
         label: null,
         connecting: true,
         connectError: null,
+        // An open dialog holds paths from the session this one replaces.
+        dialog: null,
+        changeError: null,
         // Reconnecting to the same folder keeps the rows until the new ones arrive.
         remote: path ? { ...get().remote, error: null } : emptyPane(),
       });
@@ -344,6 +358,8 @@ export const useSftpStore = create<SftpState>((set, get) => {
         label: null,
         connecting: false,
         connectError: null,
+        dialog: null,
+        changeError: null,
         remote: emptyPane(),
       });
     },
@@ -422,7 +438,11 @@ export const useSftpStore = create<SftpState>((set, get) => {
       patchPane(side, { selected: [path], anchor: path });
     },
 
-    setDialog: (dialog) => set({ dialog }),
+    setDialog: (dialog) => {
+      // What is listed without a session may be gone, and has nowhere to run.
+      if (dialog?.side === "remote" && !get().sessionId) return;
+      set({ dialog });
+    },
 
     mkdir: (side, name) =>
       mutate(side, () =>
@@ -599,6 +619,8 @@ export const useSftpStore = create<SftpState>((set, get) => {
     dismissRemoteChange: () => patchEdit({ remoteChange: null }),
 
     dismissEditError: () => set({ editError: null }),
+
+    dismissChangeError: () => set({ changeError: null }),
   };
 });
 

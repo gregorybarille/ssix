@@ -57,6 +57,25 @@ function ConnectFailure({ error }: { error: string }) {
   );
 }
 
+function DismissibleError({
+  message,
+  testId,
+  onDismiss,
+}: {
+  message: string;
+  testId: string;
+  onDismiss: () => void;
+}) {
+  return (
+    <div className="mx-6 mt-2 space-y-1">
+      <ErrorBanner message={message} testId={testId} />
+      <Button variant="ghost" size="sm" onClick={onDismiss} data-testid={`${testId}-dismiss`}>
+        Dismiss
+      </Button>
+    </div>
+  );
+}
+
 /**
  * The Files tab: this computer on the left and a connection's files on the
  * right, with what is being copied between them underneath. Sessions and
@@ -71,11 +90,13 @@ export function FilesView() {
     connectError,
     editOpening,
     editError,
+    changeError,
     initLocal,
     connect,
     disconnect,
     uploadPaths,
     dismissEditError,
+    dismissChangeError,
   } = useSftpStore(
     useShallow((s) => ({
       connectionId: s.connectionId,
@@ -85,11 +106,13 @@ export function FilesView() {
       connectError: s.connectError,
       editOpening: s.editOpening,
       editError: s.editError,
+      changeError: s.changeError,
       initLocal: s.initLocal,
       connect: s.connect,
       disconnect: s.disconnect,
       uploadPaths: s.uploadPaths,
       dismissEditError: s.dismissEditError,
+      dismissChangeError: s.dismissChangeError,
     })),
   );
   const connections = useConnectionsStore((s) => s.connections);
@@ -174,12 +197,18 @@ export function FilesView() {
         </p>
       )}
       {editError && (
-        <div className="mx-6 mt-2 space-y-1">
-          <ErrorBanner message={editError} testId="files-edit-open-error" />
-          <Button variant="ghost" size="sm" onClick={dismissEditError}>
-            Dismiss
-          </Button>
-        </div>
+        <DismissibleError
+          message={editError}
+          testId="files-edit-open-error"
+          onDismiss={dismissEditError}
+        />
+      )}
+      {changeError && (
+        <DismissibleError
+          message={changeError}
+          testId="files-change-error"
+          onDismiss={dismissChangeError}
+        />
       )}
       <div className="grid min-h-0 flex-1 grid-cols-2 gap-3 p-3">
         <FilePane side="local" title="This computer" />

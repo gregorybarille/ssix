@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { invoke } from "@/lib/tauri";
-import { browseFiles, useSftpStore } from "@/store/useSftpStore";
+import { browseFiles, useSftpStore, type FileDialog } from "@/store/useSftpStore";
 import { useViewStore } from "@/store/useViewStore";
 import type { Connection, FileEntry, FileListing, TransferEvent, TransferInput } from "@/types";
 
@@ -367,16 +367,37 @@ describe("changing files", () => {
   it("hands a refusal to the dialog that asked, readably", async () => {
     backend({
       sftp_mkdir: () => {
+        throw "Permission denied";
+      },
+    });
+    useSftpStore.getState().setDialog({ kind: "mkdir", side: "remote" });
+    await expect(useSftpStore.getState().mkdir("remote", "x")).rejects.toThrow("Permission denied");
+    const state = useSftpStore.getState();
+    expect(state.dialog).toEqual({ kind: "mkdir", side: "remote" });
+    expect(state.changeError).toBeNull();
+  });
+
+  it("closes the dialog on a lost session, says the change did not finish and reconnects", async () => {
+    backend({
+      sftp_delete: () => {
         throw "SFTP_SESSION_LOST The connection was lost";
       },
       sftp_connect: () => ({ session_id: "s2", start_path: "/home/me", label: "me@host" }),
       sftp_list: ({ path }) => listing(path as string),
     });
-    await expect(useSftpStore.getState().mkdir("remote", "x")).rejects.toThrow(
+    const entries = [file("/home/me/a")];
+    useSftpStore.getState().setDialog({ kind: "delete", side: "remote", entries });
+    await expect(useSftpStore.getState().remove("remote", entries)).rejects.toThrow(
       "The connection was lost",
     );
     await flush();
-    expect(useSftpStore.getState().sessionId).toBe("s2");
+    const state = useSftpStore.getState();
+    expect(state.sessionId).toBe("s2");
+    expect(state.dialog).toBeNull();
+    expect(state.changeError).toBe("That change did not finish. The connection was lost");
+
+    state.dismissChangeError();
+    expect(useSftpStore.getState().changeError).toBeNull();
   });
 
   it("stops deleting at the first failure, reports it and shows what is left", async () => {
@@ -395,6 +416,48 @@ describe("changing files", () => {
     ).rejects.toThrow("Permission denied");
     expect(deleted).toEqual(["/home/me/a"]);
     expect(useSftpStore.getState().remote.entries).toHaveLength(2);
+  });
+});
+
+describe("dialogs and connections", () => {
+  const entry = file("/home/me/f");
+  const dialogs: FileDialog[] = [
+    { kind: "mkdir", side: "remote" },
+    { kind: "rename", side: "remote", entry },
+    { kind: "chmod", side: "remote", entry },
+    { kind: "delete", side: "remote", entries: [entry] },
+    { kind: "delete", side: "local", entries: [entry] },
+  ];
+
+  it.each(dialogs)("disconnecting closes a $kind dialog on the $side side", async (dialog) => {
+    await connected();
+    useSftpStore.getState().setDialog(dialog);
+    expect(useSftpStore.getState().dialog).toEqual(dialog);
+    useSftpStore.getState().disconnect();
+    expect(useSftpStore.getState().dialog).toBeNull();
+  });
+
+  it.each(dialogs)("moving to another connection closes a $kind dialog", async (dialog) => {
+    await connected();
+    useSftpStore.getState().setDialog(dialog);
+    const moving = useSftpStore.getState().connect("c2");
+    expect(useSftpStore.getState().dialog).toBeNull();
+    await moving;
+    expect(useSftpStore.getState().dialog).toBeNull();
+  });
+
+  it("a replaced session closes the dialog too, on the same connection", async () => {
+    await connected();
+    useSftpStore.getState().setDialog({ kind: "rename", side: "remote", entry });
+    await useSftpStore.getState().connect("c1", "/home/me");
+    expect(useSftpStore.getState().dialog).toBeNull();
+  });
+
+  it("opens no dialog for the server's pane without a session", () => {
+    useSftpStore.getState().setDialog({ kind: "delete", side: "remote", entries: [entry] });
+    expect(useSftpStore.getState().dialog).toBeNull();
+    useSftpStore.getState().setDialog({ kind: "delete", side: "local", entries: [entry] });
+    expect(useSftpStore.getState().dialog).not.toBeNull();
   });
 });
 
