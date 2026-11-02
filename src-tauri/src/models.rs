@@ -204,7 +204,7 @@ pub struct Connection {
     #[serde(default)]
     pub agent_forwarding: bool,
     /// Seconds between keepalive requests, 0 for none; `None` uses
-    /// `AppSettings::keepalive_interval`. Stored only for now (roadmap: resilience).
+    /// `AppSettings::keepalive_interval`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub keepalive_interval: Option<u16>,
     /// Reconnect after the session drops; `None` uses `AppSettings::auto_reconnect`.
@@ -387,8 +387,7 @@ pub struct AppSettings {
     /// How many automatic backups to keep; manual ones are kept until deleted.
     #[serde(default = "default_backup_keep")]
     pub backup_keep: u32,
-    /// Seconds between SSH keepalive requests on a shell session, 0 for none
-    /// (roadmap: resilience; stored only for now).
+    /// Seconds between SSH keepalive requests on a shell session, 0 for none.
     #[serde(default = "default_keepalive_interval")]
     pub keepalive_interval: u16,
     /// Reconnect a dropped shell session automatically.

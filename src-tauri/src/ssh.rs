@@ -14,11 +14,15 @@
 //! timeout, a libssh2 setup timeout and host-key verification. A
 //! connection's verbosity adds `ssh -v` style lines to the Logs view along
 //! the way (see `crate::ssh_debug`).
+//!
+//! A shell's worker also watches for a dead connection (keepalives, see
+//! [`KeepaliveWatchdog`]), reconnects in place (`crate::reconnect`) and writes
+//! the session log (`crate::session_log`).
 
 use std::io::{self, Read, Write};
 use std::net::{Shutdown, SocketAddr, TcpListener, TcpStream, ToSocketAddrs};
 use std::path::Path;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender, TryRecvError};
 use std::sync::Arc;
 use std::thread;
@@ -26,6 +30,8 @@ use std::time::{Duration, Instant};
 
 use ssh2::Session;
 
+use crate::reconnect::{reconnect_delay, AttemptCount, OpenAttempt, ReconnectPolicy, Recovery};
+use crate::session_log::{SessionLog, SessionLogPlan};
 use crate::ssh_debug::{host_key_type_name, SshDebug};
 use tauri::ipc::{Channel, InvokeResponseBody};
 use tauri::{AppHandle, Manager};
@@ -46,6 +52,25 @@ const OUTPUT_COALESCE_MAX: usize = 256 * 1024;
 const WRITE_STALL_TIMEOUT: Duration = Duration::from_secs(10);
 /// libssh2's "call again later" code, surfaced by ssh2 as `ErrorCode::Session`.
 const LIBSSH2_ERROR_EAGAIN: i32 = -37;
+/// libssh2's answer to waiting for a channel to close before the server's EOF.
+const LIBSSH2_ERROR_INVAL: i32 = -34;
+/// Unanswered keepalive intervals before a session counts as dead, as with
+/// OpenSSH's default `ServerAliveCountMax`.
+const KEEPALIVE_MAX_MISSED: u32 = 3;
+/// libssh2 sends no more often than this, whatever the configured interval.
+const KEEPALIVE_MIN_INTERVAL_SECS: u32 = 2;
+/// Puts a terminal back to normal after a shell vanished mid-program: leaves
+/// the alternate screen, resets modes and turns off mouse reporting. The
+/// remote can no longer do any of it, and it would hide the error, the
+/// scrollback and the new prompt.
+///
+/// xterm.js restores the saved cursor on `?1049l` even when the normal screen
+/// is already showing, which would send the cursor to the top left of a plain
+/// prompt. `ESC 7` first saves where it is: on the normal screen the restore
+/// then goes nowhere, and on the alternate screen the save lands on that
+/// screen's own record, so the normal screen's position still comes back.
+const TERMINAL_RESTORE: &[u8] =
+    b"\x1b7\x1b[?1049l\x1b[!p\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1006l\x1b[?2004l";
 
 #[derive(Clone)]
 pub enum AuthMethod {
@@ -96,6 +121,10 @@ pub struct ShellOptions {
     pub verbosity: u8,
     pub extra_args: Option<String>,
     pub startup_command: Option<String>,
+    /// Seconds between SSH keepalives, 0 for none.
+    pub keepalive_interval: u16,
+    /// Set by a reconnect attempt's owner once nobody wants the result.
+    pub cancelled: Option<Arc<AtomicBool>>,
 }
 
 /// Everything a worker needs to talk back to the app.
@@ -113,8 +142,25 @@ pub struct SessionContext {
 #[derive(serde::Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum OutputEvent {
-    Error { message: String },
+    Error {
+        message: String,
+    },
     Closed,
+    /// The connection is lost: attempt `attempt` of `max_attempts` starts in
+    /// `delay_ms`. `message` says what went wrong last.
+    Reconnecting {
+        attempt: u8,
+        max_attempts: u8,
+        delay_ms: u64,
+        message: String,
+    },
+    /// A new shell took over; the session id stays the same.
+    Reconnected,
+    /// The connection is lost and nothing more happens until the user asks
+    /// (`ssh_reconnect`) or closes the pane.
+    ReconnectStopped {
+        message: String,
+    },
 }
 
 impl SessionContext {
@@ -161,8 +207,15 @@ impl SessionContext {
 
 pub enum SessionMsg {
     Write(Vec<u8>),
-    Resize { cols: u32, rows: u32 },
+    Resize {
+        cols: u32,
+        rows: u32,
+    },
     Disconnect,
+    /// Retry a dropped shell now. Means nothing while the connection is up.
+    Reconnect,
+    /// Stop retrying a dropped shell. Means nothing while the connection is up.
+    CancelReconnect,
 }
 
 /// Command-layer side of a session: queue a message and wake the worker.
@@ -271,6 +324,28 @@ pub(crate) mod wake {
     pub fn wait_writable(fd: Fd, timeout: Duration) {
         poll(&[fd], libc::POLLOUT, timeout);
     }
+
+    fn ready_now(fd: Fd, events: libc::c_short) -> bool {
+        let mut polls = [libc::pollfd {
+            fd,
+            events,
+            revents: 0,
+        }];
+        // SAFETY: `polls` is a valid, initialised one-element array of
+        // `pollfd` that outlives the call.
+        let ready = unsafe { libc::poll(polls.as_mut_ptr(), 1, 0) };
+        ready > 0
+    }
+
+    /// Whether `fd` has something to read (or was closed), without waiting.
+    pub fn is_readable(fd: Fd) -> bool {
+        ready_now(fd, libc::POLLIN)
+    }
+
+    /// Whether a send on `fd` can go out now (or would fail), without waiting.
+    pub fn is_writable(fd: Fd) -> bool {
+        ready_now(fd, libc::POLLOUT)
+    }
 }
 
 #[cfg(windows)]
@@ -310,6 +385,42 @@ pub(crate) mod wake {
 
     pub fn wait_writable(_fd: Fd, timeout: Duration) {
         std::thread::sleep(timeout.min(Duration::from_millis(5)));
+    }
+
+    /// Whether `fd` has something to read (or was closed), without waiting
+    /// or consuming it. libssh2 keeps its socket non-blocking.
+    pub fn is_readable(fd: Fd) -> bool {
+        use std::mem::ManuallyDrop;
+        use std::net::TcpStream;
+        use std::os::windows::io::FromRawSocket;
+        // SAFETY: `fd` is the session's open socket. `ManuallyDrop` keeps
+        // this temporary view of it from closing the socket.
+        let stream = ManuallyDrop::new(unsafe { TcpStream::from_raw_socket(fd) });
+        let mut byte = [0u8; 1];
+        !matches!(stream.peek(&mut byte), Err(e) if e.kind() == io::ErrorKind::WouldBlock)
+    }
+
+    /// Whether a send on `fd` can go out now (or would fail), without waiting.
+    pub fn is_writable(fd: Fd) -> bool {
+        #[repr(C)]
+        struct WsaPollFd {
+            fd: usize,
+            events: i16,
+            revents: i16,
+        }
+        const POLLWRNORM: i16 = 0x0010;
+        #[link(name = "ws2_32")]
+        extern "system" {
+            fn WSAPoll(fds: *mut WsaPollFd, count: u32, timeout: i32) -> i32;
+        }
+        let mut poll = WsaPollFd {
+            fd: fd as usize,
+            events: POLLWRNORM,
+            revents: 0,
+        };
+        // SAFETY: `poll` is a valid one-element array that outlives the call,
+        // and a timeout of 0 returns at once.
+        unsafe { WSAPoll(&mut poll, 1, 0) > 0 }
     }
 }
 
@@ -358,7 +469,6 @@ fn write_startup_command(channel: &mut ssh2::Channel, startup_command: Option<&s
     if let Some(command) = startup_command {
         let _ = channel.write_all(command.as_bytes());
         let _ = channel.write_all(b"\n");
-        let _ = channel.flush();
     }
 }
 
@@ -433,6 +543,28 @@ pub(crate) fn open_authenticated_session_over_stream(
     verbosity: u8,
     extra_args: Option<&str>,
 ) -> Result<Session, String> {
+    open_session_unless_cancelled(tcp, endpoint, verbosity, extra_args, None)
+}
+
+/// What an attempt ends with once it was cancelled. Nobody reads it.
+const ATTEMPT_CANCELLED: &str = "The reconnect attempt was cancelled";
+
+fn stop_if_cancelled(cancelled: Option<&AtomicBool>) -> Result<(), String> {
+    match cancelled {
+        Some(flag) if flag.load(Ordering::SeqCst) => Err(ATTEMPT_CANCELLED.to_string()),
+        _ => Ok(()),
+    }
+}
+
+/// [`open_authenticated_session_over_stream`] that does not log in once
+/// `cancelled` is set: a cancelled attempt must not cost a login on the server.
+fn open_session_unless_cancelled(
+    tcp: TcpStream,
+    endpoint: &Endpoint,
+    verbosity: u8,
+    extra_args: Option<&str>,
+    cancelled: Option<&AtomicBool>,
+) -> Result<Session, String> {
     tcp.set_nonblocking(false).ok();
 
     let debug = SshDebug::new(verbosity, endpoint.addr());
@@ -475,6 +607,7 @@ pub(crate) fn open_authenticated_session_over_stream(
         )
     });
 
+    stop_if_cancelled(cancelled)?;
     authenticate(&session, endpoint, &debug)?;
     Ok(session)
 }
@@ -569,24 +702,46 @@ fn authenticate_pubkey_memory(
     result
 }
 
-/// Authenticate over `tcp`, request a PTY, start a shell and run the startup
-/// command. The session is switched to non-blocking mode before returning.
+/// A shell ready for [`run_io_loop`].
+pub struct OpenShell {
+    session: Session,
+    channel: ssh2::Channel,
+    keepalive_interval: u16,
+}
+
+/// Authenticate over `tcp` and start a shell.
 pub(crate) fn open_shell_over_stream(
     tcp: TcpStream,
     endpoint: &Endpoint,
     opts: &ShellOptions,
-) -> Result<(Session, ssh2::Channel), String> {
-    let session = open_authenticated_session_over_stream(
+) -> Result<OpenShell, String> {
+    let session = open_session_unless_cancelled(
         tcp,
         endpoint,
         opts.verbosity,
         opts.extra_args.as_deref(),
+        opts.cancelled.as_deref(),
     )?;
+    start_shell(session, endpoint, opts)
+}
 
+/// Request a PTY, start a shell and run the startup command. The session is
+/// switched to non-blocking mode before returning.
+fn start_shell(
+    session: Session,
+    endpoint: &Endpoint,
+    opts: &ShellOptions,
+) -> Result<OpenShell, String> {
     let debug = SshDebug::new(opts.verbosity, endpoint.addr());
     debug.at(1, || "Opening a session channel.".to_string());
     let mut channel = session
         .channel_session()
+        .map_err(|e| format!("Channel open failed: {}", e))?;
+    // A PTY merges stderr on the server, but a server may still send extended
+    // data. Left queued on its own stream it would hide the end of the shell:
+    // libssh2 reports no EOF while any data is unread.
+    channel
+        .handle_extended_data(ssh2::ExtendedData::Merge)
         .map_err(|e| format!("Channel open failed: {}", e))?;
     debug.at(1, || {
         "Requesting a PTY (xterm-256color, 80x24).".to_string()
@@ -598,33 +753,70 @@ pub(crate) fn open_shell_over_stream(
     channel
         .shell()
         .map_err(|e| format!("Shell request failed: {}", e))?;
+    // The login command can do anything, and nobody asked for it any more.
+    stop_if_cancelled(opts.cancelled.as_deref())?;
     if let Some(command) = opts.startup_command.as_deref() {
         debug.at(2, || format!("Sending startup command: {}", command));
     }
     write_startup_command(&mut channel, opts.startup_command.as_deref());
 
+    if opts.keepalive_interval > 0 {
+        debug.at(2, || {
+            format!("Sending a keepalive every {} s.", opts.keepalive_interval)
+        });
+        session.set_keepalive(true, u32::from(opts.keepalive_interval));
+    }
     session.set_blocking(false);
-    Ok((session, channel))
+    Ok(OpenShell {
+        session,
+        channel,
+        keepalive_interval: opts.keepalive_interval,
+    })
 }
 
-fn open_shell(
-    endpoint: &Endpoint,
-    opts: &ShellOptions,
-) -> Result<(Session, ssh2::Channel), String> {
+pub(crate) fn open_shell(endpoint: &Endpoint, opts: &ShellOptions) -> Result<OpenShell, String> {
     let tcp = connect_endpoint(endpoint, opts.verbosity)?;
     open_shell_over_stream(tcp, endpoint, opts)
+}
+
+/// Open a shell on `destination` through the jump host `gateway`.
+pub(crate) fn open_jump_shell(
+    gateway: &Endpoint,
+    destination: &Endpoint,
+    opts: &ShellOptions,
+) -> Result<OpenShell, String> {
+    let stream = bridge_unless_cancelled(
+        gateway,
+        &destination.host,
+        destination.port,
+        opts.verbosity,
+        opts.cancelled.as_deref(),
+    )?;
+    open_shell_over_stream(stream, destination, opts)
+        .map_err(|e| format!("Target connect via jump host failed: {}", e))
 }
 
 // ---------------------------------------------------------------------------
 // Interactive shell sessions
 // ---------------------------------------------------------------------------
 
+/// What a shell worker does beyond its first connection.
+pub struct ShellResilience {
+    /// Read when the connection drops, so a settings change made since the
+    /// session opened applies.
+    pub policy: Arc<dyn Fn() -> ReconnectPolicy + Send + Sync>,
+    /// Open the shell again, from the saved connection as it is by then.
+    pub reopen: OpenAttempt<OpenShell>,
+    pub log: Option<SessionLogPlan>,
+}
+
 pub fn start_ssh_session(
     target: Endpoint,
     opts: ShellOptions,
     ctx: SessionContext,
+    resilience: ShellResilience,
 ) -> Result<SessionHandle, String> {
-    let (session, channel) = open_shell(&target, &opts)?;
+    let shell = open_shell(&target, &opts)?;
     let (handle, control) = control_channel()?;
     ctx.register(handle.clone())?;
     ctx.log(
@@ -646,32 +838,182 @@ pub fn start_ssh_session(
     } else {
         String::new()
     };
-    spawn_shell_worker(session, channel, ctx, control, banner, "ssh");
+    spawn_shell_worker(shell, ctx, control, banner, "ssh", resilience);
     Ok(handle)
 }
 
 fn spawn_shell_worker(
-    session: Session,
-    channel: ssh2::Channel,
+    shell: OpenShell,
     ctx: SessionContext,
     control: ControlRx,
     banner: String,
     source: &'static str,
+    resilience: ShellResilience,
 ) {
     thread::spawn(move || {
         ctx.send_output(banner.as_bytes());
-        if let Err(e) = run_io_loop(&session, channel, &ctx, control) {
-            ctx.log(
-                "error",
-                source,
-                format!("session {}: {}", ctx.session_id, e),
-            );
-            ctx.emit_error(e);
+        let mut io = ShellIo {
+            log: resilience
+                .log
+                .as_ref()
+                .and_then(|plan| open_log(&ctx, plan)),
+            ctx,
+            control,
+            pty_size: None,
+        };
+        let mut shell = shell;
+        let mut attempts = AttemptCount::default();
+        loop {
+            let opened = Instant::now();
+            let reason = match run_io_loop(shell, &mut io) {
+                ShellEnd::Closed => break,
+                ShellEnd::Dropped(reason) => reason,
+            };
+            attempts.shell_ended(opened.elapsed());
+            io.report_lost(source, &reason);
+            let ctx = &io.ctx;
+            let emit = |event: OutputEvent| {
+                log_recovery(ctx, source, &event);
+                ctx.send_event(event);
+            };
+            let reopened = Recovery {
+                policy: (resilience.policy)(),
+                open: Arc::clone(&resilience.reopen),
+                control: &io.control,
+                pty_size: &mut io.pty_size,
+                attempts: &mut attempts,
+                delay: reconnect_delay,
+                emit: &emit,
+            }
+            .run(reason);
+            match reopened {
+                Some(next) => {
+                    io.report_reconnected(source);
+                    shell = next;
+                }
+                None => break,
+            }
         }
-        ctx.finish();
-        // `session` must outlive `channel`; drop it last.
-        drop(session);
+        io.ctx.finish();
     });
+}
+
+/// The Logs view's record of a recovery.
+fn log_recovery(ctx: &SessionContext, source: &str, event: &OutputEvent) {
+    match event {
+        OutputEvent::Reconnecting {
+            attempt,
+            max_attempts,
+            delay_ms,
+            ..
+        } => ctx.log(
+            "info",
+            source,
+            format!(
+                "session {}: reconnect attempt {}/{} in {} ms",
+                ctx.session_id, attempt, max_attempts, delay_ms
+            ),
+        ),
+        OutputEvent::ReconnectStopped { message } => ctx.log(
+            "warn",
+            source,
+            format!(
+                "session {}: stopped reconnecting: {}",
+                ctx.session_id, message
+            ),
+        ),
+        _ => {}
+    }
+}
+
+/// Open the session's log. A session never fails because of its log: the
+/// reason shows in the terminal and the Logs view, and the shell goes on.
+fn open_log(ctx: &SessionContext, plan: &SessionLogPlan) -> Option<SessionLog> {
+    match SessionLog::create(plan) {
+        Ok(log) => {
+            ctx.log(
+                "info",
+                "session_log",
+                format!(
+                    "session {}: logging to {}",
+                    ctx.session_id,
+                    log.path().display()
+                ),
+            );
+            Some(log)
+        }
+        Err(e) => {
+            warn_log_stopped(ctx, &e);
+            None
+        }
+    }
+}
+
+fn warn_log_stopped(ctx: &SessionContext, reason: &str) {
+    ctx.log(
+        "warn",
+        "session_log",
+        format!("session {}: {}", ctx.session_id, reason),
+    );
+    ctx.send_output(
+        format!("\r\n\x1b[33m[SSIX] This session is not being logged: {reason}\x1b[0m\r\n")
+            .as_bytes(),
+    );
+}
+
+/// A shell worker's state that survives a reconnect.
+struct ShellIo {
+    ctx: SessionContext,
+    control: ControlRx,
+    log: Option<SessionLog>,
+    /// The terminal's last known size, for the next shell.
+    pty_size: Option<(u32, u32)>,
+}
+
+impl ShellIo {
+    /// Send shell output to the terminal and the log.
+    fn output(&mut self, bytes: &[u8]) {
+        if bytes.is_empty() {
+            return;
+        }
+        self.ctx.send_output(bytes);
+        self.write_log(|log| log.append(bytes));
+    }
+
+    fn write_log(&mut self, write: impl FnOnce(&mut SessionLog) -> io::Result<()>) {
+        let Some(log) = self.log.as_mut() else { return };
+        if let Err(e) = write(log) {
+            let reason = format!("writing {} failed: {}", log.path().display(), e);
+            self.log = None;
+            warn_log_stopped(&self.ctx, &reason);
+        }
+    }
+
+    fn report_lost(&mut self, source: &str, reason: &str) {
+        self.ctx.log(
+            "warn",
+            source,
+            format!(
+                "session {}: connection lost: {}",
+                self.ctx.session_id, reason
+            ),
+        );
+        self.write_log(|log| log.note(&format!("Connection lost: {reason}")));
+        self.ctx.send_output(TERMINAL_RESTORE);
+        self.ctx.emit_error(reason.to_string());
+    }
+
+    fn report_reconnected(&mut self, source: &str) {
+        self.ctx.log(
+            "info",
+            source,
+            format!("session {}: reconnected", self.ctx.session_id),
+        );
+        self.write_log(|log| log.note("Reconnected"));
+        self.ctx
+            .send_output(b"\r\n\x1b[2m[SSIX] Reconnected.\x1b[0m\r\n");
+        self.ctx.send_event(OutputEvent::Reconnected);
+    }
 }
 
 /// Longest we wait for a channel close to go out on a non-blocking session.
@@ -726,29 +1068,111 @@ fn write_all_nonblocking<W: Write>(w: &mut W, data: &[u8], fd: Option<wake::Fd>)
             Err(e) => return Err(e),
         }
     }
-    let _ = w.flush();
+    // Never `flush`: nothing is buffered on the way out, and an ssh2 channel's
+    // flush throws away what libssh2 has queued to read. For a queued packet
+    // under four bytes, such as the echo of a keystroke, it also sends a window
+    // adjust of about 2^32 and OpenSSH drops the connection over it.
     Ok(())
 }
 
+/// Notices a connection that has gone silent. libssh2 sends keepalives but
+/// never checks that they are answered, and a network that drops packets
+/// gives TCP nothing to report for many minutes. With `want_reply` set a
+/// server must answer each one, so a healthy connection is never quiet for
+/// long, whatever the shell is doing.
+struct KeepaliveWatchdog {
+    /// How long a connection may stay quiet; `None` when keepalive is off.
+    limit: Option<Duration>,
+    last_heard: Instant,
+}
+
+impl KeepaliveWatchdog {
+    fn new(keepalive_interval: u16, now: Instant) -> Self {
+        let interval = u32::from(keepalive_interval).max(KEEPALIVE_MIN_INTERVAL_SECS);
+        Self {
+            limit: (keepalive_interval > 0)
+                .then(|| Duration::from_secs(u64::from(interval * KEEPALIVE_MAX_MISSED))),
+            last_heard: now,
+        }
+    }
+
+    fn enabled(&self) -> bool {
+        self.limit.is_some()
+    }
+
+    fn heard(&mut self, now: Instant) {
+        self.last_heard = now;
+    }
+
+    /// The silence so far, once it exceeds the limit.
+    fn silence(&self, now: Instant) -> Option<Duration> {
+        let silence = now.saturating_duration_since(self.last_heard);
+        (silence >= self.limit?).then_some(silence)
+    }
+}
+
+/// How a shell's connection ended.
+enum ShellEnd {
+    /// The shell exited or the user closed the session: nothing to reconnect.
+    Closed,
+    /// The connection died under a live shell.
+    Dropped(String),
+}
+
+/// A failed read or write means the connection died, unless the shell had
+/// already ended: then only its last goodbye was lost.
+fn after_io_error(channel: &mut ssh2::Channel, reason: String) -> ShellEnd {
+    if server_sent_eof(channel) {
+        close_channel(channel);
+        ShellEnd::Closed
+    } else {
+        ShellEnd::Dropped(reason)
+    }
+}
+
+/// Whether the server has ended the channel, with or without unread data.
+/// `Channel::eof` says no while data is queued, and when the server's last
+/// output, EOF and close arrive with the end of the connection, that data can
+/// no longer be read. `wait_close` refuses without any I/O until EOF is in.
+fn server_sent_eof(channel: &mut ssh2::Channel) -> bool {
+    !matches!(
+        channel.wait_close(),
+        Err(e) if e.code() == ssh2::ErrorCode::Session(LIBSSH2_ERROR_INVAL)
+    )
+}
+
 /// Pump shell output to the frontend and frontend input to the shell until
-/// the channel closes or the frontend disconnects.
-fn run_io_loop(
-    session: &Session,
-    mut channel: ssh2::Channel,
-    ctx: &SessionContext,
-    control: ControlRx,
-) -> Result<(), String> {
+/// the channel closes, the frontend disconnects or the connection dies.
+fn run_io_loop(shell: OpenShell, io: &mut ShellIo) -> ShellEnd {
+    let OpenShell {
+        session,
+        mut channel,
+        keepalive_interval,
+    } = shell;
     let mut buf = vec![0u8; 32 * 1024];
     let mut pending: Vec<u8> = Vec::with_capacity(OUTPUT_COALESCE_MAX);
-    let fds = [wake::fd_of(session), control.wake.fd()];
+    let fds = [wake::fd_of(&session), io.control.wake.fd()];
+    let mut watchdog = KeepaliveWatchdog::new(keepalive_interval, Instant::now());
+
+    // A reconnected shell starts at the PTY's default size; the terminal only
+    // reports a size when it changes.
+    if let Some((cols, rows)) = io.pty_size {
+        resize_pty(&mut channel, cols, rows, &io.ctx);
+    }
 
     loop {
         let mut active = false;
         let mut eof = false;
         pending.clear();
 
-        // Drain everything the remote has for us (a PTY merges stderr into
-        // stdout, so there is no separate stderr stream to read).
+        // Bytes on the socket prove the server is there, even when libssh2
+        // consumes them without producing shell output (a keepalive reply).
+        if watchdog.enabled() && wake::is_readable(fds[0]) {
+            watchdog.heard(Instant::now());
+        }
+
+        // Drain everything the remote has for us. Extended data arrives here
+        // too: `open_shell_over_stream` merges it into this stream.
         loop {
             match channel.read(&mut buf) {
                 Ok(0) => {
@@ -758,62 +1182,92 @@ fn run_io_loop(
                 Ok(n) => {
                     pending.extend_from_slice(&buf[..n]);
                     active = true;
+                    watchdog.heard(Instant::now());
                     if pending.len() >= OUTPUT_COALESCE_MAX {
                         break;
                     }
                 }
                 Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => break,
                 Err(e) => {
-                    ctx.send_output(&pending);
-                    close_channel(&mut channel);
-                    return Err(format!("SSH read error: {}", e));
+                    io.output(&pending);
+                    return after_io_error(&mut channel, format!("SSH read error: {}", e));
                 }
             }
         }
-        ctx.send_output(&pending);
+        io.output(&pending);
 
         // Apply everything the frontend queued.
         loop {
-            match control.rx.try_recv() {
+            match io.control.rx.try_recv() {
                 Ok(SessionMsg::Write(data)) => {
                     active = true;
                     if let Err(e) = write_all_nonblocking(&mut channel, &data, Some(fds[0])) {
-                        close_channel(&mut channel);
-                        return Err(format!("SSH write error: {}", e));
+                        return after_io_error(&mut channel, format!("SSH write error: {}", e));
                     }
                 }
                 Ok(SessionMsg::Resize { cols, rows }) => {
-                    if let Err(e) = channel.request_pty_size(cols, rows, None, None) {
-                        ctx.log(
-                            "warn",
-                            "ssh",
-                            format!(
-                                "session {} resize to {}x{} failed: {}",
-                                ctx.session_id, cols, rows, e
-                            ),
-                        );
-                    }
+                    io.pty_size = Some((cols, rows));
+                    resize_pty(&mut channel, cols, rows, &io.ctx);
                 }
                 Ok(SessionMsg::Disconnect) | Err(TryRecvError::Disconnected) => {
                     close_channel(&mut channel);
-                    return Ok(());
+                    return ShellEnd::Closed;
                 }
+                Ok(SessionMsg::Reconnect | SessionMsg::CancelReconnect) => {}
                 Err(TryRecvError::Empty) => break,
             }
         }
 
+        // libssh2 reports a lost connection as a failed read, so a read of 0
+        // always comes from the server's own EOF or close.
         if eof || channel.eof() {
-            break;
+            close_channel(&mut channel);
+            return ShellEnd::Closed;
+        }
+
+        if watchdog.enabled() {
+            if let Err(e) = send_due_keepalive(&session, fds[0]) {
+                return ShellEnd::Dropped(format!("SSH keepalive failed: {}", e));
+            }
+            if let Some(silence) = watchdog.silence(Instant::now()) {
+                return ShellEnd::Dropped(format!(
+                    "The server did not answer for {} s. If it ignores keepalives, \
+                     set this connection's keepalive to 0.",
+                    silence.as_secs()
+                ));
+            }
         }
 
         if !active {
             wake::wait_readable(&fds, WAIT_MAX);
-            control.wake.drain();
+            io.control.wake.drain();
         }
     }
+}
 
-    close_channel(&mut channel);
-    Ok(())
+/// Send a keepalive if one is due and the socket can take it now. On a full
+/// socket libssh2 reports success, counts the keepalive as sent and leaves it
+/// queued, and until the next one comes due every other packet is refused as
+/// "try again". A write waiting on that would never see the next one, and
+/// would time out on a healthy connection.
+fn send_due_keepalive(session: &Session, fd: wake::Fd) -> Result<(), ssh2::Error> {
+    if !wake::is_writable(fd) {
+        return Ok(());
+    }
+    session.keepalive_send().map(drop)
+}
+
+fn resize_pty(channel: &mut ssh2::Channel, cols: u32, rows: u32, ctx: &SessionContext) {
+    if let Err(e) = channel.request_pty_size(cols, rows, None, None) {
+        ctx.log(
+            "warn",
+            "ssh",
+            format!(
+                "session {} resize to {}x{} failed: {}",
+                ctx.session_id, cols, rows, e
+            ),
+        );
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -828,10 +1282,20 @@ pub(crate) fn open_hop_session(
     role: &str,
     verbosity: u8,
 ) -> Result<Session, String> {
+    open_hop_unless_cancelled(hop, role, verbosity, None)
+}
+
+fn open_hop_unless_cancelled(
+    hop: &Endpoint,
+    role: &str,
+    verbosity: u8,
+    cancelled: Option<&AtomicBool>,
+) -> Result<Session, String> {
     SshDebug::new(verbosity, hop.addr()).at(1, || {
         format!("Using {} {}", role.to_lowercase(), hop.addr())
     });
-    open_authenticated_session(hop, verbosity, None)
+    connect_endpoint(hop, verbosity)
+        .and_then(|tcp| open_session_unless_cancelled(tcp, hop, verbosity, None, cancelled))
         .map_err(|e| format!("{} {}: {}", role, hop.addr(), e))
 }
 
@@ -926,13 +1390,23 @@ pub(crate) fn bridge_via_jump_host(
     destination_port: u16,
     verbosity: u8,
 ) -> Result<TcpStream, String> {
+    bridge_unless_cancelled(gateway, destination_host, destination_port, verbosity, None)
+}
+
+fn bridge_unless_cancelled(
+    gateway: &Endpoint,
+    destination_host: &str,
+    destination_port: u16,
+    verbosity: u8,
+    cancelled: Option<&AtomicBool>,
+) -> Result<TcpStream, String> {
     let listener = TcpListener::bind("127.0.0.1:0")
         .map_err(|e| format!("Failed to bind ephemeral loopback port: {}", e))?;
     let local_port = listener
         .local_addr()
         .map_err(|e| format!("local_addr() failed: {}", e))?
         .port();
-    let gateway_session = open_hop_session(gateway, "Jump host", verbosity)?;
+    let gateway_session = open_hop_unless_cancelled(gateway, "Jump host", verbosity, cancelled)?;
     let debug = SshDebug::new(verbosity, gateway.addr());
 
     let (ready_tx, ready_rx) = mpsc::channel::<Result<(), String>>();
@@ -1004,15 +1478,9 @@ pub fn start_jump_shell(
     destination: Endpoint,
     opts: ShellOptions,
     ctx: SessionContext,
+    resilience: ShellResilience,
 ) -> Result<SessionHandle, String> {
-    let stream = bridge_via_jump_host(
-        &gateway,
-        &destination.host,
-        destination.port,
-        opts.verbosity,
-    )?;
-    let (session, channel) = open_shell_over_stream(stream, &destination, &opts)
-        .map_err(|e| format!("Target connect via jump host failed: {}", e))?;
+    let shell = open_jump_shell(&gateway, &destination, &opts)?;
     let (handle, control) = control_channel()?;
     ctx.register(handle.clone())?;
     ctx.log(
@@ -1036,13 +1504,14 @@ pub fn start_jump_shell(
     } else {
         String::new()
     };
-    spawn_shell_worker(session, channel, ctx, control, banner, "jump_host");
+    spawn_shell_worker(shell, ctx, control, banner, "jump_host", resilience);
     Ok(handle)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::atomic::AtomicU8;
 
     #[test]
     fn test_ssh_state_new() {
@@ -1159,7 +1628,7 @@ mod tests {
                 Ok(n)
             }
             fn flush(&mut self) -> io::Result<()> {
-                Ok(())
+                panic!("a channel's flush discards what it has queued to read");
             }
         }
         let mut w = Trickle {
@@ -1184,6 +1653,620 @@ mod tests {
             build_startup_command(Some("/srv/it's"), None),
             Some("cd '/srv/it'\\''s'".into())
         );
+    }
+
+    #[test]
+    fn output_events_have_the_shape_the_frontend_reads() {
+        let json = |event: OutputEvent| serde_json::to_string(&event).unwrap();
+        assert_eq!(
+            json(OutputEvent::Error {
+                message: "x".into()
+            }),
+            r#"{"kind":"error","message":"x"}"#
+        );
+        assert_eq!(json(OutputEvent::Closed), r#"{"kind":"closed"}"#);
+        assert_eq!(
+            json(OutputEvent::Reconnecting {
+                attempt: 2,
+                max_attempts: 5,
+                delay_ms: 4000,
+                message: "gone".into()
+            }),
+            r#"{"kind":"reconnecting","attempt":2,"max_attempts":5,"delay_ms":4000,"message":"gone"}"#
+        );
+        assert_eq!(json(OutputEvent::Reconnected), r#"{"kind":"reconnected"}"#);
+        assert_eq!(
+            json(OutputEvent::ReconnectStopped {
+                message: "no".into()
+            }),
+            r#"{"kind":"reconnect_stopped","message":"no"}"#
+        );
+    }
+
+    #[test]
+    fn watchdog_is_off_at_interval_zero() {
+        let start = Instant::now();
+        let watchdog = KeepaliveWatchdog::new(0, start);
+        assert!(!watchdog.enabled());
+        assert_eq!(watchdog.silence(start + Duration::from_secs(86_400)), None);
+    }
+
+    #[test]
+    fn watchdog_gives_up_after_three_silent_intervals() {
+        let start = Instant::now();
+        let mut watchdog = KeepaliveWatchdog::new(30, start);
+        assert!(watchdog.enabled());
+        assert_eq!(watchdog.silence(start + Duration::from_secs(89)), None);
+        assert_eq!(
+            watchdog.silence(start + Duration::from_secs(90)),
+            Some(Duration::from_secs(90))
+        );
+
+        // Anything from the server starts the count over.
+        watchdog.heard(start + Duration::from_secs(89));
+        assert_eq!(watchdog.silence(start + Duration::from_secs(120)), None);
+        assert!(watchdog.silence(start + Duration::from_secs(179)).is_some());
+    }
+
+    /// libssh2 raises an interval of 1 to 2, so 1 must not leave room for a
+    /// single unanswered keepalive only.
+    #[test]
+    fn watchdog_follows_the_shortest_interval_libssh2_sends_at() {
+        let start = Instant::now();
+        let watchdog = KeepaliveWatchdog::new(1, start);
+        assert_eq!(watchdog.silence(start + Duration::from_secs(5)), None);
+        assert!(watchdog.silence(start + Duration::from_secs(6)).is_some());
+    }
+
+    #[test]
+    fn is_readable_reports_waiting_bytes_without_consuming_them() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let mut near = TcpStream::connect(listener.local_addr().unwrap()).unwrap();
+        let (mut far, _) = listener.accept().unwrap();
+        far.set_nonblocking(true).unwrap();
+        let fd = wake::fd_of(&far);
+
+        assert!(!wake::is_readable(fd));
+        near.write_all(b"x").unwrap();
+        near.flush().unwrap();
+        let start = Instant::now();
+        while !wake::is_readable(fd) {
+            assert!(start.elapsed() < Duration::from_secs(5), "never readable");
+            thread::sleep(Duration::from_millis(1));
+        }
+        // Still there: the check consumed nothing.
+        assert!(wake::is_readable(fd));
+        let mut byte = [0u8; 1];
+        far.read_exact(&mut byte).unwrap();
+        assert_eq!(&byte, b"x");
+        assert!(!wake::is_readable(fd));
+
+        // A closed peer reads as readable, so the worker goes on to find out.
+        drop(near);
+        let start = Instant::now();
+        while !wake::is_readable(fd) {
+            assert!(start.elapsed() < Duration::from_secs(5), "close not seen");
+            thread::sleep(Duration::from_millis(1));
+        }
+    }
+
+    #[test]
+    fn is_writable_turns_false_when_the_socket_is_full() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let near = TcpStream::connect(listener.local_addr().unwrap()).unwrap();
+        let (mut far, _) = listener.accept().unwrap();
+        near.set_nonblocking(true).unwrap();
+        far.set_nonblocking(true).unwrap();
+        let fd = wake::fd_of(&near);
+
+        assert!(wake::is_writable(fd));
+        fill_socket(&near, fd);
+        assert!(!wake::is_writable(fd));
+
+        let mut buf = [0u8; 64 * 1024];
+        let start = Instant::now();
+        while !wake::is_writable(fd) {
+            assert!(start.elapsed() < Duration::from_secs(10), "never writable");
+            let _ = far.read(&mut buf);
+        }
+    }
+
+    /// Write to a non-blocking socket until it reports no room. Returns the
+    /// bytes it took. A socket can refuse a large write and still have room
+    /// for a smaller one, so the writes shrink as they are refused.
+    fn fill_socket(mut socket: &TcpStream, fd: wake::Fd) -> usize {
+        let junk = [0u8; 16 * 1024];
+        let mut size = junk.len();
+        let mut filled = 0;
+        let start = Instant::now();
+        loop {
+            assert!(
+                start.elapsed() < Duration::from_secs(30),
+                "the socket reports room but takes nothing"
+            );
+            match socket.write(&junk[..size]) {
+                Ok(n) => filled += n,
+                // The kernel may still be moving bytes along.
+                Err(e) if e.kind() == io::ErrorKind::WouldBlock => {
+                    thread::sleep(Duration::from_millis(20));
+                    if !wake::is_writable(fd) {
+                        return filled;
+                    }
+                    size = (size / 2).max(1);
+                }
+                Err(e) => panic!("filling the socket failed: {e}"),
+            }
+        }
+    }
+
+    /// The first attempts of a reconnect meet these real failures, so their
+    /// wording has to stay on `reconnect`'s allow-list.
+    #[test]
+    fn real_network_failures_are_retryable() {
+        use crate::reconnect::is_retryable_connect_error;
+        let endpoint = |port| Endpoint {
+            host: "127.0.0.1".into(),
+            port,
+            username: "u".into(),
+            auth: AuthMethod::Password("p".into()),
+            proxy_command: None,
+        };
+        let closed = {
+            let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+            listener.local_addr().unwrap().port()
+        };
+        let refused = open_authenticated_session(&endpoint(closed), 0, None)
+            .err()
+            .unwrap();
+        assert!(is_retryable_connect_error(&refused), "{refused}");
+
+        let unknown = connect_tcp("host.invalid", 22).err().unwrap();
+        assert!(is_retryable_connect_error(&unknown), "{unknown}");
+
+        // A server that hangs up before the handshake finishes.
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        thread::spawn(move || drop(listener.accept()));
+        let hung_up = open_authenticated_session(&endpoint(port), 0, None)
+            .err()
+            .unwrap();
+        assert!(is_retryable_connect_error(&hung_up), "{hung_up}");
+    }
+
+    /// The watchdog relies on a keepalive's reply reaching the socket while
+    /// leaving the shell's stream alone. Needs a real server, so a plain
+    /// `cargo test` skips it: see `remote_script::live` for how to run it.
+    #[test]
+    #[ignore]
+    fn live_keepalive_replies_show_on_the_socket_only() {
+        let target = crate::remote_script::live::Target::from_env();
+        crate::storage::test_support::with_isolated_data_dir(|| {
+            let opts = ShellOptions {
+                keepalive_interval: 2,
+                ..ShellOptions::default()
+            };
+            let OpenShell {
+                session,
+                mut channel,
+                ..
+            } = open_shell(&target.endpoint, &opts).unwrap();
+            let fd = wake::fd_of(&session);
+            wait_for_quiet(&mut channel, fd);
+
+            session.keepalive_send().unwrap();
+            let sent = Instant::now();
+            while !wake::is_readable(fd) {
+                assert!(
+                    sent.elapsed() < Duration::from_secs(20),
+                    "the server never answered the keepalive"
+                );
+                thread::sleep(Duration::from_millis(20));
+            }
+
+            // The reply is consumed without producing output or ending the shell.
+            read_available(&mut channel);
+            assert!(!wake::is_readable(fd));
+            assert!(!channel.eof());
+        });
+    }
+
+    /// Typing as fast as the echo comes back, so an echo is often queued in
+    /// libssh2 by the write that follows it.
+    #[test]
+    #[ignore]
+    fn live_fast_typing_keeps_the_session() {
+        let target = crate::remote_script::live::Target::from_env();
+        crate::storage::test_support::with_isolated_data_dir(|| {
+            let OpenShell {
+                session,
+                mut channel,
+                ..
+            } = open_shell(&target.endpoint, &ShellOptions::default()).unwrap();
+            let fd = wake::fd_of(&session);
+            wait_for_quiet(&mut channel, fd);
+
+            for _ in 0..5000 {
+                write_all_nonblocking(&mut channel, b"x", Some(fd)).unwrap();
+                read_available(&mut channel);
+            }
+
+            // A server that took offence has closed the connection by now.
+            wait_for_quiet(&mut channel, fd);
+            assert!(!channel.eof());
+        });
+    }
+
+    /// With the socket full, a keepalive must not get in the way of the writes
+    /// that follow once it has room again.
+    #[cfg(unix)]
+    #[test]
+    #[ignore]
+    fn live_a_due_keepalive_on_a_full_socket_holds_nothing_up() {
+        use std::mem::ManuallyDrop;
+        use std::os::fd::FromRawFd;
+
+        let target = crate::remote_script::live::Target::from_env();
+        crate::storage::test_support::with_isolated_data_dir(|| {
+            let relay = Relay::start(&target.endpoint);
+            let opts = ShellOptions {
+                keepalive_interval: 2,
+                ..ShellOptions::default()
+            };
+            let OpenShell {
+                session,
+                mut channel,
+                ..
+            } = open_shell_over_stream(relay.connect(), &target.endpoint, &opts).unwrap();
+            let fd = wake::fd_of(&session);
+            wait_for_quiet(&mut channel, fd);
+
+            // Fill the socket behind libssh2's back, with bytes the relay will
+            // drop so that the encrypted stream it carries stays intact.
+            relay.set_mode(RELAY_HOLD_UP);
+            thread::sleep(Duration::from_millis(100));
+            // SAFETY: `fd` is the session's open socket. `ManuallyDrop` keeps
+            // this temporary view of it from closing the socket.
+            let socket = ManuallyDrop::new(unsafe { TcpStream::from_raw_fd(fd) });
+            let filled = fill_socket(&socket, fd);
+            assert!(!wake::is_writable(fd));
+
+            send_due_keepalive(&session, fd).unwrap();
+
+            relay.discard_up(filled);
+            relay.set_mode(RELAY_FLOW);
+            write_all_nonblocking(&mut channel, b"x", Some(fd))
+                .expect("the keepalive held up the write");
+            let sent = Instant::now();
+            while read_available(&mut channel) == 0 {
+                assert!(
+                    sent.elapsed() < Duration::from_secs(10),
+                    "the shell never echoed"
+                );
+                thread::sleep(Duration::from_millis(20));
+            }
+        });
+    }
+
+    /// A cancelled attempt stops before the login, where a wrong password
+    /// would show that it tried, and before the login command.
+    #[test]
+    #[ignore]
+    fn live_a_cancelled_attempt_neither_logs_in_nor_starts_the_login_command() {
+        let target = crate::remote_script::live::Target::from_env();
+        crate::storage::test_support::with_isolated_data_dir(|| {
+            let opts = ShellOptions {
+                startup_command: Some("true".to_string()),
+                cancelled: Some(Arc::new(AtomicBool::new(true))),
+                ..ShellOptions::default()
+            };
+            let wrong_password = Endpoint {
+                auth: AuthMethod::Password("not-the-password".into()),
+                ..target.endpoint.clone()
+            };
+            let error = open_shell(&wrong_password, &opts).err().unwrap();
+            assert_eq!(error, ATTEMPT_CANCELLED);
+
+            let session = open_authenticated_session(&target.endpoint, 0, None).unwrap();
+            let error = start_shell(session, &target.endpoint, &opts).err().unwrap();
+            assert_eq!(error, ATTEMPT_CANCELLED);
+        });
+    }
+
+    /// A network that dies under a live shell surfaces as a failed read, never
+    /// as a read of 0: the loop's clean-close path depends on that.
+    #[test]
+    #[ignore]
+    fn live_a_lost_connection_is_a_failed_read_and_counts_as_dropped() {
+        let target = crate::remote_script::live::Target::from_env();
+        crate::storage::test_support::with_isolated_data_dir(|| {
+            let relay = Relay::start(&target.endpoint);
+            let OpenShell {
+                session,
+                mut channel,
+                ..
+            } = open_shell_over_stream(relay.connect(), &target.endpoint, &ShellOptions::default())
+                .unwrap();
+            let fd = wake::fd_of(&session);
+            wait_for_quiet(&mut channel, fd);
+
+            relay.set_mode(RELAY_CUT);
+            let error = read_until_it_fails(&mut channel);
+
+            let ShellEnd::Dropped(reason) = after_io_error(&mut channel, error.to_string()) else {
+                panic!("a lost connection counted as the shell ending");
+            };
+            assert!(!reason.is_empty());
+        });
+    }
+
+    /// A shell that exits over a healthy connection reads as 0.
+    #[test]
+    #[ignore]
+    fn live_a_shell_that_exits_reads_as_zero() {
+        let target = crate::remote_script::live::Target::from_env();
+        if target.windows() {
+            return;
+        }
+        crate::storage::test_support::with_isolated_data_dir(|| {
+            let OpenShell {
+                session,
+                mut channel,
+                ..
+            } = open_shell(&target.endpoint, &ShellOptions::default()).unwrap();
+            let fd = wake::fd_of(&session);
+            wait_for_quiet(&mut channel, fd);
+
+            write_all_nonblocking(&mut channel, b"exit\n", Some(fd)).unwrap();
+            let mut buf = [0u8; 4096];
+            let start = Instant::now();
+            loop {
+                assert!(
+                    start.elapsed() < Duration::from_secs(10),
+                    "the shell never ended"
+                );
+                match channel.read(&mut buf) {
+                    Ok(0) => return,
+                    Ok(_) => {}
+                    Err(e) if e.kind() == io::ErrorKind::WouldBlock => {
+                        thread::sleep(Duration::from_millis(20));
+                    }
+                    Err(e) => panic!("the shell's end read as a failure: {e}"),
+                }
+            }
+        });
+    }
+
+    /// What a shell does with extended data. A PTY keeps a real server from
+    /// sending any to a shell, so this runs a command without one.
+    #[test]
+    #[ignore]
+    fn live_merged_extended_data_leaves_the_end_visible() {
+        let target = crate::remote_script::live::Target::from_env();
+        if target.windows() {
+            return;
+        }
+        crate::storage::test_support::with_isolated_data_dir(|| {
+            let session = open_authenticated_session(&target.endpoint, 0, None).unwrap();
+            let mut channel = session.channel_session().unwrap();
+            channel
+                .handle_extended_data(ssh2::ExtendedData::Merge)
+                .unwrap();
+            channel.exec("echo err >&2").unwrap();
+
+            let mut output = String::new();
+            channel.read_to_string(&mut output).unwrap();
+
+            assert_eq!(output, "err\n");
+            assert!(channel.eof());
+        });
+    }
+
+    /// A server that hangs up in one go: last output, EOF, close and the end
+    /// of the TCP stream all arrive together. libssh2 fails the read before
+    /// the queued output can be read, and that output is lost, but the shell
+    /// did end and nothing should reconnect it.
+    #[test]
+    #[ignore]
+    fn live_a_goodbye_that_arrives_with_the_connection_end_counts_as_closed() {
+        let target = crate::remote_script::live::Target::from_env();
+        if target.windows() {
+            return;
+        }
+        crate::storage::test_support::with_isolated_data_dir(|| {
+            let relay = Relay::start(&target.endpoint);
+            let OpenShell {
+                session,
+                mut channel,
+                ..
+            } = open_shell_over_stream(relay.connect(), &target.endpoint, &ShellOptions::default())
+                .unwrap();
+            let fd = wake::fd_of(&session);
+            wait_for_quiet(&mut channel, fd);
+
+            relay.set_mode(RELAY_HOLD_DOWN);
+            write_all_nonblocking(&mut channel, b"exit\n", Some(fd)).unwrap();
+            // Time for the server's goodbye to pile up behind the relay.
+            thread::sleep(Duration::from_millis(1500));
+            relay.set_mode(RELAY_LAST_WORDS);
+            let start = Instant::now();
+            while relay.mode() != RELAY_DONE {
+                assert!(
+                    start.elapsed() < Duration::from_secs(10),
+                    "the relay never finished"
+                );
+                thread::sleep(Duration::from_millis(10));
+            }
+
+            let error = read_until_it_fails(&mut channel);
+            assert!(!channel.eof(), "the output should still be masking EOF");
+            assert!(
+                matches!(
+                    after_io_error(&mut channel, error.to_string()),
+                    ShellEnd::Closed
+                ),
+                "the shell ended, so nothing should reconnect it"
+            );
+        });
+    }
+
+    /// Read until a read fails, returning the failure. A read of 0 fails the
+    /// test: it would say the shell ended.
+    fn read_until_it_fails(channel: &mut ssh2::Channel) -> io::Error {
+        let mut buf = [0u8; 4096];
+        let start = Instant::now();
+        loop {
+            assert!(
+                start.elapsed() < Duration::from_secs(10),
+                "no read ever failed"
+            );
+            match channel.read(&mut buf) {
+                Ok(0) => panic!("the read reported a clean end"),
+                Ok(_) => {}
+                Err(e) if e.kind() == io::ErrorKind::WouldBlock => {
+                    thread::sleep(Duration::from_millis(20));
+                }
+                Err(e) => return e,
+            }
+        }
+    }
+
+    const RELAY_FLOW: u8 = 0;
+    /// Leave what the client sends unread.
+    const RELAY_HOLD_UP: u8 = 1;
+    /// Leave what the server sends unread.
+    const RELAY_HOLD_DOWN: u8 = 2;
+    /// Pass on all the server has sent so far in one go, then end the stream
+    /// towards the client and become `RELAY_DONE`.
+    const RELAY_LAST_WORDS: u8 = 3;
+    const RELAY_DONE: u8 = 4;
+    /// End the connection at once on both sides.
+    const RELAY_CUT: u8 = 5;
+
+    /// A loopback relay to a real server, so that a test can control what the
+    /// client's socket sees.
+    struct Relay {
+        port: u16,
+        mode: Arc<AtomicU8>,
+        discard_up: Arc<AtomicUsize>,
+    }
+
+    impl Relay {
+        fn start(server: &Endpoint) -> Self {
+            let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+            let port = listener.local_addr().unwrap().port();
+            let mode = Arc::new(AtomicU8::new(RELAY_FLOW));
+            let discard_up = Arc::new(AtomicUsize::new(0));
+            let (relay_mode, relay_discard) = (Arc::clone(&mode), Arc::clone(&discard_up));
+            let server = server.addr();
+            thread::spawn(move || {
+                let (client, _) = listener.accept().unwrap();
+                let server = TcpStream::connect(server).unwrap();
+                client.set_nonblocking(true).unwrap();
+                server.set_nonblocking(true).unwrap();
+                let mut buf = vec![0u8; 16 * 1024];
+                loop {
+                    let mode = relay_mode.load(Ordering::SeqCst);
+                    match mode {
+                        RELAY_CUT => {
+                            let _ = client.shutdown(Shutdown::Both);
+                            let _ = server.shutdown(Shutdown::Both);
+                            return;
+                        }
+                        RELAY_LAST_WORDS => {
+                            while let Some(n) = relay_read(&server, &mut buf) {
+                                if n == 0 {
+                                    break;
+                                }
+                                relay_write(&client, &buf[..n]);
+                            }
+                            let _ = client.shutdown(Shutdown::Write);
+                            relay_mode.store(RELAY_DONE, Ordering::SeqCst);
+                        }
+                        RELAY_DONE => {
+                            thread::sleep(Duration::from_millis(10));
+                            continue;
+                        }
+                        _ => {}
+                    }
+                    if mode != RELAY_HOLD_UP {
+                        let Some(n) = relay_read(&client, &mut buf) else {
+                            return;
+                        };
+                        let skip = relay_discard.load(Ordering::SeqCst).min(n);
+                        relay_discard.fetch_sub(skip, Ordering::SeqCst);
+                        relay_write(&server, &buf[skip..n]);
+                    }
+                    if mode != RELAY_HOLD_DOWN {
+                        let Some(n) = relay_read(&server, &mut buf) else {
+                            return;
+                        };
+                        relay_write(&client, &buf[..n]);
+                    }
+                    thread::sleep(Duration::from_millis(1));
+                }
+            });
+            Self {
+                port,
+                mode,
+                discard_up,
+            }
+        }
+
+        fn connect(&self) -> TcpStream {
+            TcpStream::connect(("127.0.0.1", self.port)).unwrap()
+        }
+
+        fn set_mode(&self, mode: u8) {
+            self.mode.store(mode, Ordering::SeqCst);
+        }
+
+        fn mode(&self) -> u8 {
+            self.mode.load(Ordering::SeqCst)
+        }
+
+        /// Drop the next `bytes` that the client sends.
+        fn discard_up(&self, bytes: usize) {
+            self.discard_up.store(bytes, Ordering::SeqCst);
+        }
+    }
+
+    /// The bytes waiting on a relay's socket, `None` once it has closed.
+    fn relay_read(mut from: &TcpStream, buf: &mut [u8]) -> Option<usize> {
+        match from.read(buf) {
+            Ok(0) => None,
+            Ok(n) => Some(n),
+            Err(e) if e.kind() == io::ErrorKind::WouldBlock => Some(0),
+            Err(_) => None,
+        }
+    }
+
+    fn relay_write(mut to: &TcpStream, data: &[u8]) {
+        let _ = write_all_nonblocking(&mut to, data, None);
+    }
+
+    /// The bytes the shell had for us: 0 when nothing was waiting.
+    fn read_available(channel: &mut ssh2::Channel) -> usize {
+        let mut buf = [0u8; 4096];
+        let mut total = 0;
+        loop {
+            match channel.read(&mut buf) {
+                Ok(0) => panic!("the shell ended"),
+                Ok(n) => total += n,
+                Err(e) if e.kind() == io::ErrorKind::WouldBlock => return total,
+                Err(e) => panic!("read failed: {e}"),
+            }
+        }
+    }
+
+    fn wait_for_quiet(channel: &mut ssh2::Channel, fd: wake::Fd) {
+        let mut quiet_since = Instant::now();
+        while quiet_since.elapsed() < Duration::from_secs(3) {
+            if wake::is_readable(fd) {
+                read_available(channel);
+                quiet_since = Instant::now();
+            }
+            thread::sleep(Duration::from_millis(50));
+        }
     }
 
     #[test]

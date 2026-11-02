@@ -150,6 +150,8 @@ export interface DirectConnectionInput {
   /** Label of a verbosity option, e.g. "-vv (negotiated algorithms)". */
   verbosity?: string;
   proxyCommand?: string;
+  /** Fill more of the form, just before it is saved. */
+  beforeSave?: () => Promise<void>;
 }
 
 export async function saveConnectionForm(): Promise<void> {
@@ -183,6 +185,7 @@ export async function createDirectConnection(input: DirectConnectionInput): Prom
       await browser.keys(["Enter"]);
     }
   }
+  await input.beforeSave?.();
   await saveConnectionForm();
 }
 
@@ -297,9 +300,12 @@ async function buildTerminalTimeoutMessage(needle: string, timeoutMs: number): P
 /**
  * Type into the focused terminal. xterm.js forwards keystrokes from
  * its hidden textarea, so we focus the container then send keys.
+ *
+ * One `keys` call per key: within a call the keys are held down together,
+ * so a repeated one is typed once ("kill" arrives as "kil").
  */
 export async function typeIntoTerminal(text: string): Promise<void> {
   const term = await browser.$(sel.terminalContainer);
   await term.click();
-  await browser.keys(text.split(""));
+  for (const key of text) await browser.keys([key]);
 }

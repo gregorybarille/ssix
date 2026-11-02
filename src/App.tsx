@@ -316,9 +316,15 @@ function App() {
 
   /* ---------------------- Terminal-driven side effects ---------------------- */
 
+  /**
+   * A pane that never connected goes away. A dropped session stays, waiting
+   * for Retry, which reads the connection as it is by then. Its pane may hold
+   * an older copy of the connection than the one saved since it opened.
+   */
   const handleEditFromTerminal = (conn: Connection, failedSessionId: string) => {
-    void closePane(failedSessionId);
-    dialogs.openEditConnection(conn);
+    const pane = tabs.flatMap((t) => t.panes).find((p) => p.sessionId === failedSessionId);
+    if (!pane?.reconnect) void closePane(failedSessionId);
+    dialogs.openEditConnection(connections.find((c) => c.id === conn.id) ?? conn);
     setView("connections");
   };
 
@@ -612,6 +618,7 @@ function App() {
           }
           confirmLabel="Close"
           variant="destructive"
+          testId="confirm-close-pane"
           onConfirm={async () => {
             const target = dialogs.confirmClosePane;
             if (!target) return;

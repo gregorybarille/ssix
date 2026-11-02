@@ -128,7 +128,7 @@ interface ConnectionBase {
   color?: string;
   /** Forward the local SSH agent to the remote host (`ssh -A`). Stored only (roadmap: auth). */
   agent_forwarding?: boolean;
-  /** Seconds between keepalives; absent means `AppSettings.keepalive_interval` (roadmap: resilience). */
+  /** Seconds between keepalives, 0 for none; absent means `AppSettings.keepalive_interval`. */
   keepalive_interval?: number;
   /** Reconnect a dropped session; absent means `AppSettings.auto_reconnect`. */
   auto_reconnect?: boolean;
@@ -315,7 +315,7 @@ export interface AppSettings {
   backup_interval_hours: number;
   /** Automatic backups kept (1-100); manual ones stay until deleted. */
   backup_keep: number;
-  /** Seconds between SSH keepalives on shell sessions (roadmap: resilience; stored only). */
+  /** Seconds between SSH keepalives on shell sessions, 0 for none. */
   keepalive_interval: number;
   /** Reconnect dropped shell sessions automatically. */
   auto_reconnect: boolean;

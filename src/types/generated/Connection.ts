@@ -43,7 +43,7 @@ color?: string | null,
 agent_forwarding: boolean, 
 /**
  * Seconds between keepalive requests, 0 for none; `None` uses
- * `AppSettings::keepalive_interval`. Stored only for now (roadmap: resilience).
+ * `AppSettings::keepalive_interval`.
  */
 keepalive_interval?: number | null, 
 /**

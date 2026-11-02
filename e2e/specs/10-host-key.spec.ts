@@ -13,7 +13,7 @@
  * Exercises `src-tauri/src/known_hosts.rs`, the `ssh_forget_host_key`
  * command and the FailedTerminal trust action.
  */
-import { readFileSync, writeFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { waitForAppReady } from "../helpers/app.js";
 import { currentTestDataDir } from "../helpers/data-dir.js";
@@ -25,29 +25,8 @@ import {
   waitForFailedTerminalError,
   waitForTerminalContains,
 } from "../helpers/flows.js";
+import { BOGUS_KEYS, knownHostsName, plantBogusHostKeys } from "../helpers/known-hosts.js";
 import { sel } from "../helpers/selectors.js";
-
-/** Algorithms an OpenSSH server may present; libssh2 picks one of them. */
-const ALGORITHMS = ["ssh-ed25519", "ssh-rsa", "ecdsa-sha2-nistp256", "ecdsa-sha2-nistp384", "ecdsa-sha2-nistp521"];
-
-/**
- * A syntactically valid public-key blob (`string algorithm` + body) with a
- * body no real server has. known_hosts only needs the algorithm prefix and
- * base64 to parse it.
- */
-function bogusKey(algorithm: string): string {
-  const name = Buffer.from(algorithm, "utf8");
-  const len = Buffer.alloc(4);
-  len.writeUInt32BE(name.length);
-  const body = Buffer.alloc(32, 0x42);
-  return `${algorithm} ${Buffer.concat([len, name, body]).toString("base64")}`;
-}
-const BOGUS_KEYS = ALGORITHMS.map(bogusKey);
-
-/** OpenSSH known_hosts spelling of a host: plain for port 22, `[host]:port` otherwise. */
-function knownHostsName(host: string, port: number): string {
-  return port === 22 ? host : `[${host}]:${port}`;
-}
 
 describe("Host-key verification", () => {
   before(async () => {
@@ -63,7 +42,7 @@ describe("Host-key verification", () => {
 
     // Earlier specs may already have recorded server-a's real key. Replace
     // the file with stale entries for it, one per algorithm.
-    writeFileSync(knownHosts, BOGUS_KEYS.map((k) => `${entry} ${k}\n`).join(""));
+    plantBogusHostKeys(knownHosts, TARGETS.a.host, TARGETS.a.sshPort);
 
     await createPasswordCredential({
       name: "cred-10-a",

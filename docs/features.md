@@ -88,6 +88,7 @@ changes, because the unsaved-changes baseline follows the fetched values.
 - edit source connection from failure UI
 - GPU-accelerated rendering (xterm WebGL addon) when the WebView supports it, 10 000 lines of scrollback
 - right-click pastes into the terminal under the cursor only
+- keepalive, auto-reconnect in the same tab and session logs: see [Session resilience](session-resilience.md)
 
 ### Host-key verification
 

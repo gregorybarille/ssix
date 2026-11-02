@@ -239,6 +239,18 @@ describe("SettingsPanel", () => {
       expect(onSave).toHaveBeenCalledWith(expect.objectContaining({ theme: "light" }));
     });
 
+    it("shows a refusal from the backend, which rejects with a plain string", async () => {
+      const onSave = vi.fn().mockRejectedValue("Git remote is invalid");
+      render(<SettingsPanel settings={defaults} onSave={onSave} />);
+
+      const remote = screen.getByLabelText(/remote name/i);
+      fireEvent.change(remote, { target: { value: "--bad" } });
+      fireEvent.blur(remote);
+
+      await tick(DEBOUNCE_MS);
+      expect(screen.getByRole("alert")).toHaveTextContent("Git remote is invalid");
+    });
+
     it("reports a validation error for the final state even when an earlier edit was superseded", async () => {
       const onSave = vi.fn().mockRejectedValue(new Error("Git remote is invalid"));
       render(<SettingsPanel settings={defaults} onSave={onSave} />);

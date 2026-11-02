@@ -22,12 +22,23 @@ pub(crate) fn validate_keepalive_interval(seconds: u16) -> Result<(), String> {
     Ok(())
 }
 
+/// A relative folder would land wherever the app happens to run from.
+fn validate_session_log_dir(dir: Option<&str>) -> Result<(), String> {
+    match dir.map(str::trim).filter(|dir| !dir.is_empty()) {
+        Some(dir) if !std::path::Path::new(dir).is_absolute() => {
+            Err("The session log folder must be an absolute path".to_string())
+        }
+        _ => Ok(()),
+    }
+}
+
 fn save_settings_sync(settings: AppSettings) -> Result<AppSettings, String> {
     validate_git_remote(&settings.git_sync_remote)?;
     validate_keepalive_interval(settings.keepalive_interval)?;
     if !(1..=20).contains(&settings.reconnect_max_attempts) {
         return Err("Reconnect attempts must be between 1 and 20".to_string());
     }
+    validate_session_log_dir(settings.session_log_dir.as_deref())?;
     if !(1..=720).contains(&settings.backup_interval_hours) {
         return Err("Backup interval must be between 1 and 720 hours".to_string());
     }
@@ -75,6 +86,24 @@ mod tests {
                 ..AppSettings::default()
             };
             assert!(save_settings_sync(s).is_err(), "{hours}h keep {keep}");
+        }
+    }
+
+    #[test]
+    fn the_session_log_folder_must_be_absolute_or_blank() {
+        assert!(validate_session_log_dir(None).is_ok());
+        assert!(validate_session_log_dir(Some("  ")).is_ok());
+        let absolute = if cfg!(windows) {
+            "C:\\logs"
+        } else {
+            "/var/tmp/logs"
+        };
+        assert!(validate_session_log_dir(Some(absolute)).is_ok());
+        for relative in ["logs", "./logs", "../logs", "~/logs"] {
+            assert!(
+                validate_session_log_dir(Some(relative)).is_err(),
+                "{relative}"
+            );
         }
     }
 

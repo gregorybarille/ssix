@@ -49,8 +49,7 @@ backup_interval_hours: number,
  */
 backup_keep: number, 
 /**
- * Seconds between SSH keepalive requests on a shell session, 0 for none
- * (roadmap: resilience; stored only for now).
+ * Seconds between SSH keepalive requests on a shell session, 0 for none.
  */
 keepalive_interval: number, 
 /**
