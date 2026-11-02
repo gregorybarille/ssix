@@ -68,4 +68,11 @@ describe("search", () => {
     expect(filterConnections(conns, "staging").map((c) => c.id)).toEqual(["2"]);
     expect(filterConnections(conns, "absent")).toEqual([]);
   });
+
+  it("searches a connection's folder", () => {
+    const filed: Connection = { ...conns[0], folder: "prod/eu-west" };
+    expect(connectionMatches(filed, ["eu-west"])).toBe(true);
+    expect(connectionMatches(filed, ["prod/eu"])).toBe(true);
+    expect(connectionMatches(conns[0], ["eu-west"])).toBe(false);
+  });
 });
