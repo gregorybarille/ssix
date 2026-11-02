@@ -26,6 +26,7 @@ import {
   connectToConnection,
   createDirectConnection,
   createPasswordCredential,
+  ensureConnectionRowsLayout,
   fill,
   navigateTo,
   openCredentialEditor,
@@ -41,18 +42,32 @@ import { AGENT_KEY_COMMENT, agentPublicKey } from "../helpers/ssh-agent.js";
 
 const WRONG_ANSWER = "ssix-14-wrong-answer";
 
+/** Close every tab, confirming for each one that holds a live shell. */
 async function closeAllTabs(): Promise<void> {
-  await browser.execute((selector: string) => {
-    document.querySelectorAll<HTMLElement>(selector).forEach((button) => button.click());
-  }, sel.anyTerminalTabClose);
-  await browser.waitUntil(async () => (await browser.$$(sel.anyTerminalTabClose).length) === 0, {
-    timeout: 10_000,
-    timeoutMsg: "Terminal tabs did not close",
-  });
+  const openTabs = () => browser.$$(sel.terminalTabCloseAny).length;
+  const confirmation = () => browser.$(sel.confirmClosePaneConfirm);
+  for (let before = await openTabs(); before > 0; before = await openTabs()) {
+    await browser.execute(
+      (selector: string) => document.querySelector<HTMLElement>(selector)?.click(),
+      sel.terminalTabCloseAny,
+    );
+    await browser.waitUntil(
+      async () => (await openTabs()) < before || (await confirmation().isExisting()),
+      { timeout: 10_000, timeoutMsg: "A terminal tab neither closed nor asked to" },
+    );
+    if (await confirmation().isExisting()) {
+      await clickDialogFooterButton(sel.confirmClosePaneConfirm);
+      await browser.waitUntil(async () => (await openTabs()) < before, {
+        timeout: 10_000,
+        timeoutMsg: "A terminal tab did not close after confirming",
+      });
+    }
+  }
 }
 
 async function openConnectionEditor(name: string): Promise<void> {
   await navigateTo("connections");
+  await ensureConnectionRowsLayout();
   await clickDialogFooterButton(`${sel.connectionRowByName(name)} ${sel.connectionRowEditButton}`);
   await (await browser.$(sel.connectionForm)).waitForExist({ timeout: 10_000 });
 }
@@ -150,7 +165,8 @@ describe("SSH agent", () => {
     await (await browser.$(sel.connectionForm)).waitForExist({ reverse: true, timeout: 10_000 });
 
     await connectToConnection("conn-14-agent");
-    await runInShell("server-a:~$", "ssh-add -L", AGENT_KEY_COMMENT);
+    // Only the comment: a whole key line would wrap across terminal rows.
+    await runInShell("server-a:~$", "ssh-add -L | cut -d' ' -f3", AGENT_KEY_COMMENT);
   });
 });
 
@@ -207,7 +223,7 @@ describe("Keyboard-interactive login", () => {
     await waitForAuthPrompt();
     await click(sel.authPromptCancel);
     await (await browser.$(sel.authPrompt)).waitForExist({ reverse: true, timeout: 10_000 });
-    expect(await browser.$$(sel.anyTerminalTabClose).length).toBe(0);
+    expect(await browser.$$(sel.terminalTabCloseAny).length).toBe(0);
     expect(await (await browser.$(sel.failedTerminal)).isExisting()).toBe(false);
 
     await connectToConnection("conn-14-e");

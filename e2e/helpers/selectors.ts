@@ -253,7 +253,6 @@ export const sel = {
   connectionFormAgentForwarding: '[data-testid="connection-form-agent-forwarding"]',
   // Scoped under a connection row (see connectionRowByName).
   connectionRowEditButton: '[data-testid^="edit-connection-"]',
-  anyTerminalTabClose: '[data-testid^="close-tab-"]',
   authPrompt: '[data-testid="auth-prompt"]',
   authPromptInput: (index: number) => `[data-testid="auth-prompt-input-${index}"]`,
   authPromptSubmit: '[data-testid="auth-prompt-submit"]',
