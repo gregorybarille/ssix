@@ -83,8 +83,7 @@ pub enum AuthMethod {
         private_key: String,
         passphrase: Option<String>,
     },
-    /// Keys held by the SSH agent. Not implemented yet (roadmap: auth):
-    /// `authenticate` refuses it with a clear message.
+    /// Keys held by the SSH agent, FIDO2 keys included (see `crate::agent`).
     Agent,
 }
 
@@ -125,6 +124,8 @@ pub struct ShellOptions {
     pub keepalive_interval: u16,
     /// Set by a reconnect attempt's owner once nobody wants the result.
     pub cancelled: Option<Arc<AtomicBool>>,
+    /// Let this shell's server use the local SSH agent (`ssh -A`).
+    pub agent_forwarding: bool,
 }
 
 /// Everything a worker needs to talk back to the app.
@@ -612,6 +613,36 @@ fn open_session_unless_cancelled(
     Ok(session)
 }
 
+/// The method names a server offers (`publickey,keyboard-interactive`). `None`
+/// when it could not be asked, which offers nothing but rules nothing out.
+fn list_auth_methods(session: &Session, username: &str, debug: &SshDebug) -> Option<String> {
+    match session.auth_methods(username) {
+        Ok(methods) => {
+            debug.at(1, || {
+                format!("Authentications that can continue: {}", methods)
+            });
+            // An empty list goes with a server that just accepted "none".
+            (!methods.is_empty()).then(|| methods.to_string())
+        }
+        Err(e) => {
+            debug.at(1, || {
+                format!("Could not list authentication methods: {}", e)
+            });
+            None
+        }
+    }
+}
+
+fn offers_method(methods: &str, method: &str) -> bool {
+    methods.split(',').any(|offered| offered.trim() == method)
+}
+
+/// Log in with the endpoint's credential; a server may then still ask for a
+/// second factor. Keyboard-interactive covers both a server that takes nothing
+/// else and that second step, as it does with `ssh`. A method the server does
+/// not offer is skipped, so a saved password never goes to a server that
+/// refuses passwords, and a saved password never answers a prompt: only the
+/// user does, in the pane (see `crate::auth_prompt`).
 pub(crate) fn authenticate(
     session: &Session,
     endpoint: &Endpoint,
@@ -620,55 +651,95 @@ pub(crate) fn authenticate(
     let username = &endpoint.username;
     // Listing the methods sends a "none" request, as `ssh -v` does. A
     // server that accepts it leaves nothing else to do.
-    if debug.enabled(1) {
-        match session.auth_methods(username) {
-            Ok(methods) => debug.at(1, || {
-                format!("Authentications that can continue: {}", methods)
-            }),
-            Err(e) => debug.at(1, || {
-                format!("Could not list authentication methods: {}", e)
-            }),
-        }
-        if session.authenticated() {
-            debug.at(1, || "Authentication succeeded (none).".to_string());
-            return Ok(());
-        }
-    }
-    let method = match &endpoint.auth {
-        AuthMethod::Password(_) => "password".to_string(),
-        AuthMethod::Key { path, .. } => format!("publickey ({})", path),
-        AuthMethod::KeyMemory { .. } => "publickey (stored key)".to_string(),
-        AuthMethod::Agent => "publickey (agent)".to_string(),
-    };
-    debug.at(1, || {
-        format!("Next authentication method: {} as {}", method, username)
-    });
-    let started = Instant::now();
-    match &endpoint.auth {
-        AuthMethod::Password(pw) => session
-            .userauth_password(username, pw)
-            .map_err(|e| format!("Password auth failed: {}", e))?,
-        AuthMethod::Key { path, passphrase } => session
-            .userauth_pubkey_file(username, None, Path::new(path), passphrase.as_deref())
-            .map_err(|e| format!("Key auth failed: {}", e))?,
-        AuthMethod::KeyMemory {
-            private_key,
-            passphrase,
-        } => authenticate_pubkey_memory(session, username, private_key, passphrase.as_deref())
-            .map_err(|e| format!("Key auth failed: {}", e))?,
-        AuthMethod::Agent => {
-            return Err("SSH agent authentication is not available yet".to_string());
-        }
+    let offered = list_auth_methods(session, username, debug);
+    if session.authenticated() {
+        debug.at(1, || "Authentication succeeded (none).".to_string());
+        return Ok(());
     }
 
-    if !session.authenticated() {
-        return Err("Authentication failed".to_string());
-    }
+    let (wire_name, method) = match &endpoint.auth {
+        AuthMethod::Password(_) => ("password", "password".to_string()),
+        AuthMethod::Key { path, .. } => ("publickey", format!("publickey ({})", path)),
+        AuthMethod::KeyMemory { .. } => ("publickey", "publickey (stored key)".to_string()),
+        AuthMethod::Agent => ("publickey", "publickey (agent)".to_string()),
+    };
+    let started = Instant::now();
+    let first_step = match offered.as_deref() {
+        Some(methods) if !offers_method(methods, wire_name) => Err(format!(
+            "The server does not accept {} authentication (it offers: {})",
+            wire_name, methods
+        )),
+        _ => {
+            debug.at(1, || {
+                format!("Next authentication method: {} as {}", method, username)
+            });
+            authenticate_with_credential(session, endpoint, debug)
+        }
+    };
+    let method = match first_step {
+        Ok(()) if session.authenticated() => method,
+        outcome => {
+            let error = outcome
+                .err()
+                .unwrap_or_else(|| "Authentication failed".to_string());
+            // Refused, or accepted as a first factor: libssh2 reports both as
+            // a failure. The server's remaining methods tell them apart.
+            let remaining = list_auth_methods(session, username, debug);
+            if session.authenticated() {
+                method
+            } else if !remaining
+                .as_deref()
+                .is_some_and(|methods| offers_method(methods, "keyboard-interactive"))
+            {
+                return Err(error);
+            } else if !crate::auth_prompt::has_pane() {
+                return Err(format!(
+                    "{}. The server asks for keyboard-interactive answers, which only a \
+                     terminal pane can collect: open this connection as a shell",
+                    error
+                ));
+            } else {
+                debug.at(1, || {
+                    format!(
+                        "Next authentication method: keyboard-interactive as {}",
+                        username
+                    )
+                });
+                crate::auth_prompt::authenticate(session, endpoint, debug)?;
+                if !session.authenticated() {
+                    return Err("Authentication failed".to_string());
+                }
+                "keyboard-interactive".to_string()
+            }
+        }
+    };
     debug.at(1, || format!("Authentication succeeded ({}).", method));
     debug.at(3, || {
         format!("Authentication took {} ms", started.elapsed().as_millis())
     });
     Ok(())
+}
+
+fn authenticate_with_credential(
+    session: &Session,
+    endpoint: &Endpoint,
+    debug: &SshDebug,
+) -> Result<(), String> {
+    let username = &endpoint.username;
+    match &endpoint.auth {
+        AuthMethod::Password(pw) => session
+            .userauth_password(username, pw)
+            .map_err(|e| format!("Password auth failed: {}", e)),
+        AuthMethod::Key { path, passphrase } => session
+            .userauth_pubkey_file(username, None, Path::new(path), passphrase.as_deref())
+            .map_err(|e| format!("Key auth failed: {}", e)),
+        AuthMethod::KeyMemory {
+            private_key,
+            passphrase,
+        } => authenticate_pubkey_memory(session, username, private_key, passphrase.as_deref())
+            .map_err(|e| format!("Key auth failed: {}", e)),
+        AuthMethod::Agent => crate::agent::authenticate(session, username, debug),
+    }
 }
 
 #[cfg(not(windows))]
@@ -749,6 +820,9 @@ fn start_shell(
     channel
         .request_pty("xterm-256color", None, Some((80, 24, 0, 0)))
         .map_err(|e| format!("PTY request failed: {}", e))?;
+    if opts.agent_forwarding {
+        crate::agent::request_forwarding(&session, &mut channel, &debug);
+    }
     debug.at(1, || "Requesting a shell.".to_string());
     channel
         .shell()
@@ -816,6 +890,7 @@ pub fn start_ssh_session(
     ctx: SessionContext,
     resilience: ShellResilience,
 ) -> Result<SessionHandle, String> {
+    let _prompts = crate::auth_prompt::PromptScope::enter(&ctx.output);
     let shell = open_shell(&target, &opts)?;
     let (handle, control) = control_channel()?;
     ctx.register(handle.clone())?;
@@ -1149,6 +1224,8 @@ fn run_io_loop(shell: OpenShell, io: &mut ShellIo) -> ShellEnd {
         mut channel,
         keepalive_interval,
     } = shell;
+    // Serves a forwarded agent for as long as this shell's connection lives.
+    let _agent_pump = crate::agent::ForwardPump::start(&session);
     let mut buf = vec![0u8; 32 * 1024];
     let mut pending: Vec<u8> = Vec::with_capacity(OUTPUT_COALESCE_MAX);
     let fds = [wake::fd_of(&session), io.control.wake.fd()];
@@ -1480,6 +1557,7 @@ pub fn start_jump_shell(
     ctx: SessionContext,
     resilience: ShellResilience,
 ) -> Result<SessionHandle, String> {
+    let _prompts = crate::auth_prompt::PromptScope::enter(&ctx.output);
     let shell = open_jump_shell(&gateway, &destination, &opts)?;
     let (handle, control) = control_channel()?;
     ctx.register(handle.clone())?;

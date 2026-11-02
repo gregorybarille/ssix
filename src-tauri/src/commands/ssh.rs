@@ -202,6 +202,7 @@ fn shell_options(conn: &Connection, settings: &AppSettings) -> ShellOptions {
             .keepalive_interval
             .unwrap_or(settings.keepalive_interval),
         cancelled: None,
+        agent_forwarding: conn.agent_forwarding,
     }
 }
 
