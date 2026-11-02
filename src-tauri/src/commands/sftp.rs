@@ -3,8 +3,8 @@
 //!
 //! - `browse`: listing and file operations, on one long-lived session per
 //!   open remote pane, owned by its own thread.
-//! - `transfer`: uploads and downloads, each on a session of its own so a
-//!   long copy never holds up browsing.
+//! - `transfer`: uploads and downloads, from a queue, on sessions of their own
+//!   so a long copy never holds up browsing.
 //! - `edit`: edit in place through a private temporary copy.
 //!
 //! Every session comes from `commands::ssh::connect_session`, so a jump host

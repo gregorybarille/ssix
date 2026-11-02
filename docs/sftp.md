@@ -37,9 +37,11 @@ The browsing session uses the connection's keepalive interval, or the app's
 default. If it is lost, the view connects again to the same folder; should the new
 session be lost too, it stops and shows the error with a **Retry** button.
 
-Each transfer and each edit opens its own session, so copying does not hold up
-browsing. At most three transfers run at once; the others wait, and can be
-cancelled while waiting.
+Transfers and edits use sessions of their own, so copying does not hold up browsing.
+At most three transfers run at once. The others wait in a queue, which takes no
+thread or connection however many files you select, and can be cancelled while
+waiting. Transfers queued for one connection share its logins; a transfer that fails
+or is cancelled gives up its session, and the next one logs in again.
 
 ## Transfers
 
@@ -122,7 +124,7 @@ view cannot browse.
 ## Known gaps
 
 - **Hosts that ask for a one-time code** cannot prompt from this view: the prompt
-  belongs to terminals, and each transfer opens a new session.
+  belongs to terminals, and transfers open sessions of their own.
 - **Windows** clients and servers are untested. The live tests run only against POSIX
   servers, and the Windows-only code paths are not compiled on other systems.
 - **A connection cut during an upload** can leave a hidden `.ssix-part-*` file on the

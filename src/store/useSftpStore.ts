@@ -156,6 +156,11 @@ let connectRequests = 0;
 let justReconnected = false;
 /** Numbers rows for transfers the backend refused, which have no id from it. */
 let refusedTransfers = 0;
+/** Transfers ending together share a listing, and one more if any ended during it. */
+const targetRefresh: Record<PaneSide, { running: boolean; again: boolean }> = {
+  local: { running: false, again: false },
+  remote: { running: false, again: false },
+};
 
 export const useSftpStore = create<SftpState>((set, get) => {
   /**
@@ -220,12 +225,26 @@ export const useSftpStore = create<SftpState>((set, get) => {
         : { transfers: [...state.transfers, { ...base, id, ...patch }] },
     );
 
+  const refreshAfterTransfer = async (side: PaneSide) => {
+    const state = targetRefresh[side];
+    if (state.running) {
+      state.again = true;
+      return;
+    }
+    state.running = true;
+    do {
+      state.again = false;
+      await get().refresh(side);
+    } while (state.again);
+    state.running = false;
+  };
+
   const refreshTargetOf = ({ input }: Transfer) => {
     const { connectionId, local, remote } = get();
     if (input.direction === "download") {
-      if (local.path === input.target_dir) void get().refresh("local");
+      if (local.path === input.target_dir) void refreshAfterTransfer("local");
     } else if (connectionId === input.connection_id && remote.path === input.target_dir) {
-      void get().refresh("remote");
+      void refreshAfterTransfer("remote");
     }
   };
 
@@ -487,17 +506,17 @@ export const useSftpStore = create<SftpState>((set, get) => {
       const direction: TransferDirection = side === "local" ? "upload" : "download";
       const target_dir = targetDir ?? (side === "local" ? remote.path : local.path);
       if (!target_dir) return;
-      await Promise.all(
-        entries.map(({ path }) =>
-          startTransfer({
-            connection_id: connectionId,
-            direction,
-            source: path,
-            target_dir,
-            overwrite: false,
-          }),
-        ),
-      );
+      // In order and one at a time: each start is a blocking call in the
+      // backend, and thousands at once would take a thread each.
+      for (const { path } of entries) {
+        await startTransfer({
+          connection_id: connectionId,
+          direction,
+          source: path,
+          target_dir,
+          overwrite: false,
+        });
+      }
     },
 
     uploadPaths: (paths, targetDir) =>

@@ -1,3 +1,4 @@
+import { memo } from "react";
 import { ArrowDown, ArrowUp, X } from "lucide-react";
 import { useShallow } from "zustand/react/shallow";
 import { Button } from "../ui/button";
@@ -35,7 +36,8 @@ function statusText(transfer: Transfer): string {
   }
 }
 
-function TransferRow({ transfer }: { transfer: Transfer }) {
+// Memoized: with thousands of rows, each event only changes one of them.
+const TransferRow = memo(function TransferRow({ transfer }: { transfer: Transfer }) {
   const { cancelTransfer, dismissTransfer } = useSftpStore(
     useShallow((s) => ({
       cancelTransfer: s.cancelTransfer,
@@ -107,7 +109,7 @@ function TransferRow({ transfer }: { transfer: Transfer }) {
       )}
     </li>
   );
-}
+});
 
 /** What is being copied, what was, and how each one ended. */
 export function TransferList() {

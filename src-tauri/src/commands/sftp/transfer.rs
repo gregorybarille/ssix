@@ -1,8 +1,11 @@
 //! Uploads and downloads for the Files view.
 //!
-//! `sftp_start_transfer` returns the transfer's id at once and works on a
-//! thread of its own, with a session of its own, so browsing stays free.
-//! Everything after that arrives as `TransferEvent`s on a `Channel`.
+//! `sftp_start_transfer` returns the transfer's id at once and adds it to a
+//! queue, which costs it no thread. At most `MAX_ACTIVE` workers take from the
+//! queue, each on a thread and a session of its own, so browsing stays free and
+//! a session never crosses threads. A worker keeps its session for the next
+//! transfer on the same connection, as long as the last one ended cleanly.
+//! Everything after the start arrives as `TransferEvent`s on a `Channel`.
 //!
 //! Files stream through a fixed buffer, and a transfer only ever writes to a
 //! temporary name next to its target, renamed into place once complete. So
@@ -20,35 +23,39 @@ use super::{
 };
 use crate::commands::blocking;
 use crate::commands::scripts::connect_unless_cancelled;
-use crate::commands::ssh::find_connection;
+use crate::commands::ssh::{find_connection, ConnectedSession};
 use crate::logs::log_local;
 use dashmap::DashMap;
 use serde::{Deserialize, Serialize};
 use ssh2::{FileStat, OpenFlags, OpenType, Sftp};
+use std::collections::VecDeque;
 use std::fs;
 use std::io::{ErrorKind, Read, Write};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-use std::sync::{Arc, LazyLock};
+#[cfg(test)]
+use std::sync::atomic::AtomicUsize;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, LazyLock, Mutex, MutexGuard};
 use std::thread;
 use std::time::{Duration, Instant};
 use tauri::ipc::Channel;
 #[cfg(test)]
 use ts_rs::TS;
 
-/// Transfers running at once; the rest wait their turn. Each holds an SSH
+/// Transfers running at once; the rest wait in `QUEUE`. Each holds an SSH
 /// connection, and servers limit those (`MaxStartups`).
-const MAX_ACTIVE: usize = 3;
+pub(super) const MAX_ACTIVE: usize = 3;
 const CHUNK_BYTES: usize = 128 * 1024;
 const PROGRESS_INTERVAL: Duration = Duration::from_millis(100);
-/// How often a transfer that is waiting or connecting checks for its cancel.
-const CANCEL_POLL: Duration = Duration::from_millis(100);
 /// How long one SFTP call may take during a transfer. A cancel waits for the
 /// call in progress, so a stalled link can hold it up this long.
 const CALL_TIMEOUT_MS: u32 = 60_000;
 
-static ACTIVE: AtomicUsize = AtomicUsize::new(0);
 static TRANSFERS: LazyLock<DashMap<String, Arc<AtomicBool>>> = LazyLock::new(DashMap::new);
+static QUEUE: LazyLock<Mutex<WorkQueue<Queued>>> = LazyLock::new(|| Mutex::new(WorkQueue::new()));
+/// Logins made for transfers, for the test that queued ones share them.
+#[cfg(test)]
+pub(super) static LOGINS: AtomicUsize = AtomicUsize::new(0);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -176,9 +183,14 @@ pub(super) fn start_transfer(input: TransferInput, emit: Emit) -> Result<String,
     let id = uuid::Uuid::new_v4().to_string();
     let cancel = Arc::new(AtomicBool::new(false));
     TRANSFERS.insert(id.clone(), cancel.clone());
-    {
-        let id = id.clone();
-        thread::spawn(move || run_transfer(id, input, cancel, emit));
+    let needs_worker = lock_queue().push(Queued {
+        id: id.clone(),
+        input,
+        cancel,
+        emit,
+    });
+    if needs_worker {
+        thread::spawn(run_worker);
     }
     Ok(id)
 }
@@ -190,35 +202,142 @@ pub fn sftp_cancel_transfer(id: String) {
     if let Some(flag) = TRANSFERS.get(&id) {
         flag.store(true, Ordering::SeqCst);
     }
+    // One still waiting has nothing to stop, so it ends here.
+    let waiting = lock_queue().take(|item| item.id == id);
+    if let Some(item) = waiting {
+        TRANSFERS.remove(&item.id);
+        (item.emit)(TransferEvent::Cancelled { id: item.id });
+    }
 }
 
-/// One of the `MAX_ACTIVE` places, given back when dropped.
-struct Slot;
-impl Drop for Slot {
+/// What is waiting for a worker, oldest first, and how many workers there are.
+/// A worker only ends when nothing is waiting, so all of them are busy.
+struct WorkQueue<T> {
+    waiting: VecDeque<T>,
+    workers: usize,
+}
+
+impl<T> WorkQueue<T> {
+    fn new() -> Self {
+        Self {
+            waiting: VecDeque::new(),
+            workers: 0,
+        }
+    }
+
+    /// Add an item. True means the caller must start a worker for it.
+    fn push(&mut self, item: T) -> bool {
+        self.waiting.push_back(item);
+        self.claim_worker()
+    }
+
+    fn claim_worker(&mut self) -> bool {
+        let room = self.workers < MAX_ACTIVE;
+        if room {
+            self.workers += 1;
+        }
+        room
+    }
+
+    /// The next item for a worker that is free. `None` ends that worker.
+    fn next(&mut self) -> Option<T> {
+        let item = self.waiting.pop_front();
+        if item.is_none() {
+            self.workers -= 1;
+        }
+        item
+    }
+
+    fn take(&mut self, matches: impl Fn(&T) -> bool) -> Option<T> {
+        let position = self.waiting.iter().position(matches)?;
+        self.waiting.remove(position)
+    }
+}
+
+struct Queued {
+    id: String,
+    input: TransferInput,
+    cancel: Arc<AtomicBool>,
+    emit: Emit,
+}
+
+fn lock_queue() -> MutexGuard<'static, WorkQueue<Queued>> {
+    QUEUE.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+/// A worker's place, given back if a transfer panics: the queue must go on.
+struct WorkerPlace {
+    ended: bool,
+}
+
+impl Drop for WorkerPlace {
     fn drop(&mut self) {
-        ACTIVE.fetch_sub(1, Ordering::SeqCst);
+        if self.ended {
+            return;
+        }
+        let replace = {
+            let mut queue = lock_queue();
+            queue.workers -= 1;
+            !queue.waiting.is_empty() && queue.claim_worker()
+        };
+        if replace {
+            thread::spawn(run_worker);
+        }
     }
 }
 
-/// Wait for a place, or `None` once cancelled.
-fn wait_for_slot(cancel: &AtomicBool) -> Option<Slot> {
+fn run_worker() {
+    let mut place = WorkerPlace { ended: false };
+    let mut session = None;
     loop {
-        if cancel.load(Ordering::SeqCst) {
-            return None;
-        }
-        let claimed = ACTIVE.fetch_update(Ordering::SeqCst, Ordering::SeqCst, |active| {
-            (active < MAX_ACTIVE).then_some(active + 1)
-        });
-        if claimed.is_ok() {
-            return Some(Slot);
-        }
-        thread::sleep(CANCEL_POLL);
+        let Some(item) = lock_queue().next() else {
+            place.ended = true;
+            return;
+        };
+        session = run_transfer(item, session);
     }
 }
 
-fn run_transfer(id: String, input: TransferInput, cancel: Arc<AtomicBool>, emit: Emit) {
+/// A session a worker holds between transfers. Only this worker's thread ever
+/// touches it: libssh2 sessions are not safe to share.
+struct TransferSession {
+    connection_id: String,
+    sftp: Sftp,
+    /// Keeps the session open for `sftp`; dropped after it.
+    _ssh: ConnectedSession,
+}
+
+fn open_session(input: &TransferInput, cancel: &AtomicBool) -> Result<TransferSession, Stop> {
+    let (data, conn) = find_connection(&input.connection_id)?;
+    let ssh = connect_unless_cancelled(data, conn, "Transferring files", &|| {
+        cancel.load(Ordering::SeqCst)
+    })?
+    .ok_or(Stop::Cancelled)?;
+    #[cfg(test)]
+    LOGINS.fetch_add(1, Ordering::SeqCst);
+    ssh.session.set_timeout(CALL_TIMEOUT_MS);
+    let sftp = ssh
+        .session
+        .sftp()
+        .map_err(|e| format!("The server does not offer SFTP: {}", e.message()))?;
+    Ok(TransferSession {
+        connection_id: input.connection_id.clone(),
+        sftp,
+        _ssh: ssh,
+    })
+}
+
+/// Run one transfer to its end and report how it went. Returns the session
+/// if the next transfer may use it.
+fn run_transfer(item: Queued, session: Option<TransferSession>) -> Option<TransferSession> {
+    let Queued {
+        id,
+        input,
+        cancel,
+        emit,
+    } = item;
     let mut run = Run::new(&id, &cancel, emit.clone());
-    let outcome = copy_with_a_session(&input, &mut run);
+    let (outcome, session) = copy_on_a_session(&input, &mut run, session);
     let (bytes, files, skipped) = (run.bytes_done, run.files_done, run.skipped);
     TRANSFERS.remove(&id);
     let event = match outcome {
@@ -254,25 +373,34 @@ fn run_transfer(id: String, input: TransferInput, cancel: Arc<AtomicBool>, emit:
         }
     };
     emit(event);
+    session
 }
 
-fn copy_with_a_session(input: &TransferInput, run: &mut Run<'_>) -> Result<String, Stop> {
-    let _slot = wait_for_slot(run.cancel).ok_or(Stop::Cancelled)?;
-    let (data, conn) = find_connection(&input.connection_id)?;
-    let cancel = run.cancel;
-    let ssh = connect_unless_cancelled(data, conn, "Transferring files", &|| {
-        cancel.load(Ordering::SeqCst)
-    })?
-    .ok_or(Stop::Cancelled)?;
-    ssh.session.set_timeout(CALL_TIMEOUT_MS);
-    let sftp = ssh
-        .session
-        .sftp()
-        .map_err(|e| format!("The server does not offer SFTP: {}", e.message()))?;
-    match input.direction {
-        TransferDirection::Upload => run_upload(&sftp, input, run),
-        TransferDirection::Download => run_download(&sftp, input, run),
+/// Copy on the session given, if it is for this connection, or on a new one.
+/// A copy that stopped partway may have left its session in any state, so only
+/// one that ended cleanly hands its session on.
+fn copy_on_a_session(
+    input: &TransferInput,
+    run: &mut Run<'_>,
+    previous: Option<TransferSession>,
+) -> (Result<String, Stop>, Option<TransferSession>) {
+    if let Err(stop) = run.check() {
+        return (Err(stop), previous);
     }
+    let reusable = previous.filter(|session| session.connection_id == input.connection_id);
+    let session = match reusable {
+        Some(session) => session,
+        None => match open_session(input, run.cancel) {
+            Ok(session) => session,
+            Err(stop) => return (Err(stop), None),
+        },
+    };
+    let outcome = match input.direction {
+        TransferDirection::Upload => run_upload(&session.sftp, input, run),
+        TransferDirection::Download => run_download(&session.sftp, input, run),
+    };
+    let clean = matches!(outcome, Ok(_) | Err(Stop::Conflict { .. }));
+    (outcome, clean.then_some(session))
 }
 
 /// A transfer's counters and the way to report them.
@@ -1473,51 +1601,115 @@ mod tests {
     }
 
     #[test]
-    fn at_most_max_active_transfers_run_and_a_waiter_can_cancel() {
-        // The counter is shared with any transfer another test has running,
-        // so this only asserts what holds either way.
-        let cancel = AtomicBool::new(false);
-        let held: Vec<Slot> = (0..MAX_ACTIVE)
-            .map(|_| wait_for_slot(&cancel).unwrap())
-            .collect();
-        assert!(ACTIVE.load(Ordering::SeqCst) >= MAX_ACTIVE);
+    fn thousands_waiting_start_no_more_workers_than_the_limit() {
+        let mut queue = WorkQueue::new();
+        let workers = (0..2_000).filter(|item| queue.push(*item)).count();
+        assert_eq!(workers, MAX_ACTIVE);
+        assert_eq!(queue.waiting.len(), 2_000);
 
-        let waiter = thread::spawn(|| {
-            let cancel = AtomicBool::new(true);
-            wait_for_slot(&cancel).is_none()
+        assert_eq!(queue.next(), Some(0), "oldest first");
+        assert_eq!(queue.take(|item| *item == 7), Some(7));
+        assert_eq!(queue.take(|item| *item == 7), None);
+        assert_eq!(queue.workers, MAX_ACTIVE, "a busy worker stays counted");
+
+        while queue.next().is_some() {}
+        assert_eq!(queue.workers, MAX_ACTIVE - 1, "one worker has ended");
+        for _ in 1..MAX_ACTIVE {
+            assert_eq!(queue.next(), None);
+        }
+        assert_eq!(queue.workers, 0);
+        assert!(queue.push(1), "with no workers left, a new one starts");
+    }
+
+    /// A saved connection to a server that accepts (into the backlog) but
+    /// never speaks SSH. The listener must outlive the test's transfers.
+    fn silent_connection() -> (std::net::TcpListener, String) {
+        let silent = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = silent.local_addr().unwrap().port();
+        let cred = crate::models::Credential::new(
+            "c".into(),
+            "u".into(),
+            crate::models::CredentialKind::Password {
+                password: "p".into(),
+            },
+        );
+        let conn = crate::models::Connection::new(
+            "silent".into(),
+            "127.0.0.1".into(),
+            port,
+            Some(cred.id.clone()),
+            crate::models::ConnectionKind::Direct,
+        );
+        let connection_id = conn.id.clone();
+        crate::storage::with_data_mut(|data| {
+            data.credentials.push(cred);
+            data.connections.push(conn);
+            Ok(())
+        })
+        .unwrap();
+        (silent, connection_id)
+    }
+
+    #[test]
+    fn waiting_transfers_hold_no_worker_and_cancel_at_once() {
+        crate::storage::test_support::with_isolated_data_dir(|| {
+            let (_silent, connection_id) = silent_connection();
+            let (emit, events) = collector();
+            let tmp = TempDir::new("waiting");
+            let count = MAX_ACTIVE + 40;
+            let ids: Vec<String> = (0..count)
+                .map(|i| {
+                    start_transfer(
+                        TransferInput {
+                            connection_id: connection_id.clone(),
+                            direction: TransferDirection::Download,
+                            source: format!("/some/file{}", i),
+                            target_dir: tmp.0.to_str().unwrap().into(),
+                            overwrite: false,
+                        },
+                        emit.clone(),
+                    )
+                    .unwrap()
+                })
+                .collect();
+            {
+                let queue = lock_queue();
+                assert!(queue.workers <= MAX_ACTIVE, "{} workers", queue.workers);
+                assert!(queue.waiting.len() >= 40, "{}", queue.waiting.len());
+            }
+
+            let newest = ids.last().unwrap().clone();
+            sftp_cancel_transfer(newest.clone());
+            assert_eq!(
+                events.lock().unwrap().last(),
+                Some(&TransferEvent::Cancelled { id: newest }),
+                "a waiting transfer has nothing to wait for"
+            );
+
+            for id in &ids {
+                sftp_cancel_transfer(id.clone());
+            }
+            let started = Instant::now();
+            while events.lock().unwrap().len() < count {
+                assert!(
+                    started.elapsed() < Duration::from_secs(5),
+                    "cancel took too long"
+                );
+                thread::sleep(Duration::from_millis(20));
+            }
+            let events = events.lock().unwrap();
+            assert_eq!(events.len(), count, "one end each: {:?}", events);
+            assert!(events
+                .iter()
+                .all(|event| matches!(event, TransferEvent::Cancelled { .. })));
+            assert!(lock_queue().waiting.is_empty());
         });
-        assert!(waiter.join().unwrap(), "a cancelled waiter must give up");
-        drop(held);
     }
 
     #[test]
     fn a_cancel_while_connecting_ends_at_once() {
         crate::storage::test_support::with_isolated_data_dir(|| {
-            // Accepts connections (into the backlog) but never speaks SSH.
-            let silent = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-            let port = silent.local_addr().unwrap().port();
-            let cred = crate::models::Credential::new(
-                "c".into(),
-                "u".into(),
-                crate::models::CredentialKind::Password {
-                    password: "p".into(),
-                },
-            );
-            let conn = crate::models::Connection::new(
-                "silent".into(),
-                "127.0.0.1".into(),
-                port,
-                Some(cred.id.clone()),
-                crate::models::ConnectionKind::Direct,
-            );
-            let connection_id = conn.id.clone();
-            crate::storage::with_data_mut(|data| {
-                data.credentials.push(cred);
-                data.connections.push(conn);
-                Ok(())
-            })
-            .unwrap();
-
+            let (_silent, connection_id) = silent_connection();
             let (emit, events) = collector();
             let tmp = TempDir::new("connecting");
             let started = Instant::now();

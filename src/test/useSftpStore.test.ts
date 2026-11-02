@@ -510,6 +510,58 @@ describe("transfers", () => {
     expect(started()).toEqual([]);
   });
 
+  it("starts many one at a time, in the order picked", async () => {
+    await ready();
+    const answers: ((id: string) => void)[] = [];
+    invokeMock.mockImplementation(async (command: string) => {
+      if (command === "sftp_start_transfer") {
+        return new Promise((resolve) => answers.push(resolve)) as never;
+      }
+      return undefined as never;
+    });
+    const starting = useSftpStore
+      .getState()
+      .transfer("local", [file("/work/a"), file("/work/b"), file("/work/c")]);
+    for (let i = 0; i < 3; i += 1) {
+      await flush();
+      expect(started()).toHaveLength(i + 1);
+      answers[i](`t${i}`);
+    }
+    await starting;
+    expect(started().map((s) => s.input.source)).toEqual(["/work/a", "/work/b", "/work/c"]);
+  });
+
+  it("transfers ending together share a listing, and one more after it", async () => {
+    await ready();
+    await useSftpStore
+      .getState()
+      .transfer("local", [file("/work/a"), file("/work/b"), file("/work/c")]);
+    const [first, second, third] = started().map((s) => s.onEvent);
+    const done = (id: string) =>
+      ({ type: "done", id, bytes: 1, files: 1, skipped: 0, target: "/home/me/x" }) as const;
+
+    let answerList: (value: unknown) => void = () => {};
+    invokeMock.mockReset();
+    invokeMock.mockImplementation(async (command: string) => {
+      if (command === "sftp_list") {
+        return new Promise((resolve) => (answerList = resolve)) as never;
+      }
+      return undefined as never;
+    });
+    event(first, done("t1"));
+    event(second, done("t2"));
+    event(third, done("t3"));
+    await flush();
+    expect(calls("sftp_list")).toHaveLength(1);
+
+    answerList(listing("/home/me"));
+    await flush();
+    expect(calls("sftp_list")).toHaveLength(2);
+    answerList(listing("/home/me"));
+    await flush();
+    expect(calls("sftp_list")).toHaveLength(2);
+  });
+
   it("follows progress and refreshes the target when it ends", async () => {
     await ready();
     await useSftpStore.getState().transfer("local", [file("/work/a")]);

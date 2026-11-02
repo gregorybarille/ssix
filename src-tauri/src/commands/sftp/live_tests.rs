@@ -16,6 +16,7 @@ use super::browse::{
 use super::edit::{edit_close, edit_open, edit_save, edit_status, open_sftp, EditSaveOutcome};
 use super::transfer::{
     sftp_cancel_transfer, start_transfer, Emit, TransferDirection, TransferEvent, TransferInput,
+    LOGINS, MAX_ACTIVE,
 };
 use super::FileKind;
 use crate::commands::ssh::{connect_session, find_connection};
@@ -490,9 +491,62 @@ fn live_sftp_carries_folder_modes_both_ways() {
     });
 }
 
-/// libssh2 sessions are not safe to share between threads. Here each
-/// transfer and the browsing pane have a session of their own, so running
-/// them all at once must not disturb any of them.
+/// Many transfers queued at once log in no more often than there are workers,
+/// including when some of them stop to ask about a file that exists.
+#[test]
+#[ignore]
+fn live_sftp_queued_transfers_share_their_logins() {
+    with_connection(|id| {
+        let dir = RemoteDir::new(id);
+        let local = TempDir::new("live-queue");
+        let count = 24;
+        let (sender, ends) = mpsc::channel();
+        let emit: Emit = Arc::new(move |event| {
+            if !matches!(event, TransferEvent::Progress { .. }) {
+                let _ = sender.send(event);
+            }
+        });
+        let start_all = |overwrite: bool| {
+            for i in 0..count {
+                let source = local.0.join(format!("f{}.txt", i));
+                fs::write(&source, format!("file {}", i)).unwrap();
+                let input = TransferInput {
+                    connection_id: id.to_string(),
+                    direction: TransferDirection::Upload,
+                    source: source.to_str().unwrap().to_string(),
+                    target_dir: dir.path.clone(),
+                    overwrite,
+                };
+                start_transfer(input, emit.clone()).unwrap();
+            }
+        };
+        let wait = Duration::from_secs(60);
+
+        let logins = LOGINS.load(Ordering::SeqCst);
+        start_all(false);
+        for _ in 0..count {
+            let end = ends.recv_timeout(wait).unwrap();
+            assert!(matches!(end, TransferEvent::Done { .. }), "{:?}", end);
+        }
+        let used = LOGINS.load(Ordering::SeqCst) - logins;
+        assert!(used <= MAX_ACTIVE, "{} logins for {} files", used, count);
+        assert_eq!(remote_names(id, &dir.path).len(), count);
+        assert_eq!(sh(id, &format!("cat {}", dir.child("f7.txt"))), "file 7");
+
+        let logins = LOGINS.load(Ordering::SeqCst);
+        start_all(false);
+        for _ in 0..count {
+            let end = ends.recv_timeout(wait).unwrap();
+            assert!(matches!(end, TransferEvent::Conflict { .. }), "{:?}", end);
+        }
+        let used = LOGINS.load(Ordering::SeqCst) - logins;
+        assert!(used <= MAX_ACTIVE, "{} logins for {} files", used, count);
+    });
+}
+
+/// libssh2 sessions are not safe to share between threads. Here each worker
+/// and the browsing pane have a session of their own, so running them all at
+/// once must not disturb any of them.
 #[test]
 #[ignore]
 fn live_sftp_transfers_and_browsing_at_once_keep_every_byte() {
