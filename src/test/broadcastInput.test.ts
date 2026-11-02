@@ -7,12 +7,29 @@ import {
 } from "@/components/terminal/broadcastInput";
 import type { TerminalExtensionContext } from "@/components/terminal/extensions";
 import type { TerminalSession, TerminalTab } from "@/components/TerminalTabs";
+import type { AuthEvent } from "@/lib/authPrompt";
 import { invoke } from "@/lib/tauri";
-import { registerTerminal, unregisterTerminal } from "@/lib/terminalRegistry";
+import { deliverChannelMessage, type OutputSink } from "@/lib/terminalOutput";
+import { registerTerminal, unregisterTerminal, writeToSession } from "@/lib/terminalRegistry";
+import { useAuthPromptStore } from "@/store/useAuthPromptStore";
 import { useTerminalsStore } from "@/store/useTerminalsStore";
 import type { Connection } from "@/types";
 
 vi.mock("@/lib/tauri", () => ({ invoke: vi.fn(async () => undefined) }));
+
+/** The channel each `ssh_connect` gets, with what the store does with a login's events. */
+const channels: { sink: OutputSink; onAuthEvent: (event: AuthEvent) => void }[] = [];
+vi.mock("@/lib/terminalOutput", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/terminalOutput")>();
+  return {
+    ...actual,
+    createOutputChannel: vi.fn(async (onAuthEvent: (event: AuthEvent) => void) => {
+      const sink = new actual.OutputSink();
+      channels.push({ sink, onAuthEvent });
+      return { channel: {}, sink };
+    }),
+  };
+});
 
 const invokeMock = vi.mocked(invoke);
 
@@ -56,6 +73,7 @@ const writes = () =>
 beforeEach(() => {
   invokeMock.mockReset();
   invokeMock.mockResolvedValue(undefined);
+  useAuthPromptStore.setState({ prompts: {} });
   registered.splice(0).forEach(unregisterTerminal);
   useTerminalsStore.setState({ tabs: [], activeTabId: null });
 });
@@ -158,14 +176,6 @@ describe("broadcastInput", () => {
     expect(writes()).toEqual([]);
   });
 
-  it("sends nothing to a pane with no terminal yet, as one answering a login prompt", () => {
-    useTerminalsStore.setState({ tabs: [tabWith([live("a"), live("placeholder")])] });
-    registerTerminal("a", fakeTerm());
-    registered.push("a");
-    type("a", "x");
-    expect(writes()).toEqual([]);
-  });
-
   it("does not mirror mouse reports, focus changes or query replies", () => {
     setup([tabWith([live("a"), live("b")])]);
     for (const data of ["\x1b[<0;10;5M", "\x1b[I", "\x1b[O", "\x1b[24;80R"]) {
@@ -188,6 +198,95 @@ describe("broadcastInput", () => {
     useTerminalsStore.setState({ tabs: [tabWith([live("a"), live("b")])] });
     type("a", "y");
     expect(writes()).toEqual([{ sessionId: "b", data: "y" }]);
+  });
+});
+
+describe("a pane showing a login prompt", () => {
+  const conn: Connection = { id: "c1", name: "web", host: "h", port: 22, type: "direct" };
+  const store = () => useTerminalsStore.getState();
+  const prompt: AuthEvent = {
+    kind: "auth_prompt",
+    prompt_id: "p1",
+    host: "h:22",
+    username: "me",
+    instructions: "",
+    prompts: [{ text: "Code: ", echo: false }],
+  };
+  const closed: AuthEvent = { kind: "auth_prompt_closed", prompt_id: "p1" };
+  const secondPane = () => store().tabs[0].panes[1];
+
+  const withTerminal = (sessionId: string) => {
+    registerTerminal(sessionId, fakeTerm());
+    registered.push(sessionId);
+  };
+
+  /** Split a live pane through the store, so the second pane's events take the real route. */
+  async function split(sshConnect: () => Promise<unknown>) {
+    channels.length = 0;
+    invokeMock.mockImplementation(async (command: string) =>
+      command === "ssh_connect" ? sshConnect() : undefined,
+    );
+    useTerminalsStore.setState({ tabs: [tabWith([live("a")], false)], activeTabId: "t1" });
+    withTerminal("a");
+    const connected = store().connect(conn, { mode: "split_right" });
+    await vi.waitFor(() => expect(channels).toHaveLength(1));
+    store().toggleBroadcast("t1");
+    return { connected, ...channels[0] };
+  }
+
+  async function splitWithShell() {
+    const opened = await split(async () => "b");
+    await opened.connected;
+    withTerminal("b");
+    return opened;
+  }
+
+  it("gets nothing while logging in for the first time, when it has no terminal yet", async () => {
+    let finish = (_sessionId: string) => {};
+    const opened = await split(() => new Promise((resolve) => (finish = resolve)));
+    opened.onAuthEvent(prompt);
+    expect(useAuthPromptStore.getState().prompts[secondPane().sessionId]).toBeDefined();
+
+    expect(isLiveShell(secondPane())).toBe(false);
+    type("a", "x");
+    expect(writes()).toEqual([]);
+    finish("b");
+    await opened.connected;
+  });
+
+  it("gets nothing through a reconnect, and what is typed from then on once it is back", async () => {
+    const { sink, onAuthEvent } = await splitWithShell();
+    deliverChannelMessage(sink, {
+      kind: "reconnecting",
+      attempt: 1,
+      max_attempts: 5,
+      delay_ms: 0,
+      message: "gone",
+    });
+    onAuthEvent(prompt);
+
+    type("a", "password");
+    expect(writeToSession("b", "uptime\r")).toBe(false);
+    expect(writes()).toEqual([]);
+
+    onAuthEvent(closed);
+    deliverChannelMessage(sink, { kind: "reconnected" });
+    type("a", "after");
+    expect(writes()).toEqual([{ sessionId: "b", data: "after" }]);
+  });
+
+  it("counts as no live shell for as long as the prompt shows, whatever else the pane says", async () => {
+    const { onAuthEvent } = await splitWithShell();
+    expect(isLiveShell(secondPane())).toBe(true);
+
+    onAuthEvent(prompt);
+    expect(secondPane().reconnect).toBeUndefined();
+    expect(isLiveShell(secondPane())).toBe(false);
+    type("a", "x");
+    expect(writes()).toEqual([]);
+
+    onAuthEvent(closed);
+    expect(isLiveShell(secondPane())).toBe(true);
   });
 });
 

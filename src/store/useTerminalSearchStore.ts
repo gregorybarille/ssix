@@ -2,7 +2,6 @@ import { create } from "zustand";
 import { isPanelOpen } from "@/lib/focus";
 import { activeSessionId } from "@/lib/terminalRegistry";
 import { clearTerminalSearch, focusSearchablePane } from "@/lib/terminalSearch";
-import { useViewStore } from "./useViewStore";
 
 /**
  * The terminal find bar (Mod+F). One pane at a time has it open, and only a
@@ -15,8 +14,8 @@ interface TerminalSearchState {
   focusRequest: number;
   /**
    * Open the find bar on the visible pane that last had focus. Does nothing
-   * outside the Terminals view, while a panel holds the keyboard, or when the
-   * active tab has no live terminal.
+   * while a panel holds the keyboard, or when there is no such pane: see
+   * `activeSessionId`.
    */
   open: () => void;
   /** Close the bar and clear its highlights. `refocus` returns the keyboard to the terminal. */
@@ -28,7 +27,7 @@ export const useTerminalSearchStore = create<TerminalSearchState>((set, get) => 
   focusRequest: 0,
 
   open: () => {
-    if (useViewStore.getState().view !== "terminals" || isPanelOpen()) return;
+    if (isPanelOpen()) return;
     const target = activeSessionId();
     if (!target) return;
     const { sessionId: current, focusRequest } = get();

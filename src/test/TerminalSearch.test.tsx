@@ -53,6 +53,13 @@ const search = () => useTerminalSearchStore.getState();
 const sessions = ["s1", "s2", "elsewhere"];
 let panes: Record<string, ReturnType<typeof fakePane>>;
 
+/** Forget the pane that last had focus, which the registry keeps past a terminal going. */
+function forgetLastFocus(pane: ReturnType<typeof fakePane>) {
+  document.body.appendChild(pane.term.textarea);
+  pane.term.textarea.focus();
+  pane.term.textarea.remove();
+}
+
 function renderOverlay(sessionId = "s1", isVisible = true) {
   return render(<TerminalPaneOverlays sessionId={sessionId} isVisible={isVisible} statusShown={false} />);
 }
@@ -66,6 +73,7 @@ beforeEach(() => {
   });
   document.body.innerHTML = "";
   panes = Object.fromEntries(sessions.map((id) => [id, fakePane(id)]));
+  forgetLastFocus(panes.elsewhere);
   useViewStore.setState({ view: "terminals" });
   useTerminalsStore.setState({
     tabs: [

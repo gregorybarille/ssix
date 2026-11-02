@@ -49,7 +49,7 @@ export const NO_TERMINAL_MESSAGE =
   "There is no live terminal to paste into. Connect to a host, or go back to Terminals and pick a tab that is connected.";
 
 export const SEVERAL_LINES_MESSAGE =
-  "Nothing was pasted: this snippet has several lines, and the program in this terminal has not asked for bracketed paste, so each line would run as soon as it arrived. Put the command on one line (a && b), or use a shell with bracketed paste (bash 5.1 or later, zsh, fish). Just back from another view? Close this palette, click the terminal, press Enter at an empty prompt, then try again.";
+  "Nothing was pasted: this snippet has several lines, and the program in this terminal has not asked for bracketed paste, so each line would run as soon as it arrived. Put the command on one line (a && b), or use a shell with bracketed paste (bash 5.1 or later, zsh, fish). Just split this tab? Close this palette, click the terminal, press Enter at an empty prompt, then try again.";
 
 export const TAB_MESSAGE =
   "Nothing was pasted: this snippet has a tab, and the program in this terminal has not asked for bracketed paste, so the shell would take the tab as a request to complete, which can change the text or swallow what follows. Replace the tab with spaces, or use a shell with bracketed paste (bash 5.1 or later, zsh, fish).";

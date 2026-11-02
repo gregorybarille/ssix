@@ -1,16 +1,17 @@
 import type { TerminalSession } from "@/components/TerminalTabs";
 import { writeToSession } from "@/lib/terminalRegistry";
+import { useAuthPromptStore } from "@/store/useAuthPromptStore";
 import { useTerminalsStore } from "@/store/useTerminalsStore";
 import type { TerminalExtension } from "./extensions";
 
 /**
  * Whether a pane is showing a live shell, the only thing that may receive
  * broadcast input. A pane that is still connecting, lost its connection,
- * failed, or whose shell ended does not. Neither does a pane answering a login
- * prompt (roadmap: auth): it is still connecting, so `retrying` holds, and it
- * has no terminal yet either, so `writeToSession` refuses it.
+ * failed, or whose shell ended does not. Neither does a pane showing a login
+ * prompt: what is typed in another pane is not its answer.
  */
 export function isLiveShell(pane: TerminalSession): boolean {
+  if (useAuthPromptStore.getState().prompts[pane.sessionId]) return false;
   return !pane.error && !pane.retrying && !pane.reconnect && !pane.ended;
 }
 

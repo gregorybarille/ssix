@@ -10,7 +10,9 @@ import {
   unregisterTerminal,
   writeToSession,
 } from "@/lib/terminalRegistry";
+import { useAuthPromptStore } from "@/store/useAuthPromptStore";
 import { useTerminalsStore } from "@/store/useTerminalsStore";
+import { useViewStore } from "@/store/useViewStore";
 
 const { invoke } = vi.hoisted(() => ({ invoke: vi.fn() }));
 vi.mock("@/lib/tauri", () => ({ invoke }));
@@ -31,12 +33,23 @@ function tab(id: string, ...sessionIds: string[]): TerminalTab {
   };
 }
 
+const loginPrompt = {
+  kind: "auth_prompt" as const,
+  prompt_id: "p1",
+  host: "h:22",
+  username: "me",
+  instructions: "",
+  prompts: [{ text: "Code: ", echo: false }],
+};
+
 describe("terminalRegistry", () => {
   const sessions = ["s1", "s2", "s3"];
 
   beforeEach(() => {
     invoke.mockReset();
     invoke.mockResolvedValue(undefined);
+    useViewStore.setState({ view: "terminals" });
+    useAuthPromptStore.setState({ prompts: {} });
   });
 
   afterEach(() => {
@@ -65,6 +78,17 @@ describe("terminalRegistry", () => {
       expect(invoke).not.toHaveBeenCalled();
     });
 
+    it("refuses a session behind a login prompt, until the prompt closes", () => {
+      liveTerminal("s1");
+      const { receive } = useAuthPromptStore.getState();
+      receive("s1", loginPrompt);
+      expect(writeToSession("s1", "uptime\r")).toBe(false);
+      expect(invoke).not.toHaveBeenCalled();
+
+      receive("s1", { kind: "auth_prompt_closed", prompt_id: loginPrompt.prompt_id });
+      expect(writeToSession("s1", "uptime\r")).toBe(true);
+    });
+
     it("logs a write the backend rejects", async () => {
       const logged = vi.spyOn(console, "error").mockImplementation(() => {});
       invoke.mockRejectedValue("session not found");
@@ -76,6 +100,14 @@ describe("terminalRegistry", () => {
   });
 
   describe("activeSessionId", () => {
+    it("is null on another view, where a terminal stays mounted but off screen", () => {
+      liveTerminal("s1");
+      useTerminalsStore.setState({ tabs: [tab("t1", "s1")], activeTabId: "t1" });
+      expect(activeSessionId()).toBe("s1");
+      useViewStore.setState({ view: "connections" });
+      expect(activeSessionId()).toBeNull();
+    });
+
     it("is null with no tab open", () => {
       expect(activeSessionId()).toBeNull();
     });
@@ -108,13 +140,13 @@ describe("terminalRegistry", () => {
       expect(activeSessionId()).toBe("s2");
     });
 
-    it("remembers that pane while the terminals are unmounted", () => {
+    it("remembers that pane while its terminal is replaced", () => {
       liveTerminal("s1");
       const second = liveTerminal("s2");
       useTerminalsStore.setState({ tabs: [tab("t1", "s1", "s2")], activeTabId: "t1" });
       second.focus();
 
-      // Leaving the Terminals view unmounts them all; coming back mounts them again.
+      // A pane can get a new terminal under the same session id.
       sessions.forEach(unregisterTerminal);
       expect(activeSessionId()).toBeNull();
       liveTerminal("s1");
@@ -148,6 +180,21 @@ describe("terminalRegistry", () => {
       second.focus();
       unregisterTerminal("s2");
       expect(activeSessionId()).toBe("s1");
+    });
+
+    it("skips a pane behind a login prompt, also the one that last had focus", () => {
+      liveTerminal("s1");
+      const second = liveTerminal("s2");
+      useTerminalsStore.setState({ tabs: [tab("t1", "s1", "s2")], activeTabId: "t1" });
+      second.focus();
+      const { receive } = useAuthPromptStore.getState();
+      receive("s2", loginPrompt);
+      expect(activeSessionId()).toBe("s1");
+      receive("s1", { ...loginPrompt, prompt_id: "p2" });
+      expect(activeSessionId()).toBeNull();
+
+      receive("s2", { kind: "auth_prompt_closed", prompt_id: loginPrompt.prompt_id });
+      expect(activeSessionId()).toBe("s2");
     });
   });
 

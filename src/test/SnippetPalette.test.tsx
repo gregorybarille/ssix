@@ -5,6 +5,7 @@ import { SnippetPalette } from "@/components/SnippetPalette";
 import { invoke } from "@/lib/tauri";
 import { NO_TERMINAL_MESSAGE, SEVERAL_LINES_MESSAGE, TAB_MESSAGE } from "@/lib/snippets";
 import { registerTerminal, unregisterTerminal } from "@/lib/terminalRegistry";
+import { useAuthPromptStore } from "@/store/useAuthPromptStore";
 import { useSnippetsStore } from "@/store/useSnippetsStore";
 import { useTerminalsStore } from "@/store/useTerminalsStore";
 import { useViewStore } from "@/store/useViewStore";
@@ -75,6 +76,7 @@ const paletteOpen = () => useSnippetsStore.getState().paletteOpen;
 describe("SnippetPalette", () => {
   beforeEach(() => {
     mockInvoke.mockReset();
+    useViewStore.setState({ view: "terminals", leaveGuard: null });
     useSnippetsStore.setState({ snippets: [], error: null, isLoading: false, paletteOpen: false });
   });
 
@@ -126,13 +128,32 @@ describe("SnippetPalette", () => {
       expect(screen.queryByTestId("snippet-palette-error")).not.toBeInTheDocument();
     });
 
-    it("notices the terminal going away with the view it lives on", async () => {
-      useViewStore.setState({ view: "terminals", leaveGuard: null });
+    it("has no target while its pane shows a login prompt", async () => {
       liveTerminal("s1");
       activate("s1");
       await openPalette();
       expect(screen.queryByTestId("snippet-palette-error")).not.toBeInTheDocument();
-      unregisterTerminal("s1");
+
+      const prompt = {
+        prompt_id: "p1",
+        host: "h:22",
+        username: "me",
+        instructions: "",
+        prompts: [{ text: "Code: ", echo: false }],
+      };
+      const { receive } = useAuthPromptStore.getState();
+      act(() => receive("s1", { kind: "auth_prompt", ...prompt }));
+      expect(screen.getByTestId("snippet-palette-error")).toHaveTextContent(NO_TERMINAL_MESSAGE);
+
+      act(() => receive("s1", { kind: "auth_prompt_closed", prompt_id: "p1" }));
+      expect(screen.queryByTestId("snippet-palette-error")).not.toBeInTheDocument();
+    });
+
+    it("has no target once the user leaves for another view, though the terminal stays mounted", async () => {
+      liveTerminal("s1");
+      activate("s1");
+      await openPalette();
+      expect(screen.queryByTestId("snippet-palette-error")).not.toBeInTheDocument();
       act(() => useViewStore.getState().setView("connections"));
       expect(screen.getByTestId("snippet-palette-error")).toHaveTextContent(NO_TERMINAL_MESSAGE);
       expect(screen.getByTestId("snippet-palette-target")).toHaveTextContent(

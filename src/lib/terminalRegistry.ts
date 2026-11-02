@@ -1,5 +1,7 @@
 import type { Terminal as XTerm } from "@xterm/xterm";
+import { useAuthPromptStore } from "@/store/useAuthPromptStore";
 import { useTerminalsStore } from "@/store/useTerminalsStore";
+import { useViewStore } from "@/store/useViewStore";
 import { errorMessage } from "./errors";
 import { log as appLog } from "./log";
 import { invoke } from "./tauri";
@@ -16,8 +18,8 @@ const terminals = new Map<string, XTerm>();
 
 /**
  * The session that last had keyboard focus. It survives focus moving to a
- * palette or panel, and its terminal unmounting with the Terminals view:
- * `activeSessionId` trusts it only while that session has a live terminal.
+ * palette or panel, and its terminal being replaced: `activeSessionId` trusts
+ * it only while that session can take input.
  */
 let lastFocusedSessionId: string | null = null;
 
@@ -37,6 +39,15 @@ export function unregisterTerminal(sessionId: string): void {
   if (heldEnterSessionId === sessionId) heldEnterSessionId = null;
 }
 
+/**
+ * Whether text may go to a session: it has a terminal, and no login prompt over
+ * it. A dropped shell logging in again keeps its terminal behind the prompt, and
+ * what the user is shown there is a question, not a shell.
+ */
+function takesInput(sessionId: string): boolean {
+  return terminals.has(sessionId) && !useAuthPromptStore.getState().prompts[sessionId];
+}
+
 /** Give the keyboard to a session's terminal, when it can take it. */
 export function focusSession(sessionId: string): void {
   terminals.get(sessionId)?.focus();
@@ -47,11 +58,11 @@ export function focusSession(sessionId: string): void {
  * like keyboard input, and the remote shell echoes it. Terminal extensions'
  * `onData` hooks do not run, so an extension can call this without looping.
  *
- * Returns whether the session has a live terminal to send to. A write that
+ * Returns whether the session can take text (see `takesInput`). A write that
  * fails after that is logged; the session's `closed` notification follows it.
  */
 export function writeToSession(sessionId: string, text: string): boolean {
-  if (!terminals.has(sessionId)) return false;
+  if (!takesInput(sessionId)) return false;
   invoke("ssh_write", { sessionId, data: text }).catch((error) => {
     appLog.error("terminal", `Could not write to the session: ${errorMessage(error)}`);
   });
@@ -61,8 +72,9 @@ export function writeToSession(sessionId: string, text: string): boolean {
 /**
  * Whether the program in this session asked for bracketed paste (DECSET 2004),
  * so line breaks inside a paste reach it as text instead of pressing Enter.
- * A terminal that just remounted knows only what it has seen since: bash and
- * zsh ask again at their next prompt.
+ * A terminal knows only what it has seen, which starts over when its pane opens
+ * again (a split tab closing to one pane, say): bash and zsh ask again at their
+ * next prompt.
  */
 export function acceptsBracketedPaste(sessionId: string): boolean {
   return terminals.get(sessionId)?.modes.bracketedPasteMode ?? false;
@@ -92,14 +104,16 @@ export function isHeldEnter(sessionId: string, e: KeyboardEvent): boolean {
 }
 
 /**
- * The live session of the active terminal tab: the pane that last had focus,
- * otherwise the tab's first live pane. `null` when the active tab has none
- * (no tab open, or only failed panes).
+ * The session of the terminal the user is looking at: the active tab's pane that
+ * last had focus, otherwise its first pane that can take input. `null` when there
+ * is none: on another view, where terminals stay mounted but none is on screen,
+ * and with no tab open or only failed panes or panes behind a login prompt.
  */
 export function activeSessionId(): string | null {
+  if (useViewStore.getState().view !== "terminals") return null;
   const { tabs, activeTabId } = useTerminalsStore.getState();
   const panes = tabs.find((tab) => tab.id === activeTabId)?.panes ?? [];
-  const live = panes.map((pane) => pane.sessionId).filter((id) => terminals.has(id));
+  const live = panes.map((pane) => pane.sessionId).filter(takesInput);
   return live.find((id) => id === lastFocusedSessionId) ?? live[0] ?? null;
 }
 

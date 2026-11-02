@@ -21,7 +21,8 @@ terminal ignores its repeats until you let go.
 | Situation | What happens |
 |---|---|
 | No terminal is open, or every pane of the active tab failed | The palette says there is no live terminal. Nothing is sent and it stays open. |
-| Terminals are open but you are on another view | The palette goes to the Terminals view first, because a terminal exists only there. An editor with unsaved changes asks before leaving, as it does for any change of view, and the palette opens only if you leave. |
+| Terminals are open but you are on another view | The palette goes to the Terminals view first, so you see where the text lands. An editor with unsaved changes asks before leaving, as it does for any change of view, and the palette opens only if you leave. |
+| The active pane shows a login prompt | The palette targets another pane of the tab if it has a live one, and otherwise says there is no live terminal. A prompt takes questions, not text. |
 
 ## Line breaks and control characters
 
@@ -46,10 +47,11 @@ Sending a line break to a shell is the same as pressing Enter, so:
   bracketed paste early and run the lines after it, and `Ctrl+C` or `Ctrl+D`
   would act on the shell.
 
-SSIX only knows what the terminal has seen. Leaving the Terminals view unmounts
-its terminals, so one you come back to has forgotten that the shell asked for
-bracketed paste, and several lines are refused until the next prompt. A terminal
-takes no keys while a panel is open, so close the palette, click the terminal,
+SSIX only knows what the terminal has seen. A terminal keeps what it knows while
+another tab or view is on screen, but splitting a tab, or closing a split back to
+one pane, gives the pane that stays a new terminal. That one has forgotten that
+the shell asked for bracketed paste, and several lines are refused until the next
+prompt. A terminal takes no keys while a panel is open, so close the palette, click the terminal,
 press Enter at an empty prompt and try again. The reverse also holds: a program
 that asked for it and then crashed leaves it on until something turns it off.
 

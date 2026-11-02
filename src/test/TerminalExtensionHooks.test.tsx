@@ -11,6 +11,7 @@ import {
 import { activeSessionId, writeToSession } from "@/lib/terminalRegistry";
 import { useSnippetsStore } from "@/store/useSnippetsStore";
 import { useTerminalsStore } from "@/store/useTerminalsStore";
+import { useViewStore } from "@/store/useViewStore";
 import type { AppSettings, Connection, Snippet } from "@/types";
 import { renderInPanel } from "./panel";
 
@@ -106,6 +107,7 @@ describe("Terminal extension hooks", () => {
 
   beforeEach(() => {
     mocks.events.length = 0;
+    useViewStore.setState({ view: "terminals" });
     mocks.invoke.mockReset();
     mocks.invoke.mockResolvedValue(undefined);
     mocks.attachOutput.mockReset();

@@ -18,12 +18,17 @@ come back.
   screen is not fitted and sends the server no resize. It refits when shown.
 - It holds no keyboard. Keys typed in the view that replaced it stay there, and
   shortcuts do not reach it.
-- When it comes back it takes the keyboard again, unless a side panel has it. In
-  a split tab that is the pane that last had it.
+- When it comes back it takes the keyboard again, unless a side panel has it or a
+  login prompt in the other pane just took it. In a split tab that is the pane
+  that last had it.
 - Dropped connections keep reconnecting, and the status is there on return. See
   [Session resilience](session-resilience.md).
 - A shell that ends off screen does not interrupt you. The terminal asks about
   closing it when it is next shown. This also goes for a tab in the background.
+
+One thing does start over: splitting a tab, or closing a split back to one pane,
+gives the pane that stays a new terminal with an empty scrollback. Its shell goes
+on running.
 
 ## Find
 

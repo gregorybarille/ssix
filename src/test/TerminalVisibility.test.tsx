@@ -2,6 +2,7 @@ import { act, render } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Terminal } from "@/components/Terminal";
 import { useTerminalsStore } from "@/store/useTerminalsStore";
+import { useViewStore } from "@/store/useViewStore";
 import type { AppSettings, Connection } from "@/types";
 
 /**
@@ -135,6 +136,7 @@ describe("a terminal off screen", () => {
     mocks.invoke.mockReset();
     mocks.invoke.mockResolvedValue(undefined);
     onDisconnect.mockClear();
+    useViewStore.setState({ view: "terminals" });
     useTerminalsStore.setState({
       tabs: [{ id: "t1", mode: "single", panes: [{ sessionId: "s1", connectionName: "prod" }] }],
       activeTabId: "t1",

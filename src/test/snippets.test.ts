@@ -18,6 +18,7 @@ import {
   unregisterTerminal,
 } from "@/lib/terminalRegistry";
 import { useTerminalsStore } from "@/store/useTerminalsStore";
+import { useViewStore } from "@/store/useViewStore";
 
 vi.mock("@/lib/tauri", () => ({ invoke: vi.fn() }));
 
@@ -266,6 +267,7 @@ describe("planPaste and the registry", () => {
   }
 
   function activate(...sessionIds: string[]) {
+    useViewStore.setState({ view: "terminals" });
     useTerminalsStore.setState({
       tabs: [
         {
@@ -281,6 +283,13 @@ describe("planPaste and the registry", () => {
   afterEach(() => {
     sessions.forEach(unregisterTerminal);
     useTerminalsStore.setState({ tabs: [], activeTabId: null });
+  });
+
+  it("has nowhere to paste while the terminal is on another view", () => {
+    live("s1");
+    activate("s1");
+    useViewStore.setState({ view: "connections" });
+    expect(planPaste("uptime")).toEqual({ error: NO_TERMINAL_MESSAGE });
   });
 
   it("explains that there is no terminal", () => {
