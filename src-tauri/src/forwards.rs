@@ -52,6 +52,8 @@ mod socks5;
 const LIBSSH2_ERROR_CHANNEL_FAILURE: i32 = -21;
 /// libssh2's code for "no reply within the read timeout".
 const LIBSSH2_ERROR_TIMEOUT: i32 = -9;
+/// libssh2's code for a `REQUEST_FAILURE`, the server's own refusal of a request.
+const LIBSSH2_ERROR_REQUEST_DENIED: i32 = -32;
 
 /// The address a remote forward asks the server to listen on. `ssh -R` sends
 /// the same when it is given none: loopback only, unless the server's
@@ -63,6 +65,26 @@ const OPEN_REPLY_TIMEOUT: Duration = Duration::from_millis(SESSION_TIMEOUT_MS as
 /// Backstop for an open whose request cannot even be sent (the socket's send
 /// buffer stays full), which libssh2's reply timeout does not cover.
 const OPEN_DEADLINE: Duration = Duration::from_secs(SESSION_TIMEOUT_MS as u64 / 1000 + 5);
+/// What to tell the user about a remote forward's listen request that failed.
+/// Only a denied request is the server's decision; the rest is the connection.
+fn listen_error_message(server: &str, port: u16, error: &ssh2::Error) -> String {
+    match error.code() {
+        ErrorCode::Session(LIBSSH2_ERROR_REQUEST_DENIED) => format!(
+            "SSH server {} refused to listen on port {}. The port may be in use, \
+             or the server's AllowTcpForwarding may not allow it.",
+            server, port
+        ),
+        ErrorCode::Session(LIBSSH2_ERROR_TIMEOUT) => format!(
+            "Timed out asking SSH server {} to listen on port {}. Check the connection to it.",
+            server, port
+        ),
+        _ => format!(
+            "Lost the connection to SSH server {} while asking it to listen on port {}: {}",
+            server, port, error
+        ),
+    }
+}
+
 /// What to tell the user about a channel open that failed. libssh2 gives
 /// running out of time no message of its own ("Unexpected error").
 fn open_error_message(error: &ssh2::Error, host: &str, port: u16) -> String {
@@ -884,15 +906,7 @@ pub(crate) fn start_remote_forward<E: ForwardEvents>(
     let (listener, _) = uplink
         .session
         .channel_forward_listen(remote_port, Some(REMOTE_BIND_ADDRESS), None)
-        .map_err(|e| {
-            format!(
-                "SSH server {} refused to listen on port {}: {}. The port may be in use, \
-                 or the server's AllowTcpForwarding may not allow it.",
-                gateway.addr(),
-                remote_port,
-                e
-            )
-        })?;
+        .map_err(|e| listen_error_message(&gateway.addr(), remote_port, &e))?;
     let debug = SshDebug::new(verbosity, gateway.addr());
     debug.at(1, || {
         format!(
@@ -1243,6 +1257,29 @@ mod tests {
         let reason = f.wait_for_end().expect("a reason for the frontend");
         assert!(reason.contains("Lost the connection"), "{}", reason);
         assert_dropped(&mut client);
+    }
+
+    #[test]
+    fn only_a_denied_listen_request_blames_the_server() {
+        let message = |code: i32| {
+            listen_error_message(
+                "bastion:22",
+                8080,
+                &ssh2::Error::new(ErrorCode::Session(code), "libssh2's words"),
+            )
+        };
+        assert!(message(LIBSSH2_ERROR_REQUEST_DENIED).contains("refused to listen on port 8080"));
+        for code in [
+            LIBSSH2_ERROR_TIMEOUT,
+            -7,  // LIBSSH2_ERROR_SOCKET_SEND
+            -13, // LIBSSH2_ERROR_SOCKET_DISCONNECT
+            -43, // LIBSSH2_ERROR_SOCKET_RECV
+        ] {
+            let reason = message(code);
+            assert!(!reason.contains("refused"), "{}", reason);
+            assert!(reason.contains("bastion:22"), "{}", reason);
+            assert!(reason.contains("8080"), "{}", reason);
+        }
     }
 
     #[test]
