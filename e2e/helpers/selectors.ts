@@ -368,6 +368,23 @@ export const sel = {
   terminalSplitRight: '//*[@role="menuitem"][contains(., "Split right")]',
   connectPickerOption: (name: string) => `[role="option"][data-name="${name}"]`,
   // roadmap:import
+  importConfigButton: '[data-testid="import-config-button"]',
+  importDialog: '[data-testid="import-dialog"]',
+  importPath: '[data-testid="import-path"]',
+  importLoad: '[data-testid="import-load"]',
+  importFiles: '[data-testid="import-files"]',
+  importConfirm: '[data-testid="import-confirm"]',
+  importClose: '[data-testid="import-close"]',
+  importResult: '[data-testid="import-result"]',
+  importNothing: '[data-testid="import-nothing"]',
+  importLoadError: '[data-testid="import-load-error"]',
+  importSelectAll: '[data-testid="import-select-all"]',
+  importNotice: '[data-testid="import-notice"]',
+  importItems: '[data-testid="import-item"]',
+  importItem: (name: string) => `[data-testid="import-item"][data-name="${name}"]`,
+  // Scoped under an import item.
+  importItemCheckbox: '[data-testid="import-item-checkbox"]',
+  importSkip: (name: string) => `[data-testid="import-skip"][data-name="${name}"]`,
   // roadmap:terminal-ux
   // roadmap:folders
 } as const;
