@@ -78,6 +78,10 @@ Empty answers are allowed, since some servers only want Enter.
 - A saved password never answers a prompt on its own. It could be the wrong
   thing to send, and each wrong answer can count against the account.
 - A wrong answer ends in the failure view with **Retry**, which asks again.
+- A prompt never takes the keyboard from somewhere else, since what you are typing
+  there could be a password. It takes the focus only from its own pane or when
+  nothing has it, and when you switch to its tab. Otherwise it waits to be clicked
+  on, and closing leaves the focus alone in the same way.
 - **Cancel**, or closing the pane or tab, ends the connection attempt by closing
   its socket rather than sending blank answers, so it costs no failed attempt
   on a server that locks accounts.

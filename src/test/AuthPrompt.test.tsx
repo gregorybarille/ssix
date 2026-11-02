@@ -46,6 +46,93 @@ describe("AuthPrompt", () => {
     expect(screen.getByLabelText("Favourite colour:")).toBe(field(1));
   });
 
+  describe("the keyboard", () => {
+    /** The prompt in its own pane, next to a field in another. */
+    const beside = (isVisible: boolean, onFocusReleased = vi.fn()) => (
+      <>
+        <input data-testid="elsewhere" />
+        <div>
+          <AuthPrompt
+            request={request}
+            isVisible={isVisible}
+            onAnswer={vi.fn(async () => {})}
+            onCancel={vi.fn()}
+            onFocusReleased={onFocusReleased}
+          />
+        </div>
+      </>
+    );
+
+    /** A field outside anything rendered, holding the focus. */
+    const someoneTyping = () => {
+      const input = document.createElement("input");
+      document.body.append(input);
+      input.focus();
+      return input;
+    };
+
+    it("takes it when nothing holds it", () => {
+      setup();
+      expect(field(0)).toHaveFocus();
+    });
+
+    it("does not take it from someone typing elsewhere, whose keys stay theirs", async () => {
+      const typing = someoneTyping();
+      setup();
+      expect(typing).toHaveFocus();
+      await userEvent.keyboard("hunter2");
+      expect(typing.value).toBe("hunter2");
+      expect(field(0)).toHaveValue("");
+      typing.remove();
+    });
+
+    it("takes it from inside its own pane", () => {
+      const inPane = document.createElement("input");
+      const container = document.createElement("div");
+      container.append(inPane);
+      document.body.append(container);
+      inPane.focus();
+
+      render(
+        <AuthPrompt request={request} isVisible onAnswer={vi.fn(async () => {})} onCancel={vi.fn()} />,
+        { container },
+      );
+      expect(field(0)).toHaveFocus();
+      cleanup();
+      container.remove();
+    });
+
+    it("takes it when the user comes to its tab, wherever it was", () => {
+      const { rerender } = render(beside(false));
+      const elsewhere = screen.getByTestId("elsewhere");
+      elsewhere.focus();
+
+      rerender(beside(true));
+      expect(field(0)).toHaveFocus();
+    });
+
+    it("leaves it alone while hidden", () => {
+      render(beside(false));
+      expect(field(0)).not.toHaveFocus();
+    });
+
+    it("releases it when the prompt goes, unless someone else has it by then", () => {
+      const released = vi.fn();
+      const first = render(beside(true, released));
+      expect(field(0)).toHaveFocus();
+      first.unmount();
+      expect(released).toHaveBeenCalledTimes(1);
+
+      const notReleased = vi.fn();
+      const second = render(beside(true, notReleased));
+      const typing = someoneTyping();
+      second.unmount();
+      expect(typing).toHaveFocus();
+      expect(notReleased).not.toHaveBeenCalled();
+      typing.remove();
+    });
+  });
+
   it("says what the server refused before asking, only when it did", () => {
     setup();
     expect(screen.queryByTestId("auth-prompt-refused")).toBeNull();

@@ -14,6 +14,7 @@ import {
 import { cn } from "@/lib/utils";
 import { AppSettings, Connection, OpenMode } from "@/types";
 import { getColorHex } from "@/lib/colors";
+import { focusSession } from "@/lib/terminalRegistry";
 import type { ReconnectState } from "@/lib/reconnect";
 import { useTerminalsStore } from "@/store/useTerminalsStore";
 import { Group, Panel, Separator as PanelSeparator } from "react-resizable-panels";
@@ -83,20 +84,22 @@ function PaneRenderer({
   const neverConnected = !session.reconnect && (session.error || session.retrying);
   const authPrompt = useAuthPromptStore((state) => state.prompts[session.sessionId]);
   // A login prompt has the whole pane until it closes, also over a shell that is
-  // reconnecting. Its terminal stays mounted but hidden, as in a background tab:
-  // it keeps its scrollback, cannot take the focus and an answer with it from the
-  // prompt, and takes the focus back when the prompt goes.
+  // reconnecting. Its terminal stays where it is underneath, inert: it keeps its
+  // scrollback, and cannot take the focus and an answer with it from the prompt.
+  // Whether it gets the focus back is up to the prompt (see `AuthPrompt`).
   return (
     <>
       {!neverConnected && (
-        <Terminal
-          sessionId={session.sessionId}
-          connectionName={session.connectionName}
-          isVisible={isVisible && !authPrompt}
-          onDisconnect={onClose}
-          settings={settings}
-          connection={session.connection}
-        />
+        <div className="contents" inert={!!authPrompt}>
+          <Terminal
+            sessionId={session.sessionId}
+            connectionName={session.connectionName}
+            isVisible={isVisible}
+            onDisconnect={onClose}
+            settings={settings}
+            connection={session.connection}
+          />
+        </div>
       )}
       {authPrompt ? (
         <AuthPrompt
@@ -104,6 +107,7 @@ function PaneRenderer({
           request={authPrompt}
           isVisible={isVisible}
           reconnecting={!!session.reconnect}
+          onFocusReleased={() => focusSession(session.sessionId)}
           onAnswer={(answers) => useAuthPromptStore.getState().answer(session.sessionId, answers)}
           // A dropped shell keeps its pane: Cancel ends the attempt, which stops
           // the reconnect and leaves the status bar with Retry.
@@ -333,6 +337,7 @@ export function TerminalTabs({
               className="h-7 w-auto px-1 mx-1 shrink-0"
               title="Open a new tab or split"
               aria-label="Open a new tab or split"
+              data-testid="terminal-new-menu"
             >
               <Plus className="h-3.5 w-3.5" aria-hidden="true" />
               <ChevronDown className="h-3 w-3 ml-0.5" aria-hidden="true" />
@@ -345,6 +350,7 @@ export function TerminalTabs({
             </DropdownMenuItem>
             <DropdownMenuItem
               onClick={() => onNewTab("split_right")}
+              data-testid="terminal-new-split-right"
               disabled={
                 !activeTabId ||
                 (tabs.find((t) => t.id === activeTabId)?.panes.length ?? 0) >= 2

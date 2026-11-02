@@ -259,6 +259,9 @@ export const sel = {
   authPromptCancel: '[data-testid="auth-prompt-cancel"]',
   authPromptReconnecting: '[data-testid="auth-prompt-reconnecting"]',
   authPromptRefused: '[data-testid="auth-prompt-refused"]',
+  terminalNewMenu: '[data-testid="terminal-new-menu"]',
+  terminalNewSplitRight: '[data-testid="terminal-new-split-right"]',
+  connectPickerInput: '[data-testid="connect-picker-input"]',
   // roadmap:resilience
   // The status view of a shell that lost its connection (phase: waiting | stopped).
   reconnectStatus: '[data-testid="failed-terminal"][data-reconnect-phase]',

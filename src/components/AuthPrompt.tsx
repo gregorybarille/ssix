@@ -5,6 +5,7 @@ import { Input } from "./ui/input";
 import { Label } from "./ui/label";
 import type { AuthPromptRequest } from "@/lib/authPrompt";
 import { errorMessage } from "@/lib/errors";
+import { focusIsFreeFor } from "@/lib/focus";
 import { submitWithoutReset } from "@/lib/formSubmit";
 
 interface AuthPromptProps {
@@ -14,6 +15,8 @@ interface AuthPromptProps {
   reconnecting?: boolean;
   onAnswer: (answers: string[]) => Promise<void>;
   onCancel: () => void;
+  /** The prompt went, and nothing else holds the keyboard. */
+  onFocusReleased?: () => void;
 }
 
 /**
@@ -28,6 +31,11 @@ interface AuthPromptProps {
  * The fields are uncontrolled on purpose. React mirrors a controlled input's
  * value into its `value` attribute, which would leave an answer in the DOM,
  * and the answers would sit in component state besides.
+ *
+ * A prompt arrives whenever the server gets round to asking, which may be while
+ * the user is typing in another pane, possibly a password. So it only takes the
+ * keyboard from its own pane or from nobody, and otherwise waits to be clicked
+ * on. Switching to its tab is the user coming to it, which always does.
  */
 export function AuthPrompt({
   request,
@@ -35,7 +43,9 @@ export function AuthPrompt({
   reconnecting = false,
   onAnswer,
   onCancel,
+  onFocusReleased,
 }: AuthPromptProps) {
+  const root = useRef<HTMLDivElement | null>(null);
   const fields = useRef<(HTMLInputElement | null)[]>([]);
 
   const [error, submit, isPending] = useActionState(async () => {
@@ -52,13 +62,30 @@ export function AuthPrompt({
     }
   }, null);
 
+  const onFocusReleasedRef = useRef(onFocusReleased);
   useEffect(() => {
-    if (isVisible) fields.current[0]?.focus();
+    onFocusReleasedRef.current = onFocusReleased;
+  }, [onFocusReleased]);
+
+  const wasVisible = useRef<boolean | null>(null);
+  useEffect(() => {
+    const cameToIt = wasVisible.current === false;
+    wasVisible.current = isVisible;
+    const pane = root.current?.parentElement ?? null;
+    if (isVisible && (cameToIt || focusIsFreeFor(pane))) fields.current[0]?.focus();
   }, [isVisible]);
+
+  useEffect(() => {
+    const pane = root.current?.parentElement ?? null;
+    return () => {
+      if (focusIsFreeFor(pane)) onFocusReleasedRef.current?.();
+    };
+  }, []);
 
   return (
     <div
-      className="absolute inset-0 flex items-center justify-center bg-background"
+      ref={root}
+      className="absolute inset-0 z-20 flex items-center justify-center bg-background"
       style={{ display: isVisible ? "flex" : "none" }}
       data-testid="auth-prompt"
     >

@@ -12,6 +12,20 @@ function isContentEditable(el: HTMLElement): boolean {
   return ce !== null && ce !== "false";
 }
 
+/**
+ * Whether `container` may take the keyboard focus for something the user did not
+ * just ask for: only when that takes it from nobody. Someone typing elsewhere goes
+ * on typing there, so what they type never lands in a field that just appeared.
+ */
+export function focusIsFreeFor(container: Element | null): boolean {
+  const active = document.activeElement;
+  if (!active || active === document.body) return true;
+  if (container?.contains(active)) return true;
+  // A browser can leave focus on an element it stopped rendering, such as the
+  // terminal of a tab that was just hidden. Nobody can be typing there.
+  return !(active.checkVisibility?.() ?? true);
+}
+
 /** `<input>` types that take no text, so focusing them is not "typing". */
 const NON_TEXT_INPUT_TYPES = ["button", "checkbox", "radio", "submit", "reset", "file", "range", "color"];
 

@@ -46,6 +46,7 @@ import {
   cutConnection,
   expectReconnected,
   NO_RETRY_WINDOW_MS,
+  RECONNECTED,
   sshdPid,
   waitForPhase,
 } from "../helpers/reconnect.js";
@@ -105,6 +106,30 @@ async function createAgentCredential(name: string, username: string): Promise<vo
   expect(await (await browser.$(sel.credentialFormPassword)).isExisting()).toBe(false);
   await click(sel.credentialFormSubmit);
   await (await browser.$(sel.credentialForm)).waitForExist({ reverse: true, timeout: 10_000 });
+}
+
+/** Open `name` beside the active tab's shell. */
+async function openSplitWith(name: string): Promise<void> {
+  await click(sel.terminalNewMenu);
+  await click(sel.terminalNewSplitRight);
+  await fill(sel.connectPickerInput, name);
+  await browser.keys(["Enter"]);
+  await browser.waitUntil(async () => (await browser.$$(sel.terminalContainer).length) === 2, {
+    timeout: 30_000,
+    timeoutMsg: "The split never opened",
+  });
+}
+
+async function terminalPanes(): Promise<string[]> {
+  return browser.execute(
+    (selector: string) =>
+      [...document.querySelectorAll(selector)].map((pane) => pane.getAttribute("data-session-id") ?? ""),
+    sel.terminalContainer,
+  );
+}
+
+async function typeKeys(text: string): Promise<void> {
+  for (const key of text) await browser.keys([key]);
 }
 
 async function waitForAuthPrompt(): Promise<void> {
@@ -355,6 +380,54 @@ describe("Keyboard-interactive login", () => {
     const error = await waitForFailedTerminalError("Key auth failed");
     expect(error).not.toContain("Keyboard-interactive");
     expect(await (await browser.$(sel.authPrompt)).isExisting()).toBe(false);
+  });
+
+  it("leaves the keyboard where it is when a prompt opens in another pane", async () => {
+    await createPasswordCredential({
+      name: "cred-14-typing",
+      username: TARGETS.a.user,
+      password: TARGETS.a.password,
+    });
+    await createDirectConnection({
+      name: "conn-14-typing",
+      host: TARGETS.a.host,
+      port: TARGETS.a.sshPort,
+      credentialName: "cred-14-typing",
+    });
+    await connectToConnection("conn-14-e");
+    await waitForAuthPrompt();
+    await answerAuthPrompt(TARGETS.e.password);
+    await waitForTerminalContains("server-e:~$", 30_000);
+    await openSplitWith("conn-14-typing");
+    await waitForTerminalContains("server-a:~$", 30_000);
+    const [dropping, typing] = await terminalPanes();
+
+    // The connection drops a moment after the keyboard moved to the other pane.
+    await (await browser.$$(sel.terminalContainer))[0].click();
+    await typeKeys("(sleep 3; kill -9 $PPID) &\n");
+    await (await browser.$$(sel.terminalContainer))[1].click();
+    await waitForAuthPrompt();
+
+    const focused = await browser.execute(
+      (selector: string) =>
+        document.activeElement?.closest(selector)?.getAttribute("data-session-id") ?? null,
+      sel.terminalContainer,
+    );
+    expect(focused).toBe(typing);
+    expect(focused).not.toBe(dropping);
+
+    await typeKeys("echo ssix-14-typed-$((6*7))\n");
+    await browser.waitUntil(
+      async () =>
+        (
+          await browser.execute((id: string) => window.__ssixTerminalText?.(id) ?? "", typing)
+        ).includes("ssix-14-typed-42"),
+      { timeout: 15_000, timeoutMsg: "What was typed did not reach the pane that had the keyboard" },
+    );
+    expect(await (await browser.$(sel.authPromptInput(0))).getValue()).toBe("");
+
+    await answerAuthPrompt(TARGETS.e.password);
+    await waitForTerminalContains(RECONNECTED, 40_000);
   });
 
   it("asks in the pane for the target behind a jump host", async () => {

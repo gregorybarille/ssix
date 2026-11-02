@@ -1,11 +1,13 @@
 import { useEffect } from "react";
+import type { Terminal as XTerm } from "@xterm/xterm";
 import { act, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { FailedTerminal } from "@/components/FailedTerminal";
 import { TerminalTabs, type TerminalSession } from "@/components/TerminalTabs";
 import { invoke } from "@/lib/tauri";
 import type { ReconnectState } from "@/lib/reconnect";
+import { registerTerminal, unregisterTerminal } from "@/lib/terminalRegistry";
 import { useAuthPromptStore } from "@/store/useAuthPromptStore";
 import type { Connection } from "@/types";
 import { terminalTabsCallbacks } from "./terminalTabsCallbacks";
@@ -194,7 +196,9 @@ describe("a pane's terminal", () => {
     expect(screen.getByTestId("auth-prompt-reconnecting")).toBeInTheDocument();
     expect(screen.getByTestId("auth-prompt-input-0")).toHaveFocus();
     expect(screen.queryByTestId("failed-terminal")).not.toBeInTheDocument();
-    expect(screen.getByTestId("terminal")).toHaveAttribute("data-visible", "false");
+    // Hiding it would make it take the focus back whenever the prompt went.
+    expect(screen.getByTestId("terminal")).toHaveAttribute("data-visible", "true");
+    expect(screen.getByTestId("terminal").parentElement).toHaveAttribute("inert");
 
     act(() =>
       useAuthPromptStore.getState().receive("s1", { kind: "auth_prompt_closed", prompt_id: "p1" }),
@@ -202,7 +206,50 @@ describe("a pane's terminal", () => {
     expect(screen.queryByTestId("auth-prompt")).not.toBeInTheDocument();
     expect(screen.getByTestId("failed-terminal")).toHaveAttribute("data-reconnect-phase", "waiting");
     expect(screen.getByTestId("terminal")).toHaveAttribute("data-visible", "true");
+    expect(screen.getByTestId("terminal").parentElement).not.toHaveAttribute("inert");
     expect(mounts).toHaveBeenCalledTimes(1);
+  });
+
+  describe("the keyboard around a prompt", () => {
+    const fakeTerminal = () => {
+      const term = { focus: vi.fn(), textarea: undefined } as unknown as XTerm;
+      registerTerminal("s1", term);
+      return term;
+    };
+    const closePrompt = () =>
+      act(() =>
+        useAuthPromptStore.getState().receive("s1", { kind: "auth_prompt_closed", prompt_id: "p1" }),
+      );
+
+    afterEach(() => unregisterTerminal("s1"));
+
+    it("hands it to the terminal when the prompt goes and nothing else holds it", () => {
+      const term = fakeTerminal();
+      render(tabs({ retrying: true, reconnect: WAITING }));
+      askForCode();
+      expect(screen.getByTestId("auth-prompt-input-0")).toHaveFocus();
+      closePrompt();
+      expect(term.focus).toHaveBeenCalledTimes(1);
+    });
+
+    it("leaves it with someone typing elsewhere, both when the prompt comes and goes", () => {
+      const term = fakeTerminal();
+      render(
+        <>
+          <input data-testid="elsewhere" />
+          {tabs({ retrying: true, reconnect: WAITING })}
+        </>,
+      );
+      const elsewhere = screen.getByTestId("elsewhere");
+      elsewhere.focus();
+
+      askForCode();
+      expect(elsewhere).toHaveFocus();
+
+      closePrompt();
+      expect(elsewhere).toHaveFocus();
+      expect(term.focus).not.toHaveBeenCalled();
+    });
   });
 
   it("keeps its pane when Cancel ends a reconnect's prompt", async () => {
