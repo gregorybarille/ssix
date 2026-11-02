@@ -301,6 +301,51 @@ describe("PortForwardsView", () => {
     expect(screen.getByTestId("confirm-stop-forward")).toHaveTextContent(conn.name);
   });
 
+  describe("confirming a stop opened while the forward was connecting", () => {
+    const connecting: ForwardSession = {
+      sessionId: "forward-pf-1-placeholder",
+      connectionName: "api-tunnel",
+      connection: portForwardConn as ForwardSession["connection"],
+      retrying: true,
+    };
+
+    const openStop = async () => {
+      const onCloseSession = vi.fn();
+      const props = { ...defaultProps, onCloseSession };
+      const user = userEvent.setup();
+      const view = render(<PortForwardsView {...props} sessions={[connecting]} />);
+      await user.click(screen.getByTestId("forward-stop-pf-1"));
+      return {
+        onCloseSession,
+        becomes: (sessions: ForwardSession[]) =>
+          view.rerender(<PortForwardsView {...props} sessions={sessions} />),
+        confirm: () => user.click(screen.getByRole("button", { name: "Stop" })),
+      };
+    };
+
+    it("stops the session it has connected as since", async () => {
+      const { onCloseSession, becomes, confirm } = await openStop();
+      becomes([{ ...connecting, sessionId: "session-real", retrying: false }]);
+      await confirm();
+      expect(onCloseSession).toHaveBeenCalledTimes(1);
+      expect(onCloseSession).toHaveBeenCalledWith("session-real");
+    });
+
+    it("stops nothing if it has ended since", async () => {
+      const { onCloseSession, becomes, confirm } = await openStop();
+      becomes([]);
+      await confirm();
+      expect(onCloseSession).not.toHaveBeenCalled();
+    });
+
+    it("stops nothing if it has failed since", async () => {
+      const { onCloseSession, becomes, confirm } = await openStop();
+      becomes([{ ...connecting, retrying: false, error: "refused" }]);
+      await confirm();
+      expect(onCloseSession).not.toHaveBeenCalled();
+    });
+  });
+
   it("shows the configured forward count", () => {
     render(<PortForwardsView {...defaultProps} />);
     expect(screen.getByText(/1 configured/i)).toBeInTheDocument();

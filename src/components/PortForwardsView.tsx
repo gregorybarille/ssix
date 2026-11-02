@@ -76,10 +76,7 @@ export function PortForwardsView({
    * requires destructive actions to go through <ConfirmDialog>; the
    * same standard that gates "close live terminal pane" applies here.
    */
-  const [pendingClose, setPendingClose] = useState<{
-    sessionId: string;
-    conn: ForwardConnection;
-  } | null>(null);
+  const [pendingClose, setPendingClose] = useState<ForwardConnection | null>(null);
 
   const getCredentialName = (id?: string) =>
     id ? credentials.find((c) => c.id === id)?.name ?? "Unknown credential" : "No credential";
@@ -195,13 +192,7 @@ export function PortForwardsView({
                         variant="ghost"
                         size="icon"
                         className="h-8 w-8"
-                        onClick={() =>
-                          session &&
-                          setPendingClose({
-                            sessionId: session.sessionId,
-                            conn,
-                          })
-                        }
+                        onClick={() => setPendingClose(conn)}
                         data-testid={`forward-stop-${conn.id}`}
                         aria-label={`Stop forward ${conn.name}`}
                       >
@@ -295,7 +286,7 @@ export function PortForwardsView({
         title="Stop forwarding?"
         description={
           pendingClose
-            ? `Stopping "${pendingClose.conn.name}" ${stopConsequence(pendingClose.conn)} and drops every connection using it.`
+            ? `Stopping "${pendingClose.name}" ${stopConsequence(pendingClose)} and drops every connection using it.`
             : ""
         }
         confirmLabel="Stop"
@@ -303,7 +294,10 @@ export function PortForwardsView({
         testId="confirm-stop-forward"
         onConfirm={() => {
           if (pendingClose) {
-            onCloseSession(pendingClose.sessionId);
+            // Looked up now: a forward still connecting when the dialog opened
+            // has a new session id by the time it is confirmed, or may be over.
+            const current = getLatestSession(pendingClose);
+            if (current && !current.error) onCloseSession(current.sessionId);
             setPendingClose(null);
           }
         }}
