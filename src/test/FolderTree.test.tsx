@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useState } from "react";
-import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, createEvent, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { invoke } from "@tauri-apps/api/core";
 import { FolderTree } from "@/components/FolderTree";
@@ -283,15 +283,83 @@ describe("keyboard", () => {
     expect(handlers.onConnect).toHaveBeenCalledTimes(2);
   });
 
-  it("jumps with type-ahead", async () => {
+  /** Press a key at a moment of the test's choosing, as type-ahead reads it. */
+  const pressAt = (at: number, key: string) =>
+    act(async () => {
+      const element = document.activeElement!;
+      const event = createEvent.keyDown(element, { key });
+      Object.defineProperty(event, "timeStamp", { value: at });
+      fireEvent(element, event);
+    });
+
+  it("jumps with type-ahead, and starts a new word after a pause", async () => {
     show();
     focus(folderRow("prod")!);
-    await act(() => press("l"));
+    await pressAt(1000, "l");
     expect(focusedLabel()).toBe("lookalike");
-    await act(() => press("o"));
+    await pressAt(1100, "o");
     expect(focusedLabel()).toBe("lookalike");
-    fireEvent.keyDown(document.activeElement!, { key: "z", timeStamp: Date.now() + 5000 });
+    await pressAt(1200, "z");
     expect(focusedLabel()).toBe("lookalike");
+    await pressAt(1800, "w");
+    expect(focusedLabel()).toBe("west, 1 connection");
+  });
+
+  describe("a space", () => {
+    const NAMED = [direct("web server"), direct("web proxy"), direct("alpha")];
+
+    it("belongs to a word being typed, and does not connect", async () => {
+      show(NAMED);
+      focus(noFolderRow()!);
+      await pressAt(1000, "w");
+      await pressAt(1100, "e");
+      await pressAt(1200, "b");
+      expect(focusedLabel()).toBe("web server");
+      await pressAt(1300, " ");
+      expect(focusedLabel()).toBe("web server");
+      await pressAt(1400, "p");
+      expect(focusedLabel()).toBe("web proxy");
+      expect(handlers.onConnect).not.toHaveBeenCalled();
+    });
+
+    it("keeps its word through the Shift of a capital", async () => {
+      show(NAMED);
+      focus(noFolderRow()!);
+      await pressAt(1000, "w");
+      await pressAt(1100, "e");
+      await pressAt(1200, "b");
+      await pressAt(1300, " ");
+      await pressAt(1350, "Shift");
+      await pressAt(1400, "P");
+      expect(focusedLabel()).toBe("web proxy");
+      expect(handlers.onConnect).not.toHaveBeenCalled();
+    });
+
+    it("activates when no word is running", async () => {
+      show(NAMED);
+      focus(connectionRow("alpha")!);
+      await pressAt(1000, " ");
+      expect(handlers.onConnect).toHaveBeenCalledWith(expect.objectContaining({ id: "alpha" }));
+    });
+
+    it("activates once the word has lapsed", async () => {
+      show(NAMED);
+      focus(noFolderRow()!);
+      await pressAt(1000, "w");
+      expect(focusedLabel()).toBe("web server");
+      await pressAt(1501, " ");
+      expect(handlers.onConnect).toHaveBeenCalledWith(expect.objectContaining({ id: "web server" }));
+    });
+
+    it("activates after another key has ended the word", async () => {
+      show(NAMED);
+      focus(noFolderRow()!);
+      await pressAt(1000, "w");
+      await pressAt(1100, "ArrowDown");
+      expect(focusedLabel()).toBe("web proxy");
+      await pressAt(1200, " ");
+      expect(handlers.onConnect).toHaveBeenCalledWith(expect.objectContaining({ id: "web proxy" }));
+    });
   });
 
   it("opens each row's menu with Shift+F10 and the Menu key", async () => {

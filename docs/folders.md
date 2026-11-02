@@ -62,6 +62,7 @@ The tree is one tab stop, following the ARIA tree pattern.
 | `←` | Close it, or go to its parent if already closed | Go to its folder |
 | `Enter` / `Space` | Open or close it | Connect |
 | A letter | Jump to the next row starting with what was typed | Same |
+| `Space` right after a letter | Part of the word being typed, not an activation | Same |
 | `Shift+F10` / `Menu` | Expand or collapse, rename, delete | The row's menu, with **Move to folder…** |
 
 ### Search

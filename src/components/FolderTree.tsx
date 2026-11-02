@@ -255,6 +255,25 @@ export function FolderTree({
     // A key on a row's own buttons is theirs: they have no index.
     if (!row) return;
 
+    const word = typeahead.current;
+    const wordRunning = word.text !== "" && e.timeStamp - word.at <= TYPEAHEAD_RESET_MS;
+    const printable = e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey;
+    // Space activates a row, so it starts no word, but a name can have one in it.
+    if (printable && (e.key !== " " || wordRunning)) {
+      e.preventDefault();
+      const text = (wordRunning ? word.text : "") + e.key;
+      typeahead.current = { text, at: e.timeStamp };
+      const match = typeaheadMatch(
+        rows.map((other) => other.label),
+        index,
+        text,
+      );
+      if (match !== -1) moveFocusTo(match);
+      return;
+    }
+    // Any other key ends the word, but for a Shift on its way to a capital.
+    if (e.key !== "Shift") typeahead.current = { text: "", at: 0 };
+
     if (e.key === "ArrowRight") {
       e.preventDefault();
       if (row.kind !== "folder" || row.count === 0) return;
@@ -267,16 +286,6 @@ export function FolderTree({
       } else if (row.parentKey !== null) {
         moveFocusTo(rows.findIndex((other) => other.key === row.parentKey));
       }
-    } else if (e.key.length === 1 && e.key !== " " && !e.ctrlKey && !e.metaKey && !e.altKey) {
-      const stale = e.timeStamp - typeahead.current.at > TYPEAHEAD_RESET_MS;
-      const text = (stale ? "" : typeahead.current.text) + e.key;
-      typeahead.current = { text, at: e.timeStamp };
-      const match = typeaheadMatch(
-        rows.map((other) => other.label),
-        index,
-        text,
-      );
-      if (match !== -1) moveFocusTo(match);
     } else {
       roving.onKeyDown(e);
     }
