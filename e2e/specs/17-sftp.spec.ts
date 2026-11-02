@@ -2,9 +2,10 @@
  * Spec 17: the Files view (SFTP), direct and through a jump host.
  *
  * Two panes against server-a: folder and file operations, transfers both
- * ways (with overwrite, drag and cancel), recursive delete past a symlink,
- * and edit in place with a change on the server. Local paths are shared with
- * the app, which runs on the same machine as this runner.
+ * ways (with overwrite, drag, cancel, a queue and folder modes), recursive
+ * delete past a symlink, what may not be deleted, dialogs that end with their
+ * connection, and edit in place with a change on the server. Local paths are
+ * shared with the app, which runs on the same machine as this runner.
  *
  * An external editor cannot be driven from here, so the edit tests write to
  * the temporary copy the panel names, as an editor would. Files dropped from
@@ -370,20 +371,62 @@ describe("Files view (SFTP)", () => {
     const tree = join(uploads, "tree");
     mkdirSync(join(tree, "inner"), { recursive: true });
     writeFileSync(join(tree, "inner", "deep.txt"), "deep\n");
+    chmodSync(join(tree, "inner"), 0o700);
     writeFileSync(join(workDir, "outside.txt"), "outside\n");
     symlinkSync(join(workDir, "outside.txt"), join(tree, "link.txt"));
     await refreshPane("local");
 
     await copyAndFinish("local", "tree");
     await openFolder("remote", "tree");
-    await rowAppears("remote", "inner");
+    const inner = await rowAppears("remote", "inner");
     expect(await rowNames("remote")).toEqual(["inner"]);
+    expect(await inner.getAttribute("data-mode")).toBe("700");
     await openFolder("remote", "inner");
     await rowAppears("remote", "deep.txt");
     await click(sel.filesUp("remote"));
     await rowAppears("remote", "inner");
     await click(sel.filesUp("remote"));
     await rowAppears("remote", "tree");
+
+    // And back again: a private folder stays private on this side too.
+    const home = await panePath("local");
+    const dir = mkdtempSync(join(downloads, "tree-"));
+    await goTo("local", dir);
+    await copyAndFinish("remote", "tree");
+    expect(statSync(join(dir, "tree", "inner")).mode & 0o777).toBe(0o700);
+    expect(readFileSync(join(dir, "tree", "inner", "deep.txt"), "utf8")).toBe("deep\n");
+    await goTo("local", home);
+  });
+
+  it("copies more files at once than run at a time", async () => {
+    const names = Array.from({ length: 8 }, (_, i) => `many-${i}.txt`);
+    for (const name of names) writeFileSync(join(uploads, name), `${name}\n`);
+    await refreshPane("local");
+
+    await pick("local", names[0]);
+    for (const _name of names.slice(1)) {
+      await browser.keys(["ArrowDown"]);
+      await browser.keys([" "]);
+    }
+    const footer = await browser.$(sel.filesFooter("local"));
+    await browser.waitUntil(async () => (await footer.getText()).includes("8 selected"), {
+      timeout: 5_000,
+      timeoutMsg: "The files were never all selected",
+    });
+
+    await click(sel.filesTransfer("local"));
+    for (const name of names) await waitForTransfer(name, "done");
+    await clearTransfers();
+    await refreshPane("remote");
+    await browser.waitUntil(
+      async () => {
+        const listed = await rowNames("remote");
+        return names.every((name) => listed.includes(name));
+      },
+      { timeout: 30_000, timeoutMsg: "Not every queued file reached the server" },
+    );
+    expect((await rowNames("remote")).filter((n) => n.startsWith(".ssix-part-"))).toEqual([]);
+    expect((await downloaded(names[7])).toString()).toBe(`${names[7]}\n`);
   });
 
   it("copies by dragging a row onto the other pane", async () => {
@@ -568,6 +611,16 @@ describe("Files view (SFTP)", () => {
     await waitForUploaded();
   });
 
+  it("edit in place: asks about a change made just before closing", async () => {
+    // Too recent for any poll to have seen: closing has to look for itself.
+    writeFileSync(tempPath, "changed just now\n");
+    await click(sel.filesEditClose);
+    await click(sel.filesEditDiscardCancel);
+    await nothingMatches(sel.filesEditDiscardCancel, "The question about discarding stayed");
+    expect(readFileSync(tempPath, "utf8")).toBe("changed just now\n");
+    writeFileSync(tempPath, "edited again\n");
+  });
+
   it("edit in place: removes the temporary copy on close", async () => {
     await click(sel.filesEditClose);
     await nothingMatches(sel.filesEditPanel, "The edit panel stayed open");
@@ -589,6 +642,53 @@ describe("Files view (SFTP)", () => {
     await click(sel.filesDelete("remote"));
     await click(sel.filesDeleteConfirm);
     await rowGoes("remote", `${REMOTE_DIR}-new`);
+  });
+
+  it("refuses to delete the login folder and the folders that hold it", async () => {
+    const home = await panePath("remote");
+    const kept = `${REMOTE_DIR}-kept`;
+    await makeFolder("remote", kept);
+
+    const parts = home.split("/").filter(Boolean);
+    const refusals: [string, string][] = [
+      [`/${parts.slice(0, -1).join("/")}`, parts[parts.length - 1]],
+      ["/", parts[0]],
+    ];
+    for (const [folder, name] of refusals) {
+      await goTo("remote", folder);
+      await pick("remote", name);
+      await click(sel.filesDelete("remote"));
+      await click(sel.filesDeleteConfirm);
+      const refusal = await browser.$(sel.filesDeleteError);
+      await refusal.waitForExist({ timeout: 30_000 });
+      expect(await refusal.getText()).toContain("login folder");
+      await click(sel.filesDeleteCancel);
+    }
+
+    await goTo("remote", home);
+    await rowAppears("remote", kept);
+  });
+
+  it("closes an open dialog when the connection closes, and deletes nothing", async () => {
+    const kept = `${REMOTE_DIR}-kept`;
+    await pick("remote", kept);
+    await click(sel.filesDelete("remote"));
+    await (await browser.$(sel.filesDeleteConfirm)).waitForClickable({ timeout: 10_000 });
+
+    await click(sel.filesDisconnect);
+    await nothingMatches(sel.filesDeleteConfirm, "The delete dialog outlived its connection");
+
+    await pickOption(sel.filesConnectionSelect, "conn-17-a");
+    const status = await browser.$(sel.filesStatus);
+    await browser.waitUntil(async () => (await status.getAttribute("data-state")) === "connected", {
+      timeout: 60_000,
+      timeoutMsg: "The Files view never connected again",
+    });
+    await rowAppears("remote", kept);
+    await pick("remote", kept);
+    await click(sel.filesDelete("remote"));
+    await click(sel.filesDeleteConfirm);
+    await rowGoes("remote", kept);
   });
 
   it("refuses a changed host key until the user trusts the new one", async () => {

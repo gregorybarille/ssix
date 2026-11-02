@@ -318,6 +318,8 @@ export const sel = {
   filesChmodInput: '[data-testid="files-chmod-input"]',
   filesChmodSubmit: '[data-testid="files-chmod-submit"]',
   filesDeleteConfirm: '[data-testid="files-delete-confirm-confirm"]',
+  filesDeleteCancel: '[data-testid="files-delete-confirm-cancel"]',
+  filesDeleteError: '[data-testid="files-delete-confirm-error"]',
   filesOverwriteConfirm: '[data-testid="files-overwrite-confirm-confirm"]',
   filesOverwriteCancel: '[data-testid="files-overwrite-confirm-cancel"]',
   filesTransferRow: (name: string, status?: string) =>
@@ -330,6 +332,8 @@ export const sel = {
   filesEditConflict: '[data-testid="files-edit-conflict"]',
   filesEditConflictConfirm: '[data-testid="files-edit-conflict-confirm"]',
   filesEditConflictCancel: '[data-testid="files-edit-conflict-cancel"]',
+  filesEditDiscardCancel: '[data-testid="files-edit-discard-cancel"]',
+  filesFooter: (side: "local" | "remote") => `[data-testid="files-footer-${side}"]`,
   // roadmap:snippets
   // roadmap:import
   // roadmap:terminal-ux
