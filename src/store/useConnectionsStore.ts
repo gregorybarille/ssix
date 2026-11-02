@@ -20,6 +20,12 @@ interface ConnectionsState {
   /** Save the clone form's connection as a new one; `id` is the original's. */
   cloneConnection: (id: string, input: ConnectionInput) => Promise<void>;
   getOrphanPrivateCredential: (connId: string) => Promise<string | null>;
+  /** File a connection under `folder`; null takes it out of any folder. */
+  moveConnectionToFolder: (id: string, folder: string | null) => Promise<void>;
+  /** Rename a folder, which moves every connection in or under it. */
+  renameFolder: (from: string, to: string) => Promise<void>;
+  /** Remove a folder: what it holds moves up a level. Deletes no connection. */
+  deleteFolder: (path: string) => Promise<void>;
 }
 
 // The store always holds the full, unfiltered list. Search is a pure
@@ -76,4 +82,23 @@ export const useConnectionsStore = create<ConnectionsState>((set) => ({
   // proceed and leave a private credential's secrets behind.
   getOrphanPrivateCredential: (connId) =>
     invoke<string | null>("get_orphan_private_credential", { connId }),
+
+  moveConnectionToFolder: (id, folder) =>
+    runAsyncRethrow(set, async () => {
+      const conn = await invoke<Connection>("move_connection_to_folder", { id, folder });
+      set((state) => ({
+        connections: state.connections.map((c) => (c.id === conn.id ? conn : c)),
+      }));
+    }, { recordError: false }),
+
+  // Both answer with every connection: one call can touch many of them.
+  renameFolder: (from, to) =>
+    runAsyncRethrow(set, async () => {
+      set({ connections: await invoke<Connection[]>("rename_folder", { from, to }) });
+    }, { recordError: false }),
+
+  deleteFolder: (path) =>
+    runAsyncRethrow(set, async () => {
+      set({ connections: await invoke<Connection[]>("delete_folder", { path }) });
+    }, { recordError: false }),
 }));
