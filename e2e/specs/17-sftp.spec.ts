@@ -38,6 +38,7 @@ import {
   fill,
   navigateTo,
   pickOption,
+  saveConnectionForm,
   textContentOf,
 } from "../helpers/flows.js";
 import { sel } from "../helpers/selectors.js";
@@ -84,9 +85,19 @@ async function rowAppears(side: Side, name: string): Promise<WebdriverIO.Element
   return row;
 }
 
+/**
+ * Wait for no node to match, asked in one script: finding a node through the
+ * driver fails with a stale element if it goes while the handle is being made.
+ */
+async function nothingMatches(selector: string, timeoutMsg: string): Promise<void> {
+  await browser.waitUntil(
+    () => browser.execute((s: string) => document.querySelector(s) === null, selector),
+    { timeout: 30_000, timeoutMsg },
+  );
+}
+
 async function rowGoes(side: Side, name: string): Promise<void> {
-  const row = await browser.$(sel.fileRow(side, name));
-  await row.waitForExist({ timeout: 30_000, reverse: true, timeoutMsg: `Row ${name} stayed` });
+  await nothingMatches(sel.fileRow(side, name), `Row ${name} stayed`);
 }
 
 /** The names the pane lists now, hidden ones included. */
@@ -129,8 +140,7 @@ async function waitForTransfer(name: string, status: string): Promise<void> {
 async function clearTransfers(): Promise<void> {
   const clear = await browser.$('[data-testid="files-transfers-clear"]');
   if (await clear.isExisting()) await clear.click();
-  const rows = await browser.$('[data-testid="files-transfer"]');
-  await rows.waitForExist({ timeout: 10_000, reverse: true });
+  await nothingMatches('[data-testid="files-transfer"]', "The finished transfers stayed listed");
 }
 
 async function copyAndFinish(side: Side, name: string): Promise<void> {
@@ -191,6 +201,26 @@ function expectExactly(dir: string, expected: string[]): void {
   expect(readdirSync(dir).sort()).toEqual([...expected].sort());
 }
 
+/** The temporary copy the open edit panel names. */
+let tempPath = "";
+
+async function changeCopy(content: string): Promise<void> {
+  writeFileSync(tempPath, content);
+  const save = await browser.$(sel.filesEditSave);
+  await save.waitForClickable({
+    timeout: 15_000,
+    timeoutMsg: "Upload never became available after the copy changed",
+  });
+}
+
+async function waitForUploaded(): Promise<void> {
+  const status = await browser.$(sel.filesEditStatus);
+  await browser.waitUntil(async () => (await status.getText()).startsWith("Uploaded"), {
+    timeout: 30_000,
+    timeoutMsg: "The edit was never uploaded",
+  });
+}
+
 describe("Files view (SFTP)", () => {
   before(async () => {
     await waitForServers(["a"]);
@@ -248,7 +278,7 @@ describe("Files view (SFTP)", () => {
     await fill(sel.connectionFormTargetHost, "server-c");
     await fill(sel.connectionFormTargetPort, "22");
     await fill(sel.connectionFormLocalPort, "23417");
-    await click(sel.connectionFormSubmit);
+    await saveConnectionForm();
 
     await navigateTo("forwards");
     const forwardRow = await browser.$(sel.forwardRowByName("forward-17"));
@@ -494,80 +524,58 @@ describe("Files view (SFTP)", () => {
     expect(readFileSync(join(kept, "file.txt"), "utf8")).toBe("kept\n");
   });
 
-  describe("edit in place", () => {
-    let tempPath = "";
+  it("edit in place: downloads a private copy and uploads the changes when asked", async () => {
+    writeFileSync(join(uploads, "conf.txt"), "original\n");
+    chmodSync(join(uploads, "conf.txt"), 0o640);
+    await refreshPane("local");
+    await copyAndFinish("local", "conf.txt");
+    await rowAppears("remote", "conf.txt");
 
-    async function changeCopy(content: string): Promise<void> {
-      writeFileSync(tempPath, content);
-      const save = await browser.$(sel.filesEditSave);
-      await save.waitForClickable({
-        timeout: 15_000,
-        timeoutMsg: "Upload never became available after the copy changed",
-      });
-    }
+    await pick("remote", "conf.txt");
+    await click(sel.filesEdit);
+    const panel = await browser.$(sel.filesEditPanel);
+    await panel.waitForExist({ timeout: 30_000 });
+    tempPath = (await panel.getAttribute("data-temp-path")) ?? "";
+    expect(readFileSync(tempPath, "utf8")).toBe("original\n");
+    expect(statSync(tempPath).mode & 0o777).toBe(0o600);
 
-    async function waitForUploaded(): Promise<void> {
-      const status = await browser.$(sel.filesEditStatus);
-      await browser.waitUntil(async () => (await status.getText()).startsWith("Uploaded"), {
-        timeout: 30_000,
-        timeoutMsg: "The edit was never uploaded",
-      });
-    }
+    await changeCopy("edited\n");
+    await click(sel.filesEditSave);
+    await waitForUploaded();
+  });
 
-    it("downloads a private copy and uploads the changes when asked", async () => {
-      writeFileSync(join(uploads, "conf.txt"), "original\n");
-      chmodSync(join(uploads, "conf.txt"), 0o640);
-      await refreshPane("local");
-      await copyAndFinish("local", "conf.txt");
-      await rowAppears("remote", "conf.txt");
+  it("edit in place: asks when the server's file changed, and keeps it on no", async () => {
+    // Someone else changes the file: here, a copy from the other pane.
+    writeFileSync(join(uploads, "conf.txt"), "from the server\n");
+    await pick("local", "conf.txt");
+    await click(sel.filesTransfer("local"));
+    await click(sel.filesOverwriteConfirm);
+    await waitForTransfer("conf.txt", "done");
+    await clearTransfers();
 
-      await pick("remote", "conf.txt");
-      await click(sel.filesEdit);
-      const panel = await browser.$(sel.filesEditPanel);
-      await panel.waitForExist({ timeout: 30_000 });
-      tempPath = (await panel.getAttribute("data-temp-path")) ?? "";
-      expect(readFileSync(tempPath, "utf8")).toBe("original\n");
-      expect(statSync(tempPath).mode & 0o777).toBe(0o600);
+    await changeCopy("edited again\n");
+    await click(sel.filesEditSave);
+    const conflict = await browser.$(sel.filesEditConflict);
+    await conflict.waitForExist({ timeout: 30_000 });
+    await click(sel.filesEditConflictCancel);
+    await conflict.waitForExist({ timeout: 10_000, reverse: true });
+    expect(readFileSync(tempPath, "utf8")).toBe("edited again\n");
+  });
 
-      await changeCopy("edited\n");
-      await click(sel.filesEditSave);
-      await waitForUploaded();
+  it("edit in place: overwrites only after the user says so", async () => {
+    await click(sel.filesEditSave);
+    await click(sel.filesEditConflictConfirm);
+    await waitForUploaded();
+  });
+
+  it("edit in place: removes the temporary copy on close", async () => {
+    await click(sel.filesEditClose);
+    await nothingMatches(sel.filesEditPanel, "The edit panel stayed open");
+    await browser.waitUntil(async () => !existsSync(tempPath), {
+      timeout: 10_000,
+      timeoutMsg: "The temporary copy outlived the edit",
     });
-
-    it("asks when the server's file changed, and keeps it on no", async () => {
-      // Someone else changes the file: here, a copy from the other pane.
-      writeFileSync(join(uploads, "conf.txt"), "from the server\n");
-      await pick("local", "conf.txt");
-      await click(sel.filesTransfer("local"));
-      await click(sel.filesOverwriteConfirm);
-      await waitForTransfer("conf.txt", "done");
-      await clearTransfers();
-
-      await changeCopy("edited again\n");
-      await click(sel.filesEditSave);
-      const conflict = await browser.$(sel.filesEditConflict);
-      await conflict.waitForExist({ timeout: 30_000 });
-      await click(sel.filesEditConflictCancel);
-      await conflict.waitForExist({ timeout: 10_000, reverse: true });
-      expect(readFileSync(tempPath, "utf8")).toBe("edited again\n");
-    });
-
-    it("overwrites only after the user says so", async () => {
-      await click(sel.filesEditSave);
-      await click(sel.filesEditConflictConfirm);
-      await waitForUploaded();
-    });
-
-    it("removes the temporary copy on close", async () => {
-      await click(sel.filesEditClose);
-      const panel = await browser.$(sel.filesEditPanel);
-      await panel.waitForExist({ timeout: 10_000, reverse: true });
-      await browser.waitUntil(async () => !existsSync(tempPath), {
-        timeout: 10_000,
-        timeoutMsg: "The temporary copy outlived the edit",
-      });
-      expect((await downloaded("conf.txt")).toString()).toBe("edited again\n");
-    });
+    expect((await downloaded("conf.txt")).toString()).toBe("edited again\n");
   });
 
   it("removes its work from the server", async () => {
@@ -633,7 +641,7 @@ describe("Files view (SFTP)", () => {
     await fill(sel.connectionFormTargetHost, "server-c");
     await fill(sel.connectionFormTargetPort, "22");
     await pickOption(sel.connectionFormTargetCredential, "cred-17-c");
-    await click(sel.connectionFormSubmit);
+    await saveConnectionForm();
 
     await backToFiles();
     await pickOption(sel.filesConnectionSelect, "jump-17-c");
