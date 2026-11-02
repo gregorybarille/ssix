@@ -6,6 +6,7 @@ import { FailedTerminal } from "@/components/FailedTerminal";
 import { TerminalTabs, type TerminalSession } from "@/components/TerminalTabs";
 import { invoke } from "@/lib/tauri";
 import type { ReconnectState } from "@/lib/reconnect";
+import { useAuthPromptStore } from "@/store/useAuthPromptStore";
 import type { Connection } from "@/types";
 
 vi.mock("@/lib/tauri", () => ({ invoke: vi.fn() }));
@@ -13,11 +14,11 @@ const invokeMock = vi.mocked(invoke);
 
 const mounts = vi.fn();
 vi.mock("@/components/Terminal", () => ({
-  Terminal: ({ sessionId }: { sessionId: string }) => {
+  Terminal: ({ sessionId, isVisible }: { sessionId: string; isVisible: boolean }) => {
     useEffect(() => {
       mounts(sessionId);
     }, []);
-    return <div data-testid="terminal" data-session-id={sessionId} />;
+    return <div data-testid="terminal" data-session-id={sessionId} data-visible={isVisible} />;
   },
 }));
 
@@ -43,6 +44,7 @@ beforeEach(() => {
   mounts.mockClear();
   invokeMock.mockReset();
   invokeMock.mockResolvedValue(undefined);
+  useAuthPromptStore.setState({ prompts: {} });
 });
 
 function renderStatus(reconnect: ReconnectState, error?: string) {
@@ -154,7 +156,7 @@ describe("the status of a shell that lost its connection", () => {
 });
 
 describe("a pane's terminal", () => {
-  function tabs(pane: Partial<TerminalSession>) {
+  function tabs(pane: Partial<TerminalSession>, onClosePane = vi.fn()) {
     return (
       <TerminalTabs
         tabs={[
@@ -167,13 +169,57 @@ describe("a pane's terminal", () => {
         activeTabId="t1"
         onSelectTab={vi.fn()}
         onCloseTab={vi.fn()}
-        onClosePane={vi.fn()}
+        onClosePane={onClosePane}
         onNewTab={vi.fn()}
         onRetry={vi.fn()}
         onEdit={vi.fn()}
       />
     );
   }
+
+  const askForCode = () =>
+    act(() =>
+      useAuthPromptStore.getState().receive("s1", {
+        kind: "auth_prompt",
+        prompt_id: "p1",
+        host: "web.example:22",
+        username: "me",
+        instructions: "",
+        prompts: [{ text: "Code: ", echo: false }],
+      }),
+    );
+
+  it("gives way to a login prompt during a reconnect and comes back after it", () => {
+    render(tabs({ retrying: true, reconnect: WAITING }));
+    expect(screen.getByTestId("terminal")).toHaveAttribute("data-visible", "true");
+
+    askForCode();
+    expect(screen.getByTestId("auth-prompt-reconnecting")).toBeInTheDocument();
+    expect(screen.getByTestId("auth-prompt-input-0")).toHaveFocus();
+    expect(screen.queryByTestId("failed-terminal")).not.toBeInTheDocument();
+    expect(screen.getByTestId("terminal")).toHaveAttribute("data-visible", "false");
+
+    act(() =>
+      useAuthPromptStore.getState().receive("s1", { kind: "auth_prompt_closed", prompt_id: "p1" }),
+    );
+    expect(screen.queryByTestId("auth-prompt")).not.toBeInTheDocument();
+    expect(screen.getByTestId("failed-terminal")).toHaveAttribute("data-reconnect-phase", "waiting");
+    expect(screen.getByTestId("terminal")).toHaveAttribute("data-visible", "true");
+    expect(mounts).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps its pane when Cancel ends a reconnect's prompt", async () => {
+    const onClosePane = vi.fn();
+    render(tabs({ retrying: true, reconnect: WAITING }, onClosePane));
+    askForCode();
+
+    await userEvent.click(screen.getByTestId("auth-prompt-cancel"));
+
+    expect(invokeMock).toHaveBeenCalledWith("ssh_auth_cancel", { promptId: "p1" });
+    expect(onClosePane).not.toHaveBeenCalled();
+    expect(screen.queryByTestId("auth-prompt")).not.toBeInTheDocument();
+    expect(screen.getByTestId("failed-terminal")).toBeInTheDocument();
+  });
 
   it("stays mounted through a whole reconnect, so its scrollback survives", () => {
     const { rerender } = render(tabs({}));

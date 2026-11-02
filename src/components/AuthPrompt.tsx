@@ -10,6 +10,8 @@ import { submitWithoutReset } from "@/lib/formSubmit";
 interface AuthPromptProps {
   request: AuthPromptRequest;
   isVisible: boolean;
+  /** The server is asking because a dropped shell is logging in again. */
+  reconnecting?: boolean;
   onAnswer: (answers: string[]) => Promise<void>;
   onCancel: () => void;
 }
@@ -27,7 +29,13 @@ interface AuthPromptProps {
  * value into its `value` attribute, which would leave an answer in the DOM,
  * and the answers would sit in component state besides.
  */
-export function AuthPrompt({ request, isVisible, onAnswer, onCancel }: AuthPromptProps) {
+export function AuthPrompt({
+  request,
+  isVisible,
+  reconnecting = false,
+  onAnswer,
+  onCancel,
+}: AuthPromptProps) {
   const fields = useRef<(HTMLInputElement | null)[]>([]);
 
   const [error, submit, isPending] = useActionState(async () => {
@@ -63,6 +71,11 @@ export function AuthPrompt({ request, isVisible, onAnswer, onCancel }: AuthPromp
           <p className="text-sm font-semibold text-foreground break-all">
             {request.username}@{request.host}
           </p>
+          {reconnecting && (
+            <p className="text-xs text-foreground mt-1" data-testid="auth-prompt-reconnecting">
+              The connection was lost. Log in again to reconnect.
+            </p>
+          )}
           {request.instructions && (
             <p
               className="text-xs text-muted-foreground whitespace-pre-wrap break-words mt-1"

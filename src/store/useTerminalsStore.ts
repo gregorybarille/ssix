@@ -189,10 +189,12 @@ export const useTerminalsStore = create<TerminalsState>((set, get) => {
       try {
         // The output channel must exist before the backend starts the
         // session; its sink buffers bytes until the <Terminal> mounts.
+        // A login asks under the placeholder; a reconnect, later, under the session.
+        let paneId = placeholderId;
         const { channel, sink } = await createOutputChannel((event) => {
           const prompts = useAuthPromptStore.getState();
-          if (cancelled.has(placeholderId)) prompts.refuse(event);
-          else prompts.receive(placeholderId, event);
+          if (findPane(paneId)) prompts.receive(paneId, event);
+          else prompts.refuse(event);
         });
         const sessionId = await invoke<string>("ssh_connect", {
           connectionId: conn.id,
@@ -204,6 +206,7 @@ export const useTerminalsStore = create<TerminalsState>((set, get) => {
           return;
         }
         registerOutputSink(sessionId, sink);
+        paneId = sessionId;
         // Replace placeholder identity in-place so the pane keeps its slot.
         set((state) => ({
           tabs: state.tabs.map((t) => ({

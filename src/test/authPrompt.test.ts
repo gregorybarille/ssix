@@ -107,6 +107,12 @@ describe("useAuthPromptStore", () => {
     expect(store().prompts.pane?.prompt_id).toBe("p2");
   });
 
+  it("closes a prompt by its id, under whichever pane id it was shown", () => {
+    store().receive("placeholder", prompt("p1"));
+    store().receive("real-session", closed("p1"));
+    expect(store().prompts).toEqual({});
+  });
+
   it("sends answers for the pane's prompt", async () => {
     store().receive("pane", prompt("p1"));
     await store().answer("pane", ["secret"]);
@@ -189,6 +195,44 @@ describe("a connecting pane", () => {
     await done;
     expect(prompts()).toEqual({});
     expect(useTerminalsStore.getState().tabs[0].panes[0].sessionId).toBe("real-session");
+  });
+
+  it("shows a reconnect's prompt under the session, once it has one", async () => {
+    const { send, done, finish } = await connecting();
+    finish("real-session");
+    await done;
+
+    send(prompt("again"));
+    expect(prompts()["real-session"]?.prompt_id).toBe("again");
+
+    send(closed("again"));
+    expect(prompts()).toEqual({});
+    expect(callsTo("ssh_auth_cancel")).toEqual([]);
+  });
+
+  it("closes a prompt whose close arrives after ssh_connect resolved", async () => {
+    const { send, done, finish } = await connecting();
+    send(prompt("p1"));
+    finish("real-session");
+    await done;
+
+    send(closed("p1"));
+    expect(prompts()).toEqual({});
+  });
+
+  it("cancels a reconnect's prompt with its pane, and refuses any that come later", async () => {
+    const { send, done, finish } = await connecting();
+    finish("real-session");
+    await done;
+    send(prompt("again"));
+
+    await useTerminalsStore.getState().closePane("real-session");
+    expect(prompts()).toEqual({});
+    expect(callsTo("ssh_auth_cancel")).toEqual([["ssh_auth_cancel", { promptId: "again" }]]);
+
+    send(prompt("late"));
+    expect(prompts()).toEqual({});
+    expect(callsTo("ssh_auth_cancel")).toContainEqual(["ssh_auth_cancel", { promptId: "late" }]);
   });
 
   it("closing the pane cancels the prompt and the attempt stays quiet", async () => {

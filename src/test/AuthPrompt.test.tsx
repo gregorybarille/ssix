@@ -59,6 +59,16 @@ describe("AuthPrompt", () => {
     expect(screen.getByLabelText("Answer 1")).toBe(field(0));
   });
 
+  it("says why it is asking again only during a reconnect", () => {
+    setup({ reconnecting: true });
+    expect(screen.getByRole("status")).toHaveTextContent("Log in again to reconnect");
+  });
+
+  it("says nothing about reconnecting on a first login", () => {
+    setup();
+    expect(screen.queryByTestId("auth-prompt-reconnecting")).toBeNull();
+  });
+
   it("leaves out empty instructions", () => {
     setup({ request: { ...request, instructions: "" } });
     expect(screen.queryByTestId("auth-prompt-text")).toBeNull();

@@ -3,9 +3,9 @@ import type { AuthEvent, AuthPromptRequest } from "@/lib/authPrompt";
 import { invoke } from "@/lib/tauri";
 
 /**
- * The keyboard-interactive prompt each terminal pane is showing, by the id of
- * the pane's session (the placeholder id: a pane still logging in has no other).
- * Holds what the server asked, never what the user answers.
+ * The keyboard-interactive prompt each terminal pane is showing, by pane id: the
+ * placeholder while a pane first logs in, its session id when a dropped shell
+ * logs in again. Holds what the server asked, never what the user answers.
  */
 interface AuthPromptState {
   prompts: Record<string, AuthPromptRequest>;
@@ -36,10 +36,13 @@ export const useAuthPromptStore = create<AuthPromptState>((set, get) => ({
         const { kind: _kind, ...request } = event;
         return { prompts: { ...state.prompts, [paneId]: request } };
       }
-      // A later round may already be showing; only its own close removes it.
-      return state.prompts[paneId]?.prompt_id === event.prompt_id
-        ? { prompts: without(state.prompts, paneId) }
-        : state;
+      // By the prompt's id: a later round may already be showing, which only
+      // its own close removes, and `ssh_connect` can resolve ahead of this event,
+      // leaving the prompt under the id the pane just stopped using.
+      const shownBy = Object.keys(state.prompts).find(
+        (pane) => state.prompts[pane].prompt_id === event.prompt_id,
+      );
+      return shownBy === undefined ? state : { prompts: without(state.prompts, shownBy) };
     });
   },
 

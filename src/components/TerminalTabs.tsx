@@ -82,13 +82,17 @@ function PaneRenderer({
   // this position in the tree, so its scrollback survives the reconnect.
   const neverConnected = !session.reconnect && (session.error || session.retrying);
   const authPrompt = useAuthPromptStore((state) => state.prompts[session.sessionId]);
+  // A login prompt has the whole pane until it closes, also over a shell that is
+  // reconnecting. Its terminal stays mounted but hidden, as in a background tab:
+  // it keeps its scrollback, cannot take the focus and an answer with it from the
+  // prompt, and takes the focus back when the prompt goes.
   return (
     <>
       {!neverConnected && (
         <Terminal
           sessionId={session.sessionId}
           connectionName={session.connectionName}
-          isVisible={isVisible}
+          isVisible={isVisible && !authPrompt}
           onDisconnect={onClose}
           settings={settings}
           connection={session.connection}
@@ -99,8 +103,15 @@ function PaneRenderer({
           key={authPrompt.prompt_id}
           request={authPrompt}
           isVisible={isVisible}
+          reconnecting={!!session.reconnect}
           onAnswer={(answers) => useAuthPromptStore.getState().answer(session.sessionId, answers)}
-          onCancel={onClose}
+          // A dropped shell keeps its pane: Cancel ends the attempt, which stops
+          // the reconnect and leaves the status bar with Retry.
+          onCancel={
+            session.reconnect
+              ? () => useAuthPromptStore.getState().cancel(session.sessionId)
+              : onClose
+          }
         />
       ) : (
         (neverConnected || session.reconnect) && (
