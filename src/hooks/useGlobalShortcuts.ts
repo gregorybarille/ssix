@@ -8,6 +8,7 @@ import { useViewStore } from "@/store/useViewStore";
 // roadmap:snippets
 import { useSnippetsStore } from "@/store/useSnippetsStore";
 // roadmap:terminal-ux
+import { useTerminalSearchStore } from "@/store/useTerminalSearchStore";
 
 /**
  * Map of normalized shortcut → handler. Keys use this format:
@@ -75,6 +76,14 @@ export const SHORTCUTS: readonly ShortcutEntry[] = [
     allowInTypingSurface: true,
   },
   // roadmap:terminal-ux
+  {
+    combo: "mod+f",
+    description: "Find in the visible terminal",
+    handler: () => useTerminalSearchStore.getState().open(),
+    // Its main use is from inside a terminal, where this takes Ctrl+F from the
+    // shell on Linux and Windows: `terminalSearch.ts` keeps the key from xterm.
+    allowInTypingSurface: true,
+  },
 ];
 
 /** `SHORTCUTS` in the form `useGlobalShortcuts` takes. */

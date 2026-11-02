@@ -50,3 +50,11 @@ export function isTypingSurface(target: EventTarget | null): boolean {
   const tag = target.tagName;
   return tag === "INPUT" || tag === "SELECT";
 }
+
+/**
+ * True while a side panel or palette is open. Panels are non-modal: the view
+ * beside one stays clickable, but the keyboard belongs to the panel.
+ */
+export function isPanelOpen(): boolean {
+  return document.querySelector('[data-slot="app-panel-content"]') !== null;
+}
