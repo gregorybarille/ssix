@@ -7,6 +7,7 @@
 > - `docs/file-transfer.md` — SCP/file transfer behaviour and constraints
 > - `docs/git-sync.md` — git-sync export feature
 > - `docs/roadmap.md` — validated feature roadmap, stream ownership and rules
+> - `docs/session-resilience.md` — keepalive, auto-reconnect and session logs
 > - `docs/troubleshooting.md` — common failure modes and fixes
 
 ## Build & Test
