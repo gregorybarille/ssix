@@ -45,9 +45,18 @@ export function fillVariables(command: string, values: ReadonlyMap<string, strin
   });
 }
 
+export const NO_TERMINAL_MESSAGE =
+  "There is no live terminal to paste into. Connect to a host, or go back to Terminals and pick a tab that is connected.";
+
+export const SEVERAL_LINES_MESSAGE =
+  "Nothing was pasted: this snippet has several lines, and the program in this terminal has not asked for bracketed paste, so each line would run as soon as it arrived. Put the command on one line (a && b), or use a shell with bracketed paste (bash 5.1 or later, zsh, fish). Just back from another view? Press Enter for a new prompt, then try again.";
+
+export const TAB_MESSAGE =
+  "Nothing was pasted: this snippet has a tab, and the program in this terminal has not asked for bracketed paste, so the shell would take the tab as a request to complete, which can change the text or swallow what follows. Replace the tab with spaces, or use a shell with bracketed paste (bash 5.1 or later, zsh, fish).";
+
 /**
- * The bytes to send so that pasting runs nothing, or `null` when that cannot
- * be done. A newline is never added.
+ * The bytes to send so that pasting runs nothing, or why that cannot be done.
+ * A newline is never added.
  *
  * - Blank lines around the command go, so `uptime\n` does not run itself.
  *   Spaces at its end stay: `kubectl logs ` is a command to finish by hand.
@@ -57,24 +66,25 @@ export function fillVariables(command: string, values: ReadonlyMap<string, strin
  *   `\x1b[200~` and `\x1b[201~` and treats line breaks in between as text.
  *   They are sent as `\r`, as xterm's own paste does.
  * - Without it, a line break is the same as pressing Enter, so several lines
- *   cannot be pasted safely (`null`). Joining them would change the command.
+ *   cannot be pasted safely. Joining them would change the command. A tab asks
+ *   the shell to complete, which can change the text or swallow what follows,
+ *   so it is refused as well.
  */
-export function preparePaste(command: string, bracketed: boolean): string | null {
+export function preparePaste(
+  command: string,
+  bracketed: boolean,
+): { text: string } | { error: string } {
   const lines = command.replace(CONTROL_CHARS, "").split(/\r\n|\r|\n/);
   let start = 0;
   let end = lines.length;
   while (end - start > 1 && !lines[end - 1].trim()) end--;
   while (end - start > 1 && !lines[start].trim()) start++;
   const kept = lines.slice(start, end);
-  if (bracketed) return `\x1b[200~${kept.join("\r")}\x1b[201~`;
-  return kept.length === 1 ? kept[0] : null;
+  if (bracketed) return { text: `\x1b[200~${kept.join("\r")}\x1b[201~` };
+  if (kept.length > 1) return { error: SEVERAL_LINES_MESSAGE };
+  if (kept[0].includes("\t")) return { error: TAB_MESSAGE };
+  return { text: kept[0] };
 }
-
-export const NO_TERMINAL_MESSAGE =
-  "There is no live terminal to paste into. Connect to a host, or go back to Terminals and pick a tab that is connected.";
-
-export const SEVERAL_LINES_MESSAGE =
-  "Nothing was pasted: this snippet has several lines, and the program in this terminal has not asked for bracketed paste, so each line would run as soon as it arrived. Put the command on one line (a && b), or use a shell with bracketed paste (bash 5.1 or later, zsh, fish). Just back from another view? Press Enter for a new prompt, then try again.";
 
 export type PastePlan = { sessionId: string; text: string } | { error: string };
 
@@ -82,8 +92,8 @@ export type PastePlan = { sessionId: string; text: string } | { error: string };
 export function planPaste(command: string): PastePlan {
   const sessionId = activeSessionId();
   if (!sessionId) return { error: NO_TERMINAL_MESSAGE };
-  const text = preparePaste(command, acceptsBracketedPaste(sessionId));
-  return text === null ? { error: SEVERAL_LINES_MESSAGE } : { sessionId, text };
+  const prepared = preparePaste(command, acceptsBracketedPaste(sessionId));
+  return "error" in prepared ? prepared : { sessionId, text: prepared.text };
 }
 
 /** AND-matched tokens (from `tokenize` in `search.ts`) over name, command and tags. */

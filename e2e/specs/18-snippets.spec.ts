@@ -340,6 +340,41 @@ describe("Snippets", () => {
     await expectNotInTerminal("multi-");
   });
 
+  it("refuses a tab where the shell would read it as a completion", async () => {
+    await openSnippetsView();
+    await click(sel.addSnippetButton);
+    await fill(sel.snippetFormName, "snip-18-tab");
+    // WebDriver's Tab moves the focus. Users get a tab into the form by pasting one.
+    await browser.execute(
+      (selector: string, value: string) => {
+        const area = document.querySelector<HTMLTextAreaElement>(selector)!;
+        Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!.call(
+          area,
+          value,
+        );
+        area.dispatchEvent(new Event("input", { bubbles: true }));
+      },
+      sel.snippetFormCommand,
+      "echo tabbed\tword",
+    );
+    await clickDialogFooterButton(sel.snippetFormSubmit);
+    await waitForGone(sel.snippetForm);
+    expect(savedSnippets().find((s) => s.name === "snip-18-tab")?.command).toBe(
+      "echo tabbed\tword",
+    );
+
+    await click(sel.navTerminals);
+    await openPaletteFromTerminal();
+    await choose("snip-18-tab");
+    const error = await browser.$(sel.snippetPaletteError);
+    await error.waitForExist({ timeout: 10_000 });
+    expect(await textContentOf(error)).toContain("has a tab");
+
+    await browser.keys(["Escape"]);
+    await waitForPaletteClosed();
+    await expectNotInTerminal("tabbed");
+  });
+
   // It leaves this terminal asking for bracketed paste, which ash cannot read,
   // so the tests after it use panes of their own.
   it("sends several lines as a bracketed paste when the program asks for one", async () => {

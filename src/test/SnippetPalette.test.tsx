@@ -3,7 +3,7 @@ import { act, fireEvent, screen, waitFor } from "@testing-library/react";
 import type { Terminal as XTerm } from "@xterm/xterm";
 import { SnippetPalette } from "@/components/SnippetPalette";
 import { invoke } from "@/lib/tauri";
-import { NO_TERMINAL_MESSAGE, SEVERAL_LINES_MESSAGE } from "@/lib/snippets";
+import { NO_TERMINAL_MESSAGE, SEVERAL_LINES_MESSAGE, TAB_MESSAGE } from "@/lib/snippets";
 import { registerTerminal, unregisterTerminal } from "@/lib/terminalRegistry";
 import { useSnippetsStore } from "@/store/useSnippetsStore";
 import { useTerminalsStore } from "@/store/useTerminalsStore";
@@ -352,6 +352,43 @@ describe("SnippetPalette", () => {
         ["ssh_write", { sessionId: "s1", data: "\x1b[200~cd /tmp\rls\x1b[201~" }],
       ]);
       expect(paletteOpen()).toBe(false);
+    });
+  });
+
+  describe("snippets with a tab", () => {
+    const tabbed: Snippet = { id: "8", name: "tabbed", command: "echo a\tb" };
+
+    it("refuses them when the program did not ask for bracketed paste", async () => {
+      liveTerminal("s1");
+      activate("s1");
+      await openPalette([tabbed]);
+      fireEvent.click(option("tabbed")!);
+      expect(writes()).toEqual([]);
+      expect(paletteOpen()).toBe(true);
+      expect(screen.getByTestId("snippet-palette-error")).toHaveTextContent(TAB_MESSAGE);
+    });
+
+    it("sends them as a bracketed paste when the program asked for one", async () => {
+      liveTerminal("s1", true);
+      activate("s1");
+      await openPalette([tabbed]);
+      fireEvent.click(option("tabbed")!);
+      expect(writes()).toEqual([
+        ["ssh_write", { sessionId: "s1", data: "\x1b[200~echo a\tb\x1b[201~" }],
+      ]);
+    });
+
+    it("refuses one that arrives in a value, and keeps the values", async () => {
+      liveTerminal("s1");
+      activate("s1");
+      await openPalette([greet]);
+      fireEvent.click(option("greet")!);
+      fireEvent.change(variable("who")!, { target: { value: "a\tb" } });
+      fireEvent.change(variable("place")!, { target: { value: "paris" } });
+      fireEvent.submit(screen.getByTestId("snippet-variables-form"));
+      expect(writes()).toEqual([]);
+      expect(screen.getByTestId("snippet-palette-error")).toHaveTextContent(TAB_MESSAGE);
+      expect(variable("who")).toHaveValue("a\tb");
     });
   });
 

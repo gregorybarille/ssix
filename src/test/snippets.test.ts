@@ -8,6 +8,7 @@ import {
   SEVERAL_LINES_MESSAGE,
   snippetMatches,
   snippetVariables,
+  TAB_MESSAGE,
 } from "@/lib/snippets";
 import { tokenize } from "@/lib/search";
 import {
@@ -170,8 +171,8 @@ describe("fillVariables", () => {
 
 describe("preparePaste", () => {
   it("never appends a newline", () => {
-    expect(preparePaste("uptime", false)).toBe("uptime");
-    expect(preparePaste("uptime", true)).toBe(`${BEGIN}uptime${END}`);
+    expect(preparePaste("uptime", false)).toEqual({ text: "uptime" });
+    expect(preparePaste("uptime", true)).toEqual({ text: `${BEGIN}uptime${END}` });
   });
 
   it.each([
@@ -182,16 +183,16 @@ describe("preparePaste", () => {
     ["blank lines with spaces", "uptime\n  \n\t\n"],
     ["before and after", "\n\n  \nuptime\n\n"],
   ])("drops the line breaks around a command: %s", (_label, command) => {
-    expect(preparePaste(command, false)).toBe("uptime");
+    expect(preparePaste(command, false)).toEqual({ text: "uptime" });
   });
 
   it("keeps spaces at the end of the command, to go on typing after them", () => {
-    expect(preparePaste("kubectl logs ", false)).toBe("kubectl logs ");
-    expect(preparePaste("kubectl logs \n", false)).toBe("kubectl logs ");
+    expect(preparePaste("kubectl logs ", false)).toEqual({ text: "kubectl logs " });
+    expect(preparePaste("kubectl logs \n", false)).toEqual({ text: "kubectl logs " });
   });
 
   it("keeps leading spaces, which keep a command out of the shell's history", () => {
-    expect(preparePaste(" secret-thing", false)).toBe(" secret-thing");
+    expect(preparePaste(" secret-thing", false)).toEqual({ text: " secret-thing" });
   });
 
   it.each([
@@ -200,37 +201,53 @@ describe("preparePaste", () => {
     ["CR", "a\rb"],
     ["a blank line between", "a\n\nb"],
   ])("refuses several lines without bracketed paste: %s", (_label, command) => {
-    expect(preparePaste(command, false)).toBeNull();
+    expect(preparePaste(command, false)).toEqual({ error: SEVERAL_LINES_MESSAGE });
   });
 
   it("sends several lines between the markers, with CR as a terminal paste does", () => {
-    expect(preparePaste("a\nb", true)).toBe(`${BEGIN}a\rb${END}`);
-    expect(preparePaste("a\r\nb", true)).toBe(`${BEGIN}a\rb${END}`);
-    expect(preparePaste("a\rb", true)).toBe(`${BEGIN}a\rb${END}`);
+    expect(preparePaste("a\nb", true)).toEqual({ text: `${BEGIN}a\rb${END}` });
+    expect(preparePaste("a\r\nb", true)).toEqual({ text: `${BEGIN}a\rb${END}` });
+    expect(preparePaste("a\rb", true)).toEqual({ text: `${BEGIN}a\rb${END}` });
   });
 
   it("keeps blank lines inside and drops the ones around, between the markers too", () => {
-    expect(preparePaste("\na\n\nb\n", true)).toBe(`${BEGIN}a\r\rb${END}`);
+    expect(preparePaste("\na\n\nb\n", true)).toEqual({ text: `${BEGIN}a\r\rb${END}` });
   });
 
   it("keeps a snippet from closing the bracketed paste early", () => {
-    const text = preparePaste(`a${END}\nrm -rf /\n`, true);
-    expect(text).toBe(`${BEGIN}a[201~\rrm -rf /${END}`);
+    const sent = `${BEGIN}a[201~\rrm -rf /${END}`;
+    expect(preparePaste(`a${END}\nrm -rf /\n`, true)).toEqual({ text: sent });
     // One opening and one closing marker, the ones this function added.
-    expect(text?.split("\x1b")).toHaveLength(3);
+    expect(sent.split("\x1b")).toHaveLength(3);
   });
 
   it("strips control characters that would act on the shell", () => {
-    expect(preparePaste("a\x03b\x04c\x1bd\x7fe\x9bf", false)).toBe("abcdef");
-    expect(preparePaste("a\x00b", false)).toBe("ab");
+    expect(preparePaste("a\x03b\x04c\x1bd\x7fe\x9bf", false)).toEqual({ text: "abcdef" });
+    expect(preparePaste("a\x00b", false)).toEqual({ text: "ab" });
   });
 
   it("does not hide a line break behind a stripped control character", () => {
-    expect(preparePaste("a\x0b\nb", false)).toBeNull();
+    expect(preparePaste("a\x0b\nb", false)).toEqual({ error: SEVERAL_LINES_MESSAGE });
   });
 
-  it("keeps tabs and non-ASCII text", () => {
-    expect(preparePaste("a\tb é 日本", false)).toBe("a\tb é 日本");
+  it("keeps non-ASCII text", () => {
+    expect(preparePaste("a b é 日本", false)).toEqual({ text: "a b é 日本" });
+  });
+
+  it.each([
+    ["inside the command", "echo a\tb"],
+    ["at its end, asking for a completion", "ls /et\t"],
+    ["at its start", "\tls"],
+  ])("refuses a tab without bracketed paste: %s", (_label, command) => {
+    expect(preparePaste(command, false)).toEqual({ error: TAB_MESSAGE });
+  });
+
+  it("sends a tab between the markers, where it is text", () => {
+    expect(preparePaste("echo a\tb", true)).toEqual({ text: `${BEGIN}echo a\tb${END}` });
+  });
+
+  it("explains several lines first when a snippet has a tab as well", () => {
+    expect(preparePaste("a\tb\nc", false)).toEqual({ error: SEVERAL_LINES_MESSAGE });
   });
 });
 
@@ -293,6 +310,12 @@ describe("planPaste and the registry", () => {
     activate("s1");
     expect(acceptsBracketedPaste("s1")).toBe(false);
     expect(planPaste("a\nb")).toEqual({ error: SEVERAL_LINES_MESSAGE });
+  });
+
+  it("explains why a tab is refused", () => {
+    live("s1");
+    activate("s1");
+    expect(planPaste("echo a\tb")).toEqual({ error: TAB_MESSAGE });
   });
 
   it("knows nothing about a session with no terminal", () => {

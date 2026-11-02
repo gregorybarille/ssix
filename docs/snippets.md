@@ -37,6 +37,9 @@ Sending a line break to a shell is the same as pressing Enter, so:
   sent. `sh`, `dash`, BusyBox `ash` and older bash do not ask for bracketed
   paste, and without it each line would run on arrival. SSIX does not join the
   lines, since that would change the command. Put it on one line (`a && b`).
+- **A tab goes only in a bracketed paste, too.** Otherwise it is refused, with an
+  explanation, and nothing is sent: the shell would take it as a request to
+  complete, which can change the text or swallow what follows.
 - **Control characters are removed** from what is pasted, other than tabs and
   line breaks. Otherwise a snippet containing `ESC [ 201 ~` could end the
   bracketed paste early and run the lines after it, and `Ctrl+C` or `Ctrl+D`
