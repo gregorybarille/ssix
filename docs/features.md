@@ -51,6 +51,8 @@ distribution needs `nc` (`netcat-openbsd` on Debian and Ubuntu). SCP and
 port forwards use the proxy too; the copied `ssh` command carries it as
 `-o ProxyCommand=…`.
 
+Hosts in `~/.ssh/config` can be imported: see [Import from SSH config](ssh-config-import.md).
+
 ## Credentials
 
 Supported credential modes:
