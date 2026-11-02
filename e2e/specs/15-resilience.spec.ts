@@ -28,7 +28,7 @@ import { TARGETS, waitForServers } from "../helpers/docker.js";
 import { flaggedProxy } from "../helpers/flagged-proxy.js";
 import {
   click,
-  closeTerminal,
+  closeAllTabs,
   connectToConnection,
   createDirectConnection,
   createPasswordCredential,
@@ -187,7 +187,7 @@ describe("Session resilience", () => {
 
   afterEach(async () => {
     allowConnections();
-    await closeTerminal();
+    await closeAllTabs();
   });
 
   it("notices a frozen server through its keepalive and reconnects in the same pane", async () => {
@@ -285,7 +285,7 @@ describe("Session resilience", () => {
       await (await browser.$(sel.navTerminals)).waitForExist({ reverse: true, timeout: 10_000 });
     } finally {
       allowConnections();
-      await closeTerminal();
+      await closeAllTabs();
       await navigateTo("settings");
       await typeOverNumber(sel.settingsReconnectMaxAttempts, 5);
       await navigateTo("connections");
@@ -467,7 +467,7 @@ describe("Session resilience", () => {
       await expectReconnected("BEFORE-SETTINGS-42");
       await typeIntoTerminal(`kill -9 ${frozen}\n`);
     } finally {
-      await closeTerminal();
+      await closeAllTabs();
       await navigateTo("settings");
       await typeOverNumber(sel.settingsKeepaliveInterval, 30);
       await setSwitch(sel.settingsAutoReconnect, true);

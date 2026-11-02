@@ -247,22 +247,6 @@ export async function readTerminalText(): Promise<string> {
   return parts.join("\n");
 }
 
-/** Close the open terminal tab, answering the confirmation a live pane asks for. */
-export async function closeTerminal(): Promise<void> {
-  const nav = await browser.$(sel.navTerminals);
-  const confirm = await browser.$(sel.confirmClosePane);
-  if ((await nav.isExisting()) && !(await confirm.isExisting())) {
-    await nav.click();
-    await clickDialogFooterButton(sel.terminalTabCloseAny);
-    await browser.waitUntil(async () => (await confirm.isExisting()) || !(await nav.isExisting()), {
-      timeout: 10_000,
-      timeoutMsg: "Closing the tab neither asked for confirmation nor closed it",
-    });
-  }
-  if (await confirm.isExisting()) await clickDialogFooterButton(sel.confirmClosePaneConfirm);
-  await nav.waitForExist({ reverse: true, timeout: 10_000 });
-}
-
 /** Wait for a FailedTerminal whose backend error contains `needle`. */
 export async function waitForFailedTerminalError(needle: string, timeoutMs = 30_000): Promise<string> {
   let lastError = "";

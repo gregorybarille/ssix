@@ -25,7 +25,7 @@ import { flaggedProxy } from "../helpers/flagged-proxy.js";
 import {
   click,
   clickDialogFooterButton,
-  closeTerminal,
+  closeAllTabs,
   connectToConnection,
   createDirectConnection,
   createPasswordCredential,
@@ -282,7 +282,7 @@ describe("Terminal UX", () => {
 
   afterEach(async () => {
     allowConnections();
-    await closeTerminal();
+    await closeAllTabs();
   });
 
   describe("off screen", () => {
