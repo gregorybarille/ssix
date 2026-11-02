@@ -73,6 +73,9 @@ export function SnippetPalette() {
   const [error, setError] = useState<string | null>(null);
   const pastedTo = useRef<string | null>(null);
 
+  // A refusal is about the pane it was made for.
+  useEffect(() => setError(null), [sessionId]);
+
   const paste = (command: string) => {
     const plan = planPaste(command);
     if ("error" in plan) {

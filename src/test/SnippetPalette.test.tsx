@@ -343,6 +343,19 @@ describe("SnippetPalette", () => {
       expect(screen.queryByTestId("snippet-palette-error")).not.toBeInTheDocument();
     });
 
+    it("drops the refusal when the target changes", async () => {
+      const first = liveTerminal("s1");
+      const second = liveTerminal("s2");
+      activate("s1", "s2");
+      act(() => first.textarea.focus());
+      await openPalette();
+      fireEvent.click(option("two-lines")!);
+      expect(screen.getByTestId("snippet-palette-error")).toHaveTextContent(SEVERAL_LINES_MESSAGE);
+      act(() => second.textarea.focus());
+      expect(screen.getByTestId("snippet-palette-target")).toHaveTextContent("conn-s2");
+      expect(screen.queryByTestId("snippet-palette-error")).not.toBeInTheDocument();
+    });
+
     it("sends them as a bracketed paste when the program asked for one", async () => {
       liveTerminal("s1", true);
       activate("s1");
