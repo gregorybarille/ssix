@@ -1,5 +1,8 @@
 import type { Terminal as XTerm } from "@xterm/xterm";
+import type { TerminalSession } from "@/components/TerminalTabs";
+import { useAuthPromptStore } from "@/store/useAuthPromptStore";
 import { useTerminalsStore } from "@/store/useTerminalsStore";
+import { useViewStore } from "@/store/useViewStore";
 import { errorMessage } from "./errors";
 import { log as appLog } from "./log";
 import { invoke } from "./tauri";
@@ -9,15 +12,15 @@ import { invoke } from "./tauri";
  * has to reach one: sending text to a session, finding the active one.
  *
  * The WebGL renderer draws to a canvas, so a terminal's text is no longer
- * in the DOM. The e2e suite reads it through `window.__ssixTerminalText`
- * instead; nothing else should depend on that.
+ * in the DOM. The e2e suite reads it through `window.__ssixTerminalText` and
+ * `window.__ssixTerminalState` instead; nothing else should depend on those.
  */
 const terminals = new Map<string, XTerm>();
 
 /**
  * The session that last had keyboard focus. It survives focus moving to a
- * palette or panel, and its terminal unmounting with the Terminals view:
- * `activeSessionId` trusts it only while that session has a live terminal.
+ * palette or panel, and its terminal being replaced: `activeSessionId` trusts
+ * it only while that session can take input.
  */
 let lastFocusedSessionId: string | null = null;
 
@@ -37,6 +40,32 @@ export function unregisterTerminal(sessionId: string): void {
   if (heldEnterSessionId === sessionId) heldEnterSessionId = null;
 }
 
+/**
+ * Whether a pane is showing a live shell, the only thing that may receive text. A
+ * pane that is still connecting, lost its connection or whose shell ended would
+ * lose it: the backend discards what reaches a shell that is not there. Neither
+ * does a pane showing a login prompt: what the user is shown there is a question,
+ * not a shell, even over a dropped shell that keeps its terminal behind the prompt.
+ */
+export function isLiveShell(pane: TerminalSession): boolean {
+  if (useAuthPromptStore.getState().prompts[pane.sessionId]) return false;
+  return !pane.error && !pane.retrying && !pane.reconnect && !pane.ended;
+}
+
+/** Whether text may go to a session: it has a terminal, in a pane with a live shell. */
+function takesInput(sessionId: string): boolean {
+  const pane = useTerminalsStore
+    .getState()
+    .tabs.flatMap((tab) => tab.panes)
+    .find((candidate) => candidate.sessionId === sessionId);
+  return terminals.has(sessionId) && !!pane && isLiveShell(pane);
+}
+
+/** A session's xterm, for what has no function of its own here. */
+export function registeredTerminal(sessionId: string): XTerm | undefined {
+  return terminals.get(sessionId);
+}
+
 /** Give the keyboard to a session's terminal, when it can take it. */
 export function focusSession(sessionId: string): void {
   terminals.get(sessionId)?.focus();
@@ -47,11 +76,11 @@ export function focusSession(sessionId: string): void {
  * like keyboard input, and the remote shell echoes it. Terminal extensions'
  * `onData` hooks do not run, so an extension can call this without looping.
  *
- * Returns whether the session has a live terminal to send to. A write that
+ * Returns whether the session can take text (see `takesInput`). A write that
  * fails after that is logged; the session's `closed` notification follows it.
  */
 export function writeToSession(sessionId: string, text: string): boolean {
-  if (!terminals.has(sessionId)) return false;
+  if (!takesInput(sessionId)) return false;
   invoke("ssh_write", { sessionId, data: text }).catch((error) => {
     appLog.error("terminal", `Could not write to the session: ${errorMessage(error)}`);
   });
@@ -61,8 +90,6 @@ export function writeToSession(sessionId: string, text: string): boolean {
 /**
  * Whether the program in this session asked for bracketed paste (DECSET 2004),
  * so line breaks inside a paste reach it as text instead of pressing Enter.
- * A terminal that just remounted knows only what it has seen since: bash and
- * zsh ask again at their next prompt.
  */
 export function acceptsBracketedPaste(sessionId: string): boolean {
   return terminals.get(sessionId)?.modes.bracketedPasteMode ?? false;
@@ -91,16 +118,34 @@ export function isHeldEnter(sessionId: string, e: KeyboardEvent): boolean {
   return false;
 }
 
-/**
- * The live session of the active terminal tab: the pane that last had focus,
- * otherwise the tab's first live pane. `null` when the active tab has none
- * (no tab open, or only failed panes).
- */
-export function activeSessionId(): string | null {
+/** Of the active tab's panes that qualify, the one that last had focus, or else the first. */
+function activePaneAmong(qualifies: (sessionId: string) => boolean): string | null {
+  if (useViewStore.getState().view !== "terminals") return null;
   const { tabs, activeTabId } = useTerminalsStore.getState();
   const panes = tabs.find((tab) => tab.id === activeTabId)?.panes ?? [];
-  const live = panes.map((pane) => pane.sessionId).filter((id) => terminals.has(id));
-  return live.find((id) => id === lastFocusedSessionId) ?? live[0] ?? null;
+  const ids = panes.map((pane) => pane.sessionId).filter(qualifies);
+  return ids.find((id) => id === lastFocusedSessionId) ?? ids[0] ?? null;
+}
+
+/**
+ * The session of the terminal the user is looking at, for what only reads it, like
+ * find, or gives it the keyboard: a shell that dropped still has its scrollback.
+ * `null` when there is none: on another view, where terminals stay mounted but none
+ * is on screen, and with no tab open or only failed panes or panes behind a login
+ * prompt.
+ */
+export function activeSessionId(): string | null {
+  return activePaneAmong(
+    (id) => terminals.has(id) && !useAuthPromptStore.getState().prompts[id],
+  );
+}
+
+/**
+ * The session text sent from outside a terminal goes to: like `activeSessionId`,
+ * but only a pane that can take it, so a healthy pane comes before one that dropped.
+ */
+export function inputSessionId(): string | null {
+  return activePaneAmong(takesInput);
 }
 
 function bufferText(term: XTerm): string {
@@ -125,12 +170,46 @@ export function terminalText(sessionId?: string): string | null {
   return [...terminals.values()].map(bufferText).join("\n");
 }
 
+/** What the e2e suite checks of a terminal. */
+export interface TerminalState {
+  cols: number;
+  rows: number;
+  fontSize: number | undefined;
+  fontFamily: string | undefined;
+  background: string | undefined;
+  bracketedPaste: boolean;
+  /** A full-screen program has the screen: `buffer.active` is its own. */
+  altScreen: boolean;
+  focused: boolean;
+  /** The buffer line at the top of the screen. */
+  viewportY: number;
+}
+
+/** One terminal's state, or null when the session is unknown. */
+export function terminalState(sessionId: string): TerminalState | null {
+  const term = terminals.get(sessionId);
+  if (!term) return null;
+  return {
+    cols: term.cols,
+    rows: term.rows,
+    fontSize: term.options.fontSize,
+    fontFamily: term.options.fontFamily,
+    background: term.options.theme?.background,
+    bracketedPaste: term.modes.bracketedPasteMode,
+    altScreen: term.buffer.active.type === "alternate",
+    focused: document.activeElement === term.textarea,
+    viewportY: term.buffer.active.viewportY,
+  };
+}
+
 declare global {
   interface Window {
     __ssixTerminalText?: (sessionId?: string) => string | null;
+    __ssixTerminalState?: (sessionId: string) => TerminalState | null;
   }
 }
 
 if (typeof window !== "undefined") {
   window.__ssixTerminalText = terminalText;
+  window.__ssixTerminalState = terminalState;
 }

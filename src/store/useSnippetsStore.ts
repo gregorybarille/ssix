@@ -16,9 +16,8 @@ interface SnippetsState {
   updateSnippet: (id: string, input: SnippetInput) => Promise<Snippet>;
   deleteSnippet: (id: string) => Promise<void>;
   /**
-   * Open the palette. Terminals are mounted only on their own view, so with
-   * a tab open this goes there: a paste needs a live pane, and it shows where
-   * the text lands. An editor with unsaved changes asks first, as it does for
+   * Open the palette. With a tab open this goes to the Terminals view first: a
+   * paste needs a pane on screen, which shows where the text lands. An editor with unsaved changes asks first, as it does for
    * any change of view, and the palette opens only once the view has changed.
    */
   openPalette: () => void;

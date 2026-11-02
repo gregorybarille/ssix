@@ -1,14 +1,8 @@
 import { parseKeepaliveSeconds } from "@/lib/reconnect";
 import { Input } from "../ui/input";
 import { Label } from "../ui/label";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "../ui/select";
 import type { ConnectionFormSectionProps } from "./advanced";
+import { ChoiceSelect } from "./ChoiceSelect";
 
 /** The choices of an on/off option that can defer to the app's settings. */
 const OVERRIDE_CHOICES = [
@@ -40,24 +34,14 @@ function OverrideSelect({
   onChange: (value: boolean | undefined) => void;
 }) {
   return (
-    <div className="space-y-2">
-      <Label htmlFor={id}>{label}</Label>
-      <Select
-        value={overrideChoice(value)}
-        onValueChange={(choice) => onChange(overrideValue(choice))}
-      >
-        <SelectTrigger id={id} data-testid={testId}>
-          <SelectValue />
-        </SelectTrigger>
-        <SelectContent>
-          {OVERRIDE_CHOICES.map((choice) => (
-            <SelectItem key={choice.value} value={choice.value} data-name={choice.label}>
-              {choice.label}
-            </SelectItem>
-          ))}
-        </SelectContent>
-      </Select>
-    </div>
+    <ChoiceSelect
+      id={id}
+      label={label}
+      testId={testId}
+      value={overrideChoice(value)}
+      choices={OVERRIDE_CHOICES}
+      onChange={(choice) => onChange(overrideValue(choice))}
+    />
   );
 }
 

@@ -11,6 +11,7 @@ import {
 import { activeSessionId, writeToSession } from "@/lib/terminalRegistry";
 import { useSnippetsStore } from "@/store/useSnippetsStore";
 import { useTerminalsStore } from "@/store/useTerminalsStore";
+import { useViewStore } from "@/store/useViewStore";
 import type { AppSettings, Connection, Snippet } from "@/types";
 import { renderInPanel } from "./panel";
 
@@ -106,6 +107,7 @@ describe("Terminal extension hooks", () => {
 
   beforeEach(() => {
     mocks.events.length = 0;
+    useViewStore.setState({ view: "terminals" });
     mocks.invoke.mockReset();
     mocks.invoke.mockResolvedValue(undefined);
     mocks.attachOutput.mockReset();
@@ -170,6 +172,8 @@ describe("Terminal extension hooks", () => {
       });
       useSnippetsStore.setState({ snippets: [uptime], paletteOpen: true });
       mount();
+      // It took the keyboard as it opened. What counts is getting it back after the paste.
+      if (mocks.term) mocks.term.focused = 0;
       renderInPanel(<MountedPalette />);
       fireEvent.keyDown(await screen.findByTestId("snippet-palette-search"), { key: "Enter" });
       await vi.waitFor(() => expect(mocks.term?.focused).toBe(1));
@@ -341,11 +345,16 @@ describe("Terminal extension hooks", () => {
   });
 
   it("makes a mounted terminal reachable through the registry, until it unmounts", () => {
+    useTerminalsStore.setState({
+      tabs: [{ id: "t1", mode: "single", panes: [{ sessionId: "s1", connectionName: "prod" }] }],
+      activeTabId: "t1",
+    });
     const view = mount();
     expect(writeToSession("s1", "uptime\r")).toBe(true);
     expect(mocks.invoke).toHaveBeenCalledWith("ssh_write", { sessionId: "s1", data: "uptime\r" });
     view.unmount();
     expect(writeToSession("s1", "uptime\r")).toBe(false);
     expect(activeSessionId()).toBeNull();
+    useTerminalsStore.setState({ tabs: [], activeTabId: null });
   });
 });

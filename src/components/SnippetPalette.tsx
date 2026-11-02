@@ -20,13 +20,14 @@ import { submitWithoutReset } from "@/lib/formSubmit";
 import { tokenize } from "@/lib/search";
 import {
   fillVariables,
-  NO_TERMINAL_MESSAGE,
+  noTargetMessage,
   planPaste,
   snippetMatches,
   snippetVariables,
 } from "@/lib/snippets";
-import { activeSessionId, handKeyboardTo, writeToSession } from "@/lib/terminalRegistry";
+import { handKeyboardTo, inputSessionId, writeToSession } from "@/lib/terminalRegistry";
 import { cn } from "@/lib/utils";
+import { useAuthPromptStore } from "@/store/useAuthPromptStore";
 import { useSnippetsStore } from "@/store/useSnippetsStore";
 import { useTerminalsStore } from "@/store/useTerminalsStore";
 import { useViewStore } from "@/store/useViewStore";
@@ -50,21 +51,23 @@ export function SnippetPalette() {
   const tabs = useTerminalsStore((s) => s.tabs);
   const activeTabId = useTerminalsStore((s) => s.activeTabId);
   const view = useViewStore((s) => s.view);
+  const prompts = useAuthPromptStore((s) => s.prompts);
 
   useEffect(() => {
     void fetchSnippets();
   }, [fetchSnippets]);
 
-  // The registry is no store, so follow what changes it: tabs, and the view,
-  // because terminals exist only on their own (each registers in its own
-  // effect, which runs before this one). Clicking another pane retargets too.
-  const [sessionId, setSessionId] = useState(activeSessionId);
+  // The registry is no store, so follow what changes its answer: tabs, the view
+  // (only a terminal on screen is a target) and login prompts (a pane showing one
+  // is not). A new terminal registers in its own effect, which runs before this
+  // one. Clicking another pane retargets too.
+  const [sessionId, setSessionId] = useState(inputSessionId);
   useEffect(() => {
-    const refresh = () => setSessionId(activeSessionId());
+    const refresh = () => setSessionId(inputSessionId());
     refresh();
     document.addEventListener("focusin", refresh);
     return () => document.removeEventListener("focusin", refresh);
-  }, [tabs, activeTabId, view]);
+  }, [tabs, activeTabId, view, prompts]);
   const paneName = tabs.flatMap((tab) => tab.panes).find((pane) => pane.sessionId === sessionId)
     ?.connectionName;
 
@@ -84,7 +87,7 @@ export function SnippetPalette() {
       pastedTo.current = plan.sessionId;
       closePalette();
     } else {
-      setError(NO_TERMINAL_MESSAGE);
+      setError(noTargetMessage());
     }
   };
 
@@ -100,7 +103,7 @@ export function SnippetPalette() {
     else setPicked(snippet);
   };
 
-  const message = error ?? (sessionId ? null : NO_TERMINAL_MESSAGE);
+  const message = error ?? (sessionId ? null : noTargetMessage());
 
   return (
     <Dialog open onOpenChange={(o) => !o && closePalette()}>

@@ -102,7 +102,7 @@ Notes the foundation review left for the streams:
 
 | Stream | Scope | After | Owns | E2E spec |
 |---|---|---|---|---|
-| **E Terminal UX** | Search (Mod+F), clickable URLs, broadcast input to every pane in a tab, per-connection font/size/scheme overrides, extra palettes | B | extension files under `components/terminal/`, `TerminalTabs` broadcast toggle, `terminalTheme.ts`, `TerminalOptions` | `20-terminal-ux` |
+| **E Terminal UX** | Scrollback kept across views, search (`Cmd+F`, `Ctrl+Shift+F` elsewhere), clickable URLs, broadcast input to every pane in a tab, per-connection font/size/scheme overrides, extra palettes | B | extension files under `components/terminal/`, `TerminalTabs` broadcast toggle, `terminalTheme.ts`, `TerminalOptions` | `20-terminal-ux` |
 | **H Folders** | Folders layout with a tree, drag to folder, folder picker in the form | D, G | `FolderTree.tsx`, `src/lib/folders.ts`, layout toggle, `ConnectionList` grouping | `21-folders` |
 
 ## Rules for every stream

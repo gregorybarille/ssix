@@ -34,6 +34,13 @@ export async function click(selector: string): Promise<void> {
   await el.click();
 }
 
+/** Bring a field far down a form into view. */
+export async function reveal(selector: string): Promise<void> {
+  const el = await browser.$(selector);
+  await el.waitForExist({ timeout: 10_000 });
+  await el.scrollIntoView({ block: "center" });
+}
+
 export async function clickDialogFooterButton(selector: string): Promise<void> {
   const el = await browser.$(selector);
   await el.waitForExist({ timeout: 10_000 });
@@ -224,6 +231,14 @@ export async function ensureConnectionRowsLayout(): Promise<void> {
   }
 }
 
+/** Open a saved connection's form from its row in the Connections view. */
+export async function openConnectionEditor(name: string): Promise<void> {
+  await navigateTo("connections");
+  await ensureConnectionRowsLayout();
+  await clickDialogFooterButton(`${sel.connectionRowByName(name)} ${sel.connectionRowEditButton}`);
+  await (await browser.$(sel.connectionForm)).waitForExist({ timeout: 10_000 });
+}
+
 export async function connectToConnection(name: string): Promise<void> {
   await ensureConnectionRowsLayout();
   const row = await browser.$(sel.connectionRowByName(name));
@@ -323,24 +338,34 @@ export async function typeIntoTerminal(text: string): Promise<void> {
 }
 
 /** Close every tab, confirming for each one that holds a live shell. */
+/** Open the snippet palette from the keyboard. */
+export async function pressPaletteShortcut(): Promise<void> {
+  await browser.keys(["Control", "Shift", "s"]);
+  await (await browser.$(sel.snippetPalette)).waitForExist({ timeout: 10_000 });
+}
+
 export async function closeAllTabs(): Promise<void> {
   const openTabs = () => browser.$$(sel.terminalTabCloseAny).length;
   const confirmation = () => browser.$(sel.confirmClosePaneConfirm);
-  for (let before = await openTabs(); before > 0; before = await openTabs()) {
-    await browser.execute(
-      (selector: string) => document.querySelector<HTMLElement>(selector)?.click(),
-      sel.terminalTabCloseAny,
+  // From inside the page, as a dialog on its way out can be gone by the time of the click.
+  const clickIfThere = (selector: string) =>
+    browser.execute(
+      (target: string) => document.querySelector<HTMLElement>(target)?.click(),
+      selector,
     );
+  for (let before = await openTabs(); before > 0; before = await openTabs()) {
+    await clickIfThere(sel.terminalTabCloseAny);
     await browser.waitUntil(
       async () => (await openTabs()) < before || (await confirmation().isExisting()),
       { timeout: 10_000, timeoutMsg: "A terminal tab neither closed nor asked to" },
     );
-    if (await confirmation().isExisting()) {
-      await clickDialogFooterButton(sel.confirmClosePaneConfirm);
-      await browser.waitUntil(async () => (await openTabs()) < before, {
-        timeout: 10_000,
-        timeoutMsg: "A terminal tab did not close after confirming",
-      });
-    }
+    // A question already open comes first, so this tab's can take a second answer.
+    await browser.waitUntil(
+      async () => {
+        await clickIfThere(sel.confirmClosePaneConfirm);
+        return (await openTabs()) < before;
+      },
+      { timeout: 10_000, timeoutMsg: "A terminal tab did not close after confirming" },
+    );
   }
 }

@@ -60,11 +60,36 @@ pub struct ConnectionAdvanced {
     pub folder: Option<String>,
 }
 
+/// The terminal palettes a connection can pick, as the ids of
+/// `TERMINAL_PALETTES` in `src/lib/terminalTheme.ts`. A test of those
+/// (`src/test/terminalTheme.test.ts`) fails when the two lists differ.
+const TERMINAL_COLOR_SCHEMES: &[&str] = &[
+    "tokyo-night",
+    "tokyo-night-day",
+    "dracula",
+    "nord",
+    "solarized-dark",
+    "solarized-light",
+    "gruvbox-dark",
+    "one-dark",
+];
+
+/// A save is refused; a connection already stored with an unknown scheme still
+/// loads and connects, and its terminal uses the app's colours.
+fn validate_color_scheme(scheme: Option<&str>) -> Result<(), String> {
+    validate_option_text("Color scheme", scheme, 64)?;
+    match scheme.map(str::trim).filter(|s| !s.is_empty()) {
+        Some(scheme) if !TERMINAL_COLOR_SCHEMES.contains(&scheme) => Err(format!(
+            "Unknown color scheme \"{scheme}\": pick one from the list"
+        )),
+        _ => Ok(()),
+    }
+}
+
 impl ConnectionAdvanced {
     /// Refuse an option a later session could not use, when it is saved
     /// rather than when something first reads it. Blank text is fine: it is
-    /// stored as unset. `color_scheme` is only checked for shape here, since
-    /// the terminal-ux stream owns the list of palettes.
+    /// stored as unset.
     fn validate(&self) -> Result<(), String> {
         if let Some(seconds) = self.keepalive_interval {
             validate_keepalive_interval(seconds)?;
@@ -75,7 +100,7 @@ impl ConnectionAdvanced {
             }
         }
         validate_option_text("Font family", self.font_family.as_deref(), 128)?;
-        validate_option_text("Color scheme", self.color_scheme.as_deref(), 64)?;
+        validate_color_scheme(self.color_scheme.as_deref())?;
         crate::folder_path::parse(self.folder.as_deref().unwrap_or_default()).map(|_| ())
     }
 
@@ -664,6 +689,76 @@ mod tests {
         ] {
             assert!(invalid.validate().is_err(), "{invalid:?}");
         }
+    }
+
+    fn with_scheme(scheme: &str) -> ConnectionAdvanced {
+        ConnectionAdvanced {
+            color_scheme: Some(scheme.to_string()),
+            ..ConnectionAdvanced::default()
+        }
+    }
+
+    #[test]
+    fn test_color_scheme_must_be_a_known_palette() {
+        for scheme in TERMINAL_COLOR_SCHEMES {
+            assert!(with_scheme(scheme).validate().is_ok(), "{scheme}");
+        }
+        // Stored trimmed, so checked trimmed; blank is stored as unset.
+        assert!(with_scheme(" dracula ").validate().is_ok());
+        assert!(with_scheme("   ").validate().is_ok());
+        assert!(ConnectionAdvanced::default().validate().is_ok());
+
+        // "teal" is an accent colour of the app's settings, not a terminal palette.
+        for scheme in ["teal", "Dracula", "dracula2"] {
+            let error = with_scheme(scheme).validate().unwrap_err();
+            assert!(error.contains("Unknown color scheme"), "{error}");
+            assert!(error.contains(scheme), "{error}");
+        }
+    }
+
+    #[test]
+    fn test_a_stored_unknown_color_scheme_loads_and_only_a_save_refuses_it() {
+        with_isolated_data_dir(|| {
+            let cred = password_credential("a");
+            store_credential(&cred);
+            let conn = add_connection_sync(AddConnectionInput {
+                fields: direct_fields(Some(cred.id.clone())),
+            })
+            .unwrap();
+
+            // As left by a build that had this palette.
+            with_data_mut(|data| {
+                data.connections[0].color_scheme = Some("retired-palette".to_string());
+                Ok(())
+            })
+            .unwrap();
+            let stored = load_data().unwrap().connections.remove(0);
+            assert_eq!(stored.color_scheme.as_deref(), Some("retired-palette"));
+
+            let mut fields = direct_fields(Some(cred.id.clone()));
+            fields.advanced = with_scheme("retired-palette");
+            let refused = update_connection_sync(UpdateConnectionInput {
+                id: conn.id.clone(),
+                fields,
+            })
+            .unwrap_err();
+            assert!(refused.contains("Unknown color scheme"), "{refused}");
+            assert_eq!(
+                load_data().unwrap().connections[0].color_scheme.as_deref(),
+                Some("retired-palette"),
+                "a refused save leaves the stored connection alone"
+            );
+
+            // Clearing it, or picking a known palette, saves.
+            let mut fields = direct_fields(Some(cred.id.clone()));
+            fields.advanced = with_scheme("nord");
+            let saved = update_connection_sync(UpdateConnectionInput {
+                id: conn.id.clone(),
+                fields,
+            })
+            .unwrap();
+            assert_eq!(saved.color_scheme.as_deref(), Some("nord"));
+        });
     }
 
     fn password_credential(name: &str) -> Credential {
