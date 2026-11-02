@@ -13,6 +13,10 @@
  * `waitForTerminalContains` searches every open terminal, so each test starts
  * with no tabs open, and markers are computed by the shell
  * (`$((6*7))`) so that the typed command never matches its own output.
+ *
+ * Reconnects are forced as in spec 15, from the server's side, over connections
+ * without a proxy command: the client sees the socket close at once and no wait
+ * here comes near a keepalive interval.
  */
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
@@ -31,16 +35,28 @@ import {
   navigateTo,
   openCredentialEditor,
   pickOption,
+  readTerminalText,
   saveConnectionForm,
   textContentOf,
   typeIntoTerminal,
   waitForFailedTerminalError,
   waitForTerminalContains,
 } from "../helpers/flows.js";
+import {
+  cutConnection,
+  expectReconnected,
+  NO_RETRY_WINDOW_MS,
+  sshdPid,
+  waitForPhase,
+} from "../helpers/reconnect.js";
 import { sel } from "../helpers/selectors.js";
 import { AGENT_KEY_COMMENT, agentPublicKey } from "../helpers/ssh-agent.js";
 
 const WRONG_ANSWER = "ssix-14-wrong-answer";
+/** The keepalive of the connection that forwards through a reconnect. */
+const SHORT_KEEPALIVE_S = 2;
+/** The watchdog gives up after this many silent intervals. */
+const KEEPALIVES_MISSED_S = 3 * SHORT_KEEPALIVE_S;
 
 /** Close every tab, confirming for each one that holds a live shell. */
 async function closeAllTabs(): Promise<void> {
@@ -86,6 +102,10 @@ async function waitForAuthPrompt(): Promise<void> {
 async function answerAuthPrompt(answer: string): Promise<void> {
   await fill(sel.authPromptInput(0), answer);
   await click(sel.authPromptSubmit);
+}
+
+async function failedTerminalError(): Promise<string> {
+  return (await (await browser.$(sel.failedTerminal)).getAttribute("data-error")) ?? "";
 }
 
 describe("SSH agent", () => {
@@ -168,6 +188,63 @@ describe("SSH agent", () => {
     // Only the comment: a whole key line would wrap across terminal rows.
     await runInShell("server-a:~$", "ssh-add -L | cut -d' ' -f3", AGENT_KEY_COMMENT);
   });
+
+  it("keeps forwarding next to the keepalive, after a reconnect, and closes cleanly", async () => {
+    await createDirectConnection({
+      name: "conn-14-agent-resilient",
+      host: TARGETS.a.host,
+      port: TARGETS.a.sshPort,
+      credentialName: "cred-14-agent",
+      beforeSave: async () => {
+        await clickDialogFooterButton(sel.connectionFormAgentForwarding);
+        const keepalive = await browser.$(sel.connectionFormKeepalive);
+        await keepalive.scrollIntoView({ block: "center" });
+        await fill(sel.connectionFormKeepalive, String(SHORT_KEEPALIVE_S));
+      },
+    });
+    await connectToConnection("conn-14-agent-resilient");
+    await runInShell(
+      "server-a:~$",
+      "ssh-add -L | cut -d' ' -f3; echo forward-one-$((6*7))",
+      "forward-one-42",
+    );
+
+    // Past the watchdog's limit, with only keepalive answers coming back.
+    await browser.pause((KEEPALIVES_MISSED_S + SHORT_KEEPALIVE_S) * 1000);
+    expect(await (await browser.$(sel.reconnectStatus)).isExisting()).toBe(false);
+
+    // The new shell asks for forwarding again, with the agent credential.
+    await cutConnection();
+    await expectReconnected("forward-one-42");
+    await runInShell(
+      "server-a:~$",
+      "ssh-add -L | cut -d' ' -f3; echo forward-two-$((6*7))",
+      "forward-two-42",
+    );
+    expect((await readTerminalText()).split(AGENT_KEY_COMMENT).length - 1).toBe(2);
+
+    await typeIntoTerminal("exit\n");
+    await waitForTerminalContains("Connection closed.", 15_000);
+    expect(await (await browser.$(sel.reconnectStatus)).isExisting()).toBe(false);
+  });
+
+  it("notices a frozen server while the agent is in use", async () => {
+    await connectToConnection("conn-14-agent-resilient");
+    await waitForTerminalContains("server-a:~$", 30_000);
+    const frozen = await sshdPid();
+
+    // Bounded, as nothing is sure to end this once the session is gone.
+    await typeIntoTerminal(
+      "(for i in $(seq 100); do ssh-add -L >/dev/null 2>&1; sleep 0.1; done) & echo agent-busy-$((6*7))\n",
+    );
+    await waitForTerminalContains("agent-busy-42", 15_000);
+    await typeIntoTerminal("kill -STOP $PPID\n");
+
+    await waitForTerminalContains("The server did not answer for", 30_000);
+    await expectReconnected("agent-busy-42");
+    await typeIntoTerminal(`kill -9 ${frozen}\n`);
+    await runInShell("server-a:~$", "ssh-add -L >/dev/null; echo agent-back=$?", "agent-back=0");
+  });
 });
 
 describe("Keyboard-interactive login", () => {
@@ -208,9 +285,7 @@ describe("Keyboard-interactive login", () => {
     const error = await waitForFailedTerminalError("Keyboard-interactive auth failed");
     expect(error).not.toContain(WRONG_ANSWER);
 
-    const retry = await (await browser.$(sel.failedTerminal)).$("button*=Retry");
-    await retry.waitForClickable({ timeout: 10_000 });
-    await retry.click();
+    await click(sel.failedTerminalRetry);
     await waitForAuthPrompt();
     expect(await (await browser.$(sel.authPromptInput(0))).getValue()).toBe("");
 
@@ -258,6 +333,64 @@ describe("Keyboard-interactive login", () => {
 
     await answerAuthPrompt(TARGETS.e.password);
     await runInShell("server-e:~$", "echo ssix-14-jump-$((6*7))", "ssix-14-jump-42");
+  });
+
+  /** Log in through the prompt and print `tag`-42, to find again after a drop. */
+  async function openPromptedShell(tag: string): Promise<void> {
+    await connectToConnection("conn-14-e");
+    await waitForAuthPrompt();
+    await answerAuthPrompt(TARGETS.e.password);
+    await runInShell("server-e:~$", `echo ${tag}-$((6*7))`, `${tag}-42`);
+  }
+
+  it("asks again in the pane when the shell reconnects, over the status bar", async () => {
+    await openPromptedShell("before-drop");
+
+    await cutConnection();
+    await waitForPhase("waiting");
+
+    await waitForAuthPrompt();
+    expect(await (await browser.$(sel.authPromptReconnecting)).isExisting()).toBe(true);
+    expect(await (await browser.$(sel.reconnectStatus)).isExisting()).toBe(false);
+
+    await answerAuthPrompt(TARGETS.e.password);
+    await expectReconnected("before-drop-42");
+    await runInShell("server-e:~$", "echo after-drop-$((6*7))", "after-drop-42");
+  });
+
+  it("stops reconnecting on Cancel, keeps the pane and asks again on Retry", async () => {
+    await openPromptedShell("before-cancel");
+
+    await cutConnection();
+    await waitForAuthPrompt();
+    await click(sel.authPromptCancel);
+
+    await waitForPhase("stopped");
+    expect(await failedTerminalError()).toMatch(/auth/i);
+    await browser.pause(NO_RETRY_WINDOW_MS);
+    expect(await (await browser.$(sel.authPrompt)).isExisting()).toBe(false);
+    expect(await (await browser.$(sel.reconnectStatusPhase("stopped"))).isExisting()).toBe(true);
+
+    await click(sel.failedTerminalRetry);
+    await waitForAuthPrompt();
+    await answerAuthPrompt(TARGETS.e.password);
+    await expectReconnected("before-cancel-42");
+  });
+
+  it("does not ask again after a wrong answer during a reconnect", async () => {
+    await openPromptedShell("before-wrong");
+
+    await cutConnection();
+    await waitForAuthPrompt();
+    await answerAuthPrompt(WRONG_ANSWER);
+
+    await waitForPhase("stopped");
+    const error = await failedTerminalError();
+    expect(error).toMatch(/auth/i);
+    expect(error).not.toContain(WRONG_ANSWER);
+    await browser.pause(NO_RETRY_WINDOW_MS);
+    expect(await (await browser.$(sel.authPrompt)).isExisting()).toBe(false);
+    expect(await (await browser.$(sel.reconnectStatusPhase("stopped"))).isExisting()).toBe(true);
   });
 
   it("neither logs nor stores an answer", async () => {

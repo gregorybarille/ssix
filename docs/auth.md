@@ -50,7 +50,9 @@ SSIX decides nothing about signing. It relays bytes between the server and your
 agent, so the agent's own confirmation prompts and constraints still apply.
 
 If the server refuses forwarding or the local agent is unreachable, the shell
-still opens and the Logs view says why.
+still opens and the Logs view says why. A reconnected shell asks for forwarding
+again, and `$SSH_AUTH_SOCK` on the server changes with it. Agent traffic does not
+count towards the keepalive: only what arrives from the server shows it is there.
 
 Forwarding is not available on Windows: a connection that enables it logs a
 warning and opens without it. SSIX's **Copy SSH command** does not add `-A`.
@@ -71,6 +73,25 @@ Empty answers are allowed, since some servers only want Enter.
   on a server that locks accounts. On Windows blank answers are sent instead.
 - A prompt left unanswered for five minutes ends the attempt. Most servers give
   up sooner (OpenSSH's `LoginGraceTime` is two minutes).
+
+### During a reconnect
+
+A dropped shell that needs answers asks again in the same pane
+([session resilience](session-resilience.md) covers the rest of a reconnect).
+
+- While the prompt is open it has the whole pane. The status bar and the terminal
+  step aside, and both come back when it closes, with the scrollback intact.
+- **Cancel** stops the reconnect but keeps the pane: the status bar shows
+  "Authentication cancelled" with **Retry**, which asks again. On a first
+  connection Cancel closes the pane, as there is nothing to keep.
+- A wrong answer, or a prompt left open for five minutes, stops the reconnect the
+  same way. Nothing asks again until you press **Retry**, so walking away from a
+  dropped session cannot lock an account or fill the pane with prompts. A failed
+  agent login stops it too.
+- Closing the pane or tab, or anything else that ends the attempt, closes a
+  waiting prompt within a moment.
+- A prompt in a background tab waits there, and nothing draws attention to it
+  until you switch to that tab.
 
 Only a shell has a pane to ask in, so it is the only thing that can answer. The
 shell of a jump host connection can ask for either hop, and the pane says which
@@ -108,8 +129,8 @@ Windows.
   cargo test live_ -- --ignored --test-threads=1
   ```
 
-  CI sets only the `server-a` variables, so `live_keyboard_*` skip there and
-  the spec above covers `server-e`.
+  CI sets only the `server-a` variables, so `live_keyboard_*` and `live_reopen_*`
+  skip there and the spec above covers `server-e`, reconnects included.
 - The second-factor test needs a server that takes a password and then a prompt.
   See `live_keyboard_interactive_as_second_factor` in
   `src-tauri/src/auth_prompt.rs` for the container to start.

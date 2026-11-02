@@ -141,8 +141,10 @@ when a session opens: changing the settings does not affect open sessions.
 - A server that ends a shell and hangs up in one go can lose its last output:
   libssh2 fails the read before those bytes can be read. The session still
   counts as ended by the server and does not reconnect.
-- A connection whose login needs a one-time code cannot reconnect by itself:
-  the attempt fails as a login failure and stops, leaving **Retry**.
+- A connection whose login needs a one-time code cannot reconnect unattended:
+  each attempt asks in the pane and waits for you. Cancelling, a wrong answer or
+  five minutes without one stops the retries and leaves **Retry**
+  ([details](auth.md#during-a-reconnect)).
 - A network loss during login stops the retries and leaves **Retry**: it reads
   as a failed login, and those are never retried.
 - Windows has no readiness notification yet, so a session there checks the
