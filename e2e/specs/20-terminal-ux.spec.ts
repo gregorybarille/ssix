@@ -783,6 +783,49 @@ describe("Terminal UX", () => {
       await echoFrom(a, "SOLO-AGAIN", b, false);
     });
 
+    it("runs nothing of a paste in a pane that has not asked for bracketed paste", async () => {
+      const [a, b] = await openSplit("paste");
+      // Only `a` asks for it, and only `cat` reads there: nothing can run in `a`.
+      await typeIn(a, "printf '\\033[?2004h'\n");
+      await browser.waitUntil(async () => (await stateOf(a)).bracketedPaste, {
+        timeout: 10_000,
+        timeoutMsg: "Bracketed paste never turned on",
+      });
+      await typeIn(a, "cat\n");
+      await toggle();
+      const pasteInA = (text: string) =>
+        browser.execute(
+          (sessionId: string, pasted: string) => {
+            window.dispatchEvent(
+              new CustomEvent("ssix:terminal-paste", { detail: { text: pasted, sessionId } }),
+            );
+          },
+          a,
+          text,
+        );
+
+      await pasteInA("echo FIRST-$((40+2))\necho SECOND-$((40+2))");
+      await waitForText(a, "SECOND");
+      const skipped = await browser.$(sel.broadcastSkipped);
+      await browser.waitUntil(
+        async () => (await textContentOf(skipped)).includes("conn-20-cast-b-paste"),
+        { timeout: 10_000, timeoutMsg: "Nothing said the paste did not reach the other pane" },
+      );
+      await browser.pause(SETTLE_MS);
+      expect(await textOf(b)).not.toContain("FIRST");
+
+      // One line goes as text, with no markers, and waits for Enter.
+      await pasteInA("echo ALONE-$((40+2))");
+      await waitForText(b, "echo ALONE-$((40+2))");
+      await browser.pause(SETTLE_MS);
+      expect(await textOf(b)).not.toContain("ALONE-42");
+      expect(await textOf(b)).not.toContain("200~");
+      expect(await textContentOf(skipped)).toBe("");
+
+      await typeIn(b, "\n");
+      await waitForText(b, "ALONE-42");
+    });
+
     it("does not mirror what describes one pane, such as a focus report", async () => {
       const [a, b] = await openSplit("focus");
 

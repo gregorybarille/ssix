@@ -88,6 +88,17 @@ describe("the broadcast toggle", () => {
     expect(toggle()).toHaveTextContent("Broadcasting to 1 of 2 panes");
   });
 
+  it("says which pane a paste did not go to, only while on", () => {
+    const skipped = () => screen.getByTestId("broadcast-skipped");
+    const view = renderTabs([{ ...split([live("a"), live("b")], true), broadcastSkipped: ["b"] }]);
+    expect(skipped()).toHaveTextContent("Paste not sent to b");
+    expect(skipped()).toHaveAttribute("role", "status");
+
+    view.unmount();
+    renderTabs([{ ...split([live("a"), live("b")], false), broadcastSkipped: ["b"] }]);
+    expect(skipped()).toBeEmptyDOMElement();
+  });
+
   it("says so on a broadcasting tab that is not the active one", () => {
     const background = { ...split([live("c"), live("d")], true), id: "t2" };
     renderTabs([{ id: "t1", mode: "single", panes: [live("a")] }, background]);

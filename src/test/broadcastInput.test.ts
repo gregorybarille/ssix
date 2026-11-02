@@ -54,13 +54,18 @@ function tabWith(panes: TerminalSession[], broadcast = true): TerminalTab {
   return { id: "t1", mode: "horizontal", panes, broadcast };
 }
 
-const fakeTerm = () => ({ textarea: document.createElement("textarea") }) as unknown as XTerm;
+const fakeTerm = (bracketedPasteMode = false) =>
+  ({
+    textarea: document.createElement("textarea"),
+    modes: { bracketedPasteMode },
+  }) as unknown as XTerm;
 
 const registered: string[] = [];
-function setup(tabs: TerminalTab[]) {
+/** `askedForBracketedPaste`: the sessions whose program asked for it. */
+function setup(tabs: TerminalTab[], askedForBracketedPaste: string[] = []) {
   useTerminalsStore.setState({ tabs, activeTabId: tabs[0]?.id ?? null });
   for (const pane of tabs.flatMap((tab) => tab.panes)) {
-    registerTerminal(pane.sessionId, fakeTerm());
+    registerTerminal(pane.sessionId, fakeTerm(askedForBracketedPaste.includes(pane.sessionId)));
     registered.push(pane.sessionId);
   }
 }
@@ -186,7 +191,7 @@ describe("broadcastInput", () => {
   });
 
   it("mirrors a paste", () => {
-    setup([tabWith([live("a"), live("b")])]);
+    setup([tabWith([live("a"), live("b")])], ["b"]);
     const paste = "\x1b[200~git status\r\x1b[201~";
     type("a", paste);
     expect(writes()).toEqual([{ sessionId: "b", data: paste }]);
@@ -199,6 +204,64 @@ describe("broadcastInput", () => {
     useTerminalsStore.setState({ tabs: [tabWith([live("a"), live("b")])] });
     type("a", "y");
     expect(writes()).toEqual([{ sessionId: "b", data: "y" }]);
+  });
+});
+
+describe("a bracketed paste, in a pane that did not ask for one", () => {
+  const skipped = () => useTerminalsStore.getState().tabs[0].broadcastSkipped;
+  const bracketed = (text: string) => `\x1b[200~${text}\x1b[201~`;
+
+  it("goes as it is to a pane that asked for one too", () => {
+    setup([tabWith([live("a"), live("b")])], ["b"]);
+    type("a", bracketed("one\rtwo"));
+    expect(writes()).toEqual([{ sessionId: "b", data: bracketed("one\rtwo") }]);
+    expect(skipped()).toEqual([]);
+  });
+
+  it("goes as plain text when it is one line, with no markers and no Enter", () => {
+    setup([tabWith([live("a"), live("b")])]);
+    type("a", bracketed("uptime\r"));
+    expect(writes()).toEqual([{ sessionId: "b", data: "uptime" }]);
+    expect(skipped()).toEqual([]);
+  });
+
+  it.each([
+    ["several lines", "rm -rf a\rrm -rf b"],
+    ["a tab", "echo a\tb"],
+  ])("is not sent with %s, and says so", (_name, text) => {
+    setup([tabWith([live("a"), live("b")])]);
+    expect(type("a", bracketed(text))).toBe(bracketed(text));
+    expect(writes()).toEqual([]);
+    expect(skipped()).toEqual(["b"]);
+  });
+
+  it("is sent to the next pane as usual after one that was skipped", () => {
+    setup([tabWith([live("a"), live("b"), live("c")])], ["c"]);
+    type("a", bracketed("one\rtwo"));
+    expect(writes()).toEqual([{ sessionId: "c", data: bracketed("one\rtwo") }]);
+    expect(skipped()).toEqual(["b"]);
+  });
+
+  it("is forgotten at the next paste that reaches the pane, not at the next key", () => {
+    setup([tabWith([live("a"), live("b")])]);
+    type("a", bracketed("one\rtwo"));
+    type("a", "x");
+    expect(skipped()).toEqual(["b"]);
+    type("a", bracketed("three"));
+    expect(skipped()).toEqual([]);
+  });
+
+  it("is forgotten when broadcast goes off", () => {
+    setup([tabWith([live("a"), live("b")])]);
+    type("a", bracketed("one\rtwo"));
+    useTerminalsStore.getState().toggleBroadcast("t1");
+    expect(skipped()).toBeUndefined();
+  });
+
+  it("does not count a pane that receives nothing anyway", () => {
+    setup([tabWith([live("a"), reconnecting("b")])]);
+    type("a", bracketed("one\rtwo"));
+    expect(skipped()).toEqual([]);
   });
 });
 

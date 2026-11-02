@@ -1,4 +1,5 @@
-import { isLiveShell, writeToSession } from "@/lib/terminalRegistry";
+import { preparePaste } from "@/lib/snippets";
+import { acceptsBracketedPaste, isLiveShell, writeToSession } from "@/lib/terminalRegistry";
 import { useTerminalsStore } from "@/store/useTerminalsStore";
 import type { TerminalExtension } from "./extensions";
 
@@ -13,7 +14,7 @@ const KEY_SEQUENCE =
   /^\x1b(?:[\s\S]?|\[[A-DFHZ]|O[A-DFHP-S]|\[\d+(?:;\d+)?~|\[1;\d+[A-DFHPQS])$/;
 
 // eslint-disable-next-line no-control-regex
-const BRACKETED_PASTE = /^\x1b\[200~[\s\S]*\x1b\[201~$/;
+const BRACKETED_PASTE = /^\x1b\[200~([\s\S]*)\x1b\[201~$/;
 
 /**
  * Whether what a terminal sent is something the user typed or pasted. xterm
@@ -26,6 +27,17 @@ const BRACKETED_PASTE = /^\x1b\[200~[\s\S]*\x1b\[201~$/;
 export function isTypedInput(data: string): boolean {
   if (!data.startsWith("\x1b")) return true;
   return KEY_SEQUENCE.test(data) || BRACKETED_PASTE.test(data);
+}
+
+/**
+ * What another pane gets of a bracketed paste, or null for nothing. Only a program
+ * that asked for bracketed paste knows the markers: elsewhere a line break between
+ * them is Enter, and the lines run. So this follows the snippet palette's rules.
+ */
+function pasteFor(sessionId: string, paste: string, text: string): string | null {
+  if (acceptsBracketedPaste(sessionId)) return paste;
+  const plain = preparePaste(text, false);
+  return "text" in plain ? plain.text : null;
 }
 
 /**
@@ -44,9 +56,15 @@ export const broadcastInput: TerminalExtension = {
     const source = tab.panes.find((pane) => pane.sessionId === sessionId);
     // Keys typed in a pane that lost its connection are dropped, not sent elsewhere.
     if (!source || !isLiveShell(source)) return data;
+    const paste = BRACKETED_PASTE.exec(data);
+    const skipped: string[] = [];
     for (const pane of tab.panes) {
-      if (pane !== source && isLiveShell(pane)) writeToSession(pane.sessionId, data);
+      if (pane === source || !isLiveShell(pane)) continue;
+      const text = paste ? pasteFor(pane.sessionId, data, paste[1]) : data;
+      if (text === null) skipped.push(pane.connectionName);
+      else writeToSession(pane.sessionId, text);
     }
+    if (paste) useTerminalsStore.getState().noteBroadcastSkipped(tab.id, skipped);
     return data;
   },
 };

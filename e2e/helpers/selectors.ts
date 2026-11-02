@@ -402,6 +402,7 @@ export const sel = {
   terminalLinkConfirmUrl: '[data-testid="terminal-link-confirm-url"]',
   broadcastToggle: '[data-testid="broadcast-toggle"]',
   broadcastIndicator: '[data-testid="broadcast-indicator"]',
+  broadcastSkipped: '[data-testid="broadcast-skipped"]',
   connectionFormFontFamily: '[data-testid="connection-form-font-family"]',
   connectionFormFontSize: '[data-testid="connection-form-font-size"]',
   connectionFormColorScheme: '[data-testid="connection-form-color-scheme"]',

@@ -61,6 +61,9 @@ interface TerminalsState {
   /** Turn broadcast input on or off for a tab with several panes. */
   toggleBroadcast: (tabId: string) => void;
 
+  /** Which panes the last broadcast paste left out. Turning broadcast on or off forgets it. */
+  noteBroadcastSkipped: (tabId: string, names: string[]) => void;
+
   /** The session's shell ended by itself: its pane stays, but nothing can reach it any more. */
   markSessionEnded: (sessionId: string) => void;
 
@@ -253,8 +256,16 @@ export const useTerminalsStore = create<TerminalsState>((set, get) => {
     toggleBroadcast: (tabId) => {
       set((state) => ({
         tabs: state.tabs.map((t) =>
-          t.id === tabId && t.panes.length >= 2 ? { ...t, broadcast: !t.broadcast } : t,
+          t.id === tabId && t.panes.length >= 2
+            ? { ...t, broadcast: !t.broadcast, broadcastSkipped: undefined }
+            : t,
         ),
+      }));
+    },
+
+    noteBroadcastSkipped: (tabId, names) => {
+      set((state) => ({
+        tabs: state.tabs.map((t) => (t.id === tabId ? { ...t, broadcastSkipped: names } : t)),
       }));
     },
 

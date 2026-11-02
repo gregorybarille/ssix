@@ -115,8 +115,19 @@ new tab starts off.
   through `writeToSession`, which runs no input hooks, and stays in its own pane.
   Paste it, or type it, to send it to both.
 
-A bracketed paste is mirrored as it is. Should the other pane's program not have
-bracketed paste on, it sees the markers around the text.
+**A paste runs nothing in the other pane.** When the program in the pane you paste
+into has asked for bracketed paste, the text waits there for your Enter, so it has
+to wait in the other pane too:
+
+- A pane whose program also asked for it gets the paste as it is.
+- Any other pane gets the text alone if that is one line with no tab, under the
+  rules for [pasting a snippet](snippets.md).
+- With several lines or a tab, it gets nothing, since each line break there would
+  press Enter. The tab bar says **Paste not sent to** that pane until your next
+  paste, or until broadcast goes off.
+
+A pane that has not asked for bracketed paste takes a paste as typed, line breaks
+included, and so does the pane beside it.
 
 ## A connection's look
 

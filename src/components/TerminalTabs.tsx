@@ -61,6 +61,8 @@ export interface TerminalTab {
   panes: TerminalSession[]; // length 1 or 2
   /** What is typed in one pane also goes to the others. See `terminal/broadcastInput.ts`. */
   broadcast?: boolean;
+  /** The panes the last broadcast paste could not safely go to, by connection name. */
+  broadcastSkipped?: string[];
 }
 
 interface TerminalTabsProps {
