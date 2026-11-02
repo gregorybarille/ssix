@@ -1,3 +1,4 @@
+import { useEffect } from "react";
 import { openExternalUrl } from "@/lib/externalLinks";
 import { useTerminalLinksStore } from "@/store/useTerminalLinksStore";
 import { ConfirmDialog } from "../ConfirmDialog";
@@ -10,6 +11,9 @@ import { ConfirmDialog } from "../ConfirmDialog";
 export function TerminalLinkConfirm() {
   const url = useTerminalLinksStore((s) => s.confirming);
   const setConfirming = useTerminalLinksStore((s) => s.setConfirming);
+  // Closing the last tab unmounts this with the question still open, and the next
+  // connection would ask it again, about a link nobody has just clicked.
+  useEffect(() => () => setConfirming(null), [setConfirming]);
   return (
     <ConfirmDialog
       open={!!url}

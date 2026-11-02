@@ -23,6 +23,15 @@ describe("TerminalLinkConfirm", () => {
     expect(screen.queryByTestId("terminal-link-confirm")).toBeNull();
   });
 
+  it("forgets the question when it goes away with the last tab", () => {
+    const view = render(<TerminalLinkConfirm />);
+    confirmUrl("https://real-target.example/path");
+    view.unmount();
+
+    render(<TerminalLinkConfirm />);
+    expect(screen.queryByTestId("terminal-link-confirm")).toBeNull();
+  });
+
   it("names the real host and the whole URL, not what the terminal showed", () => {
     render(<TerminalLinkConfirm />);
     confirmUrl("https://bank.example@evil.example/login");
