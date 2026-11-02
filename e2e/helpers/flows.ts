@@ -21,7 +21,7 @@ export async function fill(selector: string, value: string): Promise<void> {
  * error when WebDriver's search lands on a node as React removes it, and
  * `browser.$` is such a search, so look from inside the page.
  */
-export async function waitForNoMatch(selector: string): Promise<void> {
+export async function waitForGone(selector: string): Promise<void> {
   await browser.waitUntil(
     () => browser.execute((s: string) => document.querySelector(s) === null, selector),
     { timeout: 10_000, timeoutMsg: `${selector} is still there` },

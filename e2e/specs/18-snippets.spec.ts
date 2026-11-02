@@ -25,24 +25,13 @@ import {
   fill,
   readTerminalText,
   textContentOf,
+  waitForGone,
   waitForTerminalContains,
 } from "../helpers/flows.js";
 import { sel } from "../helpers/selectors.js";
 
 /** Long enough for a stray line to run and print. */
 const QUIET_MS = 1_500;
-
-/**
- * Wait until nothing matches. Linux tauri-driver/WebKit throws a stale element
- * error when WebDriver's search lands on a node as React removes it, so look
- * from inside the page, as `clickDialogFooterButton` does.
- */
-async function waitForGone(selector: string): Promise<void> {
-  await browser.waitUntil(
-    () => browser.execute((s: string) => document.querySelector(s) === null, selector),
-    { timeout: 10_000, timeoutMsg: `${selector} is still there` },
-  );
-}
 
 async function openSnippetsView(): Promise<void> {
   await click(sel.navSnippets);
