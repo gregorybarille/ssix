@@ -75,11 +75,14 @@ export function SessionSection({
             min={1}
             max={20}
             value={form.reconnect_max_attempts}
-            disabled={!form.auto_reconnect}
             parse={parseReconnectAttempts}
             onCommit={(reconnect_max_attempts) => commitTextSettings({ reconnect_max_attempts })}
+            aria-describedby="reconnect-max-attempts-description"
             data-testid="settings-reconnect-max-attempts"
           />
+          <p id="reconnect-max-attempts-description" className="text-xs text-muted-foreground-soft">
+            Connections set to reconnect use this even with the switch above off.
+          </p>
         </div>
 
         <div className="flex items-start justify-between gap-4">

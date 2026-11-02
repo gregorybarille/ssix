@@ -502,6 +502,8 @@ describe("Session resilience", () => {
     await navigateTo("settings");
     await typeOverNumber(sel.settingsKeepaliveInterval, 2);
     await setSwitch(sel.settingsAutoReconnect, false);
+    // A connection set to On still uses the attempts.
+    expect(await (await browser.$(sel.settingsReconnectMaxAttempts)).isEnabled()).toBe(true);
     await setSwitch(sel.settingsSessionLogEnabled, true);
     await setLogFolder(folder);
     try {

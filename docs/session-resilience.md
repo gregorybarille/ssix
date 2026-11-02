@@ -8,7 +8,8 @@ keepalives, does not reconnect and writes no log, whatever these options say.
 
 Settings → Sessions holds the defaults. A connection's form can override the
 keepalive, auto-reconnect and logging; the number of attempts and the log
-folder are global.
+folder are global, and a connection set to reconnect uses that number even with
+the global switch off.
 
 | Setting | Default | Per connection |
 |---|---|---|
@@ -137,5 +138,7 @@ when a session opens: changing the settings does not affect open sessions.
   counts as ended by the server and does not reconnect.
 - A connection whose login needs a one-time code cannot reconnect by itself:
   the attempt fails as a login failure and stops, leaving **Retry**.
+- A network loss during login stops the retries and leaves **Retry**: it reads
+  as a failed login, and those are never retried.
 - Windows has no readiness notification yet, so a session there checks the
   socket every 5 ms, as it already does for its output.

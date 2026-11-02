@@ -144,9 +144,9 @@ describe("SessionSection", () => {
     expect(commitTextSettings).not.toHaveBeenCalled();
   });
 
-  it("disables the attempts when auto-reconnect is off", () => {
+  it("keeps the attempts editable with auto-reconnect off, for connections set to on", () => {
     renderSection({ auto_reconnect: false });
-    expect(screen.getByTestId("settings-reconnect-max-attempts")).toBeDisabled();
+    expect(screen.getByTestId("settings-reconnect-max-attempts")).toBeEnabled();
   });
 
   it("saves a trimmed log folder, and an empty one as unset", () => {
