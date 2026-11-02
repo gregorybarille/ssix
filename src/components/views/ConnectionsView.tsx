@@ -93,7 +93,7 @@ export function ConnectionsView({
   return (
     <>
       {/* Beside a panel in a small window the buttons go under the title, and show icons only. */}
-      <div className="@container flex flex-wrap items-center justify-between gap-x-4 gap-y-2 px-6 py-4 border-b border-border">
+      <div className="@container flex flex-wrap items-center justify-between gap-x-2 gap-y-2 px-6 py-4 border-b border-border">
         <h1 className="text-lg font-semibold">Connections</h1>
         <div className="flex items-center gap-2">
           <LayoutToggle
