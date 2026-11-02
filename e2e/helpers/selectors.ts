@@ -258,6 +258,7 @@ export const sel = {
   authPromptSubmit: '[data-testid="auth-prompt-submit"]',
   authPromptCancel: '[data-testid="auth-prompt-cancel"]',
   authPromptReconnecting: '[data-testid="auth-prompt-reconnecting"]',
+  authPromptRefused: '[data-testid="auth-prompt-refused"]',
   // roadmap:resilience
   // The status view of a shell that lost its connection (phase: waiting | stopped).
   reconnectStatus: '[data-testid="failed-terminal"][data-reconnect-phase]',

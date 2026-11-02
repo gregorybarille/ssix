@@ -10,9 +10,18 @@ terminal pane.
 2. If the server accepts the credential's method, SSIX tries it. If not, the
    credential is skipped, so a saved password never reaches a server that
    refuses passwords.
-3. If that did not finish the login and the server offers keyboard-interactive,
-   SSIX asks you in the pane. This covers a server that takes nothing else, a
-   refused credential, and a second factor after an accepted first one.
+3. A credential that never reached the server's judgement ends the login there
+   with its own error: a missing key file, a wrong passphrase, an agent out of
+   reach. Nothing the server could ask would help.
+4. If the login is not finished and the server offers keyboard-interactive, SSIX
+   asks you in the pane. This covers a server that takes nothing else, a second
+   factor after an accepted first one, and a refused credential. After a refusal
+   the prompt says what was refused, and if you cancel or answer wrongly the
+   error still names it.
+
+Without a pane to ask in, a refused credential is reported as refused. Only when
+the server took the credential as a first factor, or takes nothing else, does the
+message say that opening the connection as a shell would help.
 
 Set the connection's verbosity to `-v` to see these steps in the Logs view.
 

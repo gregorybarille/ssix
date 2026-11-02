@@ -76,6 +76,11 @@ export function AuthPrompt({
               The connection was lost. Log in again to reconnect.
             </p>
           )}
+          {request.refused && (
+            <p className="text-xs text-foreground mt-1" data-testid="auth-prompt-refused">
+              {request.refused}
+            </p>
+          )}
           {request.instructions && (
             <p
               className="text-xs text-muted-foreground whitespace-pre-wrap break-words mt-1"

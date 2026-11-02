@@ -20,6 +20,8 @@ export interface AuthPromptRequest {
   username: string;
   instructions: string;
   prompts: AuthPromptField[];
+  /** What the server turned down before asking, in words for the pane. */
+  refused?: string;
 }
 
 export type AuthEvent =
@@ -54,6 +56,7 @@ export function parseAuthEvent(payload: unknown): AuthEvent | null {
       username: p.username,
       instructions: p.instructions,
       prompts: p.prompts,
+      ...(typeof p.refused === "string" ? { refused: p.refused } : {}),
     };
   }
   return null;

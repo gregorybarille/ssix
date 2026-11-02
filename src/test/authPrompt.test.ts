@@ -29,6 +29,12 @@ beforeEach(() => {
 });
 
 describe("parseAuthEvent", () => {
+  it("keeps what the server refused, when it says", () => {
+    const refused = { ...prompt("p1"), refused: "The server refused the stored key." };
+    expect(parseAuthEvent(refused)).toEqual(refused);
+    expect(parseAuthEvent({ ...prompt("p1"), refused: 7 })).toEqual(prompt("p1"));
+  });
+
   it("reads both events as the backend sends them", () => {
     expect(parseAuthEvent(prompt("p1"))).toEqual(prompt("p1"));
     expect(parseAuthEvent(closed("p1"))).toEqual(closed("p1"));

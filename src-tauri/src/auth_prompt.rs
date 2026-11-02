@@ -190,21 +190,34 @@ fn exchange(
     }
 }
 
-/// Run keyboard-interactive authentication, asking in `pane`. A server that
-/// advertises the method and then asks nothing (no PAM behind it) has only
-/// refused the credential, so `refused_before` stays the answer.
+/// How keyboard-interactive authentication ended, when it did not log in.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum PromptFailure {
+    /// A server that advertises the method and then asks nothing (no PAM behind
+    /// it) has only refused the credential.
+    NothingAsked,
+    /// Something on our side ended it: one of [`CANCELLED`], [`TIMED_OUT`] or
+    /// `crate::login_wait::STALLED`.
+    GaveUp(&'static str),
+    /// The server did not accept the answers.
+    Refused(String),
+}
+
+/// Run keyboard-interactive authentication, asking in `pane`, which also shows
+/// `refused`: what the server already turned down, if it did.
 pub(crate) fn authenticate(
     pane: Scope,
     session: &Session,
     endpoint: &Endpoint,
     debug: &SshDebug,
-    refused_before: &str,
-) -> Result<(), String> {
+    refused: Option<&str>,
+) -> Result<(), PromptFailure> {
     let Scope { sink, cancelled } = pane;
     let mut prompter = PanePrompter {
         sink,
         cancelled,
         asked: false,
+        refused: refused.map(str::to_string),
         host: endpoint.addr(),
         username: endpoint.username.clone(),
         socket: Some(wake::fd_of(session)),
@@ -216,11 +229,12 @@ pub(crate) fn authenticate(
     };
     let result = exchange(session, &endpoint.username, &mut prompter, STALLS);
     if let Some(reason) = prompter.given_up {
-        return Err(reason.to_string());
+        return Err(PromptFailure::GaveUp(reason));
     }
     match result {
-        Err(_) if !prompter.asked => Err(refused_before.to_string()),
-        other => other.map_err(|e| format!("Keyboard-interactive auth failed: {}", e)),
+        Ok(()) => Ok(()),
+        Err(_) if !prompter.asked => Err(PromptFailure::NothingAsked),
+        Err(e) => Err(PromptFailure::Refused(e.to_string())),
     }
 }
 
@@ -240,6 +254,9 @@ enum AuthEvent<'a> {
         username: &'a str,
         instructions: &'a str,
         prompts: Vec<PromptField>,
+        /// What the server turned down before asking.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        refused: Option<&'a str>,
     },
     AuthPromptClosed {
         prompt_id: &'a str,
@@ -297,6 +314,8 @@ struct PanePrompter {
     cancelled: Option<Arc<AtomicBool>>,
     /// Whether the server put a question to the user.
     asked: bool,
+    /// What the server turned down before asking, for the pane to say.
+    refused: Option<String>,
     host: String,
     username: String,
     /// The session's socket, to end the conversation when giving up.
@@ -343,6 +362,7 @@ impl PanePrompter {
                     echo: prompt.echo,
                 })
                 .collect(),
+            refused: self.refused.as_deref(),
         });
         let waiting = Instant::now();
         let received = self.wait_for_reply(&answers);
@@ -448,6 +468,7 @@ mod tests {
             }),
             cancelled: None,
             asked: false,
+            refused: None,
             host: "host:22".into(),
             username: "me".into(),
             socket: None,
@@ -508,6 +529,16 @@ mod tests {
         assert_eq!(events[0]["prompts"][1]["echo"], false);
         assert_eq!(events[1]["kind"], "auth_prompt_closed");
         assert_eq!(events[1]["prompt_id"], events[0]["prompt_id"]);
+    }
+
+    #[test]
+    fn says_what_the_server_refused_only_when_it_did() {
+        let (mut prompter, events) = prompter(Duration::from_secs(5));
+        let watcher = events.clone();
+        let responder = thread::spawn(move || cancel(&wait_for_prompt(&watcher)));
+        prompter.prompt("", "", &prompts(&[("OTP: ", false)]));
+        responder.join().unwrap();
+        assert!(events.lock().unwrap()[0].get("refused").is_none());
     }
 
     #[test]
@@ -821,6 +852,14 @@ mod live {
         saved_password: &str,
         respond: impl Fn(&str) + Send + Sync + 'static,
     ) -> (Result<Session, String>, Vec<serde_json::Value>) {
+        connect_with_credential(target, AuthMethod::Password(saved_password.into()), respond)
+    }
+
+    fn connect_with_credential(
+        target: &Target,
+        auth: AuthMethod,
+        respond: impl Fn(&str) + Send + Sync + 'static,
+    ) -> (Result<Session, String>, Vec<serde_json::Value>) {
         let events = Arc::new(Mutex::new(Vec::new()));
         let sink_events = events.clone();
         let sink: Sink = Arc::new(move |json: String| {
@@ -835,7 +874,7 @@ mod live {
             host: target.host.clone(),
             port: target.port,
             username: target.username.clone(),
-            auth: AuthMethod::Password(saved_password.into()),
+            auth,
             proxy_command: None,
         };
         let mut result = None;
@@ -904,26 +943,167 @@ mod live {
         assert!(started.elapsed() < Duration::from_secs(10));
     }
 
-    /// SCP, script runs and forwards have no pane to ask in.
+    /// A login without a pane, as SCP, script runs and forwards do it.
+    fn connect_without_a_pane(endpoint: &Endpoint) -> Result<Session, String> {
+        let mut result = None;
+        with_isolated_data_dir(|| {
+            let tcp = connect_endpoint(endpoint, 0).expect("tcp connect");
+            result = Some(open_authenticated_session_over_stream(
+                tcp, endpoint, 0, None,
+            ));
+        });
+        result.unwrap()
+    }
+
+    fn endpoint_of(target: &Target, auth: AuthMethod) -> Endpoint {
+        Endpoint {
+            host: target.host.clone(),
+            port: target.port,
+            username: target.username.clone(),
+            auth,
+            proxy_command: None,
+        }
+    }
+
+    /// A key the server has never heard of, in OpenSSH's format, encrypted when
+    /// given a passphrase.
+    fn generated_key(passphrase: Option<&str>) -> String {
+        use ssh_key::rand_core::OsRng;
+        let key = ssh_key::PrivateKey::random(&mut OsRng, ssh_key::Algorithm::Ed25519).unwrap();
+        let key = match passphrase {
+            Some(passphrase) => key.encrypt(&mut OsRng, passphrase).unwrap(),
+            None => key,
+        };
+        key.to_openssh(ssh_key::LineEnding::LF).unwrap().to_string()
+    }
+
+    fn refused_key() -> AuthMethod {
+        AuthMethod::KeyMemory {
+            private_key: generated_key(None),
+            passphrase: None,
+        }
+    }
+
+    fn no_prompt_expected(_: &str) {
+        panic!("no prompt expected");
+    }
+
+    /// Nothing the server could ask would help with any of these, and asking
+    /// would hide what is actually wrong.
+    #[test]
+    #[ignore = "needs a keyboard-interactive server (SSIX_LIVE_KBDINT_SSH)"]
+    fn live_keyboard_local_failures_report_directly_in_a_pane() {
+        let Some(target) = target() else { return };
+        let dir = std::env::temp_dir().join(format!("ssix-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let encrypted = dir.join("encrypted");
+        std::fs::write(&encrypted, generated_key(Some("the-passphrase"))).unwrap();
+
+        let missing = AuthMethod::Key {
+            path: dir.join("missing").display().to_string(),
+            passphrase: None,
+        };
+        let wrong_passphrase = AuthMethod::Key {
+            path: encrypted.display().to_string(),
+            passphrase: Some("not-the-passphrase".into()),
+        };
+        for auth in [missing, wrong_passphrase] {
+            let (session, events) = connect_with_credential(&target, auth, no_prompt_expected);
+            let error = session.err().expect("refused");
+            assert!(error.contains("Key auth failed"), "{error}");
+            assert!(!error.contains("Keyboard"), "{error}");
+            assert!(events.is_empty());
+        }
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    #[ignore = "needs a keyboard-interactive server (SSIX_LIVE_KBDINT_SSH)"]
+    fn live_keyboard_refused_credential_is_named_and_survives_a_cancel() {
+        let Some(target) = target() else { return };
+        let (session, events) = connect_with_credential(&target, refused_key(), |id| {
+            let id = id.to_string();
+            thread::spawn(move || cancel(&id));
+        });
+        let error = session.err().expect("cancelled");
+        assert!(error.contains("Key auth failed"), "{error}");
+        assert!(error.contains(CANCELLED), "{error}");
+        assert!(!crate::reconnect::is_retryable_connect_error(&error));
+        assert_eq!(events[0]["refused"], "The server refused the stored key.");
+    }
+
+    #[test]
+    #[ignore = "needs a keyboard-interactive server (SSIX_LIVE_KBDINT_SSH)"]
+    fn live_keyboard_refused_credential_survives_a_wrong_answer() {
+        let Some(target) = target() else { return };
+        let (session, _) = connect_with_credential(&target, refused_key(), |id| {
+            let id = id.to_string();
+            thread::spawn(move || answer(&id, vec!["wrong".into()]).unwrap());
+        });
+        let error = session.err().expect("refused");
+        assert!(error.contains("Key auth failed"), "{error}");
+        assert!(
+            error.contains("Keyboard-interactive auth failed"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    #[ignore = "needs a keyboard-interactive server (SSIX_LIVE_KBDINT_SSH)"]
+    fn live_keyboard_refused_credential_can_still_be_answered() {
+        let Some(target) = target() else { return };
+        let password = target.password.clone();
+        let (session, events) = connect_with_credential(&target, refused_key(), move |id| {
+            let (id, password) = (id.to_string(), password.clone());
+            thread::spawn(move || answer(&id, vec![password]).unwrap());
+        });
+        assert!(session.expect("logged in").authenticated());
+        assert_eq!(events[0]["refused"], "The server refused the stored key.");
+    }
+
+    /// With no pane there is nothing to offer: the refusal is the whole story,
+    /// and a suggestion to open a shell would send the user the wrong way.
+    #[test]
+    #[ignore = "needs a keyboard-interactive server (SSIX_LIVE_KBDINT_SSH)"]
+    fn live_keyboard_refused_credential_without_a_pane_is_only_refused() {
+        let Some(target) = target() else { return };
+        let error = connect_without_a_pane(&endpoint_of(&target, refused_key()))
+            .err()
+            .expect("refused");
+        assert!(error.contains("Key auth failed"), "{error}");
+        assert!(!error.contains("terminal pane"), "{error}");
+    }
+
+    /// `server-a`, which CI runs, offers keyboard-interactive and then asks
+    /// nothing, so this also holds without `server-e`.
+    #[test]
+    #[ignore = "needs a Unix SSH server (SSIX_LIVE_SSH)"]
+    fn live_wrong_password_without_a_pane_is_only_refused() {
+        let addr = std::env::var("SSIX_LIVE_SSH").expect("SSIX_LIVE_SSH");
+        let (host, port) = addr.rsplit_once(':').expect("host:port");
+        let error = connect_without_a_pane(&Endpoint {
+            host: host.to_string(),
+            port: port.parse().expect("port"),
+            username: std::env::var("SSIX_LIVE_USER").expect("SSIX_LIVE_USER"),
+            auth: AuthMethod::Password("not-the-password".into()),
+            proxy_command: None,
+        })
+        .err()
+        .expect("refused");
+        assert!(error.contains("Password auth failed"), "{error}");
+        assert!(!error.contains("terminal pane"), "{error}");
+    }
+
+    /// SCP, script runs and forwards have no pane to ask in. A server whose only
+    /// way in is a prompt is worth a word on why that matters.
     #[test]
     #[ignore = "needs a keyboard-interactive server (SSIX_LIVE_KBDINT_SSH)"]
     fn live_keyboard_interactive_without_a_pane_says_why() {
         let Some(target) = target() else { return };
-        let endpoint = Endpoint {
-            host: target.host.clone(),
-            port: target.port,
-            username: target.username.clone(),
-            auth: AuthMethod::Password(target.password.clone()),
-            proxy_command: None,
-        };
-        let mut result = None;
-        with_isolated_data_dir(|| {
-            let tcp = connect_endpoint(&endpoint, 0).expect("tcp connect");
-            result = Some(open_authenticated_session_over_stream(
-                tcp, &endpoint, 0, None,
-            ));
-        });
-        let error = result.unwrap().err().expect("refused");
+        let auth = AuthMethod::Password(target.password.clone());
+        let error = connect_without_a_pane(&endpoint_of(&target, auth))
+            .err()
+            .expect("refused");
         assert!(
             error.contains("does not accept password"),
             "the saved password must not be tried: {error}"
@@ -972,6 +1152,7 @@ mod live {
             sink,
             cancelled,
             asked: false,
+            refused: None,
             host: "proxied".into(),
             username: target.username.clone(),
             socket: Some(wake::fd_of(session)),

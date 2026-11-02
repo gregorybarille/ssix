@@ -95,6 +95,18 @@ async function runInShell(prompt: string, command: string, marker: string): Prom
   await waitForTerminalContains(marker, 15_000);
 }
 
+async function createAgentCredential(name: string, username: string): Promise<void> {
+  await navigateTo("credentials");
+  await click(sel.addCredentialButton);
+  await fill(sel.credentialFormName, name);
+  await fill(sel.credentialFormUsername, username);
+  await click(sel.credentialFormKindAgent);
+  await (await browser.$(sel.credentialFormAgentHint)).waitForDisplayed({ timeout: 10_000 });
+  expect(await (await browser.$(sel.credentialFormPassword)).isExisting()).toBe(false);
+  await click(sel.credentialFormSubmit);
+  await (await browser.$(sel.credentialForm)).waitForExist({ reverse: true, timeout: 10_000 });
+}
+
 async function waitForAuthPrompt(): Promise<void> {
   await (await browser.$(sel.authPromptInput(0))).waitForDisplayed({ timeout: 30_000 });
 }
@@ -119,15 +131,7 @@ describe("SSH agent", () => {
   });
 
   it("creates an agent credential, with nothing secret to fill in", async () => {
-    await navigateTo("credentials");
-    await click(sel.addCredentialButton);
-    await fill(sel.credentialFormName, "cred-14-agent");
-    await fill(sel.credentialFormUsername, TARGETS.a.user);
-    await click(sel.credentialFormKindAgent);
-    await (await browser.$(sel.credentialFormAgentHint)).waitForDisplayed({ timeout: 10_000 });
-    expect(await (await browser.$(sel.credentialFormPassword)).isExisting()).toBe(false);
-    await click(sel.credentialFormSubmit);
-    await (await browser.$(sel.credentialForm)).waitForExist({ reverse: true, timeout: 10_000 });
+    await createAgentCredential("cred-14-agent", TARGETS.a.user);
 
     await openCredentialEditor("cred-14-agent");
     const tab = await browser.$(sel.credentialFormKindAgent);
@@ -305,6 +309,52 @@ describe("Keyboard-interactive login", () => {
     await waitForAuthPrompt();
     await answerAuthPrompt(TARGETS.e.password);
     await runInShell("server-e:~$", "echo ssix-14-again-$((6*7))", "ssix-14-again-42");
+  });
+
+  it("says what the server refused, and keeps that error when the answer is wrong", async () => {
+    // The agent's key is only installed on server-a, so server-e turns it down
+    // and goes on to its prompt.
+    await createAgentCredential("cred-14-e-agent", TARGETS.e.user);
+    await createDirectConnection({
+      name: "conn-14-e-agent",
+      host: TARGETS.e.host,
+      port: TARGETS.e.sshPort,
+      credentialName: "cred-14-e-agent",
+    });
+    await connectToConnection("conn-14-e-agent");
+    await waitForAuthPrompt();
+    expect(await textContentOf(await browser.$(sel.authPromptRefused))).toContain("SSH agent");
+
+    await answerAuthPrompt(WRONG_ANSWER);
+    const error = await waitForFailedTerminalError("Agent auth failed");
+    expect(error).toContain("Keyboard-interactive auth failed");
+
+    await click(sel.failedTerminalRetry);
+    await waitForAuthPrompt();
+    await answerAuthPrompt(TARGETS.e.password);
+    await runInShell("server-e:~$", "echo ssix-14-refused-$((6*7))", "ssix-14-refused-42");
+  });
+
+  it("reports a key file it cannot read at once, without asking", async () => {
+    await navigateTo("credentials");
+    await click(sel.addCredentialButton);
+    await fill(sel.credentialFormName, "cred-14-e-no-key");
+    await fill(sel.credentialFormUsername, TARGETS.e.user);
+    await click(sel.credentialFormKindSshKey);
+    await fill(sel.credentialFormPrivateKeyPath, "/nonexistent/ssix-14-no-such-key");
+    await click(sel.credentialFormSubmit);
+    await (await browser.$(sel.credentialForm)).waitForExist({ reverse: true, timeout: 10_000 });
+    await createDirectConnection({
+      name: "conn-14-e-no-key",
+      host: TARGETS.e.host,
+      port: TARGETS.e.sshPort,
+      credentialName: "cred-14-e-no-key",
+    });
+
+    await connectToConnection("conn-14-e-no-key");
+    const error = await waitForFailedTerminalError("Key auth failed");
+    expect(error).not.toContain("Keyboard-interactive");
+    expect(await (await browser.$(sel.authPrompt)).isExisting()).toBe(false);
   });
 
   it("asks in the pane for the target behind a jump host", async () => {

@@ -45,6 +45,7 @@ use std::time::Duration;
 use ssh2::{Agent, PublicKey, Session};
 
 use crate::login_wait::{Interrupted, LoginWait, REQUEST_STALL, STALLED};
+use crate::ssh::CredentialFailure;
 use crate::ssh_debug::SshDebug;
 
 /// Log in with the first key in the agent that the server accepts.
@@ -52,7 +53,7 @@ pub(crate) fn authenticate(
     session: &Session,
     username: &str,
     debug: &SshDebug,
-) -> Result<(), String> {
+) -> Result<(), CredentialFailure> {
     authenticate_via(session, username, debug, None)
 }
 
@@ -62,7 +63,7 @@ fn authenticate_via(
     username: &str,
     debug: &SshDebug,
     socket: Option<&Path>,
-) -> Result<(), String> {
+) -> Result<(), CredentialFailure> {
     log_in(session, username, debug, socket, REQUEST_STALL).map_err(agent_failure)
 }
 
@@ -70,11 +71,12 @@ fn authenticate_via(
 /// failure rather than a connection problem wherever they are shown, and none of
 /// those is one a reconnect should retry (`crate::reconnect`). A server that
 /// stopped answering is a connection problem, and is left to read as one.
-fn agent_failure(reason: String) -> String {
-    if reason == STALLED {
-        reason
-    } else {
-        format!("Agent auth failed: {}", reason)
+fn agent_failure(failure: CredentialFailure) -> CredentialFailure {
+    let said = |reason| format!("Agent auth failed: {}", reason);
+    match failure {
+        CredentialFailure::Local(reason) if reason == STALLED => CredentialFailure::Local(reason),
+        CredentialFailure::Local(reason) => CredentialFailure::Local(said(reason)),
+        CredentialFailure::Refused(reason) => CredentialFailure::Refused(said(reason)),
     }
 }
 
@@ -84,31 +86,35 @@ fn log_in(
     debug: &SshDebug,
     socket: Option<&Path>,
     stall: Duration,
-) -> Result<(), String> {
-    let mut agent = session
-        .agent()
-        .map_err(|e| format!("Could not set up the SSH agent client: {}", e))?;
-    if let Some(socket) = socket {
+) -> Result<(), CredentialFailure> {
+    let keys_at_hand = || -> Result<(Agent, Vec<PublicKey>), String> {
+        let mut agent = session
+            .agent()
+            .map_err(|e| format!("Could not set up the SSH agent client: {}", e))?;
+        if let Some(socket) = socket {
+            agent
+                .set_identity_path(socket)
+                .map_err(|e| format!("Bad SSH agent path: {}", e))?;
+        }
+        agent.connect().map_err(|e| {
+            format!(
+                "Could not reach an SSH agent: {}. Check that one is running and that \
+                 SSH_AUTH_SOCK is set where SSIX was started",
+                e
+            )
+        })?;
         agent
-            .set_identity_path(socket)
-            .map_err(|e| format!("Bad SSH agent path: {}", e))?;
-    }
-    agent.connect().map_err(|e| {
-        format!(
-            "Could not reach an SSH agent: {}. Check that one is running and that \
-             SSH_AUTH_SOCK is set where SSIX was started",
-            e
-        )
-    })?;
-    agent
-        .list_identities()
-        .map_err(|e| format!("Could not list the SSH agent's keys: {}", e))?;
-    let keys = agent
-        .identities()
-        .map_err(|e| format!("Could not read the SSH agent's keys: {}", e))?;
-    if keys.is_empty() {
-        return Err("The SSH agent holds no keys. Add one with ssh-add".to_string());
-    }
+            .list_identities()
+            .map_err(|e| format!("Could not list the SSH agent's keys: {}", e))?;
+        let keys = agent
+            .identities()
+            .map_err(|e| format!("Could not read the SSH agent's keys: {}", e))?;
+        if keys.is_empty() {
+            return Err("The SSH agent holds no keys. Add one with ssh-add".to_string());
+        }
+        Ok((agent, keys))
+    };
+    let (mut agent, keys) = keys_at_hand().map_err(CredentialFailure::Local)?;
 
     let result = offer_keys(session, &agent, &keys, username, debug, socket, stall);
     let _ = agent.disconnect();
@@ -123,9 +129,12 @@ fn offer_keys(
     debug: &SshDebug,
     socket: Option<&Path>,
     stall: Duration,
-) -> Result<(), String> {
+) -> Result<(), CredentialFailure> {
     let mut wait = LoginWait::begin(session, crate::auth_prompt::attempt_flag());
     let mut last_error = String::new();
+    // Whether the server turned a key down, rather than us never getting a key
+    // in front of it: an agent that would not sign, say.
+    let mut refused = false;
     for key in keys {
         debug.at(1, || {
             format!(
@@ -138,24 +147,40 @@ fn offer_keys(
             authenticate_security_key(&mut wait, stall, session, username, key.blob(), socket)
         } else {
             wait.until_done(stall, || agent.userauth(username, key))
-                .map(|attempt| attempt.map_err(|e| e.to_string()))
+                .map(|attempt| {
+                    attempt.map_err(|e| CredentialFailure::from_error(&e, e.to_string()))
+                })
         };
         // The next key would meet the same silence, or nobody wants it.
-        let attempt = attempt.map_err(|stopped| stopped.message().to_string())?;
+        let attempt =
+            attempt.map_err(|stopped| CredentialFailure::Local(stopped.message().to_string()))?;
         match attempt {
             Ok(()) if session.authenticated() => return Ok(()),
-            Ok(()) => last_error = "the server did not finish the login".to_string(),
-            Err(e) => {
-                debug.at(1, || format!("Agent key not accepted: {}", e));
-                last_error = e;
+            Ok(()) => {
+                refused = true;
+                last_error = "the server did not finish the login".to_string();
+            }
+            Err(failure) => {
+                refused |= matches!(failure, CredentialFailure::Refused(_));
+                let reason = failure.into_message();
+                debug.at(1, || format!("Agent key not accepted: {}", reason));
+                last_error = reason;
             }
         }
     }
-    Err(format!(
-        "the server accepted none of the {} key(s) in the SSH agent ({})",
-        keys.len(),
-        last_error
-    ))
+    Err(if refused {
+        CredentialFailure::Refused(format!(
+            "the server accepted none of the {} key(s) in the SSH agent ({})",
+            keys.len(),
+            last_error
+        ))
+    } else {
+        CredentialFailure::Local(format!(
+            "none of the {} key(s) in the SSH agent could be used ({})",
+            keys.len(),
+            last_error
+        ))
+    })
 }
 
 /// One SSH wire-format string and what follows it.
@@ -184,10 +209,10 @@ fn authenticate_security_key(
     _username: &str,
     _blob: &[u8],
     _socket: Option<&Path>,
-) -> Result<Result<(), String>, Interrupted> {
-    Ok(Err(
+) -> Result<Result<(), CredentialFailure>, Interrupted> {
+    Ok(Err(CredentialFailure::Local(
         "Security keys in the SSH agent are not supported on Windows yet".to_string(),
-    ))
+    )))
 }
 
 #[cfg(unix)]
@@ -202,7 +227,7 @@ mod sign {
 
     use ssh2::Session;
 
-    use super::{ssh_string, Interrupted, LoginWait};
+    use super::{ssh_string, CredentialFailure, Interrupted, LoginWait};
     use crate::libssh2_ext;
 
     /// How long a security key may take to sign, which means waiting for a touch.
@@ -235,10 +260,10 @@ mod sign {
         username: &str,
         blob: &[u8],
         socket: Option<&Path>,
-    ) -> Result<Result<(), String>, Interrupted> {
+    ) -> Result<Result<(), CredentialFailure>, Interrupted> {
         let mut agent = match connect_to_agent(socket) {
             Ok(agent) => agent,
-            Err(reason) => return Ok(Err(reason)),
+            Err(reason) => return Ok(Err(CredentialFailure::Local(reason))),
         };
 
         // libssh2's callback returns only a code, so the reason waits here.
@@ -256,8 +281,8 @@ mod sign {
         })?;
         Ok(match (result, failure) {
             (Ok(()), _) => Ok(()),
-            (Err(_), Some(reason)) => Err(reason),
-            (Err(e), None) => Err(e.to_string()),
+            (Err(_), Some(reason)) => Err(CredentialFailure::Local(reason)),
+            (Err(e), None) => Err(CredentialFailure::from_error(&e, e.to_string())),
         })
     }
 
@@ -1081,8 +1106,10 @@ mod live {
     fn live_agent_login_reports_an_empty_agent_and_refused_keys() {
         let agent = start_agent(vec![]);
         let session = unauthenticated_session();
-        let error =
+        let failure =
             authenticate_via(&session, &username(), &debug(), Some(&agent.socket)).unwrap_err();
+        assert!(matches!(failure, CredentialFailure::Local(_)));
+        let error = failure.into_message();
         assert!(error.contains("Agent auth failed"), "{error}");
         assert!(error.contains("holds no keys"), "{error}");
         assert!(!crate::reconnect::is_retryable_connect_error(&error));
@@ -1090,8 +1117,10 @@ mod live {
         let refused = TestKey::new(random_seed(), false, "ssix-live-refused");
         let agent = start_agent(vec![refused]);
         let session = unauthenticated_session();
-        let error =
+        let failure =
             authenticate_via(&session, &username(), &debug(), Some(&agent.socket)).unwrap_err();
+        assert!(matches!(failure, CredentialFailure::Refused(_)));
+        let error = failure.into_message();
         assert!(error.contains("Agent auth failed"), "{error}");
         assert!(error.contains("accepted none of the 1 key(s)"), "{error}");
         assert!(!crate::reconnect::is_retryable_connect_error(&error));
@@ -1102,7 +1131,10 @@ mod live {
     fn live_agent_login_reports_a_missing_agent() {
         let session = unauthenticated_session();
         let missing = std::env::temp_dir().join("ssix-no-such-agent.sock");
-        let error = authenticate_via(&session, &username(), &debug(), Some(&missing)).unwrap_err();
+        let failure =
+            authenticate_via(&session, &username(), &debug(), Some(&missing)).unwrap_err();
+        assert!(matches!(failure, CredentialFailure::Local(_)));
+        let error = failure.into_message();
         assert!(error.contains("Agent auth failed"), "{error}");
         assert!(error.contains("Could not reach an SSH agent"), "{error}");
         assert!(!crate::reconnect::is_retryable_connect_error(&error));
@@ -1122,10 +1154,12 @@ mod live {
 
         let started = Instant::now();
         let stall = Duration::from_secs(1);
-        let error = log_in(&session, &username(), &debug(), Some(&agent.socket), stall)
+        let failure = log_in(&session, &username(), &debug(), Some(&agent.socket), stall)
             .map_err(agent_failure)
             .unwrap_err();
 
+        assert!(matches!(failure, CredentialFailure::Local(_)));
+        let error = failure.into_message();
         assert_eq!(error, crate::login_wait::STALLED);
         assert!(crate::reconnect::is_retryable_connect_error(&error));
         assert!(started.elapsed() < Duration::from_secs(10));

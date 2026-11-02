@@ -1,6 +1,6 @@
 import { StrictMode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { AuthPrompt } from "@/components/AuthPrompt";
 import { TerminalTabs } from "@/components/TerminalTabs";
@@ -44,6 +44,16 @@ describe("AuthPrompt", () => {
     expect(screen.getByTestId("auth-prompt-text")).toHaveClass("whitespace-pre-wrap");
     expect(screen.getByLabelText("Password:")).toBe(field(0));
     expect(screen.getByLabelText("Favourite colour:")).toBe(field(1));
+  });
+
+  it("says what the server refused before asking, only when it did", () => {
+    setup();
+    expect(screen.queryByTestId("auth-prompt-refused")).toBeNull();
+    cleanup();
+    setup({ request: { ...request, refused: "The server refused the saved password." } });
+    expect(screen.getByTestId("auth-prompt-refused").textContent).toBe(
+      "The server refused the saved password.",
+    );
   });
 
   it("does not echo a field the server marks hidden, and offers no way to reveal it", () => {
