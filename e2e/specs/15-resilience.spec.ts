@@ -9,7 +9,10 @@
  *     the keepalive can notice.
  *
  * A proxy command that refuses while a flag file exists makes every attempt
- * fail as a network failure would, for as long as a test wants.
+ * fail as a network failure would, for as long as a test wants. OpenBSD `nc`
+ * outlives a connection the server cut until something is written to it, so
+ * these connections keep a short keepalive: at the default 30 s, the drop
+ * would surface right at the moment `waitForPhase` gives up.
  *
  * Commands print `<tag>-42` from `$((40+2))`, so the echo of the typed line
  * can never be mistaken for the shell's answer.
@@ -285,7 +288,7 @@ describe("Session resilience", () => {
   });
 
   it("counts its attempts until cancelled, drops what is typed meanwhile, and retries on request", async () => {
-    await createShellConnection("conn-15-cancel", { proxyCommand: refusingProxy() });
+    await createShellConnection("conn-15-cancel", { keepalive: 2, proxyCommand: refusingProxy() });
     await openShell("conn-15-cancel");
     await expectShellAnswers("BEFORE-CANCEL");
     refuseConnections();
@@ -320,7 +323,7 @@ describe("Session resilience", () => {
     await navigateTo("settings");
     await typeOverNumber(sel.settingsReconnectMaxAttempts, 2);
     try {
-      await createShellConnection("conn-15-attempts", { proxyCommand: refusingProxy() });
+      await createShellConnection("conn-15-attempts", { keepalive: 2, proxyCommand: refusingProxy() });
       await openShell("conn-15-attempts");
       await expectShellAnswers("BEFORE-ATTEMPTS");
       refuseConnections();

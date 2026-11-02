@@ -35,6 +35,11 @@ With keepalive off, a network that silently drops packets is noticed only when
 something is written and the operating system gives up on it, which can take
 many minutes. A server that closes the connection is noticed either way.
 
+A proxy command can hide a drop the same way. OpenBSD `nc`, the `nc` of Debian
+and Ubuntu, stays alive after the server closes the connection, until something
+is written to it. Through such a proxy, a cut connection is noticed at the next
+keepalive or keystroke, not at once.
+
 A jump host connection sends its keepalives to the target, through the tunnel,
 so it also notices a dead jump host.
 
