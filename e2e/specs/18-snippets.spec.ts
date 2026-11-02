@@ -90,11 +90,23 @@ async function openPaletteFromTerminal(): Promise<void> {
   await pressPaletteShortcut();
 }
 
-/** In the open palette: filter to one snippet and choose it from the keyboard. */
-async function choose(name: string): Promise<void> {
+/** In the open palette: filter to one snippet. */
+async function filterTo(name: string): Promise<void> {
   await fill(sel.snippetPaletteSearch, name);
   await (await browser.$(sel.snippetPaletteOptionByName(name))).waitForExist({ timeout: 10_000 });
+}
+
+/** In the open palette: filter to one snippet and choose it from the keyboard. */
+async function choose(name: string): Promise<void> {
+  await filterTo(name);
   await browser.keys(["Enter"]);
+}
+
+/** Press or release a real Enter, without doing the other, unlike `browser.keys`. */
+async function realEnter(action: "keyDown" | "keyUp"): Promise<void> {
+  await browser.performActions([
+    { type: "key", id: "held-enter", actions: [{ type: action, value: "\uE007" }] },
+  ]);
 }
 
 async function waitForPaletteClosed(): Promise<void> {
@@ -119,24 +131,20 @@ async function waitForPane(index: number, text: string): Promise<void> {
   });
 }
 
-/** An Enter at whatever has the keyboard. WebDriver's own keys never auto-repeat. */
-async function enterEvent(type: "keydown" | "keyup", repeat: boolean): Promise<void> {
-  await browser.execute(
-    (eventType: string, isRepeat: boolean) => {
-      document.activeElement?.dispatchEvent(
-        new KeyboardEvent(eventType, {
-          key: "Enter",
-          code: "Enter",
-          keyCode: 13,
-          repeat: isRepeat,
-          bubbles: true,
-          cancelable: true,
-        }),
-      );
-    },
-    type,
-    repeat,
-  );
+/** An auto-repeat of Enter at whatever has the keyboard. WebDriver's own keys never repeat. */
+async function enterRepeat(): Promise<void> {
+  await browser.execute(() => {
+    document.activeElement?.dispatchEvent(
+      new KeyboardEvent("keydown", {
+        key: "Enter",
+        code: "Enter",
+        keyCode: 13,
+        repeat: true,
+        bubbles: true,
+        cancelable: true,
+      }),
+    );
+  });
 }
 
 async function expectNotInTerminal(text: string): Promise<void> {
@@ -333,16 +341,18 @@ describe("Snippets", () => {
     await saveSnippet("snip-18-held", ["echo held-$((4*4))"]);
     await click(sel.navTerminals);
     await openPaletteFromTerminal();
-    await choose("snip-18-held");
+    await filterTo("snip-18-held");
+
+    await realEnter("keyDown");
     await waitForPaletteClosed();
     await waitForTerminalContains("echo held-$((4*4))", 10_000);
-
-    for (let i = 0; i < 5; i++) await enterEvent("keydown", true);
+    for (let i = 0; i < 5; i++) await enterRepeat();
     await expectNotInTerminal("held-16");
 
     // Once released, the same event reaches the shell, so the wait above proved something.
-    await enterEvent("keyup", false);
-    await enterEvent("keydown", true);
+    await realEnter("keyUp");
+    await browser.releaseActions();
+    await enterRepeat();
     await waitForTerminalContains("held-16", 10_000);
   });
 
@@ -492,12 +502,15 @@ describe("Snippets", () => {
     await waitForGone(sel.snippetDiscardCancel);
     expect(await (await browser.$(sel.snippetPalette)).isExisting()).toBe(false);
     expect(await (await browser.$(sel.snippetFormName)).getValue()).toBe("snip-18-unsaved");
-    expect(await (await browser.$(sel.terminalContainer)).isExisting()).toBe(false);
+    expect(await paneTexts()).toEqual([]);
 
     await browser.keys(["Control", "Shift", "s"]);
     await click(sel.snippetDiscardConfirm);
     await (await browser.$(sel.snippetPalette)).waitForExist({ timeout: 10_000 });
-    await (await browser.$(sel.terminalContainer)).waitForExist({ timeout: 10_000 });
+    await browser.waitUntil(async () => (await paneTexts()).length === 3, {
+      timeout: 10_000,
+      timeoutMsg: "the terminals never came back",
+    });
     await waitForGone(sel.snippetForm);
 
     await browser.keys(["Escape"]);
