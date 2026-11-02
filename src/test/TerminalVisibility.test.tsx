@@ -268,6 +268,35 @@ describe("a terminal off screen", () => {
     second.textarea.remove();
   });
 
+  describe("when a tab comes on screen", () => {
+    const inTab = (props: Partial<Parameters<typeof Terminal>[0]>) => (
+      <div role="tabpanel">
+        <input data-testid="other-pane" />
+        {element(props)}
+      </div>
+    );
+
+    it("leaves the keyboard on a login prompt that took it in the other pane", () => {
+      const view = render(inTab({ isVisible: false }));
+      view.rerender(inTab({}));
+      view.getByTestId("other-pane").focus();
+      settle();
+      expect(mocks.fit).toHaveBeenCalled();
+      expect(term().focus).not.toHaveBeenCalled();
+    });
+
+    it("takes it from the button that brought the tab on screen", () => {
+      const button = document.createElement("button");
+      document.body.append(button);
+      const view = render(inTab({ isVisible: false }));
+      button.focus();
+      view.rerender(inTab({}));
+      settle();
+      expect(term().focus).toHaveBeenCalledOnce();
+      button.remove();
+    });
+  });
+
   it("refuses every key, on keypress too, which xterm would otherwise send", () => {
     const view = render(element());
     settle();

@@ -2,7 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useRef } from "react";
 import { Terminal as XTerm } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { WebglAddon } from "@xterm/addon-webgl";
-import { isPanelOpen } from "@/lib/focus";
+import { anotherPaneHasFocus, isPanelOpen } from "@/lib/focus";
 import { invoke } from "@/lib/tauri";
 import { attachOutput } from "@/lib/terminalOutput";
 import { activeSessionId, isHeldEnter, registerTerminal, unregisterTerminal } from "@/lib/terminalRegistry";
@@ -107,9 +107,11 @@ export function Terminal({ sessionId, isVisible, onDisconnect, settings, connect
     const timer = setTimeout(() => {
       fitToPane();
       // A split tab shows two terminals: the keyboard goes back to the one that
-      // had it, and a panel beside them keeps it.
+      // had it. A panel beside them keeps it, and so does a login prompt in the
+      // other pane, which took it as the tab came on screen.
+      if (isPanelOpen() || anotherPaneHasFocus(termRef.current)) return;
       const active = activeSessionId();
-      if (!isPanelOpen() && (active === null || active === sessionId)) term.focus();
+      if (active === null || active === sessionId) term.focus();
     }, 50);
     return () => clearTimeout(timer);
   }, [isVisible, sessionId, fitToPane]);

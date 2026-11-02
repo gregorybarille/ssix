@@ -5,7 +5,7 @@ import { Input } from "./ui/input";
 import { Label } from "./ui/label";
 import type { AuthPromptRequest } from "@/lib/authPrompt";
 import { errorMessage } from "@/lib/errors";
-import { focusIsFreeFor } from "@/lib/focus";
+import { focusIsFreeFor, isPanelOpen } from "@/lib/focus";
 import { submitWithoutReset } from "@/lib/formSubmit";
 
 interface AuthPromptProps {
@@ -13,8 +13,6 @@ interface AuthPromptProps {
   isVisible: boolean;
   /** The server is asking because a dropped shell is logging in again. */
   reconnecting?: boolean;
-  /** This prompt was already waiting when the user arrived at its pane. */
-  userCameToIt?: boolean;
   onAnswer: (answers: string[]) => Promise<void>;
   onCancel: () => void;
   /** The prompt went, and nothing else holds the keyboard. */
@@ -37,13 +35,13 @@ interface AuthPromptProps {
  * A prompt arrives whenever the server gets round to asking, which may be while
  * the user is typing in another pane, possibly a password. So it only takes the
  * keyboard from its own pane or from nobody, and otherwise waits to be clicked
- * on. Arriving at its tab or view is the user coming to it, which always does.
+ * on. Arriving at its tab or view is the user coming to it, which always does,
+ * unless a panel holds the keyboard.
  */
 export function AuthPrompt({
   request,
   isVisible,
   reconnecting = false,
-  userCameToIt = false,
   onAnswer,
   onCancel,
   onFocusReleased,
@@ -72,11 +70,12 @@ export function AuthPrompt({
 
   const wasVisible = useRef<boolean | null>(null);
   useEffect(() => {
-    const cameToIt = wasVisible.current === false || (wasVisible.current === null && userCameToIt);
+    const cameToIt = wasVisible.current === false;
     wasVisible.current = isVisible;
     const pane = root.current?.parentElement ?? null;
-    if (isVisible && (cameToIt || focusIsFreeFor(pane))) fields.current[0]?.focus();
-  }, [isVisible, userCameToIt]);
+    if (!isVisible || isPanelOpen()) return;
+    if (cameToIt || focusIsFreeFor(pane)) fields.current[0]?.focus();
+  }, [isVisible]);
 
   useEffect(() => {
     const pane = root.current?.parentElement ?? null;

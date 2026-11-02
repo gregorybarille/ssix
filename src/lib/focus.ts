@@ -26,6 +26,17 @@ export function focusIsFreeFor(container: Element | null): boolean {
   return !(active.checkVisibility?.() ?? true);
 }
 
+/**
+ * Whether the keyboard is on something else in the tab of this terminal: another
+ * pane, or the login prompt that just took it. Showing a split tab shows all of
+ * its terminals, and each one asks for the keyboard a moment later.
+ */
+export function anotherPaneHasFocus(terminal: Element | null): boolean {
+  const active = document.activeElement;
+  const tab = terminal?.closest('[role="tabpanel"]');
+  return !!active && !!tab?.contains(active) && !terminal?.contains(active);
+}
+
 /** `<input>` types that take no text, so focusing them is not "typing". */
 const NON_TEXT_INPUT_TYPES = ["button", "checkbox", "radio", "submit", "reset", "file", "range", "color"];
 
