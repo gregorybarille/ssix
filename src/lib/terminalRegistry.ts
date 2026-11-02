@@ -14,7 +14,11 @@ import { invoke } from "./tauri";
  */
 const terminals = new Map<string, XTerm>();
 
-/** The session that last had keyboard focus; survives focus moving to a palette or panel. */
+/**
+ * The session that last had keyboard focus. It survives focus moving to a
+ * palette or panel, and its terminal unmounting with the Terminals view:
+ * `activeSessionId` trusts it only while that session has a live terminal.
+ */
 let lastFocusedSessionId: string | null = null;
 
 /** Call after `term.open()`: xterm has no input element to watch before that. */
@@ -27,7 +31,6 @@ export function registerTerminal(sessionId: string, term: XTerm): void {
 
 export function unregisterTerminal(sessionId: string): void {
   terminals.delete(sessionId);
-  if (lastFocusedSessionId === sessionId) lastFocusedSessionId = null;
 }
 
 /** Give the keyboard to a session's terminal, when it can take it. */

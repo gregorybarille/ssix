@@ -106,6 +106,20 @@ describe("terminalRegistry", () => {
       expect(activeSessionId()).toBe("s2");
     });
 
+    it("remembers that pane while the terminals are unmounted", () => {
+      liveTerminal("s1");
+      const second = liveTerminal("s2");
+      useTerminalsStore.setState({ tabs: [tab("t1", "s1", "s2")], activeTabId: "t1" });
+      second.focus();
+
+      // Leaving the Terminals view unmounts them all; coming back mounts them again.
+      sessions.forEach(unregisterTerminal);
+      expect(activeSessionId()).toBeNull();
+      liveTerminal("s1");
+      liveTerminal("s2");
+      expect(activeSessionId()).toBe("s2");
+    });
+
     it("ignores focus in a pane of another tab", () => {
       liveTerminal("s1");
       const other = liveTerminal("s2");

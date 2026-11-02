@@ -363,6 +363,9 @@ export const sel = {
   snippetVariableByName: (name: string) => `[data-testid="snippet-variable"][data-name="${name}"]`,
   snippetVariablesPreview: '[data-testid="snippet-variables-preview"]',
   snippetVariablesSubmit: '[data-testid="snippet-variables-submit"]',
+  terminalNewMenu: '[aria-label="Open a new tab or split"]',
+  terminalSplitRight: '//*[@role="menuitem"][contains(., "Split right")]',
+  connectPickerOption: (name: string) => `[role="option"][data-name="${name}"]`,
   // roadmap:import
   // roadmap:terminal-ux
   // roadmap:folders

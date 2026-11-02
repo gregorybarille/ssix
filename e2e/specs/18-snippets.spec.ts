@@ -101,6 +101,24 @@ async function waitForPaletteClosed(): Promise<void> {
   await waitForGone(sel.snippetPalette);
 }
 
+/** The text of each open pane, in the order they are mounted. */
+async function paneTexts(): Promise<string[]> {
+  return browser.execute(
+    (selector: string) =>
+      Array.from(document.querySelectorAll<HTMLElement>(selector)).map(
+        (pane) => window.__ssixTerminalText?.(pane.dataset.sessionId) ?? "",
+      ),
+    sel.terminalContainer,
+  );
+}
+
+async function waitForPane(index: number, text: string): Promise<void> {
+  await browser.waitUntil(async () => (await paneTexts())[index]?.includes(text) ?? false, {
+    timeout: 30_000,
+    timeoutMsg: `pane ${index} never showed ${text}`,
+  });
+}
+
 async function expectNotInTerminal(text: string): Promise<void> {
   await browser.pause(QUIET_MS);
   expect(await readTerminalText()).not.toContain(text);
@@ -306,7 +324,8 @@ describe("Snippets", () => {
     await expectNotInTerminal("multi-");
   });
 
-  // Last: it leaves the terminal asking for bracketed paste, which ash cannot read.
+  // It leaves this terminal asking for bracketed paste, which ash cannot read,
+  // so the tests after it use panes of their own.
   it("sends several lines as a bracketed paste when the program asks for one", async () => {
     await saveSnippet("snip-18-bracket", ["printf '\\033[?2004h'; cat"]);
     await click(sel.navTerminals);
@@ -335,5 +354,38 @@ describe("Snippets", () => {
     expect(text).not.toContain("multi-4");
 
     await browser.keys(["Control", "c"]);
+  });
+
+  it("returns to the pane that last had focus after another view", async () => {
+    for (const name of ["conn-18-b", "conn-18-c"]) {
+      await createDirectConnection({
+        name,
+        host: TARGETS.a.host,
+        port: TARGETS.a.sshPort,
+        credentialName: "cred-18-a",
+      });
+    }
+    await connectToConnection("conn-18-b");
+    await waitForPane(1, "server-a:~$");
+    await click(sel.terminalNewMenu);
+    await click(sel.terminalSplitRight);
+    await click(sel.connectPickerOption("conn-18-c"));
+    await waitForPane(2, "server-a:~$");
+
+    // The second pane takes the keyboard, then leaving the view unmounts every terminal.
+    await (await browser.$$(sel.terminalContainer))[2].click();
+    await saveSnippet("snip-18-pane", ["echo pane-$((8*8))"]);
+    await waitForGone(sel.terminalContainer);
+
+    await pressPaletteShortcut();
+    await browser.waitUntil(
+      async () =>
+        (await textContentOf(await browser.$(sel.snippetPaletteTarget))).includes("conn-18-c"),
+      { timeout: 10_000, timeoutMsg: "the palette did not name the pane that last had focus" },
+    );
+    await choose("snip-18-pane");
+    await waitForPaletteClosed();
+    await waitForPane(2, "echo pane-$((8*8))");
+    expect((await paneTexts())[1]).not.toContain("pane-");
   });
 });
