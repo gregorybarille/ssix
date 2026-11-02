@@ -73,7 +73,7 @@ export function SessionOptions({ advanced, onChange }: ConnectionFormSectionProp
           Session
         </h3>
         <p className="text-xs text-muted-foreground">
-          For shell sessions (direct and jump host). Local forwards do not use these.
+          For shell sessions (direct and jump host). Port forwards do not use these.
         </p>
       </div>
       <div className="space-y-2">
