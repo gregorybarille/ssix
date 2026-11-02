@@ -65,11 +65,11 @@ export const TARGETS: Record<"a" | "b" | "c" | "d" | "e", SshTarget> = {
     password: "passb",
   },
   c: {
-    // server-c is on a private docker network only — never published
-    // on the host. It's only reachable through a jump host (server-a),
-    // so `host` stays as the docker hostname even outside docker. The
-    // probe checks the published 2203 port, which proves only that the
-    // server is up; actual dialling happens via server-a.
+    // server-c is on a private docker network only, so Docker publishes
+    // nothing for it and 2203 has no listener on the host. It's only
+    // reachable through a jump host (server-a), so `host` stays as the
+    // docker hostname even outside docker. Only the dockerized runner can
+    // probe it; see REACHABLE_TARGETS.
     host: "server-c",
     probeHost: inside ? "server-c" : "127.0.0.1",
     probePort: inside ? 22 : 2203,
@@ -78,6 +78,7 @@ export const TARGETS: Record<"a" | "b" | "c" | "d" | "e", SshTarget> = {
     password: "passc",
   },
   d: {
+    // Same as server-c: private network only, not probeable from the host.
     host: "server-d",
     probeHost: inside ? "server-d" : "127.0.0.1",
     probePort: inside ? 22 : 2204,
@@ -114,13 +115,18 @@ function tcpPing(host: string, port: number, timeoutMs = 1000): Promise<boolean>
   });
 }
 
+/** The targets this test process can reach directly. */
+const REACHABLE_TARGETS: ReadonlyArray<keyof typeof TARGETS> = inside
+  ? ["a", "b", "c", "d", "e"]
+  : ["a", "b", "e"];
+
 /**
  * Block until every named target's sshd is accepting connections.
  * Throws after `totalTimeoutMs` so a stuck container doesn't make
  * the test hang silently.
  */
 export async function waitForServers(
-  keys: ReadonlyArray<keyof typeof TARGETS> = ["a", "b", "c", "d", "e"],
+  keys: ReadonlyArray<keyof typeof TARGETS> = REACHABLE_TARGETS,
   totalTimeoutMs = 60_000,
 ): Promise<void> {
   const deadline = Date.now() + totalTimeoutMs;
