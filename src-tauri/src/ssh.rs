@@ -430,7 +430,6 @@ fn write_startup_command(channel: &mut ssh2::Channel, startup_command: Option<&s
     if let Some(command) = startup_command {
         let _ = channel.write_all(command.as_bytes());
         let _ = channel.write_all(b"\n");
-        let _ = channel.flush();
     }
 }
 
@@ -981,7 +980,10 @@ fn write_all_nonblocking<W: Write>(w: &mut W, data: &[u8], fd: Option<wake::Fd>)
             Err(e) => return Err(e),
         }
     }
-    let _ = w.flush();
+    // Never `flush`: nothing is buffered on the way out, and an ssh2 channel's
+    // flush throws away what libssh2 has queued to read. For a queued packet
+    // under four bytes, such as the echo of a keystroke, it also sends a window
+    // adjust of about 2^32 and OpenSSH drops the connection over it.
     Ok(())
 }
 
@@ -1503,7 +1505,7 @@ mod tests {
                 Ok(n)
             }
             fn flush(&mut self) -> io::Result<()> {
-                Ok(())
+                panic!("a channel's flush discards what it has queued to read");
             }
         }
         let mut w = Trickle {
@@ -1677,25 +1679,7 @@ mod tests {
                 ..
             } = open_shell(&target.endpoint, &opts).unwrap();
             let fd = wake::fd_of(&session);
-            let mut buf = vec![0u8; 32 * 1024];
-            let mut drain = |channel: &mut ssh2::Channel| loop {
-                match channel.read(&mut buf) {
-                    Ok(0) => panic!("the shell ended"),
-                    Ok(_) => {}
-                    Err(e) if e.kind() == io::ErrorKind::WouldBlock => return,
-                    Err(e) => panic!("read failed: {e}"),
-                }
-            };
-
-            // Let the login output settle first.
-            let mut quiet_since = Instant::now();
-            while quiet_since.elapsed() < Duration::from_secs(3) {
-                if wake::is_readable(fd) {
-                    drain(&mut channel);
-                    quiet_since = Instant::now();
-                }
-                thread::sleep(Duration::from_millis(50));
-            }
+            wait_for_quiet(&mut channel, fd);
 
             session.keepalive_send().unwrap();
             let sent = Instant::now();
@@ -1708,10 +1692,59 @@ mod tests {
             }
 
             // The reply is consumed without producing output or ending the shell.
-            drain(&mut channel);
+            read_available(&mut channel);
             assert!(!wake::is_readable(fd));
             assert!(!channel.eof());
         });
+    }
+
+    /// Typing as fast as the echo comes back, so an echo is often queued in
+    /// libssh2 by the write that follows it.
+    #[test]
+    #[ignore]
+    fn live_fast_typing_keeps_the_session() {
+        let target = crate::remote_script::live::Target::from_env();
+        crate::storage::test_support::with_isolated_data_dir(|| {
+            let OpenShell {
+                session,
+                mut channel,
+                ..
+            } = open_shell(&target.endpoint, &ShellOptions::default()).unwrap();
+            let fd = wake::fd_of(&session);
+            wait_for_quiet(&mut channel, fd);
+
+            for _ in 0..5000 {
+                write_all_nonblocking(&mut channel, b"x", Some(fd)).unwrap();
+                read_available(&mut channel);
+            }
+
+            // A server that took offence has closed the connection by now.
+            wait_for_quiet(&mut channel, fd);
+            assert!(!channel.eof());
+        });
+    }
+
+    fn read_available(channel: &mut ssh2::Channel) {
+        let mut buf = [0u8; 4096];
+        loop {
+            match channel.read(&mut buf) {
+                Ok(0) => panic!("the shell ended"),
+                Ok(_) => {}
+                Err(e) if e.kind() == io::ErrorKind::WouldBlock => return,
+                Err(e) => panic!("read failed: {e}"),
+            }
+        }
+    }
+
+    fn wait_for_quiet(channel: &mut ssh2::Channel, fd: wake::Fd) {
+        let mut quiet_since = Instant::now();
+        while quiet_since.elapsed() < Duration::from_secs(3) {
+            if wake::is_readable(fd) {
+                read_available(channel);
+                quiet_since = Instant::now();
+            }
+            thread::sleep(Duration::from_millis(50));
+        }
     }
 
     #[test]
