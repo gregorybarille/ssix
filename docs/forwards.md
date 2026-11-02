@@ -22,7 +22,9 @@ Deleting a connection stops its forward first.
 - A remote forward asks the server for `localhost`, which is what `ssh -R`
   sends when it is given no address. The port is on the server's loopback
   unless the server's `GatewayPorts yes` overrides that. There is no field to
-  choose another address.
+  choose another address. For `localhost` sshd binds both `127.0.0.1` and `::1`
+  and reports success if either works, so a port taken on only one of them
+  starts normally and is reachable only on the other, as with `ssh -R`.
 - The server decides whether a remote forward may listen at all. A refusal
   (`AllowTcpForwarding`, a port already taken, a privileged port) fails the
   start with "refused to listen on port N", and the row shows it.

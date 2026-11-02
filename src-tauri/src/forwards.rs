@@ -1484,6 +1484,16 @@ mod live {
             .port()
     }
 
+    /// A port for the server to listen on, below the ephemeral ranges of Linux
+    /// (from 32768) and of macOS and Windows (from 49152). `free_port` only asks
+    /// this machine, and a server's own TIME_WAIT sockets can take a port from
+    /// 127.0.0.1 while sshd still binds ::1 and reports success.
+    fn free_server_port() -> u16 {
+        static NEXT: std::sync::atomic::AtomicU16 = std::sync::atomic::AtomicU16::new(0);
+        let run = (std::process::id() % 1_000) as u16 * 10;
+        20_000 + run + NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+    }
+
     fn connect(port: u16) -> TcpStream {
         let stream = TcpStream::connect(("127.0.0.1", port)).unwrap();
         stream.set_read_timeout(Some(SOON)).unwrap();
@@ -1701,7 +1711,7 @@ mod live {
     fn live_a_remote_forward_carries_connections_back_here() {
         with_isolated_data_dir(|| {
             let events = Arc::new(Recorder::default());
-            let remote_port = free_port();
+            let remote_port = free_server_port();
             let handle = start_remote_forward(
                 server(),
                 remote_port,
@@ -1758,7 +1768,7 @@ mod live {
     fn live_a_remote_forward_survives_an_unreachable_target() {
         with_isolated_data_dir(|| {
             let events = Arc::new(Recorder::default());
-            let remote_port = free_port();
+            let remote_port = free_server_port();
             let closed_port = free_port();
             let handle = start_remote_forward(
                 server(),
@@ -1849,7 +1859,7 @@ mod live {
     fn live_concurrent_socks_clients_get_their_own_destinations() {
         with_isolated_data_dir(|| {
             let echo_events = Arc::new(Recorder::default());
-            let remote_port = free_port();
+            let remote_port = free_server_port();
             let echo_handle = start_remote_forward(
                 server(),
                 remote_port,
