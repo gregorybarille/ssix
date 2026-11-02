@@ -83,3 +83,63 @@ describe("useConnectionsStore.cloneConnection", () => {
     expect(useConnectionsStore.getState().connections).toEqual([saved]);
   });
 });
+
+describe("useConnectionsStore folders", () => {
+  const conn = (id: string, folder?: string): Connection =>
+    ({ id, name: id, host: "h", port: 22, type: "direct", folder }) as Connection;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    useConnectionsStore.setState({
+      connections: [conn("a", "prod"), conn("b", "prod/eu"), conn("c")],
+      error: null,
+    });
+  });
+
+  it("moves one connection and keeps the order of the list", async () => {
+    vi.mocked(invoke).mockResolvedValueOnce(conn("b", "staging"));
+    await useConnectionsStore.getState().moveConnectionToFolder("b", "staging");
+    expect(invoke).toHaveBeenCalledWith("move_connection_to_folder", { id: "b", folder: "staging" });
+    expect(useConnectionsStore.getState().connections).toEqual([
+      conn("a", "prod"),
+      conn("b", "staging"),
+      conn("c"),
+    ]);
+  });
+
+  it("sends null to take a connection out of any folder", async () => {
+    vi.mocked(invoke).mockResolvedValueOnce(conn("a"));
+    await useConnectionsStore.getState().moveConnectionToFolder("a", null);
+    expect(invoke).toHaveBeenCalledWith("move_connection_to_folder", { id: "a", folder: null });
+  });
+
+  it("makes one call to rename a folder and takes the whole answer", async () => {
+    const answer = [conn("a", "live"), conn("b", "live/eu"), conn("c")];
+    vi.mocked(invoke).mockResolvedValueOnce(answer);
+    await useConnectionsStore.getState().renameFolder("prod", "live");
+    expect(invoke).toHaveBeenCalledTimes(1);
+    expect(invoke).toHaveBeenCalledWith("rename_folder", { from: "prod", to: "live" });
+    expect(useConnectionsStore.getState().connections).toEqual(answer);
+  });
+
+  it("makes one call to delete a folder and takes the whole answer", async () => {
+    const answer = [conn("a"), conn("b"), conn("c")];
+    vi.mocked(invoke).mockResolvedValueOnce(answer);
+    await useConnectionsStore.getState().deleteFolder("prod");
+    expect(invoke).toHaveBeenCalledTimes(1);
+    expect(invoke).toHaveBeenCalledWith("delete_folder", { path: "prod" });
+    expect(useConnectionsStore.getState().connections).toEqual(answer);
+  });
+
+  it.each([
+    ["moving", () => useConnectionsStore.getState().moveConnectionToFolder("a", "x")],
+    ["renaming", () => useConnectionsStore.getState().renameFolder("prod", "x")],
+    ["deleting", () => useConnectionsStore.getState().deleteFolder("prod")],
+  ])("leaves the list and the load error alone when %s fails", async (_, action) => {
+    const before = useConnectionsStore.getState().connections;
+    vi.mocked(invoke).mockRejectedValueOnce("refused");
+    await expect(action()).rejects.toBe("refused");
+    expect(useConnectionsStore.getState().connections).toBe(before);
+    expect(useConnectionsStore.getState().error).toBeNull();
+  });
+});

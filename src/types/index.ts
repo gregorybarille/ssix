@@ -284,6 +284,13 @@ export type ConnectionDraft = {
  *   the connections view.
  */
 export type LayoutMode = "list" | "tile" | "tags";
+/**
+ * What the connection list can show: every {@link LayoutMode}, plus
+ * `"folders"`, a tree grouped by each connection's `folder` path. Credentials
+ * and port forwards have no folders, so their settings stay a `LayoutMode` and
+ * `save_settings` refuses this value for them.
+ */
+export type ConnectionLayout = LayoutMode | "folders";
 export type OpenMode = "tab" | "split_right" | "split_down";
 
 export interface AppSettings {
@@ -291,7 +298,7 @@ export interface AppSettings {
   font_family: string;
   color_scheme: string;
   theme: string;
-  connection_layout: LayoutMode;
+  connection_layout: ConnectionLayout;
   credential_layout: LayoutMode;
   tunnel_layout: LayoutMode;
   default_open_mode: OpenMode;

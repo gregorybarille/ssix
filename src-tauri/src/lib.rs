@@ -2,6 +2,7 @@ mod agent;
 mod auth_prompt;
 mod backup;
 mod commands;
+mod folder_path;
 mod forwards;
 mod keychain;
 mod known_hosts;
@@ -122,6 +123,9 @@ pub fn run() {
             commands::import_config::import_ssh_config_apply,
             // roadmap:terminal-ux
             // roadmap:folders
+            commands::folders::move_connection_to_folder,
+            commands::folders::rename_folder,
+            commands::folders::delete_folder,
         ])
         .build(tauri::generate_context!())
         .expect("error while running tauri application")

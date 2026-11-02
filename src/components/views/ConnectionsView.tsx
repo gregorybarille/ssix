@@ -2,6 +2,7 @@ import React, { Suspense, lazy } from "react";
 import { Plus } from "lucide-react";
 import { ConnectionList } from "../ConnectionList";
 import { ConnectionForm } from "../ConnectionForm";
+import { FolderTree } from "../FolderTree";
 import { ImportButton } from "../ImportDialog";
 import { SearchBar } from "../SearchBar";
 import { LayoutToggle } from "../ui/layout-toggle";
@@ -14,7 +15,7 @@ import { browseFiles } from "@/store/useSftpStore";
 import { ErrorBanner } from "../ui/error-banner";
 import { filterConnections } from "@/lib/search";
 import type { TagGroup } from "@/lib/tags";
-import type { AppSettings, Connection, ConnectionInput, Credential, LayoutMode } from "@/types";
+import type { AppSettings, Connection, ConnectionInput, ConnectionLayout, Credential } from "@/types";
 
 const TagGroupGrid = lazy(() =>
   import("../TagGroupGrid").then((m) => ({ default: m.TagGroupGrid })),
@@ -24,7 +25,7 @@ interface ConnectionsViewProps {
   connections: Connection[];
   credentials: Credential[];
   settings: AppSettings;
-  onLayoutChange: (layout: LayoutMode) => void;
+  onLayoutChange: (layout: ConnectionLayout) => void;
   onSubmit: (data: ConnectionInput | Connection) => Promise<void>;
   onCloneSubmit: (data: ConnectionInput | Connection) => Promise<void>;
   onCreateCredential: (data: Omit<Credential, "id">) => Promise<Credential>;
@@ -37,8 +38,8 @@ interface ConnectionsViewProps {
 
 /**
  * The Connections tab: header with layout toggle, the search bar and
- * either the list/grid or the tag-group view. The connection form opens
- * as the right-hand panel beside them.
+ * either the list/grid, the tag-group view or the folder tree. The connection
+ * form opens as the right-hand panel beside them.
  */
 export function ConnectionsView({
   connections,
@@ -71,6 +72,7 @@ export function ConnectionsView({
     useShallow((s) => ({ loadError: s.error, retryLoad: s.fetchConnections })),
   );
   const [searchQuery, setSearchQuery] = React.useState("");
+  const layout = settings.connection_layout;
 
   // Search is a pure filter over the loaded list; the tag-groups view
   // filters tag labels itself and always receives every connection.
@@ -79,12 +81,26 @@ export function ConnectionsView({
     [connections, searchQuery],
   );
 
+  const rowActions = {
+    onEdit: (conn: Connection) => dialogs.openEditConnection(conn),
+    onDelete,
+    onClone: (conn: Connection) => dialogs.openCloneConnection(conn),
+    onConnect,
+    onScp: (conn: Connection) => dialogs.openScp(conn),
+    onBrowse: browseFiles,
+  };
+
   return (
     <>
       <div className="flex items-center justify-between px-6 py-4 border-b border-border">
         <h1 className="text-lg font-semibold">Connections</h1>
         <div className="flex items-center gap-2">
-          <LayoutToggle value={settings.connection_layout} onChange={onLayoutChange} showTags />
+          <LayoutToggle
+            value={settings.connection_layout}
+            onChange={onLayoutChange}
+            showTags
+            showFolders
+          />
           <ImportButton />
           <Button
             size="sm"
@@ -109,11 +125,11 @@ export function ConnectionsView({
         <SearchBar
           value={searchQuery}
           onChange={setSearchQuery}
-          placeholder={settings.connection_layout === "tags" ? "Search tags…" : undefined}
+          placeholder={layout === "tags" ? "Search tags…" : undefined}
         />
       </div>
       <div className="flex-1 overflow-y-auto px-4 py-2">
-        {settings.connection_layout === "tags" ? (
+        {layout === "tags" ? (
           <Suspense fallback={<ViewFallback label="Loading tags…" />}>
             <TagGroupGrid
               connections={connections}
@@ -122,17 +138,19 @@ export function ConnectionsView({
               onScpAll={onScpAllInTag}
             />
           </Suspense>
+        ) : layout === "folders" ? (
+          <FolderTree
+            connections={connections}
+            credentials={credentials}
+            query={searchQuery}
+            {...rowActions}
+          />
         ) : (
           <ConnectionList
             connections={visibleConnections}
             credentials={credentials}
-            layout={settings.connection_layout}
-            onEdit={(conn) => dialogs.openEditConnection(conn)}
-            onDelete={onDelete}
-            onClone={(conn) => dialogs.openCloneConnection(conn)}
-            onConnect={onConnect}
-            onScp={(conn) => dialogs.openScp(conn)}
-            onBrowse={browseFiles}
+            layout={layout}
+            {...rowActions}
           />
         )}
       </div>

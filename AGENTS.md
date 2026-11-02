@@ -6,6 +6,7 @@
 > - `docs/development.md` — prerequisites, dev setup, build pipeline
 > - `docs/features.md` — feature catalogue and keyboard shortcuts
 > - `docs/file-transfer.md` — SCP/file transfer behaviour and constraints
+> - `docs/folders.md` — connection folders: path rules, the tree, moving, rename and delete
 > - `docs/forwards.md` — port forwards: kinds, lifecycle, SOCKS replies and limits
 > - `docs/git-sync.md` — git-sync export feature
 > - `docs/roadmap.md` — validated feature roadmap, stream ownership and rules

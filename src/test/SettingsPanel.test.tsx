@@ -509,4 +509,31 @@ describe("SettingsPanel", () => {
       });
     });
   });
+
+  /*
+   * Folders is a Connections layout: the other two lists have no tree, and
+   * `save_settings` refuses the value for them.
+   */
+  it("offers the Folders layout for connections only", () => {
+    // What Radix Select asks of an element, and jsdom does not have.
+    Element.prototype.hasPointerCapture = () => false;
+    Element.prototype.scrollIntoView = () => {};
+    const onSave = vi.fn();
+    render(<SettingsPanel settings={defaults} onSave={onSave} />);
+    const open = (label: string) => fireEvent.keyDown(screen.getByLabelText(label), { key: "Enter" });
+
+    open("Credentials");
+    expect(screen.getByRole("option", { name: "Tiles" })).toBeInTheDocument();
+    expect(screen.queryByRole("option", { name: "Folders" })).toBeNull();
+    fireEvent.keyDown(screen.getByRole("listbox"), { key: "Escape" });
+
+    open("Port forwards");
+    expect(screen.getByRole("option", { name: "Tiles" })).toBeInTheDocument();
+    expect(screen.queryByRole("option", { name: "Folders" })).toBeNull();
+    fireEvent.keyDown(screen.getByRole("listbox"), { key: "Escape" });
+
+    open("Connections");
+    fireEvent.click(screen.getByRole("option", { name: "Folders" }));
+    expect(screen.getByLabelText("Connections")).toHaveTextContent("Folders");
+  });
 });
