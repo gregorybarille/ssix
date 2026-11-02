@@ -197,9 +197,9 @@ export async function createDirectConnection(input: DirectConnectionInput): Prom
  * not hidden behind hover state).
  */
 /**
- * Rows only exist in the list / tile layouts. A previous spec may have
- * left the persisted layout on "tags", so switch back before looking
- * for a row.
+ * Rows are only sure to exist in the list / tile layouts. A previous spec
+ * may have left the persisted layout on "tags", or on "folders" with the
+ * row's folder collapsed, so switch back before looking for a row.
  */
 export async function ensureConnectionRowsLayout(): Promise<void> {
   await navigateTo("connections");

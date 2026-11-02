@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/react";
 import { LayoutToggle } from "@/components/ui/layout-toggle";
+import type { ConnectionLayout } from "@/types";
 
 /*
  * Audit-3 follow-up P1#1: the toggle is icon-only, so each button
@@ -69,5 +70,21 @@ describe("LayoutToggle", () => {
     svgs.forEach((svg) =>
       expect(svg.getAttribute("aria-hidden")).toBe("true"),
     );
+  });
+
+  it("offers Folders only when asked, and reports it", () => {
+    const onChange = vi.fn();
+    const { rerender } = render(<LayoutToggle value="list" onChange={onChange} />);
+    expect(screen.queryByRole("button", { name: "Folders view" })).toBeNull();
+
+    rerender(<LayoutToggle<ConnectionLayout> value="list" onChange={onChange} showFolders />);
+    const button = screen.getByTestId("layout-toggle-folders");
+    expect(button).toHaveAccessibleName("Folders view");
+    expect(button).toHaveAttribute("aria-pressed", "false");
+    fireEvent.click(button);
+    expect(onChange).toHaveBeenCalledWith("folders");
+
+    rerender(<LayoutToggle<ConnectionLayout> value="folders" onChange={onChange} showFolders />);
+    expect(screen.getByTestId("layout-toggle-folders")).toHaveAttribute("aria-pressed", "true");
   });
 });

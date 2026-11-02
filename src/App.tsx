@@ -36,7 +36,7 @@ import { TABLE_SHORTCUTS, useGlobalShortcuts } from "./hooks/useGlobalShortcuts"
 import { useScreenshotToast } from "./hooks/useScreenshotToast";
 import { useShallow } from "zustand/react/shallow";
 import { log as appLog } from "./lib/log";
-import { Connection, ConnectionInput, Credential, LayoutMode } from "./types";
+import { AppSettings, Connection, ConnectionInput, Credential } from "./types";
 import { connectMany } from "./lib/bulk-actions";
 import type { TagGroup } from "./lib/tags";
 import { VIEWS } from "./lib/views";
@@ -166,7 +166,7 @@ function App() {
   const connectionSig = React.useMemo(
     () =>
       connections
-        .map((c) => `${c.id}:${c.name}:${c.host}:${c.port}:${c.credential_id ?? ""}`)
+        .map((c) => `${c.id}:${c.name}:${c.host}:${c.port}:${c.credential_id ?? ""}:${c.folder ?? ""}`)
         .sort()
         .join("|"),
     [connections],
@@ -376,9 +376,9 @@ function App() {
 
   /* ----------------------------- Layout helpers ----------------------------- */
 
-  const updateLayout = (
-    key: "connection_layout" | "credential_layout" | "tunnel_layout",
-    value: LayoutMode,
+  const updateLayout = <K extends "connection_layout" | "credential_layout" | "tunnel_layout">(
+    key: K,
+    value: AppSettings[K],
   ) => {
     void saveSettings({ ...settings, [key]: value }).catch((error) => {
       appLog.error(
