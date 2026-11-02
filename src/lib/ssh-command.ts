@@ -24,6 +24,8 @@ import { isForwardConnection } from "@/lib/sshTerms";
  * cannot give a proxy, so the jump is spelled out as a nested
  * `ProxyCommand=ssh -W %h:%p …` instead.
  *
+ * Agent forwarding adds `-A`, for every kind of connection.
+ *
  * Default port `22` is suppressed for readability. Identity files are
  * included only when the credential stores a filesystem path; inline keys
  * cannot be referenced from a CLI command and are skipped.
@@ -51,6 +53,8 @@ export function buildSshCommand(
 
   const userAt = (user: string | undefined, host: string) =>
     user ? `${q(user)}@${q(host)}` : q(host);
+
+  if (connection.agent_forwarding) push("-A");
 
   const proxy = connection.proxy_command?.trim() || undefined;
   if (proxy && connection.type !== "jump_shell") push("-o", q(`ProxyCommand=${proxy}`));

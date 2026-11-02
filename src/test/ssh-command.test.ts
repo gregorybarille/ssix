@@ -157,6 +157,56 @@ describe("buildSshCommand", () => {
     expect(cmd).toBe("ssh -o 'ProxyCommand=wsl.exe -e nc %h %p' alice@example.com");
   });
 
+  describe("agent forwarding", () => {
+    it("adds -A to a direct connection", () => {
+      expect(buildSshCommand(directConn({ agent_forwarding: true }), [passCred])).toBe(
+        "ssh -A alice@example.com",
+      );
+    });
+
+    it("adds -A to a jump host connection", () => {
+      const conn: Connection = {
+        id: "c5",
+        name: "jump",
+        host: "",
+        port: 22,
+        type: "jump_shell",
+        gateway_host: "bastion.example",
+        gateway_port: 22,
+        gateway_credential_id: passCred.id,
+        destination_host: "internal.example",
+        destination_port: 22,
+        credential_id: keyCred.id,
+        agent_forwarding: true,
+      };
+      expect(buildSshCommand(conn, [passCred, keyCred])).toBe(
+        "ssh -A -J alice@bastion.example -i /home/u/.ssh/id_ed25519 deploy@internal.example",
+      );
+    });
+
+    it("adds -A to a forward", () => {
+      const conn: Connection = {
+        id: "c6",
+        name: "socks",
+        host: "",
+        port: 22,
+        type: "dynamic_forward",
+        gateway_host: "bastion.example",
+        gateway_port: 22,
+        gateway_credential_id: passCred.id,
+        local_port: 1080,
+        agent_forwarding: true,
+      };
+      expect(buildSshCommand(conn, [passCred])).toBe("ssh -A -D 1080 alice@bastion.example");
+    });
+
+    it("leaves it out when off", () => {
+      expect(buildSshCommand(directConn({ agent_forwarding: false }), [passCred])).toBe(
+        "ssh alice@example.com",
+      );
+    });
+  });
+
   it("spells out the jump when the jump host has a proxy command", () => {
     const conn: Connection = {
       id: "c4",

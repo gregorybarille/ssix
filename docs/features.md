@@ -517,7 +517,8 @@ Wired surfaces today:
   (hidden for port forwards), separator, Copy SSH command, separator, Delete
   (destructive). "Copy SSH command" builds a portable `ssh` invocation
   from the connection + selected credential via `buildSshCommand` in
-  `src/lib/ssh-command.ts` and writes it to the clipboard.
+  `src/lib/ssh-command.ts` and writes it to the clipboard. Agent forwarding
+  adds `-A`.
 - **Terminal tabs** — Close tab, Close other tabs, Close tabs to the
   right (the latter two are disabled when they would be no-ops).
 - **Window background** — Take screenshot (legacy behavior preserved
