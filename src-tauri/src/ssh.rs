@@ -52,9 +52,6 @@ const OUTPUT_COALESCE_MAX: usize = 256 * 1024;
 const WRITE_STALL_TIMEOUT: Duration = Duration::from_secs(10);
 /// libssh2's "call again later" code, surfaced by ssh2 as `ErrorCode::Session`.
 const LIBSSH2_ERROR_EAGAIN: i32 = -37;
-/// libssh2's answer when a partly sent packet is still queued; the keepalive
-/// goes out on a later tick.
-const LIBSSH2_ERROR_BAD_USE: i32 = -39;
 /// Unanswered keepalive intervals before a session counts as dead, as with
 /// OpenSSH's default `ServerAliveCountMax`.
 const KEEPALIVE_MAX_MISSED: u32 = 3;
@@ -324,17 +321,26 @@ pub(crate) mod wake {
         poll(&[fd], libc::POLLOUT, timeout);
     }
 
-    /// Whether `fd` has something to read (or was closed), without waiting.
-    pub fn is_readable(fd: Fd) -> bool {
+    fn ready_now(fd: Fd, events: libc::c_short) -> bool {
         let mut polls = [libc::pollfd {
             fd,
-            events: libc::POLLIN,
+            events,
             revents: 0,
         }];
         // SAFETY: `polls` is a valid, initialised one-element array of
         // `pollfd` that outlives the call.
         let ready = unsafe { libc::poll(polls.as_mut_ptr(), 1, 0) };
         ready > 0
+    }
+
+    /// Whether `fd` has something to read (or was closed), without waiting.
+    pub fn is_readable(fd: Fd) -> bool {
+        ready_now(fd, libc::POLLIN)
+    }
+
+    /// Whether a send on `fd` can go out now (or would fail), without waiting.
+    pub fn is_writable(fd: Fd) -> bool {
+        ready_now(fd, libc::POLLOUT)
     }
 }
 
@@ -388,6 +394,29 @@ pub(crate) mod wake {
         let stream = ManuallyDrop::new(unsafe { TcpStream::from_raw_socket(fd) });
         let mut byte = [0u8; 1];
         !matches!(stream.peek(&mut byte), Err(e) if e.kind() == io::ErrorKind::WouldBlock)
+    }
+
+    /// Whether a send on `fd` can go out now (or would fail), without waiting.
+    pub fn is_writable(fd: Fd) -> bool {
+        #[repr(C)]
+        struct WsaPollFd {
+            fd: usize,
+            events: i16,
+            revents: i16,
+        }
+        const POLLWRNORM: i16 = 0x0010;
+        #[link(name = "ws2_32")]
+        extern "system" {
+            fn WSAPoll(fds: *mut WsaPollFd, count: u32, timeout: i32) -> i32;
+        }
+        let mut poll = WsaPollFd {
+            fd: fd as usize,
+            events: POLLWRNORM,
+            revents: 0,
+        };
+        // SAFETY: `poll` is a valid one-element array that outlives the call,
+        // and a timeout of 0 returns at once.
+        unsafe { WSAPoll(&mut poll, 1, 0) > 0 }
     }
 }
 
@@ -1134,11 +1163,8 @@ fn run_io_loop(shell: OpenShell, io: &mut ShellIo) -> ShellEnd {
         }
 
         if watchdog.enabled() {
-            match session.keepalive_send() {
-                Err(e) if !keepalive_can_wait(&e) => {
-                    return ShellEnd::Dropped(format!("SSH keepalive failed: {}", e));
-                }
-                _ => {}
+            if let Err(e) = send_due_keepalive(&session, fds[0]) {
+                return ShellEnd::Dropped(format!("SSH keepalive failed: {}", e));
             }
             if let Some(silence) = watchdog.silence(Instant::now()) {
                 return ShellEnd::Dropped(format!(
@@ -1155,10 +1181,16 @@ fn run_io_loop(shell: OpenShell, io: &mut ShellIo) -> ShellEnd {
     }
 }
 
-/// A keepalive that could not go out yet: the socket is full, or a partly
-/// sent packet comes first. Neither says anything about the connection.
-fn keepalive_can_wait(e: &ssh2::Error) -> bool {
-    is_eagain(e) || e.code() == ssh2::ErrorCode::Session(LIBSSH2_ERROR_BAD_USE)
+/// Send a keepalive if one is due and the socket can take it now. On a full
+/// socket libssh2 reports success, counts the keepalive as sent and leaves it
+/// queued, and until the next one comes due every other packet is refused as
+/// "try again". A write waiting on that would never see the next one, and
+/// would time out on a healthy connection.
+fn send_due_keepalive(session: &Session, fd: wake::Fd) -> Result<(), ssh2::Error> {
+    if !wake::is_writable(fd) {
+        return Ok(());
+    }
+    session.keepalive_send().map(drop)
 }
 
 fn resize_pty(channel: &mut ssh2::Channel, cols: u32, rows: u32, ctx: &SessionContext) {
@@ -1395,6 +1427,7 @@ pub fn start_jump_shell(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::atomic::AtomicU8;
 
     #[test]
     fn test_ssh_state_new() {
@@ -1633,6 +1666,55 @@ mod tests {
         }
     }
 
+    #[test]
+    fn is_writable_turns_false_when_the_socket_is_full() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let near = TcpStream::connect(listener.local_addr().unwrap()).unwrap();
+        let (mut far, _) = listener.accept().unwrap();
+        near.set_nonblocking(true).unwrap();
+        far.set_nonblocking(true).unwrap();
+        let fd = wake::fd_of(&near);
+
+        assert!(wake::is_writable(fd));
+        fill_socket(&near, fd);
+        assert!(!wake::is_writable(fd));
+
+        let mut buf = [0u8; 64 * 1024];
+        let start = Instant::now();
+        while !wake::is_writable(fd) {
+            assert!(start.elapsed() < Duration::from_secs(10), "never writable");
+            let _ = far.read(&mut buf);
+        }
+    }
+
+    /// Write to a non-blocking socket until it reports no room. Returns the
+    /// bytes it took. A socket can refuse a large write and still have room
+    /// for a smaller one, so the writes shrink as they are refused.
+    fn fill_socket(mut socket: &TcpStream, fd: wake::Fd) -> usize {
+        let junk = [0u8; 16 * 1024];
+        let mut size = junk.len();
+        let mut filled = 0;
+        let start = Instant::now();
+        loop {
+            assert!(
+                start.elapsed() < Duration::from_secs(30),
+                "the socket reports room but takes nothing"
+            );
+            match socket.write(&junk[..size]) {
+                Ok(n) => filled += n,
+                // The kernel may still be moving bytes along.
+                Err(e) if e.kind() == io::ErrorKind::WouldBlock => {
+                    thread::sleep(Duration::from_millis(20));
+                    if !wake::is_writable(fd) {
+                        return filled;
+                    }
+                    size = (size / 2).max(1);
+                }
+                Err(e) => panic!("filling the socket failed: {e}"),
+            }
+        }
+    }
+
     /// The first attempts of a reconnect meet these real failures, so their
     /// wording has to stay on `reconnect`'s allow-list.
     #[test]
@@ -1730,13 +1812,143 @@ mod tests {
         });
     }
 
-    fn read_available(channel: &mut ssh2::Channel) {
+    /// With the socket full, a keepalive must not get in the way of the writes
+    /// that follow once it has room again.
+    #[cfg(unix)]
+    #[test]
+    #[ignore]
+    fn live_a_due_keepalive_on_a_full_socket_holds_nothing_up() {
+        use std::mem::ManuallyDrop;
+        use std::os::fd::FromRawFd;
+
+        let target = crate::remote_script::live::Target::from_env();
+        crate::storage::test_support::with_isolated_data_dir(|| {
+            let relay = Relay::start(&target.endpoint);
+            let opts = ShellOptions {
+                keepalive_interval: 2,
+                ..ShellOptions::default()
+            };
+            let OpenShell {
+                session,
+                mut channel,
+                ..
+            } = open_shell_over_stream(relay.connect(), &target.endpoint, &opts).unwrap();
+            let fd = wake::fd_of(&session);
+            wait_for_quiet(&mut channel, fd);
+
+            // Fill the socket behind libssh2's back, with bytes the relay will
+            // drop so that the encrypted stream it carries stays intact.
+            relay.set_mode(RELAY_HOLD_UP);
+            thread::sleep(Duration::from_millis(100));
+            // SAFETY: `fd` is the session's open socket. `ManuallyDrop` keeps
+            // this temporary view of it from closing the socket.
+            let socket = ManuallyDrop::new(unsafe { TcpStream::from_raw_fd(fd) });
+            let filled = fill_socket(&socket, fd);
+            assert!(!wake::is_writable(fd));
+
+            send_due_keepalive(&session, fd).unwrap();
+
+            relay.discard_up(filled);
+            relay.set_mode(RELAY_FLOW);
+            write_all_nonblocking(&mut channel, b"x", Some(fd))
+                .expect("the keepalive held up the write");
+            let sent = Instant::now();
+            while read_available(&mut channel) == 0 {
+                assert!(
+                    sent.elapsed() < Duration::from_secs(10),
+                    "the shell never echoed"
+                );
+                thread::sleep(Duration::from_millis(20));
+            }
+        });
+    }
+
+    const RELAY_FLOW: u8 = 0;
+    /// Leave what the client sends unread.
+    const RELAY_HOLD_UP: u8 = 1;
+
+    /// A loopback relay to a real server, so that a test can control what the
+    /// client's socket sees.
+    struct Relay {
+        port: u16,
+        mode: Arc<AtomicU8>,
+        discard_up: Arc<AtomicUsize>,
+    }
+
+    impl Relay {
+        fn start(server: &Endpoint) -> Self {
+            let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+            let port = listener.local_addr().unwrap().port();
+            let mode = Arc::new(AtomicU8::new(RELAY_FLOW));
+            let discard_up = Arc::new(AtomicUsize::new(0));
+            let (relay_mode, relay_discard) = (Arc::clone(&mode), Arc::clone(&discard_up));
+            let server = server.addr();
+            thread::spawn(move || {
+                let (client, _) = listener.accept().unwrap();
+                let server = TcpStream::connect(server).unwrap();
+                client.set_nonblocking(true).unwrap();
+                server.set_nonblocking(true).unwrap();
+                let mut buf = vec![0u8; 16 * 1024];
+                loop {
+                    if relay_mode.load(Ordering::SeqCst) != RELAY_HOLD_UP {
+                        let Some(n) = relay_read(&client, &mut buf) else {
+                            return;
+                        };
+                        let skip = relay_discard.load(Ordering::SeqCst).min(n);
+                        relay_discard.fetch_sub(skip, Ordering::SeqCst);
+                        relay_write(&server, &buf[skip..n]);
+                    }
+                    let Some(n) = relay_read(&server, &mut buf) else {
+                        return;
+                    };
+                    relay_write(&client, &buf[..n]);
+                    thread::sleep(Duration::from_millis(1));
+                }
+            });
+            Self {
+                port,
+                mode,
+                discard_up,
+            }
+        }
+
+        fn connect(&self) -> TcpStream {
+            TcpStream::connect(("127.0.0.1", self.port)).unwrap()
+        }
+
+        fn set_mode(&self, mode: u8) {
+            self.mode.store(mode, Ordering::SeqCst);
+        }
+
+        /// Drop the next `bytes` that the client sends.
+        fn discard_up(&self, bytes: usize) {
+            self.discard_up.store(bytes, Ordering::SeqCst);
+        }
+    }
+
+    /// The bytes waiting on a relay's socket, `None` once it has closed.
+    fn relay_read(mut from: &TcpStream, buf: &mut [u8]) -> Option<usize> {
+        match from.read(buf) {
+            Ok(0) => None,
+            Ok(n) => Some(n),
+            Err(e) if e.kind() == io::ErrorKind::WouldBlock => Some(0),
+            Err(_) => None,
+        }
+    }
+
+    fn relay_write(mut to: &TcpStream, data: &[u8]) {
+        let _ = write_all_nonblocking(&mut to, data, None);
+    }
+
+    /// The bytes the shell had for us: 0 when nothing was waiting.
+    fn read_available(channel: &mut ssh2::Channel) -> usize {
         let mut buf = [0u8; 4096];
+        let mut total = 0;
         loop {
             match channel.read(&mut buf) {
                 Ok(0) => panic!("the shell ended"),
-                Ok(_) => {}
-                Err(e) if e.kind() == io::ErrorKind::WouldBlock => return,
+                Ok(n) => total += n,
+                Err(e) if e.kind() == io::ErrorKind::WouldBlock => return total,
                 Err(e) => panic!("read failed: {e}"),
             }
         }
