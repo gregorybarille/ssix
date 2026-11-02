@@ -121,26 +121,27 @@ describe("SessionSection", () => {
   });
 
   it("holds typed numbers in range and saves them on blur", () => {
-    const { updateLocalSettings, commitTextSettings } = renderSection();
+    const { commitTextSettings } = renderSection();
     const keepalive = screen.getByTestId("settings-keepalive-interval");
     fireEvent.change(keepalive, { target: { value: "90000" } });
-    expect(updateLocalSettings).toHaveBeenLastCalledWith({ keepalive_interval: 3600 });
+    expect(commitTextSettings).not.toHaveBeenCalled();
     fireEvent.blur(keepalive);
-    expect(commitTextSettings).toHaveBeenLastCalledWith({ keepalive_interval: 30 });
+    expect(commitTextSettings).toHaveBeenLastCalledWith({ keepalive_interval: 3600 });
 
     const attempts = screen.getByTestId("settings-reconnect-max-attempts");
     fireEvent.change(attempts, { target: { value: "50" } });
-    expect(updateLocalSettings).toHaveBeenLastCalledWith({ reconnect_max_attempts: 20 });
     fireEvent.blur(attempts);
-    expect(commitTextSettings).toHaveBeenLastCalledWith({ reconnect_max_attempts: 5 });
+    expect(commitTextSettings).toHaveBeenLastCalledWith({ reconnect_max_attempts: 20 });
   });
 
-  it("keeps the value when a number field is emptied", () => {
-    const { updateLocalSettings } = renderSection();
-    fireEvent.change(screen.getByTestId("settings-keepalive-interval"), {
-      target: { value: "" },
-    });
-    expect(updateLocalSettings).toHaveBeenLastCalledWith({ keepalive_interval: 30 });
+  it("keeps the value when a number field is left empty", () => {
+    const { commitTextSettings } = renderSection();
+    const keepalive = screen.getByTestId("settings-keepalive-interval");
+    fireEvent.change(keepalive, { target: { value: "" } });
+    expect(keepalive).toHaveValue(null);
+    fireEvent.blur(keepalive);
+    expect(keepalive).toHaveValue(30);
+    expect(commitTextSettings).not.toHaveBeenCalled();
   });
 
   it("disables the attempts when auto-reconnect is off", () => {

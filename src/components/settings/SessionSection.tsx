@@ -1,6 +1,7 @@
 import { parseKeepaliveSeconds, parseReconnectAttempts } from "@/lib/reconnect";
 import { Input } from "../ui/input";
 import { Label } from "../ui/label";
+import { NumberInput } from "../ui/number-input";
 import { Separator } from "../ui/separator";
 import { Switch } from "../ui/switch";
 import type { SettingsSectionProps } from "./section";
@@ -32,19 +33,13 @@ export function SessionSection({
 
         <div className="space-y-2">
           <Label htmlFor="keepalive-interval">Keepalive interval (seconds)</Label>
-          <Input
+          <NumberInput
             id="keepalive-interval"
-            type="number"
             min={0}
             max={3600}
             value={form.keepalive_interval}
-            onChange={(e) =>
-              updateLocalSettings({
-                keepalive_interval:
-                  parseKeepaliveSeconds(e.target.value) ?? form.keepalive_interval,
-              })
-            }
-            onBlur={() => commitTextSettings({ keepalive_interval: form.keepalive_interval })}
+            parse={parseKeepaliveSeconds}
+            onCommit={(keepalive_interval) => commitTextSettings({ keepalive_interval })}
             aria-describedby="keepalive-interval-description"
             data-testid="settings-keepalive-interval"
           />
@@ -75,22 +70,14 @@ export function SessionSection({
 
         <div className="space-y-2">
           <Label htmlFor="reconnect-max-attempts">Reconnect attempts</Label>
-          <Input
+          <NumberInput
             id="reconnect-max-attempts"
-            type="number"
             min={1}
             max={20}
             value={form.reconnect_max_attempts}
             disabled={!form.auto_reconnect}
-            onChange={(e) =>
-              updateLocalSettings({
-                reconnect_max_attempts:
-                  parseReconnectAttempts(e.target.value) ?? form.reconnect_max_attempts,
-              })
-            }
-            onBlur={() =>
-              commitTextSettings({ reconnect_max_attempts: form.reconnect_max_attempts })
-            }
+            parse={parseReconnectAttempts}
+            onCommit={(reconnect_max_attempts) => commitTextSettings({ reconnect_max_attempts })}
             data-testid="settings-reconnect-max-attempts"
           />
         </div>

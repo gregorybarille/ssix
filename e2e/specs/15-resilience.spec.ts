@@ -178,19 +178,12 @@ async function setCredentialPassword(name: string, password: string): Promise<vo
   await (await browser.$(sel.credentialForm)).waitForExist({ reverse: true, timeout: 10_000 });
 }
 
-/**
- * Overwrite a number field. Emptying one first is not possible: it keeps its
- * value while it holds no number, so the digits would be added to it.
- */
+/** Overwrite a number field and leave it, which is what saves it. */
 async function typeOverNumber(selector: string, value: number): Promise<void> {
   await reveal(selector);
-  const field = await browser.$(selector);
-  await field.waitForClickable({ timeout: 10_000 });
-  await field.click();
-  await browser.execute((el: HTMLInputElement) => el.select(), field as unknown as HTMLInputElement);
-  await browser.keys(String(value).split(""));
+  await fill(selector, String(value));
   await browser.keys(["Tab"]);
-  expect(await field.getValue()).toBe(String(value));
+  expect(await (await browser.$(selector)).getValue()).toBe(String(value));
 }
 
 async function setSwitch(selector: string, on: boolean): Promise<void> {

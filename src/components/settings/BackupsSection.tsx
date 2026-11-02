@@ -1,6 +1,6 @@
 import { BackupsList } from "../BackupsList";
-import { Input } from "../ui/input";
 import { Label } from "../ui/label";
+import { NumberInput } from "../ui/number-input";
 import {
   Select,
   SelectContent,
@@ -30,7 +30,6 @@ function parseBackupKeep(text: string, fallback: number): number {
 export function BackupsSection({
   form,
   applySettings,
-  updateLocalSettings,
   commitTextSettings,
 }: SettingsSectionProps) {
   return (
@@ -87,23 +86,14 @@ export function BackupsSection({
         </div>
         <div className="space-y-2">
           <Label htmlFor="backup-keep">Automatic backups kept</Label>
-          <Input
+          <NumberInput
             id="backup-keep"
-            type="number"
             min={1}
             max={100}
             value={form.backup_keep}
             disabled={!form.backup_enabled}
-            onChange={(e) =>
-              updateLocalSettings({
-                backup_keep: parseBackupKeep(e.target.value, form.backup_keep),
-              })
-            }
-            onBlur={(e) =>
-              commitTextSettings({
-                backup_keep: parseBackupKeep(e.target.value, form.backup_keep),
-              })
-            }
+            parse={(text) => parseBackupKeep(text, form.backup_keep)}
+            onCommit={(backup_keep) => commitTextSettings({ backup_keep })}
             data-testid="settings-backup-keep"
           />
         </div>
