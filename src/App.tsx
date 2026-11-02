@@ -131,13 +131,13 @@ function App() {
   // Dialog/UI state
   // The connection / credential form fields are read by their views only;
   // leaving them out keeps the shell from re-rendering while a form opens.
-  const snippetPaletteOpen = useSnippetsStore((s) => s.paletteOpen);
   const dialogs = useDialogsStore(
     useShallow(({ connFormOpen, editingConn, credFormOpen, editingCred, ...shell }) => shell),
   );
   const captureScreenshot = useScreenshotToast();
 
   // Terminal & port forward session state
+  const snippetPaletteOpen = useSnippetsStore((s) => s.paletteOpen);
   const tabs = useTerminalsStore((s) => s.tabs);
   const activeTabId = useTerminalsStore((s) => s.activeTabId);
   const setActiveTabId = useTerminalsStore((s) => s.setActiveTabId);
