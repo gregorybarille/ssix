@@ -102,8 +102,9 @@ impl RawChannel {
     }
 
     /// Whether data for this channel already sits in libssh2's queue. Unlike
-    /// [`Self::read`] this leaves the socket alone, so it never pulls another
-    /// channel's packets out from under the thread that sleeps on the socket.
+    /// [`Self::read`] this leaves the socket alone, so asking pulls no packets
+    /// out from under the thread that sleeps on the socket. Reading, writing and
+    /// freeing a channel do (`crate::agent` deals with what that means).
     ///
     /// Not `libssh2_poll_channel_read`: that gives up at the first queued packet
     /// under five bytes, and libssh2 keeps a one-byte answer to each keepalive

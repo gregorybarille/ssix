@@ -41,7 +41,7 @@ const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 /// libssh2 timeout for blocking calls during setup (handshake, auth, channel open).
 pub(crate) const SESSION_TIMEOUT_MS: u32 = 15_000;
 /// Longest an idle worker waits for socket readiness before re-checking its queue.
-/// Idle wait for a forwarder that shares its session with other clients.
+/// Idle wait for a thread that shares its session with another that reads it.
 const SHARED_WAIT_MAX: Duration = Duration::from_millis(10);
 /// Longest single park while waiting for a socket to become writable.
 const WRITE_WAIT_MAX: Duration = Duration::from_millis(50);
@@ -1391,7 +1391,7 @@ fn run_io_loop(shell: OpenShell, io: &mut ShellIo) -> ShellEnd {
         keepalive_interval,
     } = shell;
     // Serves a forwarded agent for as long as this shell's connection lives.
-    let _agent_pump = crate::agent::ForwardPump::start(&session);
+    let agent_pump = crate::agent::ForwardPump::start(&session);
     let mut buf = vec![0u8; 32 * 1024];
     let mut pending: Vec<u8> = Vec::with_capacity(OUTPUT_COALESCE_MAX);
     let fds = [wake::fd_of(&session), io.control.wake.fd()];
@@ -1409,8 +1409,13 @@ fn run_io_loop(shell: OpenShell, io: &mut ShellIo) -> ShellEnd {
         pending.clear();
 
         // Bytes on the socket prove the server is there, even when libssh2
-        // consumes them without producing shell output (a keepalive reply).
-        if watchdog.enabled() && wake::is_readable(fds[0]) {
+        // consumes them without producing shell output (a keepalive reply). The
+        // agent pump may have got to them first, and says so. Asked every pass,
+        // so that what it says is never old news.
+        let pump_heard = agent_pump
+            .as_ref()
+            .is_some_and(crate::agent::ForwardPump::take_heard);
+        if watchdog.enabled() && (pump_heard || wake::is_readable(fds[0])) {
             watchdog.heard(Instant::now());
         }
 
@@ -1482,9 +1487,23 @@ fn run_io_loop(shell: OpenShell, io: &mut ShellIo) -> ShellEnd {
         }
 
         if !active {
-            wake::wait_readable(&fds, WAIT_MAX);
+            let shared = agent_pump
+                .as_ref()
+                .is_some_and(crate::agent::ForwardPump::serving);
+            wake::wait_readable(&fds, idle_wait(shared));
             io.control.wake.drain();
         }
+    }
+}
+
+/// How long an idle reader of a session may sleep. Another thread reading the
+/// same session can pull its packet into libssh2's queue without the socket ever
+/// turning readable for the sleeper, so then it cannot sleep for long.
+fn idle_wait(shared: bool) -> Duration {
+    if shared {
+        SHARED_WAIT_MAX
+    } else {
+        WAIT_MAX
     }
 }
 
@@ -1546,10 +1565,7 @@ fn open_hop_unless_cancelled(
 /// channel. Both ends are non-blocking; the thread sleeps in `poll(2)` on
 /// both sockets while idle, so neither direction can stall the other and an
 /// idle forward costs no CPU.
-/// `clients` counts the forwarders sharing `session`. With more than one,
-/// a sibling's read can pull this channel's packet into libssh2's buffer
-/// without the socket ever becoming readable for us, so the idle wait is
-/// kept short in that case instead of parking for the full `WAIT_MAX`.
+/// `clients` counts the forwarders sharing `session`: see [`idle_wait`].
 pub(crate) fn forward_bidi(
     mut local: TcpStream,
     mut channel: ssh2::Channel,
@@ -1613,12 +1629,7 @@ pub(crate) fn forward_bidi(
         }
 
         if idle {
-            let timeout = if clients.load(Ordering::Relaxed) > 1 {
-                SHARED_WAIT_MAX
-            } else {
-                WAIT_MAX
-            };
-            wake::wait_readable(&fds, timeout);
+            wake::wait_readable(&fds, idle_wait(clients.load(Ordering::Relaxed) > 1));
         }
     }
 }
@@ -1750,6 +1761,18 @@ pub fn start_jump_shell(
     };
     spawn_shell_worker(shell, ctx, control, banner, "jump_host", resilience);
     Ok(handle)
+}
+
+#[cfg(test)]
+mod idle_wait_tests {
+    use super::*;
+
+    #[test]
+    fn a_reader_with_company_cannot_sleep_for_long() {
+        assert_eq!(idle_wait(false), WAIT_MAX);
+        assert_eq!(idle_wait(true), SHARED_WAIT_MAX);
+        assert!(SHARED_WAIT_MAX < WAIT_MAX);
+    }
 }
 
 #[cfg(test)]

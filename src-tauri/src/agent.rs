@@ -23,17 +23,24 @@
 //! them: signing is the local agent's decision, as it is with `ssh`.
 //!
 //! That pump needs the session to be non-blocking, which a shell's session is
-//! once `start_shell` returns. It only reads a channel once its data is in
-//! libssh2's queue, which the shell's worker fills as it reads the socket.
-//! Reading the socket itself would take packets the worker sleeps on, and delay
-//! the shell's output.
+//! once `start_shell` returns. It cannot leave the socket to the shell's worker:
+//! inside libssh2, reading or writing a channel and freeing one all read the
+//! socket first, and queue whatever they find, for any channel. Two things follow
+//! while it serves a channel ([`ForwardPump::serving`]):
 //!
-//! The pump has no part in deciding whether the connection is alive. Only the
-//! worker tells its keepalive watchdog that something arrived, so agent traffic
-//! going out cannot make a dead connection look alive. It never flushes a
-//! channel either, for the reason `write_all_nonblocking` in `crate::ssh` gives.
-//! Each shell has its own pump: a reconnect asks for forwarding again and starts
-//! a new one, because the old session's grant died with it.
+//! - A packet for the shell can land in libssh2's queue without the socket ever
+//!   turning readable for the worker sleeping on it, so the worker wakes more
+//!   often, and shell output is not held up.
+//! - A keepalive reply can vanish the same way, and the worker's watchdog takes
+//!   bytes on the socket as the proof that the server is there. So the pump looks
+//!   at the socket before it can drain it, and passes on what it saw
+//!   ([`ForwardPump::take_heard`]). Only bytes actually received count: agent
+//!   traffic going out, or data already queued, cannot make a dead connection look
+//!   alive.
+//!
+//! The pump never flushes a channel, for the reason `write_all_nonblocking` in
+//! `crate::ssh` gives. Each shell has its own pump: a reconnect asks for forwarding
+//! again and starts a new one, because the old session's grant died with it.
 //!
 //! Forwarding is Unix-only: it needs libssh2's raw channels and the agent's
 //! socket. On Windows a connection that enables it says so in the log and
@@ -372,6 +379,14 @@ impl ForwardPump {
     pub(crate) fn start(_session: &Session) -> Option<Self> {
         None
     }
+
+    pub(crate) fn serving(&self) -> bool {
+        match *self {}
+    }
+
+    pub(crate) fn take_heard(&self) -> bool {
+        match *self {}
+    }
 }
 
 #[cfg(unix)]
@@ -419,6 +434,10 @@ mod forward {
         arrivals: Mutex<Vec<RawChannel>>,
         wake: Condvar,
         stop: AtomicBool,
+        /// Whether the pump has a channel, which makes it read the session.
+        serving: AtomicBool,
+        /// Whether it saw bytes from the server since the worker last asked.
+        heard: AtomicBool,
     }
 
     impl AgentChannelSink for Forwarding {
@@ -427,6 +446,9 @@ mod forward {
                 .lock()
                 .unwrap_or_else(|e| e.into_inner())
                 .push(channel);
+            // Before the pump wakes: this runs on the thread reading the session,
+            // usually the worker, which is about to choose how long to sleep.
+            self.serving.store(true, Ordering::Release);
             self.wake.notify_all();
         }
     }
@@ -477,6 +499,8 @@ mod forward {
             arrivals: Mutex::new(Vec::new()),
             wake: Condvar::new(),
             stop: AtomicBool::new(false),
+            serving: AtomicBool::new(false),
+            heard: AtomicBool::new(false),
         });
         // Listening starts first: the server may open a channel as soon as it
         // has granted the request.
@@ -517,6 +541,17 @@ mod forward {
                 state,
                 thread: Some(thread),
             })
+        }
+
+        /// Whether the pump is reading the session as well, so that a sleeping
+        /// worker may not see what arrives (see the module docs).
+        pub(crate) fn serving(&self) -> bool {
+            self.state.serving.load(Ordering::Acquire)
+        }
+
+        /// Whether the server sent anything the pump saw since the last call.
+        pub(crate) fn take_heard(&self) -> bool {
+            self.state.heard.swap(false, Ordering::AcqRel)
         }
     }
 
@@ -685,6 +720,8 @@ mod forward {
         let mut closing: Vec<RawChannel> = Vec::new();
         let mut buf = vec![0u8; 32 * 1024];
         let mut wait = BUSY_WAIT_MIN;
+        // Not inside `with_session`: asking the session for it takes the same lock.
+        let socket = wake::fd_of(&session);
 
         while !state.stop.load(Ordering::Acquire) {
             for channel in state.take_arrivals() {
@@ -699,12 +736,21 @@ mod forward {
                 }
                 wait = BUSY_WAIT_MIN;
             }
-            if bridges.is_empty() && closing.is_empty() {
+            let serving = !bridges.is_empty() || !closing.is_empty();
+            state.serving.store(serving, Ordering::Release);
+            if !serving {
                 state.wait_for_arrival();
                 continue;
             }
 
             let moved = libssh2_ext::with_session(&session, |locked| {
+                // Before anything below can drain the socket. Bytes that land in
+                // the instant before the first call reads them go uncounted, but
+                // the watchdog only gives up after several intervals of nothing,
+                // and this looks again on every pass.
+                if wake::is_readable(socket) {
+                    state.heard.store(true, Ordering::Release);
+                }
                 let mut moved = false;
                 let mut open = Vec::with_capacity(bridges.len());
                 for mut bridge in bridges.drain(..) {
@@ -909,6 +955,7 @@ mod live {
     use std::io::{Read, Write};
     use std::os::unix::net::{UnixListener, UnixStream};
     use std::path::PathBuf;
+    use std::sync::{Arc, Mutex};
     use std::thread;
     use std::time::{Duration, Instant};
 
@@ -1219,6 +1266,106 @@ mod live {
         assert!(crate::reconnect::is_retryable_connect_error(&error));
         assert!(started.elapsed() < Duration::from_secs(10));
         assert!(session.is_blocking());
+    }
+
+    /// Accepts connections and keeps them open without ever answering, until
+    /// told to hang up.
+    struct SilentAgent {
+        socket: PathBuf,
+        dir: PathBuf,
+        held: Arc<Mutex<Vec<UnixStream>>>,
+    }
+
+    impl SilentAgent {
+        fn start() -> Self {
+            let dir = std::env::temp_dir()
+                .join(format!("ssix-{}", &uuid::Uuid::new_v4().to_string()[..8]));
+            std::fs::create_dir_all(&dir).unwrap();
+            let socket = dir.join("s.sock");
+            let listener = UnixListener::bind(&socket).unwrap();
+            let held = Arc::new(Mutex::new(Vec::new()));
+            let accepted = held.clone();
+            thread::spawn(move || {
+                for client in listener.incoming().flatten() {
+                    accepted.lock().unwrap().push(client);
+                }
+            });
+            Self { socket, dir, held }
+        }
+
+        fn hang_up(&self) {
+            self.held.lock().unwrap().clear();
+        }
+    }
+
+    impl Drop for SilentAgent {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.dir);
+        }
+    }
+
+    fn wait_until(what: &str, mut done: impl FnMut() -> bool) {
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while !done() {
+            assert!(Instant::now() < deadline, "timed out waiting: {what}");
+            thread::sleep(Duration::from_millis(10));
+        }
+    }
+
+    /// What the worker's watchdog depends on while the pump shares the socket.
+    /// The bridge below sits idle, so all that moves is one keepalive reply.
+    #[test]
+    #[ignore = "needs a Unix SSH server (SSIX_LIVE_SSH)"]
+    fn live_pump_passes_on_what_the_server_sent_and_nothing_else() {
+        let agent = SilentAgent::start();
+        with_password_session(|session| {
+            let mut channel = session.channel_session().unwrap();
+            request_forwarding_to(session, &mut channel, &debug(), &agent.socket);
+            channel.exec("ssh-add -l").unwrap();
+            let fd = crate::ssh::wake::fd_of(session);
+            session.set_blocking(false);
+            let pump = ForwardPump::start(session).expect("forwarding was not granted");
+            assert!(!pump.serving());
+
+            let mut buf = [0u8; 4096];
+            let mut read_all = || {
+                while channel.read(&mut buf).is_ok_and(|n| n > 0) {}
+            };
+            // The agent channel's arrival is noticed while something reads.
+            wait_until("a channel to serve", || {
+                read_all();
+                pump.serving()
+            });
+            // `ssh-add` still has its request to send once the channel is open.
+            let mut quiet_since = Instant::now();
+            wait_until("the server to go quiet", || {
+                read_all();
+                if crate::ssh::wake::is_readable(fd) {
+                    quiet_since = Instant::now();
+                }
+                quiet_since.elapsed() > Duration::from_secs(1)
+            });
+
+            // Silence: nothing left to report, however often the pump looks.
+            pump.take_heard();
+            thread::sleep(Duration::from_millis(200));
+            assert!(!pump.take_heard(), "bytes that never came were reported");
+
+            // The worker is not reading now, and the pump sees the reply.
+            session.set_keepalive(true, 2);
+            session.keepalive_send().unwrap();
+            wait_until("the pump to see the reply", || pump.take_heard());
+
+            // Read and gone from the socket, so it counts once and no more.
+            read_all();
+            pump.take_heard();
+            thread::sleep(Duration::from_millis(200));
+            assert!(!pump.take_heard(), "the same bytes were reported twice");
+
+            agent.hang_up();
+            wait_until("the bridge to end", || !pump.serving());
+            drop(pump);
+        });
     }
 
     /// A signature takes as long as the touch does, and libssh2 is inside its

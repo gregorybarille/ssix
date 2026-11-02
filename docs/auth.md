@@ -60,8 +60,9 @@ agent, so the agent's own confirmation prompts and constraints still apply.
 
 If the server refuses forwarding or the local agent is unreachable, the shell
 still opens and the Logs view says why. A reconnected shell asks for forwarding
-again, and `$SSH_AUTH_SOCK` on the server changes with it. Agent traffic does not
-count towards the keepalive: only what arrives from the server shows it is there.
+again, and `$SSH_AUTH_SOCK` on the server changes with it. Agent traffic going out
+does not count towards the keepalive: only what arrives from the server shows it
+is there.
 
 Forwarding is not available on Windows: a connection that enables it logs a
 warning and opens without it. SSIX's **Copy SSH command** does not add `-A`.
