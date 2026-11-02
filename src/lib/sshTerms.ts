@@ -7,8 +7,10 @@ import { FORWARD_TYPES, type Connection, type ConnectionType, type ForwardConnec
  *   a remote host it can reach.
  * - A **jump host** connection is `ssh -J`: a jump host relays the session
  *   to the target.
- * - A **remote forward** is `ssh -R` and a **dynamic forward** `ssh -D`;
- *   both are data only until the forwards stream lands (`docs/roadmap.md`).
+ * - A **remote forward** is `ssh -R`: an SSH server forwards a port of its
+ *   own back to a target on this machine's side.
+ * - A **dynamic forward** is `ssh -D`: a local SOCKS5 proxy whose connections
+ *   the SSH server dials.
  *
  * The stored field names (`gateway_*`, `destination_*`, `port_forward`,
  * `jump_shell`) predate these terms and stay as they are in `data.json`;

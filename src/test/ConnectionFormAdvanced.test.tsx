@@ -121,26 +121,74 @@ describe("ConnectionForm advanced options", () => {
   });
 });
 
-describe("ConnectionForm with the kinds it does not offer yet", () => {
+describe("ConnectionForm with remote and dynamic forwards", () => {
   const gateway = { gateway_host: "bastion", gateway_port: 2200, gateway_credential_id: "cred-1" };
 
-  it("offers the same three kind tabs as before", () => {
+  const remoteForward: Connection = {
+    ...direct,
+    ...gateway,
+    type: "remote_forward",
+    remote_port: 8080,
+    destination_host: "127.0.0.1",
+    destination_port: 3000,
+  };
+  const dynamicForward: Connection = {
+    ...direct,
+    ...gateway,
+    type: "dynamic_forward",
+    local_port: 1080,
+  };
+
+  it("offers every kind, existing tabs first", () => {
     expect(CONNECTION_KIND_TABS.map((tab) => tab.type)).toEqual([
       "direct",
       "port_forward",
       "jump_shell",
+      "remote_forward",
+      "dynamic_forward",
     ]);
   });
 
+  it("asks for the remote port when the remote forward tab is chosen", () => {
+    renderForm(null);
+    expect(screen.queryByTestId("connection-form-remote-port")).not.toBeInTheDocument();
+    fireEvent.mouseDown(screen.getByTestId("connection-form-kind-remoteforward"), { button: 0 });
+    expect(screen.getByTestId("connection-form-remote-port")).toBeInTheDocument();
+    expect(screen.queryByTestId("connection-form-local-port")).not.toBeInTheDocument();
+  });
+
+  it("asks for the SOCKS port and no target when the dynamic forward tab is chosen", () => {
+    renderForm(null);
+    fireEvent.mouseDown(screen.getByTestId("connection-form-kind-dynamicforward"), { button: 0 });
+    expect(screen.getByTestId("connection-form-socks-port")).toBeInTheDocument();
+    expect(screen.queryByTestId("connection-form-target-host")).not.toBeInTheDocument();
+  });
+
+  it("shows a bad remote port beside its input and does not save", async () => {
+    const { onSubmit } = renderForm(remoteForward);
+    const input = screen.getByTestId("connection-form-remote-port");
+    fireEvent.change(input, { target: { value: "70000" } });
+    submit();
+    await waitFor(() => expect(input).toHaveAttribute("aria-invalid", "true"));
+    expect(input).toHaveAttribute("aria-describedby", "remote_port-error");
+    expect(document.getElementById("remote_port-error")).toBeInTheDocument();
+    expect(onSubmit).not.toHaveBeenCalled();
+  });
+
+  it("calls a missing dynamic forward port the SOCKS port and does not save", async () => {
+    const { onSubmit } = renderForm(dynamicForward);
+    const input = screen.getByTestId("connection-form-socks-port");
+    fireEvent.change(input, { target: { value: "" } });
+    submit();
+    await waitFor(() => expect(input).toHaveAttribute("aria-invalid", "true"));
+    expect(document.getElementById("local_port-error")).toHaveTextContent(
+      "SOCKS port is required",
+    );
+    expect(onSubmit).not.toHaveBeenCalled();
+  });
+
   it("keeps a remote forward's kind and ports when saved", async () => {
-    const { onSubmit } = renderForm({
-      ...direct,
-      ...gateway,
-      type: "remote_forward",
-      remote_port: 8080,
-      destination_host: "127.0.0.1",
-      destination_port: 3000,
-    });
+    const { onSubmit } = renderForm(remoteForward);
     submit();
     await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
     expect(onSubmit.mock.calls[0][0]).toMatchObject({
@@ -153,12 +201,7 @@ describe("ConnectionForm with the kinds it does not offer yet", () => {
   });
 
   it("keeps a dynamic forward's kind and port when saved, with no destination", async () => {
-    const { onSubmit } = renderForm({
-      ...direct,
-      ...gateway,
-      type: "dynamic_forward",
-      local_port: 1080,
-    });
+    const { onSubmit } = renderForm(dynamicForward);
     submit();
     await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
     const payload = onSubmit.mock.calls[0][0];

@@ -434,7 +434,8 @@ export function ConnectionForm({
           portChecks.push({ key: "destination_port", required: true, label: terms.targetPort });
         }
         if (connectionType === "port_forward" || connectionType === "dynamic_forward") {
-          portChecks.push({ key: "local_port", required: true, label: "Local port" });
+          const label = connectionType === "dynamic_forward" ? "SOCKS port" : "Local port";
+          portChecks.push({ key: "local_port", required: true, label });
         }
         if (connectionType === "remote_forward") {
           portChecks.push({ key: "remote_port", required: true, label: "Remote port" });
@@ -818,7 +819,7 @@ export function ConnectionForm({
       value={connectionType}
       onValueChange={(v) => setConnectionType(v as ConnectionType)}
     >
-      <TabsList className="w-full gap-1 rounded-xl bg-muted/70 p-1">
+      <TabsList className="h-auto w-full flex-wrap gap-1 rounded-xl bg-muted/70 p-1 group-data-[orientation=horizontal]/tabs:h-auto">
         {CONNECTION_KIND_TABS.map(({ type, testId }) => (
           <TabsTrigger
             key={type}

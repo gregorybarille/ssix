@@ -52,7 +52,7 @@ const VIEW_TABLE = [
   {
     id: "forwards",
     label: "Port forwards",
-    description: "Local forwards (ssh -L) and whether they are running",
+    description: "Port forwards (ssh -L, -R, -D) and whether they are running",
     icon: Cable,
     placement: "main",
   },
