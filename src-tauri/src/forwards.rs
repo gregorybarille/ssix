@@ -63,6 +63,16 @@ const OPEN_REPLY_TIMEOUT: Duration = Duration::from_millis(SESSION_TIMEOUT_MS as
 /// Backstop for an open whose request cannot even be sent (the socket's send
 /// buffer stays full), which libssh2's reply timeout does not cover.
 const OPEN_DEADLINE: Duration = Duration::from_secs(SESSION_TIMEOUT_MS as u64 / 1000 + 5);
+/// What to tell the user about a channel open that failed. libssh2 gives
+/// running out of time no message of its own ("Unexpected error").
+fn open_error_message(error: &ssh2::Error, host: &str, port: u16) -> String {
+    if error.code() == ErrorCode::Session(LIBSSH2_ERROR_TIMEOUT) {
+        format!("timed out opening a channel to {}:{}", host, port)
+    } else {
+        error.to_string()
+    }
+}
+
 /// A channel type no server implements, for [`Uplink::probe`].
 const PROBE_CHANNEL_TYPE: &str = "ssix-probe@ssix.invalid";
 
@@ -421,6 +431,10 @@ impl SshUplink {
                 Err(e) if is_eagain(&e) => {
                     if Instant::now() >= deadline {
                         let _ = self.socket.shutdown(Shutdown::Both);
+                        return Err(ssh2::Error::new(
+                            ErrorCode::Session(LIBSSH2_ERROR_TIMEOUT),
+                            "timed out",
+                        ));
                     }
                     wake::wait_readable(&fds, Duration::from_millis(50));
                 }
@@ -757,7 +771,10 @@ pub(crate) fn start_port_forward<E: ForwardEvents>(
                 }
                 Err(e) => hub.status(
                     "client_error",
-                    Some(format!("channel_direct_tcpip failed: {}", e)),
+                    Some(format!(
+                        "channel_direct_tcpip failed: {}",
+                        open_error_message(&e, &destination_host, destination_port)
+                    )),
                 ),
             }
         })
@@ -831,7 +848,12 @@ fn serve_socks_client(
             let _ = socks5::write_reply(&mut stream, socks5::reply_for_open_error(&e));
             hub.status(
                 "client_error",
-                Some(format!("from {} to {}: {}", peer, target, e)),
+                Some(format!(
+                    "from {} to {}: {}",
+                    peer,
+                    target,
+                    open_error_message(&e, &target.host, target.port)
+                )),
             );
             socks5::close_gracefully(&stream);
             return;
@@ -1221,6 +1243,23 @@ mod tests {
         let reason = f.wait_for_end().expect("a reason for the frontend");
         assert!(reason.contains("Lost the connection"), "{}", reason);
         assert_dropped(&mut client);
+    }
+
+    #[test]
+    fn a_channel_open_that_ran_out_of_time_says_so_and_where_to() {
+        let timeout = ssh2::Error::new(
+            ErrorCode::Session(LIBSSH2_ERROR_TIMEOUT),
+            "Unexpected error",
+        );
+        assert_eq!(
+            open_error_message(&timeout, "db.internal", 5432),
+            "timed out opening a channel to db.internal:5432"
+        );
+        let refused = ssh2::Error::new(
+            ErrorCode::Session(LIBSSH2_ERROR_CHANNEL_FAILURE),
+            "Channel open failure (connect failed)",
+        );
+        assert!(open_error_message(&refused, "db.internal", 5432).contains("connect failed"));
     }
 
     #[test]
