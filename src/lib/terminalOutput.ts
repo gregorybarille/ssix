@@ -19,6 +19,7 @@
  * whoever owns the pane (`useTerminalsStore`) instead of its output handler.
  */
 
+import { parseAuthEvent, type AuthEvent } from "./authPrompt";
 import { assertTauriRuntime } from "./runtime";
 
 /** Upper bound on bytes held for a terminal that has not attached yet. */
@@ -179,17 +180,33 @@ export function deliverChannelMessage(sink: OutputSink, payload: unknown): void 
 }
 
 /**
+ * Route one channel message: login prompts go to `onAuthEvent` straight away,
+ * since nothing attaches to the sink until the login they belong to is over.
+ */
+export function routeChannelMessage(
+  sink: OutputSink,
+  payload: unknown,
+  onAuthEvent?: (event: AuthEvent) => void,
+): void {
+  const authEvent = parseAuthEvent(payload);
+  if (authEvent) onAuthEvent?.(authEvent);
+  else deliverChannelMessage(sink, payload);
+}
+
+/**
  * Create the IPC channel handed to `ssh_connect` as `onOutput`, together
  * with the sink it feeds. Register the sink under the session id once the
- * backend has returned one.
+ * backend has returned one. Only a shell needs `onAuthEvent`.
  */
-export async function createOutputChannel(): Promise<{ channel: unknown; sink: OutputSink }> {
+export async function createOutputChannel(
+  onAuthEvent?: (event: AuthEvent) => void,
+): Promise<{ channel: unknown; sink: OutputSink }> {
   // `new Channel` reaches into the Tauri bridge too; fail with the same
   // readable message as `invoke` when it is missing.
   assertTauriRuntime();
   const { Channel } = await import("@tauri-apps/api/core");
   const sink = new OutputSink();
-  const channel = new Channel<unknown>((payload) => deliverChannelMessage(sink, payload));
+  const channel = new Channel<unknown>((payload) => routeChannelMessage(sink, payload, onAuthEvent));
   return { channel, sink };
 }
 

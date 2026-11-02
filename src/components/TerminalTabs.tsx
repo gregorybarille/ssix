@@ -1,6 +1,8 @@
 import React, { useState } from "react";
 import { Terminal } from "./Terminal";
 import { FailedTerminal } from "./FailedTerminal";
+import { AuthPrompt } from "./AuthPrompt";
+import { useAuthPromptStore } from "@/store/useAuthPromptStore";
 import { Button } from "./ui/button";
 import {
   X,
@@ -79,6 +81,7 @@ function PaneRenderer({
   // A shell that lost its connection keeps its <Terminal> mounted, always at
   // this position in the tree, so its scrollback survives the reconnect.
   const neverConnected = !session.reconnect && (session.error || session.retrying);
+  const authPrompt = useAuthPromptStore((state) => state.prompts[session.sessionId]);
   return (
     <>
       {!neverConnected && (
@@ -91,21 +94,31 @@ function PaneRenderer({
           connection={session.connection}
         />
       )}
-      {(neverConnected || session.reconnect) && (
-        <FailedTerminal
-          connectionName={session.connectionName}
-          error={session.error}
-          connection={session.connection}
+      {authPrompt ? (
+        <AuthPrompt
+          key={authPrompt.prompt_id}
+          request={authPrompt}
           isVisible={isVisible}
-          retrying={session.retrying}
-          reconnect={session.reconnect}
-          onCancelReconnect={() =>
-            void useTerminalsStore.getState().cancelReconnect(session.sessionId)
-          }
-          onRetry={(conn) => onRetry(conn)}
-          onEdit={(conn) => onEdit(conn)}
-          onClose={onClose}
+          onAnswer={(answers) => useAuthPromptStore.getState().answer(session.sessionId, answers)}
+          onCancel={onClose}
         />
+      ) : (
+        (neverConnected || session.reconnect) && (
+          <FailedTerminal
+            connectionName={session.connectionName}
+            error={session.error}
+            connection={session.connection}
+            isVisible={isVisible}
+            retrying={session.retrying}
+            reconnect={session.reconnect}
+            onCancelReconnect={() =>
+              void useTerminalsStore.getState().cancelReconnect(session.sessionId)
+            }
+            onRetry={(conn) => onRetry(conn)}
+            onEdit={(conn) => onEdit(conn)}
+            onClose={onClose}
+          />
+        )
       )}
     </>
   );
