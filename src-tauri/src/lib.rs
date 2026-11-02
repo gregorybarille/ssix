@@ -5,7 +5,6 @@ mod commands;
 mod forwards;
 mod keychain;
 mod known_hosts;
-#[cfg(unix)]
 mod libssh2_ext;
 mod login_wait;
 mod logs;

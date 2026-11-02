@@ -6,6 +6,10 @@
 //! libssh2 API that `libssh2-sys` does not declare; they are declared here.
 //! Nothing reaches into a private libssh2 struct.
 //!
+//! Only [`userauth_list`] runs on every platform. Agent forwarding and signing
+//! through the agent's socket are Unix only (`crate::agent`), so what they need
+//! is `#[cfg(unix)]`.
+//!
 //! Two rules keep this sound, and every wrapper below relies on them:
 //!
 //! - A session is not thread-safe; `ssh2` serialises it with a mutex.
@@ -16,25 +20,35 @@
 //!   hold a clone of its `Session`.
 
 use std::borrow::Cow;
-use std::ffi::{c_char, c_int, c_uchar, c_uint, c_ulong, c_void, CStr, CString};
+#[cfg(unix)]
+use std::ffi::{c_char, c_int, c_uchar, c_ulong, c_void};
+use std::ffi::{c_uint, CStr, CString};
+#[cfg(unix)]
 use std::io;
 use std::marker::PhantomData;
+#[cfg(unix)]
 use std::mem;
+#[cfg(unix)]
 use std::panic::{catch_unwind, AssertUnwindSafe};
+#[cfg(unix)]
 use std::slice;
+#[cfg(unix)]
 use std::sync::Arc;
 
 use libssh2_sys as raw;
 use ssh2::Session;
 
 /// `LIBSSH2_CALLBACK_AUTHAGENT` in `libssh2.h`.
+#[cfg(unix)]
 const CALLBACK_AUTHAGENT: c_int = 7;
 
 /// `LIBSSH2_AUTHAGENT_FUNC` in `libssh2.h`.
+#[cfg(unix)]
 type AgentChannelFn =
     extern "C" fn(*mut raw::LIBSSH2_SESSION, *mut raw::LIBSSH2_CHANNEL, *mut *mut c_void);
 
 /// `LIBSSH2_USERAUTH_PUBLICKEY_SIGN_FUNC` in `libssh2.h`.
+#[cfg(unix)]
 type SignFn = extern "C" fn(
     *mut raw::LIBSSH2_SESSION,
     *mut *mut c_uchar,
@@ -45,8 +59,10 @@ type SignFn = extern "C" fn(
 ) -> c_int;
 
 /// `libssh2_cb_generic` in `libssh2.h`: libssh2 casts it back by callback type.
+#[cfg(unix)]
 type GenericCallback = unsafe extern "C" fn();
 
+#[cfg(unix)]
 extern "C" {
     fn libssh2_session_callback_set2(
         session: *mut raw::LIBSSH2_SESSION,
@@ -84,6 +100,7 @@ pub(crate) fn with_session<R>(session: &Session, f: impl for<'a> FnOnce(&Locked<
 }
 
 /// A channel the server opened towards us, which `ssh2` cannot represent.
+#[cfg(unix)]
 pub(crate) struct RawChannel {
     raw: *mut raw::LIBSSH2_CHANNEL,
     session: *mut raw::LIBSSH2_SESSION,
@@ -91,8 +108,10 @@ pub(crate) struct RawChannel {
 
 // SAFETY: a libssh2 channel has no thread affinity; it needs its session's
 // lock, which every method below requires through `Locked`.
+#[cfg(unix)]
 unsafe impl Send for RawChannel {}
 
+#[cfg(unix)]
 impl RawChannel {
     fn check(&self, locked: &Locked<'_>) {
         debug_assert_eq!(
@@ -172,6 +191,7 @@ impl RawChannel {
     }
 }
 
+#[cfg(unix)]
 fn io_result(n: isize) -> io::Result<usize> {
     if n >= 0 {
         Ok(n as usize)
@@ -183,12 +203,14 @@ fn io_result(n: isize) -> io::Result<usize> {
 }
 
 /// Receives the agent channels a server opens.
+#[cfg(unix)]
 pub(crate) trait AgentChannelSink: Send + Sync + 'static {
     /// Runs inside libssh2, on whichever thread is reading the session and
     /// with its lock held: it must not touch the session, and must not block.
     fn channel_opened(&self, channel: RawChannel);
 }
 
+#[cfg(unix)]
 extern "C" fn on_agent_channel<T: AgentChannelSink>(
     session: *mut raw::LIBSSH2_SESSION,
     channel: *mut raw::LIBSSH2_CHANNEL,
@@ -221,6 +243,7 @@ extern "C" fn on_agent_channel<T: AgentChannelSink>(
 /// Stores `sink` in the session's abstract pointer until
 /// [`stop_agent_channels`]. `ssh2` only borrows that pointer for the length
 /// of a keyboard-interactive call, which is over once a session has channels.
+#[cfg(unix)]
 pub(crate) fn listen_for_agent_channels<T: AgentChannelSink>(locked: &Locked<'_>, sink: Arc<T>) {
     let callback: AgentChannelFn = on_agent_channel::<T>;
     // SAFETY: the session is locked and the pointer `libssh2_session_abstract`
@@ -238,6 +261,7 @@ pub(crate) fn listen_for_agent_channels<T: AgentChannelSink>(locked: &Locked<'_>
 }
 
 /// The sink [`listen_for_agent_channels`] stored, when there is one.
+#[cfg(unix)]
 pub(crate) fn agent_channel_sink<T: AgentChannelSink>(locked: &Locked<'_>) -> Option<Arc<T>> {
     // SAFETY: the session is locked. A non-null abstract pointer came from
     // `Arc::into_raw` in `listen_for_agent_channels` (sessions are created
@@ -255,6 +279,7 @@ pub(crate) fn agent_channel_sink<T: AgentChannelSink>(locked: &Locked<'_>) -> Op
 
 /// Refuse agent channels again, and give back the stored sink. The callback
 /// cannot run after this: it only runs under the lock held here.
+#[cfg(unix)]
 pub(crate) fn stop_agent_channels<T: AgentChannelSink>(locked: &Locked<'_>) -> Option<Arc<T>> {
     // SAFETY: as in `agent_channel_sink`; this takes over the reference that
     // `listen_for_agent_channels` left behind and clears the pointer to it.
@@ -266,6 +291,7 @@ pub(crate) fn stop_agent_channels<T: AgentChannelSink>(locked: &Locked<'_>) -> O
     }
 }
 
+#[cfg(unix)]
 extern "C" fn on_sign<F: FnMut(&[u8]) -> Option<Vec<u8>>>(
     _session: *mut raw::LIBSSH2_SESSION,
     sig: *mut *mut c_uchar,
@@ -348,6 +374,7 @@ pub(crate) fn userauth_list(session: &Session, username: &str) -> Result<String,
 /// `publickey` authentication with `key_blob`, signing through `sign`, which
 /// returns the bytes libssh2 puts after the method name in the signature. On a
 /// non-blocking session, call again with the same arguments after `EAGAIN`.
+#[cfg(unix)]
 pub(crate) fn userauth_publickey<F>(
     session: &Session,
     username: &str,
