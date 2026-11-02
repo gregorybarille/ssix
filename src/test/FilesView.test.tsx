@@ -4,7 +4,7 @@ import { FilesView } from "@/components/views/FilesView";
 import { invoke } from "@/lib/tauri";
 import { useConnectionsStore } from "@/store/useConnectionsStore";
 import { useSftpStore } from "@/store/useSftpStore";
-import type { Connection, FileEntry, FileListing } from "@/types";
+import type { Connection, FileEntry, FileListing, PaneTarget } from "@/types";
 import { renderInPanel } from "./panel";
 
 vi.mock("@/lib/tauri", () => ({ invoke: vi.fn() }));
@@ -81,7 +81,7 @@ function answer(overrides: Record<string, (args: Record<string, unknown>) => unk
       case "sftp_connect":
         return { session_id: "s1", start_path: "/home/me", label: "me@web" } as never;
       case "sftp_list":
-        return (input.sessionId
+        return ((input.target as PaneTarget).side === "remote"
           ? listing(input.path as string, input.path === "/home/me" ? REMOTE : [])
           : listing(input.path as string, input.path === "/work" ? LOCAL : [])) as never;
       case "sftp_start_transfer":
@@ -139,7 +139,7 @@ afterEach(() => {
 describe("FilesView", () => {
   it("starts on this computer's home with no connection open", async () => {
     await show({ connect: false });
-    expect(calls("sftp_list")).toEqual([{ sessionId: null, path: "/work" }]);
+    expect(calls("sftp_list")).toEqual([{ target: { side: "local" }, path: "/work" }]);
     expect(screen.getByText("No connection open")).toBeInTheDocument();
     expect(screen.getByTestId("files-disconnect")).toBeDisabled();
   });
@@ -336,7 +336,7 @@ describe("changing files", () => {
     await waitFor(() =>
       expect(screen.getByTestId("files-name-dialog")).toHaveTextContent("Permission denied"),
     );
-    expect(calls("sftp_mkdir")).toEqual([{ sessionId: "s1", dir: "/home/me", name: "new" }]);
+    expect(calls("sftp_mkdir")).toEqual([{ target: { side: "remote", session_id: "s1" }, dir: "/home/me", name: "new" }]);
 
     answer();
     fireEvent.click(screen.getByTestId("files-name-submit"));
@@ -353,7 +353,7 @@ describe("changing files", () => {
     fireEvent.click(screen.getByTestId("files-name-submit"));
     await waitFor(() =>
       expect(calls("sftp_rename")).toEqual([
-        { sessionId: null, path: "/work/a.txt", newName: "c.txt" },
+        { target: { side: "local" }, path: "/work/a.txt", newName: "c.txt" },
       ]),
     );
   });
@@ -376,7 +376,7 @@ describe("changing files", () => {
     fireEvent.click(screen.getByTestId("files-chmod-submit"));
     await waitFor(() =>
       expect(calls("sftp_chmod")).toEqual([
-        { sessionId: "s1", path: "/home/me/conf.txt", mode: 0o600 },
+        { target: { side: "remote", session_id: "s1" }, path: "/home/me/conf.txt", mode: 0o600 },
       ]),
     );
   });
@@ -412,6 +412,19 @@ describe("changing files", () => {
     expect(await screen.findByTestId("files-delete-confirm-error")).toHaveTextContent(
       "Permission denied",
     );
+  });
+
+  it("offers no change to the server's files while it has no session", async () => {
+    await show();
+    fireEvent.click(row("remote", "conf.txt"));
+    for (const id of ["rename", "chmod", "delete"]) {
+      expect(screen.getByTestId(`files-${id}-remote`)).toBeEnabled();
+    }
+    act(() => useSftpStore.setState({ sessionId: null }));
+    for (const id of ["rename", "chmod", "delete", "mkdir"]) {
+      expect(screen.getByTestId(`files-${id}-remote`)).toBeDisabled();
+    }
+    expect(screen.getByTestId("files-edit")).toBeDisabled();
   });
 
   it("disables what the selection does not allow", async () => {

@@ -15,6 +15,7 @@ import type {
   EditStatus,
   FileEntry,
   FileListing,
+  PaneTarget,
   SftpSessionInfo,
   TransferDirection,
   TransferEvent,
@@ -152,7 +153,16 @@ let justReconnected = false;
 let refusedTransfers = 0;
 
 export const useSftpStore = create<SftpState>((set, get) => {
-  const sessionArg = (side: PaneSide) => (side === "remote" ? get().sessionId : null);
+  /**
+   * Where a command for this pane runs. A remote pane with no session has
+   * nowhere to run anything, and must never fall back to this computer.
+   */
+  const paneTarget = (side: PaneSide): PaneTarget => {
+    if (side === "local") return { side };
+    const { sessionId } = get();
+    if (!sessionId) throw new Error("The server is not connected, so nothing was changed.");
+    return { side, session_id: sessionId };
+  };
 
   const patchPane = (side: PaneSide, patch: Partial<PaneState>) =>
     set((state) => ({ [side]: { ...state[side], ...patch } }) as Partial<SftpState>);
@@ -361,7 +371,7 @@ export const useSftpStore = create<SftpState>((set, get) => {
       patchPane(side, { loading: true, error: null });
       try {
         const listing = await invoke<FileListing>("sftp_list", {
-          sessionId: sessionArg(side),
+          target: paneTarget(side),
           path,
         });
         if (request !== paneRequests[side]) return;
@@ -416,25 +426,27 @@ export const useSftpStore = create<SftpState>((set, get) => {
 
     mkdir: (side, name) =>
       mutate(side, () =>
-        invoke("sftp_mkdir", { sessionId: sessionArg(side), dir: get()[side].path, name }),
+        invoke("sftp_mkdir", { target: paneTarget(side), dir: get()[side].path, name }),
       ),
 
     rename: (side, entry, newName) =>
       mutate(side, () =>
-        invoke("sftp_rename", { sessionId: sessionArg(side), path: entry.path, newName }),
+        invoke("sftp_rename", { target: paneTarget(side), path: entry.path, newName }),
       ),
 
     chmod: (side, entry, mode) =>
       mutate(side, () =>
-        invoke("sftp_chmod", { sessionId: sessionArg(side), path: entry.path, mode }),
+        invoke("sftp_chmod", { target: paneTarget(side), path: entry.path, mode }),
       ),
 
-    // One at a time, so the first failure stops the rest and is reported.
+    // One at a time, so the first failure stops the rest and is reported. The
+    // target is settled once: a session replaced partway must end the run.
     remove: async (side, entries) => {
       try {
         await mutate(side, async () => {
+          const target = paneTarget(side);
           for (const entry of entries) {
-            await invoke("sftp_delete", { sessionId: sessionArg(side), path: entry.path });
+            await invoke("sftp_delete", { target, path: entry.path });
           }
         });
       } catch (err) {

@@ -2,8 +2,8 @@
 //!
 //! A remote pane holds one session, owned by a thread of its own; commands
 //! reach it through an mpsc queue like a shell's `SessionHandle`, and the
-//! thread keeps the session alive while it idles. Every command takes
-//! `session_id`: a session for the remote pane, `None` for the local one.
+//! thread keeps the session alive while it idles. Every command names its
+//! side with a `PaneTarget`.
 
 use super::{
     call_error, check_remote_path, is_local_root, is_not_found, join_remote, path_string,
@@ -14,7 +14,7 @@ use crate::commands::blocking;
 use crate::commands::ssh::{connect_session, find_connection};
 use crate::logs::log_local;
 use dashmap::DashMap;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use ssh2::{ErrorCode, FileStat, Session, Sftp};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -43,6 +43,16 @@ pub struct SftpSessionInfo {
     pub start_path: String,
     /// `user@host:port`, with the jump host if there is one.
     pub label: String,
+}
+
+/// The side a command acts on. A remote one cannot be built without its
+/// session, so a missing session is a refused call and never means this
+/// computer. Mirrored in `src/types/index.ts`.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(tag = "side", rename_all = "snake_case")]
+pub enum PaneTarget {
+    Local,
+    Remote { session_id: String },
 }
 
 struct Browser {
@@ -197,36 +207,38 @@ pub fn sftp_local_home() -> Result<String, String> {
 }
 
 #[tauri::command]
-pub async fn sftp_list(session_id: Option<String>, path: String) -> Result<FileListing, String> {
-    blocking(move || match session_id {
-        Some(id) => with_browser(&id, move |b| list_remote(&b.sftp, &b.home, &path)),
-        None => list_local(&path),
+pub async fn sftp_list(target: PaneTarget, path: String) -> Result<FileListing, String> {
+    blocking(move || match target {
+        PaneTarget::Remote { session_id } => {
+            with_browser(&session_id, move |b| list_remote(&b.sftp, &b.home, &path))
+        }
+        PaneTarget::Local => list_local(&path),
     })
     .await
 }
 
 #[tauri::command]
-pub async fn sftp_mkdir(
-    session_id: Option<String>,
-    dir: String,
-    name: String,
-) -> Result<String, String> {
-    blocking(move || match session_id {
-        Some(id) => with_browser(&id, move |b| mkdir_remote(&b.sftp, &dir, &name)),
-        None => mkdir_local(&dir, &name),
+pub async fn sftp_mkdir(target: PaneTarget, dir: String, name: String) -> Result<String, String> {
+    blocking(move || match target {
+        PaneTarget::Remote { session_id } => {
+            with_browser(&session_id, move |b| mkdir_remote(&b.sftp, &dir, &name))
+        }
+        PaneTarget::Local => mkdir_local(&dir, &name),
     })
     .await
 }
 
 #[tauri::command]
 pub async fn sftp_rename(
-    session_id: Option<String>,
+    target: PaneTarget,
     path: String,
     new_name: String,
 ) -> Result<String, String> {
-    blocking(move || match session_id {
-        Some(id) => with_browser(&id, move |b| rename_remote(&b.sftp, &path, &new_name)),
-        None => rename_local(&path, &new_name),
+    blocking(move || match target {
+        PaneTarget::Remote { session_id } => with_browser(&session_id, move |b| {
+            rename_remote(&b.sftp, &path, &new_name)
+        }),
+        PaneTarget::Local => rename_local(&path, &new_name),
     })
     .await
 }
@@ -234,21 +246,25 @@ pub async fn sftp_rename(
 /// Delete one entry, a folder with everything in it. Symlinks are removed,
 /// never followed.
 #[tauri::command]
-pub async fn sftp_delete(session_id: Option<String>, path: String) -> Result<(), String> {
-    blocking(move || match session_id {
-        Some(id) => with_browser(&id, move |b| delete_remote(&b.sftp, &b.home, &path)),
-        None => delete_local(&path),
+pub async fn sftp_delete(target: PaneTarget, path: String) -> Result<(), String> {
+    blocking(move || match target {
+        PaneTarget::Remote { session_id } => {
+            with_browser(&session_id, move |b| delete_remote(&b.sftp, &b.home, &path))
+        }
+        PaneTarget::Local => delete_local(&path),
     })
     .await
 }
 
 #[tauri::command]
-pub async fn sftp_chmod(session_id: Option<String>, path: String, mode: u32) -> Result<(), String> {
+pub async fn sftp_chmod(target: PaneTarget, path: String, mode: u32) -> Result<(), String> {
     blocking(move || {
         validate_mode(mode)?;
-        match session_id {
-            Some(id) => with_browser(&id, move |b| chmod_remote(&b.sftp, &path, mode)),
-            None => chmod_local(&path, mode),
+        match target {
+            PaneTarget::Remote { session_id } => {
+                with_browser(&session_id, move |b| chmod_remote(&b.sftp, &path, mode))
+            }
+            PaneTarget::Local => chmod_local(&path, mode),
         }
     })
     .await
@@ -933,11 +949,76 @@ mod tests {
     #[test]
     fn a_session_that_is_gone_says_so() {
         let err = tauri::async_runtime::block_on(sftp_list(
-            Some("no-such-session".to_string()),
+            PaneTarget::Remote {
+                session_id: "no-such-session".to_string(),
+            },
             "/".to_string(),
         ))
         .unwrap_err();
         assert!(err.starts_with(SESSION_LOST), "{}", err);
+    }
+
+    #[test]
+    fn a_remote_target_needs_a_session_and_nothing_defaults_to_this_computer() {
+        use serde_json::{from_value, json};
+        for refused in [
+            json!({ "side": "remote" }),
+            json!({ "side": "remote", "session_id": null }),
+            json!({ "session_id": null }),
+            json!({ "session_id": "s1" }),
+            json!({}),
+            json!(null),
+        ] {
+            assert!(
+                from_value::<PaneTarget>(refused.clone()).is_err(),
+                "{}",
+                refused
+            );
+        }
+        assert_eq!(
+            from_value::<PaneTarget>(json!({ "side": "local" })).unwrap(),
+            PaneTarget::Local
+        );
+        assert_eq!(
+            from_value::<PaneTarget>(json!({ "side": "remote", "session_id": "s1" })).unwrap(),
+            PaneTarget::Remote {
+                session_id: "s1".to_string()
+            }
+        );
+    }
+
+    /// The same path exists on this computer: a remote command with no
+    /// session behind it must fail, and leave that path as it is.
+    #[test]
+    fn a_remote_change_with_no_session_leaves_this_computer_alone() {
+        use tauri::async_runtime::block_on;
+        let tmp = TempDir::new("no-session");
+        fs::create_dir(tmp.0.join("victim")).unwrap();
+        fs::write(tmp.0.join("victim/sentinel"), "stay").unwrap();
+        let dir = tmp.0.to_str().unwrap().to_string();
+        let victim = tmp.path("victim");
+        let target = || PaneTarget::Remote {
+            session_id: "no-such-session".to_string(),
+        };
+
+        let refusals = [
+            block_on(sftp_delete(target(), victim.clone())).unwrap_err(),
+            block_on(sftp_rename(target(), victim.clone(), "moved".to_string())).unwrap_err(),
+            block_on(sftp_mkdir(target(), dir, "made".to_string())).unwrap_err(),
+            block_on(sftp_chmod(target(), victim, 0o700)).unwrap_err(),
+        ];
+        for err in refusals {
+            assert!(err.starts_with(SESSION_LOST), "{}", err);
+        }
+        let left: Vec<_> = fs::read_dir(&tmp.0)
+            .unwrap()
+            .map(|e| e.unwrap().file_name())
+            .collect();
+        assert_eq!(left, ["victim"]);
+        assert_eq!(
+            fs::read_to_string(tmp.0.join("victim/sentinel")).unwrap(),
+            "stay"
+        );
     }
 
     #[test]

@@ -63,7 +63,7 @@ describe("connecting", () => {
     expect(state.label).toBe("me@host");
     expect(state.connecting).toBe(false);
     expect(state.remote.path).toBe("/home/me");
-    expect(calls("sftp_list")).toEqual([{ sessionId: "s1", path: "/home/me" }]);
+    expect(calls("sftp_list")).toEqual([{ target: { side: "remote", session_id: "s1" }, path: "/home/me" }]);
   });
 
   it("reports a failure without pretending to be connected", async () => {
@@ -171,7 +171,7 @@ describe("listing", () => {
   it("uses no session for the local pane", async () => {
     backend({ sftp_list: ({ path }) => listing(path as string) });
     await useSftpStore.getState().navigate("local", "/tmp");
-    expect(calls("sftp_list")).toEqual([{ sessionId: null, path: "/tmp" }]);
+    expect(calls("sftp_list")).toEqual([{ target: { side: "local" }, path: "/tmp" }]);
   });
 
   it("does not ask the backend about a remote pane with no session", async () => {
@@ -297,7 +297,7 @@ describe("changing files", () => {
   it("refreshes the pane after a change", async () => {
     invokeMock.mockClear();
     await useSftpStore.getState().mkdir("remote", "new");
-    expect(calls("sftp_mkdir")).toEqual([{ sessionId: "s1", dir: "/home/me", name: "new" }]);
+    expect(calls("sftp_mkdir")).toEqual([{ target: { side: "remote", session_id: "s1" }, dir: "/home/me", name: "new" }]);
     expect(calls("sftp_list")).toHaveLength(1);
   });
 
@@ -305,8 +305,63 @@ describe("changing files", () => {
     const entry = file("/home/me/f");
     await useSftpStore.getState().rename("remote", entry, "g");
     await useSftpStore.getState().chmod("local", entry, 0o600);
-    expect(calls("sftp_rename")).toEqual([{ sessionId: "s1", path: entry.path, newName: "g" }]);
-    expect(calls("sftp_chmod")).toEqual([{ sessionId: null, path: entry.path, mode: 0o600 }]);
+    expect(calls("sftp_rename")).toEqual([{ target: { side: "remote", session_id: "s1" }, path: entry.path, newName: "g" }]);
+    expect(calls("sftp_chmod")).toEqual([{ target: { side: "local" }, path: entry.path, mode: 0o600 }]);
+  });
+
+  describe("on the server's pane with no session", () => {
+    const entry = file("/home/me/f");
+    const refusals: [string, string, () => Promise<void>][] = [
+      ["mkdir", "sftp_mkdir", () => useSftpStore.getState().mkdir("remote", "new")],
+      ["rename", "sftp_rename", () => useSftpStore.getState().rename("remote", entry, "g")],
+      ["chmod", "sftp_chmod", () => useSftpStore.getState().chmod("remote", entry, 0o600)],
+      ["delete", "sftp_delete", () => useSftpStore.getState().remove("remote", [entry])],
+    ];
+
+    it.each(refusals)("%s fails without reaching the backend", async (_, command, change) => {
+      useSftpStore.setState({ sessionId: null });
+      invokeMock.mockClear();
+      await expect(change()).rejects.toThrow("not connected");
+      expect(calls(command)).toEqual([]);
+    });
+
+    it("the same goes while a connect is under way", async () => {
+      let answer: (value: unknown) => void = () => {};
+      invokeMock.mockImplementation(async (command: string) => {
+        if (command === "sftp_connect") {
+          return new Promise((resolve) => (answer = resolve)) as never;
+        }
+        return undefined as never;
+      });
+      const connecting = useSftpStore.getState().connect("c1", "/home/me");
+      await expect(useSftpStore.getState().remove("remote", [entry])).rejects.toThrow(
+        "not connected",
+      );
+      expect(calls("sftp_delete")).toEqual([]);
+      answer({ session_id: "s2", start_path: "/home/me", label: "me@host" });
+      await connecting;
+    });
+  });
+
+  it("names the local side explicitly", async () => {
+    await useSftpStore.getState().remove("local", [file("/work/f")]);
+    expect(calls("sftp_delete")).toEqual([{ target: { side: "local" }, path: "/work/f" }]);
+  });
+
+  it("keeps one target for a whole delete, even if the session is replaced partway", async () => {
+    backend({
+      sftp_delete: ({ path, target }) => {
+        if (path === "/home/me/a") useSftpStore.setState({ sessionId: "s2" });
+        if ((target as { session_id: string }).session_id !== "s2") return;
+        throw "SFTP_SESSION_LOST unexpected";
+      },
+      sftp_list: ({ path }) => listing(path as string),
+    });
+    await useSftpStore.getState().remove("remote", [file("/home/me/a"), file("/home/me/b")]);
+    expect(calls("sftp_delete")).toEqual([
+      { target: { side: "remote", session_id: "s1" }, path: "/home/me/a" },
+      { target: { side: "remote", session_id: "s1" }, path: "/home/me/b" },
+    ]);
   });
 
   it("hands a refusal to the dialog that asked, readably", async () => {
@@ -411,7 +466,7 @@ describe("transfers", () => {
     event(onEvent, { type: "done", id: "t1", bytes: 10, files: 1, skipped: 2, target: "/home/me/a" });
     await flush();
     expect(row()).toMatchObject({ status: "done", bytesDone: 10, skipped: 2 });
-    expect(calls("sftp_list")).toEqual([{ sessionId: "s1", path: "/home/me" }]);
+    expect(calls("sftp_list")).toEqual([{ target: { side: "remote", session_id: "s1" }, path: "/home/me" }]);
   });
 
   it("keeps a row whose events arrive before the start call answers", async () => {

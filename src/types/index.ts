@@ -513,6 +513,12 @@ export interface SftpSessionInfo {
   label: string;
 }
 
+/**
+ * The side a Files view command acts on. Mirrors `PaneTarget` in
+ * `src-tauri/src/commands/sftp/browse.rs`: a remote one always has its session.
+ */
+export type PaneTarget = { side: "local" } | { side: "remote"; session_id: string };
+
 export type TransferDirection = "upload" | "download";
 
 export interface TransferInput {

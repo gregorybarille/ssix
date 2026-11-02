@@ -11,7 +11,7 @@
 
 use super::browse::{
     sftp_chmod, sftp_connect_sync, sftp_delete, sftp_disconnect, sftp_list, sftp_mkdir,
-    sftp_rename, TempDir,
+    sftp_rename, PaneTarget, TempDir,
 };
 use super::edit::{edit_close, edit_open, edit_save, edit_status, open_sftp, EditSaveOutcome};
 use super::transfer::{
@@ -180,10 +180,16 @@ fn assert_done(event: TransferEvent) -> (u64, u64, u64) {
     }
 }
 
+fn remote(session_id: &str) -> PaneTarget {
+    PaneTarget::Remote {
+        session_id: session_id.to_string(),
+    }
+}
+
 /// Names in a remote folder, hidden ones included: temporary files show here.
 fn remote_names(connection_id: &str, dir: &str) -> Vec<String> {
     let session = sftp_connect_sync(connection_id).unwrap();
-    let listing = block_on(sftp_list(Some(session.session_id.clone()), dir.to_string())).unwrap();
+    let listing = block_on(sftp_list(remote(&session.session_id), dir.to_string())).unwrap();
     sftp_disconnect(session.session_id);
     listing.entries.into_iter().map(|e| e.name).collect()
 }
@@ -194,7 +200,7 @@ fn live_sftp_browses_and_changes_files() {
     with_connection(|id| {
         let dir = RemoteDir::new(id);
         let session = sftp_connect_sync(id).unwrap();
-        let sid = || Some(session.session_id.clone());
+        let sid = || remote(&session.session_id);
         assert!(session.label.contains('@'), "{}", session.label);
 
         let made = block_on(sftp_mkdir(sid(), dir.path.clone(), "sub".to_string())).unwrap();
@@ -261,7 +267,7 @@ fn live_sftp_delete_removes_links_and_keeps_what_they_point_to() {
             ),
         );
         let session = sftp_connect_sync(id).unwrap();
-        let sid = || Some(session.session_id.clone());
+        let sid = || remote(&session.session_id);
 
         block_on(sftp_delete(sid(), dir.child("victim"))).unwrap();
         block_on(sftp_delete(sid(), dir.child("direct"))).unwrap();
@@ -445,7 +451,7 @@ fn live_sftp_transfers_and_browsing_at_once_keep_every_byte() {
             thread::spawn(move || {
                 let mut listings = 0;
                 while !stop.load(Ordering::SeqCst) {
-                    block_on(sftp_list(Some(session_id.clone()), path.clone()))
+                    block_on(sftp_list(remote(&session_id), path.clone()))
                         .expect("listing while transfers run");
                     listings += 1;
                 }
@@ -477,7 +483,7 @@ fn live_sftp_transfers_and_browsing_at_once_keep_every_byte() {
         stop.store(true, Ordering::SeqCst);
         assert!(browsing.join().unwrap() > 0, "the pane never listed");
         // The session that browsed through all of it still answers.
-        let names = block_on(sftp_list(Some(session_id.clone()), dir.path.clone()))
+        let names = block_on(sftp_list(remote(&session_id), dir.path.clone()))
             .unwrap()
             .entries
             .len();

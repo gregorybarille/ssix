@@ -174,19 +174,20 @@ export function FilePane({ side, title, placeholder }: FilePaneProps) {
       items.push({
         label: "Edit",
         icon: <SquarePen className="h-3.5 w-3.5" />,
-        disabled: editBusy,
+        disabled: !usable || editBusy,
         onClick: () => void openEdit(entry),
       });
     }
     items.push({
       label: "Rename",
       icon: <Pencil className="h-3.5 w-3.5" />,
+      disabled: !usable,
       onClick: () => setDialog({ kind: "rename", side, entry }),
     });
     items.push({
       label: "Permissions",
       icon: <KeyRound className="h-3.5 w-3.5" />,
-      disabled: !chmodAllowed(entry),
+      disabled: !usable || !chmodAllowed(entry),
       onClick: () => setDialog({ kind: "chmod", side, entry }),
     });
     items.push({ separator: true });
@@ -194,6 +195,7 @@ export function FilePane({ side, title, placeholder }: FilePaneProps) {
       label: "Delete",
       icon: <Trash2 className="h-3.5 w-3.5" />,
       destructive: true,
+      disabled: !usable,
       onClick: () => setDialog({ kind: "delete", side, entries: menuTargets(entry) }),
     });
     return items;
@@ -276,7 +278,7 @@ export function FilePane({ side, title, placeholder }: FilePaneProps) {
             variant="ghost"
             size="sm"
             className="h-7 gap-1 text-xs"
-            disabled={!single || !editable(single) || editBusy}
+            disabled={!usable || !single || !editable(single) || editBusy}
             onClick={() => single && void openEdit(single)}
             data-testid="files-edit"
           >
@@ -296,14 +298,14 @@ export function FilePane({ side, title, placeholder }: FilePaneProps) {
           label="Rename"
           icon={Pencil}
           testId={`files-rename-${side}`}
-          disabled={!single}
+          disabled={!usable || !single}
           onClick={() => single && setDialog({ kind: "rename", side, entry: single })}
         />
         <ToolButton
           label="Permissions"
           icon={KeyRound}
           testId={`files-chmod-${side}`}
-          disabled={!single || !chmodAllowed(single)}
+          disabled={!usable || !single || !chmodAllowed(single)}
           onClick={() => single && setDialog({ kind: "chmod", side, entry: single })}
         />
         <ToolButton
@@ -311,7 +313,7 @@ export function FilePane({ side, title, placeholder }: FilePaneProps) {
           icon={Trash2}
           testId={`files-delete-${side}`}
           destructive
-          disabled={chosen.length === 0}
+          disabled={!usable || chosen.length === 0}
           onClick={() => setDialog({ kind: "delete", side, entries: chosen })}
         />
       </div>
