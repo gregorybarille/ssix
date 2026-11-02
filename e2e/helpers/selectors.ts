@@ -287,6 +287,7 @@ export const sel = {
   terminalTabCloseAny: '[data-testid^="close-tab-"]',
   confirmClosePane: '[data-testid="confirm-close-pane"]',
   confirmClosePaneConfirm: '[data-testid="confirm-close-pane-confirm"]',
+  confirmClosePaneCancel: '[data-testid="confirm-close-pane-cancel"]',
   // roadmap:forwards
   connectionFormKindRemoteForward: '[data-testid="connection-form-kind-remoteforward"]',
   connectionFormKindDynamicForward: '[data-testid="connection-form-kind-dynamicforward"]',

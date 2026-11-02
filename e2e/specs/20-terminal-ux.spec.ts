@@ -587,6 +587,49 @@ describe("Terminal UX", () => {
       await click(sel.navTerminals);
       await (await browser.$(sel.confirmClosePane)).waitForExist({ timeout: 10_000 });
     });
+
+    it("asks about each shell of a split that ended off screen, one after the other", async () => {
+      await createConnectionA("conn-20-ended-one");
+      await createConnectionA("conn-20-ended-two");
+      const first = await openShell("conn-20-ended-one");
+      await splitWith("conn-20-ended-two");
+      const second = await secondPane(first);
+      await typeIn(first, "exec sh -c 'sleep 10'\n");
+      await typeIn(second, "exec sh -c 'sleep 10'\n");
+      await navigateTo("connections");
+
+      await waitForText(first, CLOSED);
+      await waitForText(second, CLOSED);
+      await expectGone(sel.confirmClosePane);
+
+      await click(sel.navTerminals);
+      const question = await browser.$(sel.confirmClosePane);
+      await question.waitForExist({ timeout: 10_000 });
+      expect(await textContentOf(question)).toContain("conn-20-ended-one");
+
+      await clickDialogFooterButton(sel.confirmClosePaneCancel);
+      await browser.waitUntil(
+        async () => (await textContentOf(await browser.$(sel.confirmClosePane))).includes("conn-20-ended-two"),
+        { timeout: 10_000, timeoutMsg: "The second shell's question never came" },
+      );
+      // A careless Enter must not answer it for the one just answered.
+      await browser.waitUntil(
+        () =>
+          browser.execute(
+            (selector: string) => document.activeElement === document.querySelector(selector),
+            sel.confirmClosePaneCancel,
+          ),
+        { timeout: 10_000, timeoutMsg: "The next question did not start on Cancel" },
+      );
+
+      await clickDialogFooterButton(sel.confirmClosePaneConfirm);
+      await browser.waitUntil(async () => (await sessionIds()).length === 1, {
+        timeout: 10_000,
+        timeoutMsg: "The second pane did not close",
+      });
+      expect(await sessionIds()).toEqual([first]);
+      await expectGone(sel.confirmClosePane);
+    });
   });
 
   describe("find", () => {

@@ -25,6 +25,8 @@ come back.
   [Session resilience](session-resilience.md).
 - A shell that ends off screen does not interrupt you. The terminal asks about
   closing it when it is next shown. This also goes for a tab in the background.
+- Both shells of a split can end while it is off screen. Each gets its question, one
+  after the other, and neither replaces a question already open.
 
 A terminal that just opened takes the keyboard too, unless a side panel has it or
 you are typing somewhere else by the time it connects. In a split, that puts it in

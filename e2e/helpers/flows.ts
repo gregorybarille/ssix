@@ -329,21 +329,25 @@ export async function typeIntoTerminal(text: string): Promise<void> {
 export async function closeAllTabs(): Promise<void> {
   const openTabs = () => browser.$$(sel.terminalTabCloseAny).length;
   const confirmation = () => browser.$(sel.confirmClosePaneConfirm);
-  for (let before = await openTabs(); before > 0; before = await openTabs()) {
-    await browser.execute(
-      (selector: string) => document.querySelector<HTMLElement>(selector)?.click(),
-      sel.terminalTabCloseAny,
+  // From inside the page, as a dialog on its way out can be gone by the time of the click.
+  const clickIfThere = (selector: string) =>
+    browser.execute(
+      (target: string) => document.querySelector<HTMLElement>(target)?.click(),
+      selector,
     );
+  for (let before = await openTabs(); before > 0; before = await openTabs()) {
+    await clickIfThere(sel.terminalTabCloseAny);
     await browser.waitUntil(
       async () => (await openTabs()) < before || (await confirmation().isExisting()),
       { timeout: 10_000, timeoutMsg: "A terminal tab neither closed nor asked to" },
     );
-    if (await confirmation().isExisting()) {
-      await clickDialogFooterButton(sel.confirmClosePaneConfirm);
-      await browser.waitUntil(async () => (await openTabs()) < before, {
-        timeout: 10_000,
-        timeoutMsg: "A terminal tab did not close after confirming",
-      });
-    }
+    // A question already open comes first, so this tab's can take a second answer.
+    await browser.waitUntil(
+      async () => {
+        await clickIfThere(sel.confirmClosePaneConfirm);
+        return (await openTabs()) < before;
+      },
+      { timeout: 10_000, timeoutMsg: "A terminal tab did not close after confirming" },
+    );
   }
 }
