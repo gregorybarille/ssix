@@ -34,6 +34,7 @@ import {
   createPasswordCredential,
   fill,
   navigateTo,
+  openConnectionEditor,
   openCredentialEditor,
   pickOption,
   readTerminalText,
@@ -404,6 +405,34 @@ describe("Session resilience", () => {
 
     await expectReconnected("BEFORE-EDIT-42");
     await expectShellAnswers("AFTER-EDIT");
+  });
+
+  it("leaves a typed keepalive alone until the field is left, then shows what is saved", async () => {
+    const keepalive = () => browser.$(sel.connectionFormKeepalive);
+    const shows = (text: string) =>
+      browser.waitUntil(async () => (await (await keepalive()).getValue()) === text, {
+        timeout: 10_000,
+        timeoutMsg: `The keepalive field never showed ${text}`,
+      });
+
+    await createDirectConnection({
+      name: "conn-15-typed-keepalive",
+      host: TARGETS.a.host,
+      port: TARGETS.a.sshPort,
+      credentialName: CREDENTIAL,
+      beforeSave: async () => {
+        await reveal(sel.connectionFormKeepalive);
+        await fill(sel.connectionFormKeepalive, "70000");
+        await shows("70000");
+        await browser.keys(["Tab"]);
+        await shows("3600");
+      },
+    });
+
+    await openConnectionEditor("conn-15-typed-keepalive");
+    await reveal(sel.connectionFormKeepalive);
+    await shows("3600");
+    await click(sel.connectionFormCancel);
   });
 
   it("logs a session to a private file that its name cannot move out of the folder", async () => {

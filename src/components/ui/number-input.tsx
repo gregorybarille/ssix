@@ -32,3 +32,33 @@ export function NumberInput({ value, parse, onCommit, ...props }: NumberInputPro
     />
   );
 }
+
+interface OptionalNumberInputProps
+  extends Omit<ComponentProps<typeof Input>, "type" | "value" | "onChange" | "onBlur"> {
+  /** `undefined` leaves the field empty. */
+  value: number | undefined;
+  /** The number a text stands for, held to its range; `undefined` when it holds none. */
+  parse: (text: string) => number | undefined;
+  onChange: (value: number | undefined) => void;
+}
+
+/**
+ * The same for a number a form may leave unset. The form holds the number from
+ * the first digit, as Enter saves it without leaving the field; what was typed
+ * stays on screen until the field is left, and only then shows its range.
+ */
+export function OptionalNumberInput({ value, parse, onChange, ...props }: OptionalNumberInputProps) {
+  const [draft, setDraft] = useState<string | null>(null);
+  return (
+    <Input
+      {...props}
+      type="number"
+      value={draft ?? value ?? ""}
+      onChange={(e) => {
+        setDraft(e.target.value);
+        onChange(parse(e.target.value));
+      }}
+      onBlur={() => setDraft(null)}
+    />
+  );
+}

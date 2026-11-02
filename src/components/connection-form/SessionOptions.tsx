@@ -1,6 +1,6 @@
 import { parseKeepaliveSeconds } from "@/lib/reconnect";
-import { Input } from "../ui/input";
 import { Label } from "../ui/label";
+import { OptionalNumberInput } from "../ui/number-input";
 import type { ConnectionFormSectionProps } from "./advanced";
 import { ChoiceSelect } from "./ChoiceSelect";
 
@@ -62,16 +62,14 @@ export function SessionOptions({ advanced, onChange }: ConnectionFormSectionProp
       </div>
       <div className="space-y-2">
         <Label htmlFor="keepalive_interval">Keepalive interval (seconds)</Label>
-        <Input
+        <OptionalNumberInput
           id="keepalive_interval"
-          type="number"
           min={0}
           max={3600}
           placeholder="Use app setting"
-          value={advanced.keepalive_interval ?? ""}
-          onChange={(e) =>
-            onChange({ keepalive_interval: parseKeepaliveSeconds(e.target.value) })
-          }
+          value={advanced.keepalive_interval ?? undefined}
+          parse={parseKeepaliveSeconds}
+          onChange={(keepalive_interval) => onChange({ keepalive_interval })}
           aria-describedby="keepalive_interval-hint"
           data-testid="connection-form-keepalive"
         />
