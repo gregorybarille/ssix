@@ -38,8 +38,8 @@ share one slot, and `none` counts as the first value.
 - **Wildcard and negated patterns** (`Host *`, `*.example.com`, `!prod`) only
   supply options. They are listed, never imported.
 - **`Match` blocks are not evaluated**, because their conditions depend on the
-  machine and the connection. Their options are not applied, and the preview
-  says where each block is.
+  machine and the connection. Their options are not applied, the preview says
+  where each block is, and every row starts unticked (see below).
 - **`ProxyJump` beyond one hop**: a list of hops, or a jump host that itself
   goes through a `ProxyJump` or `ProxyCommand`.
 - **Forwards SSIX cannot represent**: a forward on a host that goes through a
@@ -64,6 +64,24 @@ fewer when a very large file makes each one slow to work out, and offers at most
 2000 connections, with at most 64 forwards per host. It lists at most 2000 skipped
 entries and 200 passed-over lines. `Include` cycles stop at the file that would
 repeat. Each limit is reported once in the panel under **Passed over**.
+
+## When part of a config is not applied
+
+A `Match` block, an `Include` that could not be read and an unreadable `Host` line
+can each change what any host does. A dropped `Match` may be the very line that
+sends a host through its bastion, and importing that host as a direct connection
+would connect straight to it. SSIX cannot tell which hosts they touch, so if a file
+has any of these:
+
+- every row says so, and starts unticked;
+- **Passed over** lists what was left out, with its `file:line`;
+- you can still tick any row, once you have checked it against the config.
+
+The rule is deliberately simple. It also applies to a `Match` block that sets
+nothing SSIX reads, which only costs you the extra tick. Two things do not count:
+an `Include` that matches no file, because `ssh` reads nothing from it either, and
+an unreadable option, which skips the hosts it applies to and leaves the others
+alone.
 
 ## Hosts with no `User` or `IdentityFile`
 

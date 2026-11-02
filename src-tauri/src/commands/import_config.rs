@@ -21,6 +21,9 @@
 //! - A host that cannot be imported faithfully is skipped with its reason;
 //!   importing it without its port, proxy or jump host would connect to
 //!   something the config does not describe.
+//! - A config with a part left out that could change any host (`Match`, an
+//!   `Include` that could not be read) cannot promise that of any row, so every
+//!   row says so and starts unticked. The user decides, not the default.
 
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -60,6 +63,7 @@ const MAX_SKIPS: usize = 2000;
 /// `check_connection`'s limit, tested first so an absurdly long name is not
 /// matched against every pattern in the file.
 const MAX_NAME_CHARS: usize = 128;
+const UNAPPLIED_NOTE: &str = "Part of this config was not applied (see Passed over), so this may not be what ssh does for this host. Check it before ticking it";
 const STALE_PREVIEW: &str =
     "The config or your connections changed since this preview. Review it again before importing.";
 
@@ -1377,6 +1381,12 @@ fn build_plan(config: &ParsedConfig, data: &AppData, env: &ImportEnv) -> Plan {
             }
         }
     }
+    if config.unapplied {
+        for item in &mut plan.items {
+            item.preselected = false;
+            item.planned.notes.push(UNAPPLIED_NOTE.to_string());
+        }
+    }
     plan
 }
 
@@ -2258,6 +2268,97 @@ mod tests {
         });
     }
 
+    /// Every row starts unticked and carries the note.
+    fn assert_all_held_back(preview: &ImportPreview) {
+        assert!(!preview.items.is_empty());
+        for row in &preview.items {
+            assert!(!row.preselected, "{row:#?}");
+            assert!(row.notes.iter().any(|n| n == UNAPPLIED_NOTE), "{row:#?}");
+        }
+    }
+
+    /// Nothing in the config was left out: rows start ticked, without the note.
+    fn assert_none_held_back(preview: &ImportPreview) {
+        assert!(!preview.items.is_empty());
+        for row in &preview.items {
+            assert!(row.preselected, "{row:#?}");
+            assert!(!row.notes.iter().any(|n| n == UNAPPLIED_NOTE), "{row:#?}");
+        }
+    }
+
+    #[test]
+    fn a_dropped_match_holds_back_every_row() {
+        in_data_dir(|f| {
+            // ssh would reach web through the bastion; the import cannot know.
+            let text = "Host web\n  User u\n  LocalForward 1 d:1\nHost db\n  User u\nMatch host web\n  ProxyJump bastion\n";
+            let preview = f.preview(text);
+            assert_eq!(names(&preview), ["web", "web (-L 1)", "db"]);
+            assert_all_held_back(&preview);
+            assert_eq!(item(&preview, "web").kind, "direct");
+            assert_eq!(notices_saying(&preview, "Match block skipped").len(), 1);
+
+            // It can still be chosen, row by row.
+            let result = f.apply(vec![item(&preview, "db").key.clone()]).unwrap();
+            assert_eq!(result.connections, ["db"]);
+        });
+    }
+
+    #[test]
+    fn an_include_that_was_not_applied_holds_back_every_row() {
+        in_data_dir(|f| {
+            f.home.write(".ssh/loop", "Include loop\n");
+            f.home.write(".ssh/big", &"#".repeat(2 * 1024 * 1024));
+            for include in [
+                "Include [ab]",
+                "Include ~bob/config",
+                "Include \"unbalanced",
+                "Include ~/.ssh",
+                "Include loop",
+                "Include big",
+            ] {
+                let preview = f.preview(&format!("{include}\nHost web\n  User u\n"));
+                assert_eq!(names(&preview), ["web"], "{include}");
+                assert_all_held_back(&preview);
+            }
+        });
+    }
+
+    #[test]
+    fn an_unreadable_host_line_holds_back_every_row() {
+        in_data_dir(|f| {
+            let preview = f.preview("Host \"web\n  ProxyJump bastion\nHost db\n  User u\n");
+            assert_eq!(names(&preview), ["db"]);
+            assert_all_held_back(&preview);
+        });
+    }
+
+    #[test]
+    fn an_include_ssh_would_ignore_too_holds_back_nothing() {
+        in_data_dir(|f| {
+            let preview = f
+                .preview("Include /nonexistent/file\nInclude nothing-here/*\nHost web\n  User u\n");
+            assert_eq!(preview.notices.len(), 2, "{:#?}", preview.notices);
+            assert_none_held_back(&preview);
+        });
+    }
+
+    #[test]
+    fn an_unreadable_option_stays_with_the_host_it_applies_to() {
+        in_data_dir(|f| {
+            let preview = f.preview("Host bad\n  Port \"1\nHost good\n  User u\n");
+            assert_eq!(names(&preview), ["good"]);
+            assert_eq!(skip(&preview, "bad").category, ImportSkipCategory::Invalid);
+            assert_none_held_back(&preview);
+        });
+    }
+
+    #[test]
+    fn a_config_with_nothing_left_out_starts_ticked() {
+        in_data_dir(|f| {
+            assert_none_held_back(&f.preview(BASIC));
+        });
+    }
+
     #[test]
     fn hosts_inside_includes_are_imported_and_files_are_named() {
         in_data_dir(|f| {
@@ -2899,6 +3000,7 @@ mod tests {
             assert_eq!(names(&preview), ["real"]);
             assert_eq!(notices_saying(&preview, "were passed over too").len(), 1);
             assert!(preview.notices.len() < 300, "{}", preview.notices.len());
+            assert_all_held_back(&preview);
             assert!(started.elapsed() < QUICKLY, "{:?}", started.elapsed());
         });
     }

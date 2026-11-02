@@ -21,6 +21,11 @@
 //!
 //! `Match` is deliberately not evaluated: its conditions depend on the
 //! machine and the connection. Its block is dropped and reported.
+//!
+//! What is dropped this way can change any host, and nothing here can tell
+//! which: a `Match` may be the line that sends a host through its bastion. So
+//! it sets [`ParsedConfig::unapplied`], which the import has to act on. An
+//! `Include` that matches no file does not: `ssh` reads nothing from it either.
 
 use std::borrow::Cow;
 use std::cell::Cell;
@@ -272,6 +277,9 @@ pub struct ParsedConfig {
     pub notices: Vec<Notice>,
     /// Every file read, for the preview to name.
     pub files: Vec<String>,
+    /// Whether a `Match`, a `Host` line or an `Include` was left out, so that
+    /// what `resolve` answers may not be what `ssh` would do for any host.
+    pub unapplied: bool,
     /// What every `resolve` so far has cost, see `resolve_steps`.
     steps: Cell<usize>,
 }
@@ -606,6 +614,7 @@ struct Reader<'a> {
     bytes_left: u64,
     files: Vec<String>,
     notices: Vec<Notice>,
+    unapplied: bool,
 }
 
 impl<'a> Reader<'a> {
@@ -616,6 +625,7 @@ impl<'a> Reader<'a> {
             bytes_left: MAX_TOTAL_BYTES,
             files: Vec::new(),
             notices: Vec::new(),
+            unapplied: false,
         }
     }
 
@@ -624,6 +634,7 @@ impl<'a> Reader<'a> {
             statements,
             notices: self.notices,
             files: self.files,
+            unapplied: self.unapplied,
             steps: Cell::new(0),
         }
     }
@@ -645,6 +656,12 @@ impl<'a> Reader<'a> {
             source: at.clone(),
             message,
         });
+    }
+
+    /// A notice about something that could change what any host does.
+    fn left_out(&mut self, at: &Source, message: String) {
+        self.unapplied = true;
+        self.notice(at, message);
     }
 
     /// Read a regular file within the import's limits. The checks come
@@ -684,7 +701,7 @@ impl<'a> Reader<'a> {
         let real = canonical(path);
         if self.stack.contains(&real) {
             let shown = self.display(path);
-            self.notice(
+            self.left_out(
                 at,
                 format!("Include of {shown} skipped: it would include itself"),
             );
@@ -692,14 +709,14 @@ impl<'a> Reader<'a> {
         }
         if depth >= MAX_INCLUDE_DEPTH {
             let shown = self.display(path);
-            self.notice(
+            self.left_out(
                 at,
                 format!("Include of {shown} skipped: more than {MAX_INCLUDE_DEPTH} levels deep"),
             );
             return;
         }
         match self.read_bytes(path) {
-            Err(why) => self.notice(at, format!("Include skipped: {why}")),
+            Err(why) => self.left_out(at, format!("Include skipped: {why}")),
             Ok(bytes) => {
                 self.stack.push(real);
                 let file = self.display(path);
@@ -725,38 +742,38 @@ impl<'a> Reader<'a> {
                     Ok(patterns) => out.push(Statement::Host(patterns, at)),
                     Err(why) => {
                         out.push(Statement::Opaque);
-                        self.notice(&at, format!("Host line ignored with its block: {why}"));
+                        self.left_out(&at, format!("Host line ignored with its block: {why}"));
                     }
                 },
                 "match" => {
                     out.push(Statement::Opaque);
-                    self.notice(
+                    self.left_out(
                         &at,
                         "Match block skipped: SSIX does not evaluate Match, so its options \
                          were not applied"
                             .to_string(),
                     );
                 }
-                "include" => match line.args {
-                    Err(why) => self.notice(&at, format!("Include line ignored: {why}")),
-                    Ok(args) => {
-                        for arg in args {
-                            match expand_include(&arg, self.home) {
-                                Err(why) => {
-                                    self.notice(&at, format!("Include of {arg} skipped: {why}"))
-                                }
-                                Ok(paths) if paths.is_empty() => {
-                                    self.notice(&at, format!("Include of {arg} matched no files"))
-                                }
-                                Ok(paths) => {
-                                    for path in paths {
-                                        self.include_file(&path, &at, depth, &mut out);
+                "include" => {
+                    match line.args {
+                        Err(why) => self.left_out(&at, format!("Include line ignored: {why}")),
+                        Ok(args) => {
+                            for arg in args {
+                                match expand_include(&arg, self.home) {
+                                    Err(why) => self
+                                        .left_out(&at, format!("Include of {arg} skipped: {why}")),
+                                    Ok(paths) if paths.is_empty() => self
+                                        .notice(&at, format!("Include of {arg} matched no files")),
+                                    Ok(paths) => {
+                                        for path in paths {
+                                            self.include_file(&path, &at, depth, &mut out);
+                                        }
                                     }
                                 }
                             }
                         }
                     }
-                },
+                }
                 word => {
                     if let Some(keyword) = Keyword::from_lowercase(word) {
                         let args = line.args.map_err(|why| {
@@ -1192,6 +1209,33 @@ mod tests {
         let host = config.resolve("web");
         assert_eq!(host.identity_files.len(), MAX_IDENTITY_FILES);
         assert_eq!(host.identity_files[0].single().unwrap(), "/k/0");
+    }
+
+    #[test]
+    fn only_what_could_change_a_host_counts_as_unapplied() {
+        let home = test_support::TempHome::new();
+        home.write(".ssh/inner", "Include inner\n");
+        for (text, unapplied) in [
+            ("Host a\nUser u\n", false),
+            ("Include /nonexistent/file\nHost a\n", false),
+            ("Include nothing-here/*\nHost a\n", false),
+            ("Host a\nPort \"1\n", false),
+            ("Host a\nForwardAgent yes\n", false),
+            ("Match all\nUser u\n", true),
+            ("Host \"a\nUser u\n", true),
+            ("Include \"a\n", true),
+            ("Include [ab]\n", true),
+            ("Include ~bob/config\n", true),
+            ("Include ~/.ssh\n", true),
+            ("Include inner\n", true),
+        ] {
+            let config = ParsedConfig::parse_text(text, &home.0);
+            assert_eq!(
+                config.unapplied, unapplied,
+                "{text:?}: {:?}",
+                config.notices
+            );
+        }
     }
 
     #[test]

@@ -228,6 +228,32 @@ describe("ImportDialog", () => {
     ]);
   });
 
+  it("offers nothing by default when every row is held back, but lets each be ticked", async () => {
+    const user = userEvent.setup();
+    const note = "Part of this config was not applied (see Passed over)";
+    backendWith({
+      ...PREVIEW,
+      items: [
+        item("web", { preselected: false, notes: [note] }),
+        item("db", { preselected: false, notes: [note] }),
+      ],
+    });
+    await renderLoaded();
+    expect(checkbox("web")).not.toBeChecked();
+    expect(checkbox("db")).not.toBeChecked();
+    expect(within(row("web")).getByText(note)).toBeInTheDocument();
+    expect(within(row("db")).getByText(note)).toBeInTheDocument();
+    expect(screen.getByTestId("import-select-all")).not.toBeChecked();
+    expect(screen.getByTestId("import-confirm")).toBeDisabled();
+
+    await user.click(checkbox("db"));
+    await user.click(screen.getByTestId("import-confirm"));
+    await screen.findByTestId("import-result");
+    expect(calls("import_ssh_config_apply")).toEqual([
+      ["import_ssh_config_apply", { input: { path: "~/.ssh/config", keys: ["key-db"] } }],
+    ]);
+  });
+
   it("keeps what the user ticked when the preview is read again", async () => {
     const user = userEvent.setup();
     backendWith({ ...PREVIEW, items: [item("web"), item("alt", { preselected: false })] });
