@@ -346,6 +346,73 @@ export interface BackupList {
   backups: BackupInfo[];
 }
 
+/**
+ * `import_ssh_config_preview` / `import_ssh_config_apply`
+ * (`src-tauri/src/commands/import_config.rs`).
+ */
+export type ImportSkipCategory =
+  | "pattern"
+  | "already_imported"
+  | "name_clash"
+  | "duplicate"
+  | "unsupported"
+  | "invalid";
+
+export interface ImportCredentialPlan {
+  /** What it signs in to, in the words the connection form uses. */
+  role: string;
+  name: string;
+  username: string;
+  /** The key's path; `null` means keys from the SSH agent. */
+  private_key_path: string | null;
+  /** Whether the credential exists already and will be shared. */
+  exists: boolean;
+}
+
+export interface ImportItem {
+  /** Hash of what this item would create; `import_ssh_config_apply` takes it. */
+  key: string;
+  name: string;
+  type: ConnectionType;
+  /** Where it goes, in one line. */
+  target: string;
+  credentials: ImportCredentialPlan[];
+  /** Runs locally on every connect, so the preview shows it in full. */
+  proxy_command: string | null;
+  /** Defaults the import chose and details it had to drop. */
+  notes: string[];
+  /** `file:line` of the Host or forward line. */
+  source: string;
+}
+
+export interface ImportSkip {
+  name: string;
+  category: ImportSkipCategory;
+  reason: string;
+  source: string;
+}
+
+export interface ImportNotice {
+  message: string;
+  source: string;
+}
+
+export interface ImportPreview {
+  path: string;
+  /** Every file read, the config first. */
+  files: string[];
+  items: ImportItem[];
+  skipped: ImportSkip[];
+  notices: ImportNotice[];
+}
+
+export interface ImportResult {
+  /** Names of the connections stored. */
+  connections: string[];
+  /** Names of the credentials created; shared ones are not listed. */
+  credentials: string[];
+}
+
 /** A saved command to paste into a terminal (see `src/lib/snippets.ts`). */
 export interface Snippet {
   id: string;
