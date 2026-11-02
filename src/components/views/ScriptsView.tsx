@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useShallow } from "zustand/react/shallow";
-import { FileCode, Pencil, Play, Plus, Square, Trash2 } from "lucide-react";
+import { FileCode, Play, Plus, Square } from "lucide-react";
 import type { Connection, Script, ScriptInput } from "@/types";
 import { Button } from "../ui/button";
 import { Badge } from "../ui/badge";
@@ -8,11 +8,11 @@ import { Checkbox } from "../ui/checkbox";
 import { EmptyState } from "../ui/EmptyState";
 import { ErrorBanner } from "../ui/error-banner";
 import { StatusIcon } from "../ui/status-icon";
-import { ConfirmDialog } from "../ConfirmDialog";
+import { DeleteItemDialog, ItemRowActions } from "../ItemActions";
 import { ScriptForm } from "../ScriptForm";
 import { useScriptsStore } from "@/store/useScriptsStore";
 import { useConnectionsStore } from "@/store/useConnectionsStore";
-import type { FormSwitchGuard } from "@/store/useDialogsStore";
+import { useEditorPanel } from "@/hooks/useEditorPanel";
 import { isBulkActionable } from "@/lib/bulk-actions";
 import {
   formatDuration,
@@ -21,9 +21,6 @@ import {
   type ScriptRunStep,
 } from "@/lib/scripts";
 import { cn } from "@/lib/utils";
-
-/** What the side panel editor is showing: a new script or an existing one. */
-type Editing = { script: Script | null; key: number } | null;
 
 /**
  * The Scripts tab: saved scripts on the left, the selected script's run
@@ -69,24 +66,13 @@ export function ScriptsView() {
   const [selectedId, setSelectedId] = useState<string | null>(run?.scriptId ?? null);
   const selected = scripts.find((s) => s.id === selectedId) ?? scripts[0] ?? null;
 
-  const [editing, setEditing] = useState<Editing>(null);
-  const editKey = useRef(0);
-  const formGuard = useRef<FormSwitchGuard | null>(null);
-  const setFormGuard = useCallback((guard: FormSwitchGuard | null) => {
-    formGuard.current = guard;
-  }, []);
-  // Opening another script while the editor has unsaved changes asks first.
-  const openEditor = (script: Script | null) => {
-    const open = () => setEditing({ script, key: ++editKey.current });
-    if (formGuard.current) formGuard.current(open);
-    else open();
-  };
+  const { editing, openEditor, closeEditor, setFormGuard } = useEditorPanel<Script>();
 
   const [confirmDelete, setConfirmDelete] = useState<Script | null>(null);
 
   const submit = async (input: ScriptInput) => {
-    const saved = editing?.script
-      ? await updateScript(editing.script.id, input)
+    const saved = editing?.item
+      ? await updateScript(editing.item.id, input)
       : await addScript(input);
     setSelectedId(saved.id);
     return saved;
@@ -145,26 +131,12 @@ export function ScriptsView() {
                     {script.interpreter}
                   </span>
                 </button>
-                <Button
-                  size="icon"
-                  variant="ghost"
-                  className="h-7 w-7"
-                  aria-label={`Edit ${script.name}`}
-                  onClick={() => openEditor(script)}
-                  data-testid="script-row-edit"
-                >
-                  <Pencil className="h-3.5 w-3.5" aria-hidden="true" />
-                </Button>
-                <Button
-                  size="icon"
-                  variant="ghost"
-                  className="h-7 w-7"
-                  aria-label={`Delete ${script.name}`}
-                  onClick={() => setConfirmDelete(script)}
-                  data-testid="script-row-delete"
-                >
-                  <Trash2 className="h-3.5 w-3.5" aria-hidden="true" />
-                </Button>
+                <ItemRowActions
+                  name={script.name}
+                  testIdPrefix="script"
+                  onEdit={() => openEditor(script)}
+                  onDelete={() => setConfirmDelete(script)}
+                />
               </li>
             ))}
           </ul>
@@ -186,29 +158,19 @@ export function ScriptsView() {
       {editing && (
         <ScriptForm
           key={editing.key}
-          script={editing.script}
+          script={editing.item}
           onSubmit={submit}
-          onClose={() => setEditing(null)}
+          onClose={closeEditor}
           onGuardChange={setFormGuard}
         />
       )}
-      <ConfirmDialog
-        open={!!confirmDelete}
-        onOpenChange={(o) => !o && setConfirmDelete(null)}
-        title="Delete script?"
-        description={
-          <>
-            Delete <strong>{confirmDelete?.name}</strong>? This cannot be undone.
-          </>
-        }
-        confirmLabel="Delete"
-        variant="destructive"
-        testId="script-delete-dialog"
-        onConfirm={async () => {
-          if (!confirmDelete) return;
-          await deleteScript(confirmDelete.id);
-          if (editing?.script?.id === confirmDelete.id) setEditing(null);
-          setConfirmDelete(null);
+      <DeleteItemDialog
+        item={confirmDelete}
+        kind="script"
+        onClose={() => setConfirmDelete(null)}
+        onDelete={async (script) => {
+          await deleteScript(script.id);
+          if (editing?.item?.id === script.id) closeEditor();
         }}
       />
     </div>

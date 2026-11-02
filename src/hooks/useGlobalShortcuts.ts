@@ -6,6 +6,7 @@ import { useDialogsStore } from "@/store/useDialogsStore";
 import { useTerminalsStore } from "@/store/useTerminalsStore";
 import { useViewStore } from "@/store/useViewStore";
 // roadmap:snippets
+import { useSnippetsStore } from "@/store/useSnippetsStore";
 // roadmap:terminal-ux
 
 /**
@@ -65,6 +66,14 @@ export const SHORTCUTS: readonly ShortcutEntry[] = [
     handler: () => useTerminalsStore.getState().selectTabByIndex(n - 1),
   })),
   // roadmap:snippets
+  {
+    combo: "mod+shift+s",
+    description: "Paste a snippet into the active terminal",
+    handler: () => useSnippetsStore.getState().openPalette(),
+    // Its main use is from inside a terminal. xterm sends nothing for
+    // Ctrl+Shift+S and no readline binding uses it, so the shell loses nothing.
+    allowInTypingSurface: true,
+  },
   // roadmap:terminal-ux
 ];
 

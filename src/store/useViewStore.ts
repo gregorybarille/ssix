@@ -16,17 +16,22 @@ interface ViewState {
    * view goes through it, so unsaved changes are not dropped silently.
    */
   leaveGuard: FormSwitchGuard | null;
-  setView: (view: NavItem) => void;
+  /** `onChanged` runs once the view has changed: never, if the user keeps editing. */
+  setView: (view: NavItem, onChanged?: () => void) => void;
   setLeaveGuard: (guard: FormSwitchGuard | null) => void;
 }
 
 export const useViewStore = create<ViewState>((set, get) => ({
   view: "connections",
   leaveGuard: null,
-  setView: (view) => {
+  setView: (view, onChanged) => {
     const { view: current, leaveGuard } = get();
-    if (view !== current && leaveGuard) leaveGuard(() => set({ view }));
-    else set({ view });
+    const change = () => {
+      set({ view });
+      onChanged?.();
+    };
+    if (view !== current && leaveGuard) leaveGuard(change);
+    else change();
   },
   setLeaveGuard: (leaveGuard) => set({ leaveGuard }),
 }));

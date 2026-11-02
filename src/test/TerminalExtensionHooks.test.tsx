@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { render } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
+import { SnippetPalette } from "@/components/SnippetPalette";
 import { Terminal } from "@/components/Terminal";
 import {
   registerTerminalExtension,
@@ -8,11 +9,15 @@ import {
   type TerminalExtensionContext,
 } from "@/components/terminal/extensions";
 import { activeSessionId, writeToSession } from "@/lib/terminalRegistry";
-import type { AppSettings, Connection } from "@/types";
+import { useSnippetsStore } from "@/store/useSnippetsStore";
+import { useTerminalsStore } from "@/store/useTerminalsStore";
+import type { AppSettings, Connection, Snippet } from "@/types";
+import { renderInPanel } from "./panel";
 
 /**
  * xterm.js cannot run in jsdom, so a stand-in records what `Terminal` does
- * with it. This pins where the component calls the extension hooks.
+ * with it. This pins where the component calls the extension hooks, and when it
+ * lets the terminal have the keyboard.
  */
 const mocks = vi.hoisted(() => ({
   invoke: vi.fn(),
@@ -22,6 +27,8 @@ const mocks = vi.hoisted(() => ({
     onDataListener: (data: string) => void;
     onSelectionListener: () => void;
     selection: string;
+    focused: number;
+    keyHandler: (event: KeyboardEvent) => boolean;
   },
 }));
 
@@ -47,6 +54,9 @@ vi.mock("@xterm/xterm", () => ({
     onDataListener: (data: string) => void = () => {};
     onSelectionListener: () => void = () => {};
     selection = "";
+    focused = 0;
+    keyHandler: (event: KeyboardEvent) => boolean = () => true;
+    modes = { bracketedPasteMode: false };
     constructor() {
       mocks.term = this;
     }
@@ -54,12 +64,16 @@ vi.mock("@xterm/xterm", () => ({
     open() {
       mocks.events.push("open");
     }
-    focus() {}
+    focus() {
+      this.focused += 1;
+    }
     paste() {}
     getSelection() {
       return this.selection;
     }
-    attachCustomKeyEventHandler() {}
+    attachCustomKeyEventHandler(handler: (event: KeyboardEvent) => boolean) {
+      this.keyHandler = handler;
+    }
     onData(listener: (data: string) => void) {
       this.onDataListener = listener;
       return { dispose() {} };
@@ -125,6 +139,116 @@ describe("Terminal extension hooks", () => {
         {...props}
       />,
     );
+
+  describe("after a paste from the palette", () => {
+    const uptime: Snippet = { id: "1", name: "uptime", command: "uptime" };
+
+    /** What xterm does with a key: ask the custom handler, then send it to the shell. */
+    const press = (type: string, repeat = false) => {
+      const event = new KeyboardEvent(type, { key: "Enter", repeat, cancelable: true });
+      if (mocks.term?.keyHandler(event) !== false && type !== "keyup") {
+        mocks.term?.onDataListener("\r");
+      }
+      return event;
+    };
+    const writes = () => mocks.invoke.mock.calls.filter(([cmd]) => cmd === "ssh_write");
+
+    function MountedPalette() {
+      return useSnippetsStore((s) => s.paletteOpen) ? <SnippetPalette /> : null;
+    }
+
+    /** Choose the snippet with Enter, and wait for the terminal to get the keyboard. */
+    async function pasteWithEnter() {
+      mocks.invoke.mockImplementation(async (cmd: string) =>
+        cmd === "get_snippets" ? [uptime] : undefined,
+      );
+      useTerminalsStore.setState({
+        tabs: [
+          { id: "t1", mode: "single", panes: [{ sessionId: "s1", connectionName: "prod" }] },
+        ],
+        activeTabId: "t1",
+      });
+      useSnippetsStore.setState({ snippets: [uptime], paletteOpen: true });
+      mount();
+      renderInPanel(<MountedPalette />);
+      fireEvent.keyDown(await screen.findByTestId("snippet-palette-search"), { key: "Enter" });
+      await vi.waitFor(() => expect(mocks.term?.focused).toBe(1));
+      expect(writes()).toEqual([["ssh_write", { sessionId: "s1", data: "uptime" }]]);
+    }
+
+    afterEach(() => {
+      useSnippetsStore.setState({ snippets: [], paletteOpen: false });
+      useTerminalsStore.setState({ tabs: [], activeTabId: null });
+    });
+
+    it("sends nothing while the Enter that chose the snippet repeats", async () => {
+      await pasteWithEnter();
+      const held = [press("keydown", true), press("keypress", true), press("keydown", true)];
+      expect(writes()).toHaveLength(1);
+      expect(held.every((event) => event.defaultPrevented)).toBe(true);
+    });
+
+    it("lets the user's next Enter through once that one is released", async () => {
+      await pasteWithEnter();
+      press("keydown", true);
+      press("keyup");
+      press("keydown");
+      expect(writes()).toEqual([
+        ["ssh_write", { sessionId: "s1", data: "uptime" }],
+        ["ssh_write", { sessionId: "s1", data: "\r" }],
+      ]);
+    });
+  });
+
+  describe("with a panel open", () => {
+    const key = (type: string) => new KeyboardEvent(type, { key: "a", cancelable: true });
+
+    it("forwards no key, on keypress either, where xterm sends printable keys from", () => {
+      mount();
+      const panel = document.createElement("div");
+      panel.dataset.slot = "app-panel-content";
+      document.body.appendChild(panel);
+      const handler = mocks.term?.keyHandler;
+      const keypress = key("keypress");
+      expect(handler?.(key("keydown"))).toBe(false);
+      expect(handler?.(keypress)).toBe(false);
+      expect(keypress.defaultPrevented).toBe(true);
+      expect(handler?.(key("keyup"))).toBe(true);
+      panel.remove();
+      expect(handler?.(key("keypress"))).toBe(true);
+    });
+  });
+
+  describe("becoming visible", () => {
+    const props = {
+      sessionId: "s1",
+      connectionName: "prod",
+      onDisconnect: vi.fn(),
+      settings,
+      connection,
+    };
+
+    async function show() {
+      const view = render(<Terminal {...props} isVisible={false} />);
+      view.rerender(<Terminal {...props} isVisible />);
+      // The terminal waits for the DOM to paint before it refits and takes focus.
+      await new Promise((resolve) => setTimeout(resolve, 80));
+    }
+
+    it("takes the keyboard when nothing else holds it", async () => {
+      await show();
+      expect(mocks.term?.focused).toBe(1);
+    });
+
+    it("leaves the keyboard with an open panel", async () => {
+      const panel = document.createElement("div");
+      panel.dataset.slot = "app-panel-content";
+      document.body.appendChild(panel);
+      await show();
+      panel.remove();
+      expect(mocks.term?.focused).toBe(0);
+    });
+  });
 
   it("runs onCreate with the terminal, session and connection, after open and before output", () => {
     let seen: TerminalExtensionContext | undefined;

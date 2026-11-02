@@ -32,6 +32,13 @@ describe("Form mounting structure", () => {
     expect(app.slice(cred, tun)).toMatch(/<CredentialsView[\s\n]/);
   });
 
+  it("loads the lazy snippet palette only once it is opened", () => {
+    expect(app).toMatch(
+      /snippetPaletteOpen && \(\s*<Suspense fallback=\{null\}>\s*<SnippetPalette \/>/,
+    );
+    expect(app.match(/<SnippetPalette[\s\n/]/g) ?? []).toHaveLength(1);
+  });
+
   it("Cmd+N switches to Connections before opening the form", () => {
     const handlerStart = app.indexOf('"mod+n":');
     expect(handlerStart).toBeGreaterThan(-1);

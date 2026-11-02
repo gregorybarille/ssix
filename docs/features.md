@@ -110,6 +110,10 @@ The terminal tab bar is a true WAI-ARIA tablist. With focus on a tab:
 - **Delete** or **Cmd/Ctrl+W** — close the focused tab
 - The "x" affordance on tabs is mouse-only.
 
+## Snippets
+
+Saved commands with `{{variable}}` prompts, pasted into the active terminal and never run for you: see [Snippets](snippets.md).
+
 ## Port Forwards
 
 - local forwards (`ssh -L`): SSIX listens on `127.0.0.1:<local port>` and
@@ -328,7 +332,7 @@ and (on Windows / Linux) the minimize / maximize / close window controls.
 ## Side Panel
 
 Nothing in SSIX opens a floating window. Editors (connection,
-credential and script forms), SCP and bulk SCP, key generation and key install open
+credential, script and snippet forms), the snippet palette, SCP and bulk SCP, key generation and key install open
 in a panel column on the right of the app, beside the current view, so
 the list you came from stays visible and usable. Confirmations appear as
 a compact card at the top of that column, above the panel they are about.
@@ -599,6 +603,7 @@ macOS and `Ctrl` everywhere else.
 | `Mod+,`        | Open Settings                                            |
 | `Mod+W`        | Close the active terminal tab (with confirm if live)     |
 | `Mod+1`…`Mod+9`| Switch to terminal tab N                                 |
+| `Mod+Shift+S`  | Paste a snippet into the active terminal ([Snippets](snippets.md)) |
 
 On macOS the shortcuts work everywhere, including while a terminal
 has focus: `Cmd+K`, `Cmd+W` or `Cmd+1` are never consumed by the shell
@@ -607,8 +612,11 @@ picker without clicking out of the terminal first. On Linux and
 Windows, `Ctrl` combos are suppressed when focus is in an input,
 textarea, `contenteditable` element, or anywhere inside an `xterm`
 instance, because `Ctrl+K`, `Ctrl+W` and friends are readline bindings
-inside the shell. To avoid swallowing those bindings, combos that mix
-`Ctrl` and `Cmd` simultaneously are ignored on every platform.
+inside the shell. `Mod+Shift+S` is the exception and works everywhere:
+its main use is from inside a terminal, and neither the shell nor a text
+field has a use for `Ctrl+Shift+S`. To avoid swallowing those bindings,
+combos that mix `Ctrl` and `Cmd` simultaneously are ignored on every
+platform.
 
 The terminal tab strip itself also implements its own WAI-ARIA
 keyboard model (Arrow keys, Home/End, Delete) — see the Terminals

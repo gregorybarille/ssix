@@ -8,8 +8,8 @@
 //! so each host of the run, even one whose call arrives after the cancel,
 //! sees it is cancelled, and no other run does.
 
-use crate::commands::blocking;
 use crate::commands::ssh::{connect_session, find_connection, ConnectedSession};
+use crate::commands::{blocking, check_item_name};
 use crate::logs::log_local;
 use crate::models::{AppData, Connection, Script, ScriptPlatform};
 use crate::remote_script::{self, ScriptResult, RUN_TIMEOUT};
@@ -22,7 +22,6 @@ use std::sync::LazyLock;
 use std::thread;
 use std::time::Duration;
 
-const NAME_MAX_CHARS: usize = 128;
 const INTERPRETER_MAX_CHARS: usize = 256;
 const BODY_MAX_BYTES: usize = 256 * 1024;
 
@@ -53,22 +52,12 @@ fn check_script(
     own_id: Option<&str>,
     input: ScriptInput,
 ) -> Result<ScriptInput, String> {
-    let name = input.name.trim().to_string();
-    if name.is_empty() {
-        return Err("Script name is required".to_string());
-    }
-    if name.chars().count() > NAME_MAX_CHARS {
-        return Err(format!(
-            "Script name must be {} characters or fewer",
-            NAME_MAX_CHARS
-        ));
-    }
-    if scripts
-        .iter()
-        .any(|s| s.name == name && Some(s.id.as_str()) != own_id)
-    {
-        return Err(format!("A script named \"{}\" already exists", name));
-    }
+    let name = check_item_name(
+        "Script",
+        &input.name,
+        scripts.iter().map(|s| (s.id.as_str(), s.name.as_str())),
+        own_id,
+    )?;
 
     let interpreter = match input.interpreter.trim() {
         "" => input.platform.default_interpreter().to_string(),

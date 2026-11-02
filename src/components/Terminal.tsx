@@ -4,7 +4,7 @@ import { FitAddon } from "@xterm/addon-fit";
 import { WebglAddon } from "@xterm/addon-webgl";
 import { invoke } from "@/lib/tauri";
 import { attachOutput } from "@/lib/terminalOutput";
-import { registerTerminal, unregisterTerminal } from "@/lib/terminalRegistry";
+import { isHeldEnter, registerTerminal, unregisterTerminal } from "@/lib/terminalRegistry";
 import { terminalTheme } from "@/lib/terminalTheme";
 import { AppSettings, Connection } from "@/types";
 import {
@@ -27,6 +27,11 @@ interface TerminalProps {
   settings?: AppSettings;
   /** The saved connection behind this session, passed on to terminal extensions. */
   connection?: Connection;
+}
+
+/** A panel keeps the keyboard: a terminal behind it takes neither focus nor keys. */
+function isPanelOpen(): boolean {
+  return document.querySelector('[data-slot="app-panel-content"]') !== null;
 }
 
 export interface TerminalPasteDetail {
@@ -63,7 +68,7 @@ export function Terminal({ sessionId, isVisible, onDisconnect, settings, connect
           if (term) {
             invoke("ssh_resize", { sessionId, cols: term.cols, rows: term.rows }).catch(() => {});
           }
-          xtermRef.current?.focus();
+          if (!isPanelOpen()) xtermRef.current?.focus();
         } catch {
           // ignore
         }
@@ -139,13 +144,22 @@ export function Terminal({ sessionId, isVisible, onDisconnect, settings, connect
      * Ctrl+V on macOS is captured by the WebView).
      *
      * In-app panels are non-modal, so xterm's hidden textarea can keep
-     * focus while a panel is open. Never forward keystrokes in that state.
+     * focus while a panel is open. Never forward keystrokes in that state,
+     * on keypress as well: xterm sends printable keys and Enter from there
+     * when it was told to skip their keydown.
      */
     term.attachCustomKeyEventHandler((e) => {
-      if (e.type !== "keydown") return true;
-      if (document.querySelector('[data-slot="app-panel-content"]')) {
+      if (isHeldEnter(sessionId, e)) {
+        // Without this the browser goes on to fire keypress, and xterm sends that.
+        e.preventDefault();
         return false;
       }
+      if (e.type === "keyup") return true;
+      if (isPanelOpen()) {
+        if (e.type === "keypress") e.preventDefault();
+        return false;
+      }
+      if (e.type !== "keydown") return true;
       const mod = e.metaKey || e.ctrlKey;
       if (!mod || e.altKey) return true;
       const key = e.key.toLowerCase();

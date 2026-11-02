@@ -28,6 +28,7 @@ import { useSettingsStore } from "./store/useSettingsStore";
 import { useGitSyncStore } from "./store/useGitSyncStore";
 import { useViewStore } from "./store/useViewStore";
 import { useDialogsStore } from "./store/useDialogsStore";
+import { useSnippetsStore } from "./store/useSnippetsStore";
 import { useTerminalsStore } from "./store/useTerminalsStore";
 import { runningForwardCount, usePortForwardsStore } from "./store/usePortForwardsStore";
 import { useApplySettings } from "./hooks/useApplySettings";
@@ -53,6 +54,9 @@ const ScpDialog = lazy(() =>
 );
 const BulkScpDialog = lazy(() =>
   import("./components/BulkScpDialog").then((m) => ({ default: m.BulkScpDialog })),
+);
+const SnippetPalette = lazy(() =>
+  import("./components/SnippetPalette").then((m) => ({ default: m.SnippetPalette })),
 );
 
 /**
@@ -133,6 +137,7 @@ function App() {
   const captureScreenshot = useScreenshotToast();
 
   // Terminal & port forward session state
+  const snippetPaletteOpen = useSnippetsStore((s) => s.paletteOpen);
   const tabs = useTerminalsStore((s) => s.tabs);
   const activeTabId = useTerminalsStore((s) => s.activeTabId);
   const setActiveTabId = useTerminalsStore((s) => s.setActiveTabId);
@@ -542,6 +547,13 @@ function App() {
             groupLabel={dialogs.bulkScpLabel}
           />
         </Suspense>
+
+        {/* Snippet palette (Cmd/Ctrl+Shift+S) */}
+        {snippetPaletteOpen && (
+          <Suspense fallback={null}>
+            <SnippetPalette />
+          </Suspense>
+        )}
 
         {/* Custom context menu */}
         {dialogs.contextMenu && (

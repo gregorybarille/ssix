@@ -346,13 +346,15 @@ export interface BackupList {
   backups: BackupInfo[];
 }
 
-/** A saved command to paste into a terminal (roadmap: snippets; data only so far). */
+/** A saved command to paste into a terminal (see `src/lib/snippets.ts`). */
 export interface Snippet {
   id: string;
   name: string;
   command: string;
   tags?: string[];
 }
+
+export type SnippetInput = Omit<Snippet, "id">;
 
 /** The kind of host a script is written for. */
 export type ScriptPlatform = "posix" | "windows";
