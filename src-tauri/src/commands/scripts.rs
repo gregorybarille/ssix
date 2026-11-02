@@ -198,7 +198,10 @@ fn run_script_sync(script_id: &str, connection_id: &str, run: u64) -> Result<Scr
         .cloned()
         .ok_or_else(|| "Script not found".to_string())?;
 
-    let outcome = connect_unless_cancelled(data, conn.clone(), run).and_then(|ssh| match ssh {
+    let outcome = connect_unless_cancelled(data, conn.clone(), "Running a script", &|| {
+        is_cancelled(run)
+    })
+    .and_then(|ssh| match ssh {
         None => Ok(ScriptResult::cancelled_before_start()),
         Some(ssh) => remote_script::run(
             &ssh.session,
@@ -231,22 +234,23 @@ fn run_script_sync(script_id: &str, connection_id: &str, run: u64) -> Result<Scr
     outcome
 }
 
-/// Connect to `conn` for run `run`, or `None` once the run is cancelled:
-/// a connection can take a while to fail. An abandoned attempt ends on
-/// its own connect and handshake timeouts.
-fn connect_unless_cancelled(
+/// Connect to `conn`, or `None` once `cancelled` returns true: a connection
+/// can take a while to fail. An abandoned attempt ends on its own connect
+/// and handshake timeouts.
+pub(crate) fn connect_unless_cancelled(
     data: AppData,
     conn: Connection,
-    run: u64,
+    feature: &'static str,
+    cancelled: &dyn Fn() -> bool,
 ) -> Result<Option<ConnectedSession>, String> {
     let (tx, rx) = mpsc::channel();
     thread::spawn(move || {
-        let _ = tx.send(connect_session(&data, &conn, "Running a script"));
+        let _ = tx.send(connect_session(&data, &conn, feature));
     });
     loop {
         match rx.recv_timeout(CANCEL_POLL) {
             Ok(connected) => return connected.map(Some),
-            Err(RecvTimeoutError::Timeout) if is_cancelled(run) => return Ok(None),
+            Err(RecvTimeoutError::Timeout) if cancelled() => return Ok(None),
             Err(RecvTimeoutError::Timeout) => {}
             Err(RecvTimeoutError::Disconnected) => {
                 return Err("The connection attempt stopped unexpectedly".to_string())
