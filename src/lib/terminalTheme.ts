@@ -192,7 +192,7 @@ export interface TerminalPalette {
 /**
  * The schemes a connection can pick. A save checks `color_scheme` against the
  * same ids in `TERMINAL_COLOR_SCHEMES` (`src-tauri/src/commands/connections.rs`):
- * add a palette in both, or `terminalPalettesParity.test.ts` fails.
+ * add a palette in both, or `src/test/terminalTheme.test.ts` fails.
  */
 export const TERMINAL_PALETTES: readonly TerminalPalette[] = [
   { id: "tokyo-night", label: "Tokyo Night", theme: TOKYO_NIGHT },

@@ -35,7 +35,7 @@ export function activateTerminalLink(event: MouseEvent, raw: string, viaHyperlin
 /**
  * Clickable links in a terminal: URLs found in its text through
  * `@xterm/addon-web-links`, and OSC 8 hyperlinks, which xterm detects itself
- * and hands to `linkHandler`. While the mouse is over either, `TerminalLinkHint`
+ * and hands to `linkHandler`. While the mouse is over either, `TerminalPaneOverlays`
  * shows the real target. xterm does not offer an OSC 8 link with another
  * scheme at all (`allowNonHttpProtocols` stays off).
  */

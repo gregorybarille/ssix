@@ -61,8 +61,8 @@ pub struct ConnectionAdvanced {
 }
 
 /// The terminal palettes a connection can pick, as the ids of
-/// `TERMINAL_PALETTES` in `src/lib/terminalTheme.ts`. A test there
-/// (`terminalPalettesParity.test.ts`) fails when the two lists differ.
+/// `TERMINAL_PALETTES` in `src/lib/terminalTheme.ts`. A test of those
+/// (`src/test/terminalTheme.test.ts`) fails when the two lists differ.
 const TERMINAL_COLOR_SCHEMES: &[&str] = &[
     "tokyo-night",
     "tokyo-night-day",
