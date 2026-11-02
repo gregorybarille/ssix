@@ -770,6 +770,72 @@ describe("dragging", () => {
       expect(loadCollapsedFolders()).toEqual(new Set(["prod/eu"]));
     });
   });
+
+  describe("a refused move's message", () => {
+    const refuseADrag = async () => {
+      invokeMock.mockRejectedValueOnce("refused");
+      dragOnto(connectionRow("loose")!, folderRow("production"));
+      drop();
+      await screen.findByTestId("folder-move-error");
+      await nextTask();
+    };
+    const messageGoes = () =>
+      waitFor(() => expect(screen.queryByTestId("folder-move-error")).not.toBeInTheDocument());
+
+    it("goes with a later drag that works", async () => {
+      show();
+      await refuseADrag();
+      invokeMock.mockResolvedValueOnce({ ...direct("loose"), folder: "production" });
+      dragOnto(connectionRow("loose")!, folderRow("production"));
+      drop();
+      await messageGoes();
+    });
+
+    it("goes with a later move from the menu", async () => {
+      const user = userEvent.setup({ pointerEventsCheck: 0 });
+      show();
+      await refuseADrag();
+      invokeMock.mockResolvedValueOnce({ ...direct("loose"), folder: "production" });
+      fireEvent.contextMenu(connectionRow("loose")!);
+      await act(async () => {
+        screen.getByRole("menuitem", { name: "Move to folder…" }).click();
+      });
+      await user.type(await screen.findByTestId("folder-move-input"), "production{Enter}");
+      await messageGoes();
+    });
+
+    it("goes with a later rename", async () => {
+      const user = userEvent.setup({ pointerEventsCheck: 0 });
+      show();
+      await refuseADrag();
+      invokeMock.mockResolvedValueOnce(CONNECTIONS);
+      await user.click(within(folderRow("prod")!).getByTestId("folder-rename"));
+      const input = await screen.findByTestId("folder-rename-input");
+      await user.clear(input);
+      await user.type(input, "live{Enter}");
+      await messageGoes();
+    });
+
+    it("goes with a later delete", async () => {
+      const user = userEvent.setup({ pointerEventsCheck: 0 });
+      show();
+      await refuseADrag();
+      invokeMock.mockResolvedValueOnce(CONNECTIONS);
+      await user.click(within(folderRow("prod")!).getByTestId("folder-delete"));
+      await user.click(await screen.findByTestId("folder-delete-dialog-confirm"));
+      await messageGoes();
+    });
+  });
+
+  it("says so when the move is refused", async () => {
+    invokeMock.mockRejectedValueOnce("Connection not found");
+    show();
+    dragOnto(connectionRow("loose")!, folderRow("production"));
+    drop();
+    const banner = await screen.findByTestId("folder-move-error");
+    expect(banner).toHaveTextContent("Could not move loose: Connection not found");
+    expect(connectionRow("loose")).toHaveAttribute("aria-level", "2");
+  });
 });
 
 describe("rename", () => {

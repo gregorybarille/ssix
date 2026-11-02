@@ -347,6 +347,7 @@ export function FolderTree({
   };
 
   const moveTo = async (connection: Connection, path: string | null) => {
+    setMoveError(null);
     await moveConnectionToFolder(connection.id, path);
     // Show the folder it landed in, and the connection with it.
     changeCollapsed((current) => collapsedWithRevealed(current, path));
@@ -355,7 +356,6 @@ export function FolderTree({
   const drag = usePointerDrag<string>(dropFolderAt);
 
   const onDropOnFolder = (connection: Connection, target: string) => {
-    setMoveError(null);
     const path = target === NO_FOLDER ? null : target;
     if (path === (connection.folder ?? null)) return;
     void moveTo(connection, path).catch((err: unknown) =>
@@ -504,6 +504,7 @@ export function FolderTree({
             if (to !== renaming) {
               const merges = knownFolders.includes(to);
               await renameFolder(renaming, to);
+              setMoveError(null);
               changeCollapsed((current) => collapsedAfterRename(current, renaming, to, merges));
             }
             focusAfterClose.current = folderRowKey(to);
@@ -537,6 +538,7 @@ export function FolderTree({
         onConfirm={async () => {
           if (deleting === null) return;
           await deleteFolder(deleting);
+          setMoveError(null);
           changeCollapsed((current) => collapsedAfterDelete(current, deleting));
           focusAfterClose.current = folderRowKey(deletingParent ?? NO_FOLDER);
         }}
