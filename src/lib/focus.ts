@@ -27,6 +27,15 @@ export function focusIsFreeFor(container: Element | null): boolean {
 }
 
 /**
+ * Whether a terminal that just opened may take the keyboard. The user asked for
+ * it, perhaps seconds ago: a connection takes its time. So it gives way to someone
+ * typing elsewhere, and to nothing else, not even the button that asked for it.
+ */
+export function nobodyTypingElsewhere(terminal: Element | null): boolean {
+  return focusIsFreeFor(terminal) || !isTypingSurface(document.activeElement);
+}
+
+/**
  * Whether the keyboard is on something else in the tab of this terminal: another
  * pane, or the login prompt that just took it. Showing a split tab shows all of
  * its terminals, and each one asks for the keyboard a moment later.

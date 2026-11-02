@@ -270,6 +270,54 @@ describe("a terminal off screen", () => {
     second.textarea.remove();
   });
 
+  describe("when it has just opened", () => {
+    function focusedElsewhere(tag: string, wrapperClass = "") {
+      const wrapper = document.createElement("div");
+      wrapper.className = wrapperClass;
+      const held = document.createElement(tag);
+      wrapper.append(held);
+      document.body.append(wrapper);
+      held.focus();
+      return wrapper;
+    }
+
+    it("takes the keyboard", () => {
+      render(element());
+      expect(term().focus).toHaveBeenCalledOnce();
+    });
+
+    it("takes it from the button that asked for it", () => {
+      const button = focusedElsewhere("button");
+      render(element());
+      expect(term().focus).toHaveBeenCalledOnce();
+      button.remove();
+    });
+
+    it.each([
+      ["a text field", "input", ""],
+      ["another terminal", "textarea", "xterm"],
+    ])("leaves it with someone typing in %s", (_name, tag, wrapperClass) => {
+      const elsewhere = focusedElsewhere(tag, wrapperClass);
+      render(element());
+      expect(term().focus).not.toHaveBeenCalled();
+      elsewhere.remove();
+    });
+
+    it("leaves it to a panel open beside it", () => {
+      const panel = document.createElement("div");
+      panel.dataset.slot = "app-panel-content";
+      document.body.append(panel);
+      render(element());
+      expect(term().focus).not.toHaveBeenCalled();
+      panel.remove();
+    });
+
+    it("leaves it alone when it opens off screen", () => {
+      render(element({ isVisible: false }));
+      expect(term().focus).not.toHaveBeenCalled();
+    });
+  });
+
   describe("when a tab comes on screen", () => {
     const inTab = (props: Partial<Parameters<typeof Terminal>[0]>) => (
       <div role="tabpanel">

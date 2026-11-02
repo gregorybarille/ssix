@@ -285,6 +285,58 @@ describe("Terminal UX", () => {
     await closeAllTabs();
   });
 
+  describe("a terminal that just opened", () => {
+    /** The shell of a pane split in beside `first`, once it is up. */
+    async function secondPane(first: string): Promise<string> {
+      await browser.waitUntil(async () => (await sessionIds()).length === 2, {
+        timeout: 30_000,
+        timeoutMsg: "The split never opened a second terminal",
+      });
+      const second = (await sessionIds()).find((id) => id !== first);
+      if (!second) throw new Error("No second pane");
+      await waitForText(second, PROMPT_A);
+      return second;
+    }
+
+    it("takes the keyboard with no click", async () => {
+      await createConnectionA("conn-20-fresh");
+      const id = await openShell("conn-20-fresh");
+      await press("echo FRESH-$((40+2))\n");
+      await waitForText(id, "FRESH-42", 10_000);
+    });
+
+    it("takes the keyboard in the new pane of a split asked for from the tab bar", async () => {
+      await createConnectionA("conn-20-split-from");
+      await createConnectionA("conn-20-split-to");
+      const first = await openShell("conn-20-split-from");
+      await splitWith("conn-20-split-to");
+      const second = await secondPane(first);
+
+      await press("echo SPLIT-$((40+2))\n");
+      await waitForText(second, "SPLIT-42", 10_000);
+      expect(await textOf(first)).not.toContain("SPLIT");
+    });
+
+    it("leaves the keyboard with someone typing when a slow connection arrives", async () => {
+      await createConnectionA("conn-20-typing");
+      await createDirectConnection({
+        name: "conn-20-slow",
+        host: TARGETS.a.host,
+        port: TARGETS.a.sshPort,
+        credentialName: CREDENTIAL_A,
+        proxyCommand: `sleep 4; exec nc ${TARGETS.a.host} ${TARGETS.a.sshPort}`,
+      });
+      const first = await openShell("conn-20-typing");
+      await splitWith("conn-20-slow");
+      await typeIn(first, "echo TYPING-$((40+2))");
+      const second = await secondPane(first);
+
+      await press("\n");
+      await waitForText(first, "TYPING-42", 10_000);
+      expect(await textOf(second)).not.toContain("TYPING");
+    });
+  });
+
   describe("off screen", () => {
     it("keeps a terminal as it was across views, taking output but no keys", async () => {
       await createConnectionA("conn-20-views");

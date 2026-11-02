@@ -26,6 +26,10 @@ come back.
 - A shell that ends off screen does not interrupt you. The terminal asks about
   closing it when it is next shown. This also goes for a tab in the background.
 
+A terminal that just opened takes the keyboard too, unless a side panel has it or
+you are typing somewhere else by the time it connects. In a split, that puts it in
+the new pane unless you have gone back to typing in the old one.
+
 One thing does start over: splitting a tab, or closing a split back to one pane,
 gives the pane that stays a new terminal with an empty scrollback. Its shell goes
 on running.

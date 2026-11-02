@@ -172,6 +172,8 @@ describe("Terminal extension hooks", () => {
       });
       useSnippetsStore.setState({ snippets: [uptime], paletteOpen: true });
       mount();
+      // It took the keyboard as it opened. What counts is getting it back after the paste.
+      if (mocks.term) mocks.term.focused = 0;
       renderInPanel(<MountedPalette />);
       fireEvent.keyDown(await screen.findByTestId("snippet-palette-search"), { key: "Enter" });
       await vi.waitFor(() => expect(mocks.term?.focused).toBe(1));

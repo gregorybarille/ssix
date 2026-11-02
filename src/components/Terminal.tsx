@@ -2,7 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useRef } from "react";
 import { Terminal as XTerm } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { WebglAddon } from "@xterm/addon-webgl";
-import { anotherPaneHasFocus, isPanelOpen } from "@/lib/focus";
+import { anotherPaneHasFocus, isPanelOpen, nobodyTypingElsewhere } from "@/lib/focus";
 import { invoke } from "@/lib/tauri";
 import { attachOutput } from "@/lib/terminalOutput";
 import { activeSessionId, isHeldEnter, registerTerminal, unregisterTerminal } from "@/lib/terminalRegistry";
@@ -278,6 +278,11 @@ export function Terminal({ sessionId, isVisible, onDisconnect, settings, connect
 
     const resizeObserver = new ResizeObserver(fitToPane);
     resizeObserver.observe(termRef.current);
+
+    // The effect above ran before this terminal existed, so opening is up to this one.
+    if (isVisibleRef.current && !isPanelOpen() && nobodyTypingElsewhere(termRef.current)) {
+      term.focus();
+    }
 
     return () => {
       dataDisposable.dispose();
