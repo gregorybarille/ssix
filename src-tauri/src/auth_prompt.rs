@@ -42,7 +42,8 @@ const ANSWER_TIMEOUT: Duration = Duration::from_secs(300);
 /// call and includes the time spent in the callback, so the 15 s setup timeout
 /// would fail any answer that took longer than that to type.
 const EXCHANGE_TIMEOUT_MS: u32 = 900_000;
-/// Longest server text passed on, per field. Anything longer is not a prompt.
+/// Longest server text passed on, per field and for instructions gathered over
+/// several rounds. Anything longer is not a prompt.
 const MAX_TEXT_CHARS: usize = 4096;
 /// Longest answers accepted over IPC, in total.
 const MAX_ANSWER_BYTES: usize = 64 * 1024;
@@ -201,13 +202,49 @@ enum AuthEvent<'a> {
     },
 }
 
-/// Server text as the pane shows it: control characters, which could only
-/// disguise what is being asked, go. Line breaks and tabs stay.
+/// Characters that change how text around them is shown without showing
+/// anything themselves: Unicode's format category (bidi overrides and isolates,
+/// zero-width characters, tag characters) and the line and paragraph separators.
+/// Text that needs a joiner to look right still reads without it.
+fn is_invisible_formatting(c: char) -> bool {
+    matches!(
+        c as u32,
+        0xAD | 0x600..=0x605
+            | 0x61C
+            | 0x6DD
+            | 0x70F
+            | 0x890..=0x891
+            | 0x8E2
+            | 0x180E
+            | 0x200B..=0x200F
+            | 0x2028..=0x202E
+            | 0x2060..=0x2064
+            | 0x2066..=0x206F
+            | 0xFEFF
+            | 0xFFF9..=0xFFFB
+            | 0x110BD
+            | 0x110CD
+            | 0x13430..=0x1343F
+            | 0x1BCA0..=0x1BCA3
+            | 0x1D173..=0x1D17A
+            | 0xE0001
+            | 0xE0020..=0xE007F
+    )
+}
+
+/// Server text as the pane shows it: control and formatting characters, which
+/// could only disguise what is being asked, go. Line breaks and tabs stay.
 fn printable(text: &str) -> String {
     text.chars()
-        .filter(|c| !c.is_control() || matches!(c, '\n' | '\t'))
+        .filter(|&c| (!c.is_control() || matches!(c, '\n' | '\t')) && !is_invisible_formatting(c))
         .take(MAX_TEXT_CHARS)
         .collect()
+}
+
+/// Add a round's text to what earlier rounds left, up to the cap.
+fn keep_instructions(kept: &mut String, more: &str) {
+    let room = MAX_TEXT_CHARS.saturating_sub(kept.chars().count());
+    kept.extend(printable(more).chars().take(room));
 }
 
 struct PanePrompter {
@@ -246,7 +283,8 @@ impl PanePrompter {
                 fields: prompts.len(),
             },
         );
-        let shown = std::mem::take(&mut self.instructions) + &printable(instructions);
+        let mut shown = std::mem::take(&mut self.instructions);
+        keep_instructions(&mut shown, instructions);
         self.send(&AuthEvent::AuthPrompt {
             prompt_id: &prompt_id,
             host: &self.host,
@@ -331,7 +369,7 @@ impl KeyboardInteractivePrompt for PanePrompter {
         if prompts.is_empty() {
             // Nothing to answer, and no way to show it yet: libssh2 goes back
             // to the server as soon as this returns.
-            self.instructions.push_str(&printable(instructions));
+            keep_instructions(&mut self.instructions, instructions);
             return Vec::new();
         }
         self.asked = true;
@@ -596,6 +634,42 @@ mod tests {
             printable(&"x".repeat(MAX_TEXT_CHARS + 5)).len(),
             MAX_TEXT_CHARS
         );
+    }
+
+    /// A bidi override can show `password` as something else, and zero-width
+    /// characters can make text that looks the same say something different.
+    #[test]
+    fn strips_formatting_that_could_disguise_server_text() {
+        assert_eq!(
+            printable("\u{202E}drowssaP\u{202C}\u{200B}:\u{2066} x\u{2069}\u{FEFF}\u{E0041}\u{AD}"),
+            "drowssaP: x"
+        );
+        assert_eq!(printable("a\u{2028}b\u{2029}c\u{200F}d\u{61C}e"), "abcde");
+        assert_eq!(
+            printable("Code de vérification 確認\n"),
+            "Code de vérification 確認\n"
+        );
+    }
+
+    /// Each round can bring the full length of text, and nothing limits the
+    /// number of rounds a server starts.
+    #[test]
+    fn rounds_without_questions_stay_within_the_cap() {
+        let (mut prompter, events) = prompter(Duration::from_secs(5));
+        let long = "x".repeat(MAX_TEXT_CHARS);
+        for _ in 0..3 {
+            assert!(prompter.prompt("", &long, &[]).is_empty());
+            assert_eq!(prompter.instructions.chars().count(), MAX_TEXT_CHARS);
+        }
+        let watcher = events.clone();
+        let responder = thread::spawn(move || {
+            answer(&wait_for_prompt(&watcher), vec!["1".into()]).unwrap();
+        });
+        prompter.prompt("", &long, &prompts(&[("OTP: ", false)]));
+        responder.join().unwrap();
+        let events = events.lock().unwrap();
+        let shown = events[0]["instructions"].as_str().unwrap();
+        assert_eq!(shown.chars().count(), MAX_TEXT_CHARS);
     }
 
     #[test]
