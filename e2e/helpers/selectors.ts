@@ -248,6 +248,16 @@ export const sel = {
 
   // Each roadmap stream appends its selectors under its own anchor.
   // roadmap:auth
+  credentialFormKindAgent: '[data-testid="credential-form-kind-agent"]',
+  credentialFormAgentHint: '[data-testid="credential-form-agent-hint"]',
+  connectionFormAgentForwarding: '[data-testid="connection-form-agent-forwarding"]',
+  // Scoped under a connection row (see connectionRowByName).
+  connectionRowEditButton: '[data-testid^="edit-connection-"]',
+  anyTerminalTabClose: '[data-testid^="close-tab-"]',
+  authPrompt: '[data-testid="auth-prompt"]',
+  authPromptInput: (index: number) => `[data-testid="auth-prompt-input-${index}"]`,
+  authPromptSubmit: '[data-testid="auth-prompt-submit"]',
+  authPromptCancel: '[data-testid="auth-prompt-cancel"]',
   // roadmap:resilience
   // The status view of a shell that lost its connection (phase: waiting | stopped).
   reconnectStatus: '[data-testid="failed-terminal"][data-reconnect-phase]',
