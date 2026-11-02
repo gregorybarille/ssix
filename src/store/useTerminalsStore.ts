@@ -96,11 +96,10 @@ export const useTerminalsStore = create<TerminalsState>((set, get) => {
       addSessionToNewTab(session);
       return;
     }
-    // A pane the user did not choose to broadcast to never joins by itself.
     set((state) => ({
       tabs: state.tabs.map((t) =>
         t.id === activeTabId
-          ? { ...t, mode: splitMode, panes: [...t.panes, session], broadcast: false }
+          ? { ...t, mode: splitMode, panes: [...t.panes, session] }
           : t,
       ),
     }));
