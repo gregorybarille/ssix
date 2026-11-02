@@ -611,13 +611,18 @@ describe("Terminal UX", () => {
       await toggle();
       await dropPane(a);
 
+      // A pane offers to close only once it has stopped trying to reconnect.
+      await click(sel.reconnectCancelButton);
+      await (await browser.$(sel.reconnectStatusPhase("stopped"))).waitForExist({ timeout: 10_000 });
       await click(sel.failedTerminalDismiss);
-      const confirm = await browser.$(sel.confirmClosePane);
-      if (await confirm.isExisting()) await clickDialogFooterButton(sel.confirmClosePaneConfirm);
-      await browser.waitUntil(async () => (await sessionIds()).length === 1, {
-        timeout: 10_000,
-        timeoutMsg: "The pane did not close",
-      });
+      await browser.waitUntil(
+        async () => {
+          const confirm = await browser.$(sel.confirmClosePane);
+          if (await confirm.isExisting()) await clickDialogFooterButton(sel.confirmClosePaneConfirm);
+          return (await sessionIds()).length === 1;
+        },
+        { timeout: 10_000, timeoutMsg: "The pane did not close" },
+      );
 
       const button = await browser.$(sel.broadcastToggle);
       expect(await button.getAttribute("aria-pressed")).toBe("false");
