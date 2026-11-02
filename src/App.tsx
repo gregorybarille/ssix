@@ -28,6 +28,7 @@ import { useSettingsStore } from "./store/useSettingsStore";
 import { useGitSyncStore } from "./store/useGitSyncStore";
 import { useViewStore } from "./store/useViewStore";
 import { useDialogsStore } from "./store/useDialogsStore";
+import { useSnippetsStore } from "./store/useSnippetsStore";
 import { useTerminalsStore } from "./store/useTerminalsStore";
 import { runningForwardCount, usePortForwardsStore } from "./store/usePortForwardsStore";
 import { useApplySettings } from "./hooks/useApplySettings";
@@ -130,6 +131,7 @@ function App() {
   // Dialog/UI state
   // The connection / credential form fields are read by their views only;
   // leaving them out keeps the shell from re-rendering while a form opens.
+  const snippetPaletteOpen = useSnippetsStore((s) => s.paletteOpen);
   const dialogs = useDialogsStore(
     useShallow(({ connFormOpen, editingConn, credFormOpen, editingCred, ...shell }) => shell),
   );
@@ -547,9 +549,11 @@ function App() {
         </Suspense>
 
         {/* Snippet palette (Cmd/Ctrl+Shift+S) */}
-        <Suspense fallback={null}>
-          <SnippetPalette />
-        </Suspense>
+        {snippetPaletteOpen && (
+          <Suspense fallback={null}>
+            <SnippetPalette />
+          </Suspense>
+        )}
 
         {/* Custom context menu */}
         {dialogs.contextMenu && (

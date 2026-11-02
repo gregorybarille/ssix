@@ -35,15 +35,10 @@ const NO_VALUES: ReadonlyMap<string, string> = new Map();
 
 /**
  * Pick a snippet, fill in its variables, and paste it into the active pane.
- * It never runs anything: see `preparePaste` for how. Mounted once by `App`;
- * its state starts fresh every time it opens.
+ * It never runs anything: see `preparePaste` for how. `App` mounts it only while
+ * the palette is open, so its state starts fresh every time.
  */
 export function SnippetPalette() {
-  const open = useSnippetsStore((s) => s.paletteOpen);
-  return open ? <PalettePanel /> : null;
-}
-
-function PalettePanel() {
   const { snippets, loadError, fetchSnippets, closePalette } = useSnippetsStore(
     useShallow((s) => ({
       snippets: s.snippets,

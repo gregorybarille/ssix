@@ -28,6 +28,11 @@ const proto: Snippet = { id: "6", name: "proto", command: "echo {{constructor}} 
 const docker: Snippet = { id: "7", name: "docker", command: "docker ps --format '{{.Names}}' {{" };
 const all = [uptime, newline, lines, greet, linesWithVariable, proto, docker];
 
+/** As `App` mounts it: only while open. */
+function MountedPalette() {
+  return useSnippetsStore((s) => s.paletteOpen) ? <SnippetPalette /> : null;
+}
+
 function liveTerminal(sessionId: string, bracketedPasteMode = false) {
   const textarea = document.createElement("textarea");
   document.body.appendChild(textarea);
@@ -55,7 +60,7 @@ function activate(...sessionIds: string[]) {
 async function openPalette(snippets: Snippet[] = all) {
   mockInvoke.mockImplementation(async (cmd: string) => (cmd === "get_snippets" ? snippets : undefined));
   useSnippetsStore.setState({ snippets, paletteOpen: true });
-  renderInPanel(<SnippetPalette />);
+  renderInPanel(<MountedPalette />);
   return screen.findByTestId("snippet-palette");
 }
 
@@ -80,11 +85,6 @@ describe("SnippetPalette", () => {
   });
 
   describe("opening", () => {
-    it("renders nothing while closed", () => {
-      renderInPanel(<SnippetPalette />);
-      expect(screen.queryByTestId("snippet-palette")).not.toBeInTheDocument();
-    });
-
     it("docks in the side panel, not as an overlay", async () => {
       liveTerminal("s1");
       activate("s1");
@@ -143,7 +143,7 @@ describe("SnippetPalette", () => {
     it("shows a load failure with a retry", async () => {
       mockInvoke.mockRejectedValue("disk on fire");
       useSnippetsStore.setState({ paletteOpen: true });
-      renderInPanel(<SnippetPalette />);
+      renderInPanel(<MountedPalette />);
       const banner = await screen.findByTestId("snippet-palette-load-error");
       expect(banner).toHaveTextContent("disk on fire");
       mockInvoke.mockResolvedValue([uptime]);
