@@ -26,6 +26,10 @@ silent for **three intervals** counts as lost, so at the default a dead
 connection is noticed within about 90 seconds. An interval of 1 s counts as
 2 s, the shortest libssh2 sends at.
 
+An SSH server has to answer these, but a rare one does not. On such a server
+an idle session counts as lost after three intervals, and the message says what
+to do: set that connection's keepalive to 0.
+
 With keepalive off, a network that silently drops packets is noticed only when
 something is written and the operating system gives up on it, which can take
 many minutes. A server that closes the connection is noticed either way.

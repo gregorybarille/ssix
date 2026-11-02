@@ -1231,7 +1231,8 @@ fn run_io_loop(shell: OpenShell, io: &mut ShellIo) -> ShellEnd {
             }
             if let Some(silence) = watchdog.silence(Instant::now()) {
                 return ShellEnd::Dropped(format!(
-                    "The server did not answer for {} s",
+                    "The server did not answer for {} s. If it ignores keepalives, \
+                     set this connection's keepalive to 0.",
                     silence.as_secs()
                 ));
             }
