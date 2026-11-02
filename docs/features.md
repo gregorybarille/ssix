@@ -53,6 +53,8 @@ port forwards use the proxy too; the copied `ssh` command carries it as
 
 Hosts in `~/.ssh/config` can be imported: see [Import from SSH config](ssh-config-import.md).
 
+Connections can be filed in nested folders and shown as a tree: see [Folders](folders.md).
+
 ## Credentials
 
 Supported credential modes:
@@ -299,8 +301,8 @@ are shown inline for the final state of the burst.
 - font family
 - font size
 - color scheme
-- list/tile layouts per section (the Connections view also offers a
-  third **Tag groups** layout — see [Tag groups](#tag-groups))
+- list/tile layouts per section (the Connections view also offers
+  **Tag groups** — see [Tag groups](#tag-groups) — and [Folders](folders.md))
 - default terminal open mode
 - Git Sync repository settings
 
