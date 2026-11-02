@@ -835,6 +835,25 @@ describe("editing in place", () => {
     await waitFor(() => expect(screen.queryByTestId("files-edit-panel")).not.toBeInTheDocument());
   });
 
+  it("asks about a change the last poll has not seen yet", async () => {
+    let modified = false;
+    answer({
+      sftp_edit_open: () => session,
+      sftp_edit_status: () => ({ modified, missing: false }),
+    });
+    await show();
+    fireEvent.click(row("remote", "conf.txt"));
+    fireEvent.click(screen.getByTestId("files-edit"));
+    const close = await screen.findByTestId("files-edit-close");
+    await waitFor(() => expect(calls("sftp_edit_status").length).toBeGreaterThan(0));
+    expect(screen.getByTestId("files-edit-save")).toBeDisabled();
+
+    modified = true;
+    fireEvent.click(close);
+    await screen.findByTestId("files-edit-discard");
+    expect(calls("sftp_edit_close")).toEqual([]);
+  });
+
   it("closes straight away with nothing to lose", async () => {
     answer({
       sftp_edit_open: () => session,

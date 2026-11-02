@@ -40,13 +40,22 @@ function remoteChangeText(change: NonNullable<EditState["remoteChange"]>): strin
  * over a file someone else changed asks first.
  */
 export function EditPanel() {
-  const { edit, pollEdit, launchEditor, saveEdit, closeEdit, dismissRemoteChange } = useSftpStore(
+  const {
+    edit,
+    pollEdit,
+    launchEditor,
+    saveEdit,
+    closeEdit,
+    closeEditUnlessModified,
+    dismissRemoteChange,
+  } = useSftpStore(
     useShallow((s) => ({
       edit: s.edit,
       pollEdit: s.pollEdit,
       launchEditor: s.launchEditor,
       saveEdit: s.saveEdit,
       closeEdit: s.closeEdit,
+      closeEditUnlessModified: s.closeEditUnlessModified,
       dismissRemoteChange: s.dismissRemoteChange,
     })),
   );
@@ -63,8 +72,9 @@ export function EditPanel() {
   if (!edit) return null;
   const { session } = edit;
   const requestClose = () => {
-    if (edit.modified && !edit.missing) setConfirmDiscard(true);
-    else void closeEdit();
+    void closeEditUnlessModified().then((ask) => {
+      if (ask) setConfirmDiscard(true);
+    });
   };
 
   return (

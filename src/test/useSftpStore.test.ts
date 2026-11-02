@@ -827,6 +827,47 @@ describe("editing in place", () => {
     });
   });
 
+  describe("closing unless modified", () => {
+    const close = () => useSftpStore.getState().closeEditUnlessModified();
+
+    it("asks when the copy changed after the last poll", async () => {
+      await editing();
+      expect(edit()?.modified).toBe(false);
+      backend({ sftp_edit_status: () => ({ modified: true, missing: false }) });
+      expect(await close()).toBe(true);
+      expect(calls("sftp_edit_close")).toEqual([]);
+      expect(edit()?.modified).toBe(true);
+    });
+
+    it("closes when the copy has gone back to what the server holds", async () => {
+      await editing();
+      useSftpStore.setState((s) => ({ edit: s.edit && { ...s.edit, modified: true } }));
+      backend({ sftp_edit_status: () => ({ modified: false, missing: false }) });
+      expect(await close()).toBe(false);
+      expect(calls("sftp_edit_close")).toEqual([{ editId: "e1" }]);
+      expect(edit()).toBeNull();
+    });
+
+    it("treats a status that cannot be read as modified", async () => {
+      await editing();
+      backend({
+        sftp_edit_status: () => {
+          throw "Could not read the copy";
+        },
+      });
+      expect(await close()).toBe(true);
+      expect(calls("sftp_edit_close")).toEqual([]);
+      expect(edit()).not.toBeNull();
+    });
+
+    it("closes when the copy is gone, with nothing left to lose", async () => {
+      await editing();
+      backend({ sftp_edit_status: () => ({ modified: false, missing: true }) });
+      expect(await close()).toBe(false);
+      expect(edit()).toBeNull();
+    });
+  });
+
   it("closing removes the copy", async () => {
     await editing();
     await useSftpStore.getState().closeEdit();

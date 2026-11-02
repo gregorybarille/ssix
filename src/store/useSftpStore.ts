@@ -129,6 +129,8 @@ interface SftpState {
   pollEdit: () => Promise<void>;
   saveEdit: (force: boolean) => Promise<void>;
   closeEdit: () => Promise<void>;
+  /** Close the edit unless its copy has changes to lose; true means ask first. */
+  closeEditUnlessModified: () => Promise<boolean>;
   dismissRemoteChange: () => void;
   dismissEditError: () => void;
   dismissChangeError: () => void;
@@ -612,6 +614,25 @@ export const useSftpStore = create<SftpState>((set, get) => {
       await invoke("sftp_edit_close", { editId: edit.session.edit_id }).catch((err) => {
         set({ editError: errorMessage(err) });
       });
+    },
+
+    closeEditUnlessModified: async () => {
+      const editId = get().edit?.session.edit_id;
+      if (!editId) return false;
+      // The last poll is up to two seconds old, and the editor may have saved
+      // since. A copy that cannot be read may hold the only version of the work.
+      let unsaved = true;
+      try {
+        const status = await invoke<EditStatus>("sftp_edit_status", { editId });
+        patchEdit(editId, status);
+        unsaved = status.modified && !status.missing;
+      } catch {
+        // Stays unsaved, so the user decides.
+      }
+      if (get().edit?.session.edit_id !== editId) return false;
+      if (unsaved) return true;
+      await get().closeEdit();
+      return false;
     },
 
     dismissRemoteChange: () => {

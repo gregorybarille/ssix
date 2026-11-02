@@ -85,8 +85,9 @@ until you press **Upload changes**.
   stops and asks. **Keep editing** leaves everything as it is; **Overwrite** replaces
   the server's version. Size and time are compared first, then the content.
 - The copy lives in `<data dir>/edit-cache/<id>/`, readable only by you (`0700` on
-  the folder, `0600` on the file). Closing the panel removes it, and asks first if
-  there are changes that were not uploaded. Quitting the app removes open copies.
+  the folder, `0600` on the file). Closing the panel removes it, and first looks at
+  the copy again and asks if it holds changes that were not uploaded, or if it cannot
+  tell. Quitting the app removes open copies.
 - The editor is the default text editor on macOS (`open -t`), Notepad on Windows, and
   on other systems whatever `xdg-open` picks for the file's type. The copy is not
   executable, so opening a script does not run it. If nothing can be started, the
