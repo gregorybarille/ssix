@@ -27,6 +27,8 @@ export interface ConfirmDialogProps {
    * which ConfirmDialog instance is on screen (the App mounts several).
    */
   testId?: string;
+  /** Where focus goes once it closed; see `DialogContent`. */
+  onCloseAutoFocus?: (event: Event) => void;
 }
 
 /**
@@ -51,6 +53,7 @@ export function ConfirmDialog({
   variant = "default",
   onConfirm,
   testId,
+  onCloseAutoFocus,
 }: ConfirmDialogProps) {
   const [busy, setBusy] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
@@ -79,7 +82,7 @@ export function ConfirmDialog({
 
   return (
     <Dialog open={open} onOpenChange={(o) => !busy && onOpenChange(o)}>
-      <DialogContent kind="confirm" data-testid={testId}>
+      <DialogContent kind="confirm" data-testid={testId} onCloseAutoFocus={onCloseAutoFocus}>
         <DialogHeader>
           <DialogTitle>{title}</DialogTitle>
           <DialogDescription>{description}</DialogDescription>
