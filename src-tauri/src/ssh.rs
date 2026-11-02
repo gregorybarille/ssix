@@ -52,6 +52,8 @@ const OUTPUT_COALESCE_MAX: usize = 256 * 1024;
 const WRITE_STALL_TIMEOUT: Duration = Duration::from_secs(10);
 /// libssh2's "call again later" code, surfaced by ssh2 as `ErrorCode::Session`.
 const LIBSSH2_ERROR_EAGAIN: i32 = -37;
+/// libssh2's answer to waiting for a channel to close before the server's EOF.
+const LIBSSH2_ERROR_INVAL: i32 = -34;
 /// Unanswered keepalive intervals before a session counts as dead, as with
 /// OpenSSH's default `ServerAliveCountMax`.
 const KEEPALIVE_MAX_MISSED: u32 = 3;
@@ -701,6 +703,12 @@ pub(crate) fn open_shell_over_stream(
     let mut channel = session
         .channel_session()
         .map_err(|e| format!("Channel open failed: {}", e))?;
+    // A PTY merges stderr on the server, but a server may still send extended
+    // data. Left queued on its own stream it would hide the end of the shell:
+    // libssh2 reports no EOF while any data is unread.
+    channel
+        .handle_extended_data(ssh2::ExtendedData::Merge)
+        .map_err(|e| format!("Channel open failed: {}", e))?;
     debug.at(1, || {
         "Requesting a PTY (xterm-256color, 80x24).".to_string()
     });
@@ -1069,12 +1077,23 @@ enum ShellEnd {
 /// A failed read or write means the connection died, unless the shell had
 /// already ended: then only its last goodbye was lost.
 fn after_io_error(channel: &mut ssh2::Channel, reason: String) -> ShellEnd {
-    if channel.eof() {
+    if server_sent_eof(channel) {
         close_channel(channel);
         ShellEnd::Closed
     } else {
         ShellEnd::Dropped(reason)
     }
+}
+
+/// Whether the server has ended the channel, with or without unread data.
+/// `Channel::eof` says no while data is queued, and when the server's last
+/// output, EOF and close arrive with the end of the connection, that data can
+/// no longer be read. `wait_close` refuses without any I/O until EOF is in.
+fn server_sent_eof(channel: &mut ssh2::Channel) -> bool {
+    !matches!(
+        channel.wait_close(),
+        Err(e) if e.code() == ssh2::ErrorCode::Session(LIBSSH2_ERROR_INVAL)
+    )
 }
 
 /// Pump shell output to the frontend and frontend input to the shell until
@@ -1107,8 +1126,8 @@ fn run_io_loop(shell: OpenShell, io: &mut ShellIo) -> ShellEnd {
             watchdog.heard(Instant::now());
         }
 
-        // Drain everything the remote has for us (a PTY merges stderr into
-        // stdout, so there is no separate stderr stream to read).
+        // Drain everything the remote has for us. Extended data arrives here
+        // too: `open_shell_over_stream` merges it into this stream.
         loop {
             match channel.read(&mut buf) {
                 Ok(0) => {
@@ -1154,12 +1173,11 @@ fn run_io_loop(shell: OpenShell, io: &mut ShellIo) -> ShellEnd {
             }
         }
 
-        if channel.eof() {
+        // libssh2 reports a lost connection as a failed read, so a read of 0
+        // always comes from the server's own EOF or close.
+        if eof || channel.eof() {
             close_channel(&mut channel);
             return ShellEnd::Closed;
-        }
-        if eof {
-            return ShellEnd::Dropped("The server closed the connection".to_string());
         }
 
         if watchdog.enabled() {
@@ -1863,9 +1881,175 @@ mod tests {
         });
     }
 
+    /// A network that dies under a live shell surfaces as a failed read, never
+    /// as a read of 0: the loop's clean-close path depends on that.
+    #[test]
+    #[ignore]
+    fn live_a_lost_connection_is_a_failed_read_and_counts_as_dropped() {
+        let target = crate::remote_script::live::Target::from_env();
+        crate::storage::test_support::with_isolated_data_dir(|| {
+            let relay = Relay::start(&target.endpoint);
+            let OpenShell {
+                session,
+                mut channel,
+                ..
+            } = open_shell_over_stream(relay.connect(), &target.endpoint, &ShellOptions::default())
+                .unwrap();
+            let fd = wake::fd_of(&session);
+            wait_for_quiet(&mut channel, fd);
+
+            relay.set_mode(RELAY_CUT);
+            let error = read_until_it_fails(&mut channel);
+
+            let ShellEnd::Dropped(reason) = after_io_error(&mut channel, error.to_string()) else {
+                panic!("a lost connection counted as the shell ending");
+            };
+            assert!(!reason.is_empty());
+        });
+    }
+
+    /// A shell that exits over a healthy connection reads as 0.
+    #[test]
+    #[ignore]
+    fn live_a_shell_that_exits_reads_as_zero() {
+        let target = crate::remote_script::live::Target::from_env();
+        if target.windows() {
+            return;
+        }
+        crate::storage::test_support::with_isolated_data_dir(|| {
+            let OpenShell {
+                session,
+                mut channel,
+                ..
+            } = open_shell(&target.endpoint, &ShellOptions::default()).unwrap();
+            let fd = wake::fd_of(&session);
+            wait_for_quiet(&mut channel, fd);
+
+            write_all_nonblocking(&mut channel, b"exit\n", Some(fd)).unwrap();
+            let mut buf = [0u8; 4096];
+            let start = Instant::now();
+            loop {
+                assert!(
+                    start.elapsed() < Duration::from_secs(10),
+                    "the shell never ended"
+                );
+                match channel.read(&mut buf) {
+                    Ok(0) => return,
+                    Ok(_) => {}
+                    Err(e) if e.kind() == io::ErrorKind::WouldBlock => {
+                        thread::sleep(Duration::from_millis(20));
+                    }
+                    Err(e) => panic!("the shell's end read as a failure: {e}"),
+                }
+            }
+        });
+    }
+
+    /// What a shell does with extended data. A PTY keeps a real server from
+    /// sending any to a shell, so this runs a command without one.
+    #[test]
+    #[ignore]
+    fn live_merged_extended_data_leaves_the_end_visible() {
+        let target = crate::remote_script::live::Target::from_env();
+        if target.windows() {
+            return;
+        }
+        crate::storage::test_support::with_isolated_data_dir(|| {
+            let session = open_authenticated_session(&target.endpoint, 0, None).unwrap();
+            let mut channel = session.channel_session().unwrap();
+            channel
+                .handle_extended_data(ssh2::ExtendedData::Merge)
+                .unwrap();
+            channel.exec("echo err >&2").unwrap();
+
+            let mut output = String::new();
+            channel.read_to_string(&mut output).unwrap();
+
+            assert_eq!(output, "err\n");
+            assert!(channel.eof());
+        });
+    }
+
+    /// A server that hangs up in one go: last output, EOF, close and the end
+    /// of the TCP stream all arrive together. libssh2 fails the read before
+    /// the queued output can be read, and that output is lost, but the shell
+    /// did end and nothing should reconnect it.
+    #[test]
+    #[ignore]
+    fn live_a_goodbye_that_arrives_with_the_connection_end_counts_as_closed() {
+        let target = crate::remote_script::live::Target::from_env();
+        if target.windows() {
+            return;
+        }
+        crate::storage::test_support::with_isolated_data_dir(|| {
+            let relay = Relay::start(&target.endpoint);
+            let OpenShell {
+                session,
+                mut channel,
+                ..
+            } = open_shell_over_stream(relay.connect(), &target.endpoint, &ShellOptions::default())
+                .unwrap();
+            let fd = wake::fd_of(&session);
+            wait_for_quiet(&mut channel, fd);
+
+            relay.set_mode(RELAY_HOLD_DOWN);
+            write_all_nonblocking(&mut channel, b"exit\n", Some(fd)).unwrap();
+            // Time for the server's goodbye to pile up behind the relay.
+            thread::sleep(Duration::from_millis(1500));
+            relay.set_mode(RELAY_LAST_WORDS);
+            let start = Instant::now();
+            while relay.mode() != RELAY_DONE {
+                assert!(
+                    start.elapsed() < Duration::from_secs(10),
+                    "the relay never finished"
+                );
+                thread::sleep(Duration::from_millis(10));
+            }
+
+            let error = read_until_it_fails(&mut channel);
+            assert!(!channel.eof(), "the output should still be masking EOF");
+            assert!(
+                matches!(
+                    after_io_error(&mut channel, error.to_string()),
+                    ShellEnd::Closed
+                ),
+                "the shell ended, so nothing should reconnect it"
+            );
+        });
+    }
+
+    /// Read until a read fails, returning the failure. A read of 0 fails the
+    /// test: it would say the shell ended.
+    fn read_until_it_fails(channel: &mut ssh2::Channel) -> io::Error {
+        let mut buf = [0u8; 4096];
+        let start = Instant::now();
+        loop {
+            assert!(
+                start.elapsed() < Duration::from_secs(10),
+                "no read ever failed"
+            );
+            match channel.read(&mut buf) {
+                Ok(0) => panic!("the read reported a clean end"),
+                Ok(_) => {}
+                Err(e) if e.kind() == io::ErrorKind::WouldBlock => {
+                    thread::sleep(Duration::from_millis(20));
+                }
+                Err(e) => return e,
+            }
+        }
+    }
+
     const RELAY_FLOW: u8 = 0;
     /// Leave what the client sends unread.
     const RELAY_HOLD_UP: u8 = 1;
+    /// Leave what the server sends unread.
+    const RELAY_HOLD_DOWN: u8 = 2;
+    /// Pass on all the server has sent so far in one go, then end the stream
+    /// towards the client and become `RELAY_DONE`.
+    const RELAY_LAST_WORDS: u8 = 3;
+    const RELAY_DONE: u8 = 4;
+    /// End the connection at once on both sides.
+    const RELAY_CUT: u8 = 5;
 
     /// A loopback relay to a real server, so that a test can control what the
     /// client's socket sees.
@@ -1890,7 +2074,30 @@ mod tests {
                 server.set_nonblocking(true).unwrap();
                 let mut buf = vec![0u8; 16 * 1024];
                 loop {
-                    if relay_mode.load(Ordering::SeqCst) != RELAY_HOLD_UP {
+                    let mode = relay_mode.load(Ordering::SeqCst);
+                    match mode {
+                        RELAY_CUT => {
+                            let _ = client.shutdown(Shutdown::Both);
+                            let _ = server.shutdown(Shutdown::Both);
+                            return;
+                        }
+                        RELAY_LAST_WORDS => {
+                            while let Some(n) = relay_read(&server, &mut buf) {
+                                if n == 0 {
+                                    break;
+                                }
+                                relay_write(&client, &buf[..n]);
+                            }
+                            let _ = client.shutdown(Shutdown::Write);
+                            relay_mode.store(RELAY_DONE, Ordering::SeqCst);
+                        }
+                        RELAY_DONE => {
+                            thread::sleep(Duration::from_millis(10));
+                            continue;
+                        }
+                        _ => {}
+                    }
+                    if mode != RELAY_HOLD_UP {
                         let Some(n) = relay_read(&client, &mut buf) else {
                             return;
                         };
@@ -1898,10 +2105,12 @@ mod tests {
                         relay_discard.fetch_sub(skip, Ordering::SeqCst);
                         relay_write(&server, &buf[skip..n]);
                     }
-                    let Some(n) = relay_read(&server, &mut buf) else {
-                        return;
-                    };
-                    relay_write(&client, &buf[..n]);
+                    if mode != RELAY_HOLD_DOWN {
+                        let Some(n) = relay_read(&server, &mut buf) else {
+                            return;
+                        };
+                        relay_write(&client, &buf[..n]);
+                    }
                     thread::sleep(Duration::from_millis(1));
                 }
             });
@@ -1918,6 +2127,10 @@ mod tests {
 
         fn set_mode(&self, mode: u8) {
             self.mode.store(mode, Ordering::SeqCst);
+        }
+
+        fn mode(&self) -> u8 {
+            self.mode.load(Ordering::SeqCst)
         }
 
         /// Drop the next `bytes` that the client sends.

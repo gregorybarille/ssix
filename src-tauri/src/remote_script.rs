@@ -847,7 +847,7 @@ pub(crate) mod live {
             }
         }
 
-        fn windows(&self) -> bool {
+        pub(crate) fn windows(&self) -> bool {
             self.platform == ScriptPlatform::Windows
         }
 

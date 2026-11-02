@@ -116,6 +116,9 @@ when a session opens: changing the settings does not affect open sessions.
 - libssh2 keeps each keepalive answer in memory until the session ends, about
   100 bytes each: some 300 KB a day per session at the default interval.
   Reconnecting or reopening a session frees it.
+- A server that ends a shell and hangs up in one go can lose its last output:
+  libssh2 fails the read before those bytes can be read. The session still
+  counts as ended by the server and does not reconnect.
 - A connection whose login needs a one-time code cannot reconnect by itself:
   the attempt fails as a login failure and stops, leaving **Retry**.
 - Windows has no readiness notification yet, so a session there checks the
