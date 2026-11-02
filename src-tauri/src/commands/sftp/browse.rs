@@ -427,10 +427,32 @@ fn delete_remote(sftp: &Sftp, home: &str, path: &str) -> Result<(), String> {
     if target.is_empty() {
         return Err("The root folder cannot be deleted".to_string());
     }
-    if target == home.trim_end_matches('/') {
-        return Err("Your login folder cannot be deleted".to_string());
+    if holds_remote_home(target, home) || holds_remote_home(&above_resolved(sftp, target)?, home) {
+        return Err(
+            "Your login folder, and the folders that hold it, cannot be deleted".to_string(),
+        );
     }
     delete_remote_tree(sftp, target, 0)
+}
+
+/// Whether `target` is `home` or a folder above it, component by component.
+fn holds_remote_home(target: &str, home: &str) -> bool {
+    let (target, home) = (target.trim_end_matches('/'), home.trim_end_matches('/'));
+    home.strip_prefix(target)
+        .is_some_and(|rest| rest.is_empty() || rest.starts_with('/'))
+}
+
+/// `target` with the symlinks above it resolved. `target` itself is not
+/// followed: a link is removed, and what it points to stays.
+fn above_resolved(sftp: &Sftp, target: &str) -> Result<String, String> {
+    let (Some(parent), Some(name)) = (remote_parent(target), remote_name(target)) else {
+        return Ok(target.to_string());
+    };
+    let real = sftp
+        .realpath(Path::new(&parent))
+        .map_err(|e| call_error("Could not read", &parent, &e))
+        .and_then(path_string)?;
+    Ok(join_remote(&real, name))
 }
 
 /// Depth first, with an `lstat` of its own for every entry rather than
@@ -672,15 +694,39 @@ fn rename_local(path: &str, new_name: &str) -> Result<String, String> {
     local_path_string(&target)
 }
 
-/// `fs::remove_dir_all` removes a symlink it meets and never follows it.
+/// Whether deleting `target` would take `home` with it: `target` is that
+/// folder or one above it, however either path is spelled. A symlink named by
+/// `target` is only removed, so its own target does not count.
+fn holds_local_home(target: &Path, home: &Path) -> bool {
+    let resolved = match (target.parent(), target.file_name()) {
+        (Some(parent), Some(name)) => canonical_local(parent)
+            .map(|real| real.join(name))
+            .unwrap_or_else(|_| target.to_path_buf()),
+        _ => target.to_path_buf(),
+    };
+    let real_home = canonical_local(home).unwrap_or_else(|_| home.to_path_buf());
+    let reaches = |home: &Path| {
+        home.ancestors()
+            .any(|above| above == target || above == resolved || same_entry(above, &resolved))
+    };
+    reaches(home) || reaches(&real_home)
+}
+
 fn delete_local(path: &str) -> Result<(), String> {
+    delete_local_keeping(path, dirs::home_dir().as_deref())
+}
+
+/// `fs::remove_dir_all` removes a symlink it meets and never follows it.
+fn delete_local_keeping(path: &str, home: Option<&Path>) -> Result<(), String> {
     check_local_path(path)?;
     let target = Path::new(path);
     if is_local_root(target) {
         return Err("The root folder cannot be deleted".to_string());
     }
-    if dirs::home_dir().as_deref() == Some(target) {
-        return Err("Your home folder cannot be deleted".to_string());
+    if home.is_some_and(|home| holds_local_home(target, home)) {
+        return Err(
+            "Your home folder, and the folders that hold it, cannot be deleted".to_string(),
+        );
     }
     let meta =
         fs::symlink_metadata(target).map_err(|e| format!("Could not read {}: {}", path, e))?;
@@ -905,9 +951,72 @@ mod tests {
                 bad
             );
         }
-        assert!(delete_local("/").unwrap_err().contains("root"));
-        let home = sftp_local_home().unwrap();
-        assert!(delete_local(&home).unwrap_err().contains("home"));
+        assert!(is_local_root(Path::new("/")));
+    }
+
+    /// A made-up home in a temporary tree: if this guard ever breaks, the
+    /// test must not take the real one with it.
+    #[test]
+    fn local_delete_refuses_home_and_every_folder_above_it() {
+        let tmp = TempDir::new("home");
+        let home = tmp.0.join("users/me");
+        fs::create_dir_all(&home).unwrap();
+        fs::write(home.join("sentinel"), "stay").unwrap();
+        fs::create_dir(tmp.0.join("users/me2")).unwrap();
+        fs::create_dir(home.join("sub")).unwrap();
+
+        for refused in [tmp.path("users/me"), tmp.path("users")] {
+            let err = delete_local_keeping(&refused, Some(&home)).unwrap_err();
+            assert!(err.contains("home folder"), "{}", err);
+        }
+        assert_eq!(fs::read_to_string(home.join("sentinel")).unwrap(), "stay");
+
+        // A name that merely starts the same, and what is inside, can go.
+        delete_local_keeping(&tmp.path("users/me2"), Some(&home)).unwrap();
+        delete_local_keeping(&tmp.path("users/me/sub"), Some(&home)).unwrap();
+        assert!(!home.join("sub").exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn local_delete_sees_through_a_symlinked_home_and_a_symlinked_path() {
+        use std::os::unix::fs::symlink;
+        let tmp = TempDir::new("linkedhome");
+        let real = tmp.0.join("data/me");
+        fs::create_dir_all(&real).unwrap();
+        fs::write(real.join("sentinel"), "stay").unwrap();
+        // $HOME names the link, and listings show the real folder.
+        let linked = tmp.0.join("home-link");
+        symlink(&real, &linked).unwrap();
+        // A second way to reach the real folder.
+        symlink(tmp.0.join("data"), tmp.0.join("alias")).unwrap();
+
+        for refused in [
+            tmp.path("data/me"),
+            tmp.path("data"),
+            tmp.path("home-link"),
+            tmp.path("alias/me"),
+        ] {
+            let err = delete_local_keeping(&refused, Some(&linked)).unwrap_err();
+            assert!(err.contains("home folder"), "{}: {}", refused, err);
+        }
+        assert_eq!(fs::read_to_string(real.join("sentinel")).unwrap(), "stay");
+
+        // Another link to home is only a link: removing it costs nothing.
+        symlink(&real, tmp.0.join("shortcut")).unwrap();
+        delete_local_keeping(&tmp.path("shortcut"), Some(&linked)).unwrap();
+        assert!(fs::symlink_metadata(tmp.0.join("shortcut")).is_err());
+        assert_eq!(fs::read_to_string(real.join("sentinel")).unwrap(), "stay");
+    }
+
+    #[test]
+    fn remote_delete_refuses_the_login_folder_and_every_folder_above_it() {
+        for held in ["/home/me", "/home/me/", "/home", "/"] {
+            assert!(holds_remote_home(held, "/home/me"), "{}", held);
+        }
+        for free in ["/home/me2", "/home/me/sub", "/ho", "/tmp", "/home/m"] {
+            assert!(!holds_remote_home(free, "/home/me"), "{}", free);
+        }
     }
 
     #[test]

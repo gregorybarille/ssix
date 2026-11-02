@@ -69,8 +69,9 @@ cancelled.
 | A symlink inside a folder being copied | Skipped and counted in the result. Following it could leave the tree or go round in a loop |
 | A symlink inside a folder being deleted | The link is removed; what it points to is untouched |
 
-Deleting the root or your login folder is refused. Names a server sends are
-checked before they become local paths, so a hostile listing cannot reach outside
+Deleting the root, your home or login folder, or any folder that holds it, is
+refused on both panes, however the path reaches it through symlinks. Names a server
+sends are checked before they become local paths, so a hostile listing cannot reach outside
 the target folder.
 
 ## Edit in place

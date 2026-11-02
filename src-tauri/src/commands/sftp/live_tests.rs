@@ -283,8 +283,21 @@ fn live_sftp_delete_removes_links_and_keeps_what_they_point_to() {
             );
         }
         let home = sh(id, "pwd").trim_end().to_string();
-        let err = block_on(sftp_delete(sid(), home)).unwrap_err();
-        assert!(err.contains("login folder"), "{}", err);
+        let above = super::remote_parent(&home).unwrap();
+        let name = super::remote_name(&home).unwrap();
+        let sentinel = format!("{}/.ssix-live-{}", home, uuid::Uuid::new_v4().simple());
+        sh(id, &format!("touch {}", sentinel));
+        // The same folders reached through a link, as a listing could.
+        sh(id, &format!("ln -s {} {}", above, dir.child("alias")));
+        for refused in [
+            home.clone(),
+            above.clone(),
+            format!("{}/{}", dir.child("alias"), name),
+        ] {
+            let err = block_on(sftp_delete(sid(), refused.clone())).unwrap_err();
+            assert!(err.contains("login folder"), "{}: {}", refused, err);
+        }
+        sh(id, &format!("test -e {sentinel} && rm {sentinel}"));
         sftp_disconnect(session.session_id);
     });
 }
