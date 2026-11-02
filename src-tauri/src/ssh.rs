@@ -616,13 +616,13 @@ fn open_session_unless_cancelled(
 /// The method names a server offers (`publickey,keyboard-interactive`). `None`
 /// when it could not be asked, which offers nothing but rules nothing out.
 fn list_auth_methods(session: &Session, username: &str, debug: &SshDebug) -> Option<String> {
-    match session.auth_methods(username) {
+    match crate::libssh2_ext::userauth_list(session, username) {
         Ok(methods) => {
             debug.at(1, || {
                 format!("Authentications that can continue: {}", methods)
             });
             // An empty list goes with a server that just accepted "none".
-            (!methods.is_empty()).then(|| methods.to_string())
+            (!methods.is_empty()).then_some(methods)
         }
         Err(e) => {
             debug.at(1, || {
@@ -692,20 +692,21 @@ pub(crate) fn authenticate(
                 .is_some_and(|methods| offers_method(methods, "keyboard-interactive"))
             {
                 return Err(error);
-            } else if !crate::auth_prompt::has_pane() {
-                return Err(format!(
-                    "{}. The server asks for keyboard-interactive answers, which only a \
-                     terminal pane can collect: open this connection as a shell",
-                    error
-                ));
             } else {
+                let Some(pane) = crate::auth_prompt::current_pane() else {
+                    return Err(format!(
+                        "{}. The server asks for keyboard-interactive answers, which only a \
+                         terminal pane can collect: open this connection as a shell",
+                        error
+                    ));
+                };
                 debug.at(1, || {
                     format!(
                         "Next authentication method: keyboard-interactive as {}",
                         username
                     )
                 });
-                crate::auth_prompt::authenticate(session, endpoint, debug, &error)?;
+                crate::auth_prompt::authenticate(pane, session, endpoint, debug, &error)?;
                 if !session.authenticated() {
                     return Err("Authentication failed".to_string());
                 }

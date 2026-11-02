@@ -98,8 +98,9 @@ pub(crate) fn cancel(prompt_id: &str) {
 /// Where a prompt goes: the JSON of one event for the pane.
 type Sink = Arc<dyn Fn(String) + Send + Sync>;
 
+/// The pane a login on this thread can ask in.
 #[derive(Clone)]
-struct Scope {
+pub(crate) struct Scope {
     sink: Sink,
     /// Set once nobody wants this attempt's result (`reconnect::OpenAttempt`).
     cancelled: Option<Arc<AtomicBool>>,
@@ -137,23 +138,22 @@ impl Drop for PromptScope {
     }
 }
 
-/// Whether this thread has a pane to ask in.
-pub(crate) fn has_pane() -> bool {
-    SCOPE.with(|scope| scope.borrow().is_some())
+/// The pane this thread can ask in, when it has one.
+pub(crate) fn current_pane() -> Option<Scope> {
+    SCOPE.with(|scope| scope.borrow().clone())
 }
 
-/// Run keyboard-interactive authentication, asking in this thread's pane. A
-/// server that advertises the method and then asks nothing (no PAM behind it)
-/// has only refused the credential, so `refused_before` stays the answer.
+/// Run keyboard-interactive authentication, asking in `pane`. A server that
+/// advertises the method and then asks nothing (no PAM behind it) has only
+/// refused the credential, so `refused_before` stays the answer.
 pub(crate) fn authenticate(
+    pane: Scope,
     session: &Session,
     endpoint: &Endpoint,
     debug: &SshDebug,
     refused_before: &str,
 ) -> Result<(), String> {
-    let Scope { sink, cancelled } = SCOPE
-        .with(|scope| scope.borrow().clone())
-        .ok_or("Keyboard-interactive auth needs a terminal pane to ask in")?;
+    let Scope { sink, cancelled } = pane;
     let mut prompter = PanePrompter {
         sink,
         cancelled,
@@ -606,6 +606,7 @@ mod tests {
 
     #[test]
     fn a_scope_lasts_as_long_as_its_guard_and_only_on_its_thread() {
+        let has_pane = || current_pane().is_some();
         assert!(!has_pane());
         let scope = PromptScope::install(Scope {
             sink: Arc::new(|_| {}),

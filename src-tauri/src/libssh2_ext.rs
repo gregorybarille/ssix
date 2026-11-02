@@ -1,4 +1,5 @@
-//! The libssh2 calls the `ssh2` crate does not wrap, and nothing else.
+//! The libssh2 calls the `ssh2` crate does not wrap, or wraps with a panic on
+//! what a server sends, and nothing else.
 //!
 //! `libssh2-sys` is the copy `ssh2` links, so these run on the same sessions.
 //! `libssh2_session_callback_set2` and `libssh2_userauth_publickey` are public
@@ -14,7 +15,8 @@
 //!   session is freed, whichever comes first, so whoever holds one must also
 //!   hold a clone of its `Session`.
 
-use std::ffi::{c_char, c_int, c_uchar, c_ulong, c_void, CString};
+use std::borrow::Cow;
+use std::ffi::{c_char, c_int, c_uchar, c_uint, c_ulong, c_void, CStr, CString};
 use std::io;
 use std::marker::PhantomData;
 use std::mem;
@@ -305,6 +307,43 @@ extern "C" fn on_sign<F: FnMut(&[u8]) -> Option<Vec<u8>>>(
     .unwrap_or(FAILED)
 }
 
+/// A method list as text. The list is whatever the server sent, and a name
+/// that is not UTF-8 cannot match a method anyway.
+fn decode_method_list(list: &CStr) -> Cow<'_, str> {
+    list.to_string_lossy()
+}
+
+/// The authentication methods the server still accepts for `username`, comma
+/// separated. Empty when it just accepted the "none" request this sends.
+///
+/// Not `Session::auth_methods`: that panics on a list that is not UTF-8, which
+/// any server can send.
+pub(crate) fn userauth_list(session: &Session, username: &str) -> Result<String, ssh2::Error> {
+    let username_len = username.len() as c_uint;
+    let username = CString::new(username).map_err(|_| {
+        ssh2::Error::new(
+            ssh2::ErrorCode::Session(raw::LIBSSH2_ERROR_INVAL),
+            "the username contains a NUL byte",
+        )
+    })?;
+    with_session(session, |locked| {
+        // SAFETY: the session is locked and the username is valid for the call.
+        let list =
+            unsafe { raw::libssh2_userauth_list(locked.raw, username.as_ptr(), username_len) };
+        if list.is_null() {
+            return match ssh2::Error::last_session_error_raw(locked.raw) {
+                Some(error) => Err(error),
+                None => Ok(String::new()),
+            };
+        }
+        // SAFETY: libssh2 NUL-terminates the list it returns. The session owns
+        // it until the next call, which the lock held here keeps away until
+        // this copy is made.
+        let list = unsafe { CStr::from_ptr(list) };
+        Ok(decode_method_list(list).into_owned())
+    })
+}
+
 /// `publickey` authentication with `key_blob`, signing through `sign`, which
 /// returns the bytes libssh2 puts after the method name in the signature.
 pub(crate) fn userauth_publickey<F>(
@@ -347,4 +386,27 @@ where
             "public key authentication failed",
         )
     }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_method_list_that_is_not_utf8_still_decodes() {
+        let list = CStr::from_bytes_with_nul(b"publickey,pass\xffword,keyboard-interactive\0")
+            .expect("one terminating NUL");
+        let methods = decode_method_list(list);
+        let names: Vec<&str> = methods.split(',').collect();
+        assert_eq!(names[0], "publickey");
+        assert_eq!(names[1], "pass\u{fffd}word");
+        assert_eq!(names[2], "keyboard-interactive");
+    }
+
+    #[test]
+    fn a_username_with_a_nul_is_an_error_not_a_panic() {
+        let session = Session::new().expect("session");
+        let error = userauth_list(&session, "bad\0name").expect_err("refused");
+        assert!(error.message().contains("NUL"), "{error}");
+    }
 }
