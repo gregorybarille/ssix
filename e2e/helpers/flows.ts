@@ -301,19 +301,11 @@ async function buildTerminalTimeoutMessage(needle: string, timeoutMs: number): P
  * Type into the focused terminal. xterm.js forwards keystrokes from
  * its hidden textarea, so we focus the container then send keys.
  *
- * A letter sent twice in a row in one `keys` call is typed once ("kill"
- * arrives as "kil"), so a repeated letter starts a new call.
+ * One `keys` call per key: within a call the keys are held down together,
+ * so a repeated one is typed once ("kill" arrives as "kil").
  */
 export async function typeIntoTerminal(text: string): Promise<void> {
   const term = await browser.$(sel.terminalContainer);
   await term.click();
-  let run: string[] = [];
-  for (const key of text) {
-    if (run[run.length - 1] === key) {
-      await browser.keys(run);
-      run = [];
-    }
-    run.push(key);
-  }
-  await browser.keys(run);
+  for (const key of text) await browser.keys([key]);
 }
