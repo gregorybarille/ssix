@@ -27,6 +27,7 @@ use std::io::{Read, Write};
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{mpsc, Arc};
+use std::thread;
 use std::time::Duration;
 use tauri::async_runtime::block_on;
 
@@ -411,6 +412,84 @@ fn live_sftp_round_trips_a_folder_without_following_links() {
             "low"
         );
         assert!(!got.join("passwd-link").exists());
+    });
+}
+
+/// libssh2 sessions are not safe to share between threads. Here each
+/// transfer and the browsing pane have a session of their own, so running
+/// them all at once must not disturb any of them.
+#[test]
+#[ignore]
+fn live_sftp_transfers_and_browsing_at_once_keep_every_byte() {
+    with_connection(|id| {
+        let dir = RemoteDir::new(id);
+        let up = TempDir::new("live-together-up");
+        let down = TempDir::new("live-together-down");
+        // Different lengths and bytes, so a mix-up cannot pass.
+        let files: Vec<(String, Vec<u8>)> = (0..6usize)
+            .map(|i| {
+                let name = format!("f{}.bin", i);
+                let content: Vec<u8> = (0..4 * 1024 * 1024 + i * 4099)
+                    .map(|b| (b % 251) as u8 ^ i as u8)
+                    .collect();
+                fs::write(up.0.join(&name), &content).unwrap();
+                (name, content)
+            })
+            .collect();
+
+        let session = sftp_connect_sync(id).unwrap();
+        let session_id = session.session_id.clone();
+        let stop = Arc::new(AtomicBool::new(false));
+        let browsing = {
+            let (session_id, path, stop) = (session_id.clone(), dir.path.clone(), stop.clone());
+            thread::spawn(move || {
+                let mut listings = 0;
+                while !stop.load(Ordering::SeqCst) {
+                    block_on(sftp_list(Some(session_id.clone()), path.clone()))
+                        .expect("listing while transfers run");
+                    listings += 1;
+                }
+                listings
+            })
+        };
+
+        let uploads: Vec<_> = files
+            .iter()
+            .map(|(name, _)| {
+                let (id, source, target) = (id.to_string(), up.0.join(name), dir.path.clone());
+                thread::spawn(move || upload(&id, &source, &target, false))
+            })
+            .collect();
+        for running in uploads {
+            assert_done(running.join().unwrap());
+        }
+        let downloads: Vec<_> = files
+            .iter()
+            .map(|(name, _)| {
+                let (id, source, target) = (id.to_string(), dir.child(name), down.0.clone());
+                thread::spawn(move || download(&id, &source, &target, false))
+            })
+            .collect();
+        for running in downloads {
+            assert_done(running.join().unwrap());
+        }
+
+        stop.store(true, Ordering::SeqCst);
+        assert!(browsing.join().unwrap() > 0, "the pane never listed");
+        // The session that browsed through all of it still answers.
+        let names = block_on(sftp_list(Some(session_id.clone()), dir.path.clone()))
+            .unwrap()
+            .entries
+            .len();
+        assert_eq!(names, files.len());
+        sftp_disconnect(session_id);
+        for (name, content) in &files {
+            assert!(
+                fs::read(down.0.join(name)).unwrap() == *content,
+                "{} changed on the way",
+                name
+            );
+        }
     });
 }
 

@@ -38,6 +38,7 @@ import {
   fill,
   navigateTo,
   pickOption,
+  textContentOf,
 } from "../helpers/flows.js";
 import { sel } from "../helpers/selectors.js";
 
@@ -640,7 +641,7 @@ describe("Files view (SFTP)", () => {
     await browser.waitUntil(
       async () =>
         (await status.getAttribute("data-state")) === "connected" &&
-        (await status.getText()).includes("server-c"),
+        (await textContentOf(status)).includes("server-c"),
       { timeout: 60_000, timeoutMsg: "The jump host connection never opened" },
     );
     await panePath("remote");
