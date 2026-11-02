@@ -196,10 +196,10 @@ describe("Terminal extension hooks", () => {
     expect(mocks.events.slice(-2)).toEqual(["write:3", "output"]);
   });
 
-  it("runs dispose on unmount, before xterm is disposed", () => {
-    add({ id: "probe", dispose: () => void mocks.events.push("dispose") });
+  it("runs what onCreate returned on unmount, before xterm is disposed", () => {
+    add({ id: "probe", onCreate: () => () => void mocks.events.push("cleanup") });
     mount().unmount();
-    expect(mocks.events.slice(-2)).toEqual(["dispose", "term-dispose"]);
+    expect(mocks.events.slice(-2)).toEqual(["cleanup", "term-dispose"]);
   });
 
   it("registers auto-copy as a built-in extension and it reaches the clipboard", () => {

@@ -17,13 +17,17 @@ export interface TerminalExtensionContext {
 /**
  * A behaviour plugged into every `<Terminal>`. Implement only the hooks you
  * need, then add the extension to `registerExtensions.ts`. An extension that
- * throws is logged and skipped, so it cannot take keyboard input or output
- * down with it.
+ * throws is skipped, so it cannot take keyboard input or output down with it,
+ * and logged once per hook, so one running on every chunk cannot flood the log.
  */
 export interface TerminalExtension {
   id: string;
-  /** After the terminal is opened and before any output is written to it. */
-  onCreate?(ctx: TerminalExtensionContext): void;
+  /**
+   * After the terminal is opened and before any output is written to it.
+   * Return a function to release what it took: it runs when this terminal
+   * unmounts, before xterm is disposed.
+   */
+  onCreate?(ctx: TerminalExtensionContext): void | (() => void);
   /**
    * Keyboard and paste input on its way to the session. Return the text to
    * send (the argument, to leave it alone) or `null` to swallow it. Each
@@ -32,8 +36,6 @@ export interface TerminalExtension {
   onData?(ctx: TerminalExtensionContext, data: string): string | null;
   /** Shell output, after it was handed to xterm. Observe it only: do not keep or change `bytes`. */
   onOutput?(ctx: TerminalExtensionContext, bytes: Uint8Array): void;
-  /** When the terminal unmounts, before xterm is disposed. Release what `onCreate` took. */
-  dispose?(ctx: TerminalExtensionContext): void;
 }
 
 const extensions: TerminalExtension[] = [];
@@ -56,22 +58,38 @@ export function registerTerminalExtension(extension: TerminalExtension): () => v
   };
 }
 
+const reportedFailures = new WeakMap<TerminalExtension, Set<string>>();
+
 function guarded<T>(extension: TerminalExtension, hook: string, call: () => T): T | undefined {
   try {
     return call();
   } catch (error) {
-    appLog.error(
-      "terminal",
-      `Terminal extension ${extension.id} failed in ${hook}: ${errorMessage(error)}`,
-    );
+    const reported = reportedFailures.get(extension) ?? new Set<string>();
+    if (!reported.has(hook)) {
+      reportedFailures.set(extension, reported.add(hook));
+      appLog.error(
+        "terminal",
+        `Terminal extension ${extension.id} failed in ${hook}, further failures of this hook are not logged: ${errorMessage(error)}`,
+      );
+    }
     return undefined;
   }
 }
 
-export function runTerminalCreate(ctx: TerminalExtensionContext): void {
+/**
+ * Run every `onCreate`. The returned function is for the terminal's unmount:
+ * it runs the cleanups those calls returned, whatever the registry holds by
+ * then, last first so an extension can still rely on the ones before it.
+ */
+export function runTerminalCreate(ctx: TerminalExtensionContext): () => void {
+  const cleanups: (() => void)[] = [];
   for (const extension of extensions) {
-    guarded(extension, "onCreate", () => extension.onCreate?.(ctx));
+    const cleanup = guarded(extension, "onCreate", () => extension.onCreate?.(ctx));
+    if (typeof cleanup === "function") {
+      cleanups.push(() => guarded(extension, "cleanup", cleanup));
+    }
   }
+  return () => cleanups.reverse().forEach((cleanup) => cleanup());
 }
 
 /** The input to send after every extension saw it, or `null` if one swallowed it. */
@@ -89,12 +107,5 @@ export function runTerminalData(ctx: TerminalExtensionContext, data: string): st
 export function runTerminalOutput(ctx: TerminalExtensionContext, bytes: Uint8Array): void {
   for (const extension of extensions) {
     if (extension.onOutput) guarded(extension, "onOutput", () => extension.onOutput?.(ctx, bytes));
-  }
-}
-
-/** Runs in reverse, so an extension can still rely on the ones registered before it. */
-export function runTerminalDispose(ctx: TerminalExtensionContext): void {
-  for (const extension of [...extensions].reverse()) {
-    guarded(extension, "dispose", () => extension.dispose?.(ctx));
   }
 }

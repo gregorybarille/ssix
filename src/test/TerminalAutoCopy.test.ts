@@ -74,8 +74,8 @@ describe("Terminal — auto-copy on selection (opt-in)", () => {
         return opts.settings.current;
       },
     } as unknown as TerminalExtensionContext;
-    autoCopySelection.onCreate?.(ctx);
-    return { select: () => onSelection(), ctx, dispose };
+    const cleanup = autoCopySelection.onCreate?.(ctx);
+    return { select: () => onSelection(), cleanup, dispose };
   }
 
   it("does NOT write to clipboard when auto-copy is disabled (default)", () => {
@@ -126,11 +126,11 @@ describe("Terminal — auto-copy on selection (opt-in)", () => {
   });
 
   it("releases the selection listener when the terminal goes away", () => {
-    const { ctx, dispose } = mountExtension({
+    const { cleanup, dispose } = mountExtension({
       settings: { current: { auto_copy_selection: true } },
       getSelection: () => "x",
     });
-    autoCopySelection.dispose?.(ctx);
+    if (cleanup) cleanup();
     expect(dispose).toHaveBeenCalledTimes(1);
   });
 });

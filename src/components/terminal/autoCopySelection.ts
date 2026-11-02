@@ -1,7 +1,4 @@
-import type { IDisposable } from "@xterm/xterm";
-import type { TerminalExtension, TerminalExtensionContext } from "./extensions";
-
-const listeners = new WeakMap<TerminalExtensionContext, IDisposable>();
+import type { TerminalExtension } from "./extensions";
 
 /**
  * Opt-in auto-copy (`settings.auto_copy_selection`, off by default): classic
@@ -16,10 +13,6 @@ export const autoCopySelection: TerminalExtension = {
       const selection = ctx.term.getSelection();
       if (selection) navigator.clipboard.writeText(selection).catch(() => {});
     });
-    listeners.set(ctx, listener);
-  },
-  dispose(ctx) {
-    listeners.get(ctx)?.dispose();
-    listeners.delete(ctx);
+    return () => listener.dispose();
   },
 };

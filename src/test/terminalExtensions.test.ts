@@ -3,7 +3,6 @@ import {
   registerTerminalExtension,
   runTerminalCreate,
   runTerminalData,
-  runTerminalDispose,
   runTerminalOutput,
   terminalExtensions,
   type TerminalExtension,
@@ -27,12 +26,12 @@ describe("terminal extension registry", () => {
     const calls: string[] = [];
     add({
       id: "first",
-      onCreate: () => calls.push("first:create"),
+      onCreate: () => void calls.push("first:create"),
       onOutput: () => calls.push("first:output"),
     });
     add({
       id: "second",
-      onCreate: () => calls.push("second:create"),
+      onCreate: () => void calls.push("second:create"),
       onOutput: () => calls.push("second:output"),
     });
     runTerminalCreate(ctx);
@@ -48,12 +47,37 @@ describe("terminal extension registry", () => {
     expect(onOutput).toHaveBeenCalledWith(ctx, bytes);
   });
 
-  it("disposes in reverse order", () => {
+  it("runs the cleanups onCreate returned, last first", () => {
     const calls: string[] = [];
-    add({ id: "first", dispose: () => calls.push("first") });
-    add({ id: "second", dispose: () => calls.push("second") });
-    runTerminalDispose(ctx);
+    add({ id: "first", onCreate: () => () => void calls.push("first") });
+    add({ id: "second", onCreate: () => () => void calls.push("second") });
+    const dispose = runTerminalCreate(ctx);
+    expect(calls).toEqual([]);
+    dispose();
     expect(calls).toEqual(["second", "first"]);
+  });
+
+  it("still cleans up an extension removed after its onCreate ran", () => {
+    const cleanup = vi.fn();
+    const remove = registerTerminalExtension({ id: "removed", onCreate: () => cleanup });
+    const dispose = runTerminalCreate(ctx);
+    remove();
+    dispose();
+    expect(cleanup).toHaveBeenCalledTimes(1);
+  });
+
+  it("runs the remaining cleanups when one throws", () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const healthy = vi.fn();
+    add({ id: "healthy", onCreate: () => healthy });
+    add({
+      id: "broken",
+      onCreate: () => () => {
+        throw new Error("boom");
+      },
+    });
+    runTerminalCreate(ctx)();
+    expect(healthy).toHaveBeenCalledTimes(1);
   });
 
   it("passes input through untouched when no extension has onData", () => {
@@ -101,6 +125,18 @@ describe("terminal extension registry", () => {
     expect(onCreate).toHaveBeenCalledTimes(1);
     expect(logged.mock.calls[0][1]).toContain("broken");
     expect(logged.mock.calls[0][1]).toContain("boom");
+  });
+
+  it("logs a hook that keeps failing only once", () => {
+    const logged = vi.spyOn(console, "error").mockImplementation(() => {});
+    add({
+      id: "noisy",
+      onOutput: () => {
+        throw new Error("boom");
+      },
+    });
+    for (let chunk = 0; chunk < 3; chunk += 1) runTerminalOutput(ctx, new Uint8Array([chunk]));
+    expect(logged).toHaveBeenCalledTimes(1);
   });
 
   it("replaces an extension registered again under the same id, in place", () => {

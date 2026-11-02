@@ -10,7 +10,6 @@ import { AppSettings, Connection } from "@/types";
 import {
   runTerminalCreate,
   runTerminalData,
-  runTerminalDispose,
   runTerminalOutput,
   type TerminalExtensionContext,
 } from "./terminal/extensions";
@@ -197,7 +196,7 @@ export function Terminal({ sessionId, isVisible, onDisconnect, settings, connect
     });
 
     // Before the output is attached below: buffered output replays at once.
-    runTerminalCreate(extensionContext);
+    const disposeExtensions = runTerminalCreate(extensionContext);
 
     // Right-click paste: App.tsx dispatches this with the session id of the
     // terminal under the cursor. Only that terminal pastes.
@@ -238,7 +237,7 @@ export function Terminal({ sessionId, isVisible, onDisconnect, settings, connect
 
     return () => {
       dataDisposable.dispose();
-      runTerminalDispose(extensionContext);
+      disposeExtensions();
       window.removeEventListener("ssix:terminal-paste", pasteHandler);
       detachOutput();
       resizeObserver.disconnect();
