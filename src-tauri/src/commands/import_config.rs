@@ -797,7 +797,7 @@ fn connection_signature(connection: &Connection, credentials: &[Credential]) -> 
         connection
             .credential_id
             .as_deref()
-            .map_or(Json::Null, &identity)
+            .map_or(Json::Null, identity)
     };
     signature(
         &connection.kind,
