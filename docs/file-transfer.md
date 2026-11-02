@@ -7,6 +7,8 @@ SSIX supports SCP-based file transfer for:
 
 Port forwards are not valid SCP targets.
 
+The [Files view](sftp.md) is the alternative for browsing a server, with progress and cancel; that page compares the two.
+
 ## Supported Operations
 
 - upload a single file

@@ -146,6 +146,10 @@ See [Port Forwards](forwards.md) for details.
 
 See [File Transfer](file-transfer.md) for behavior and limitations.
 
+## Files
+
+See [Files (SFTP)](sftp.md) for the two-pane browser: transfers with progress and cancel, file operations and edit in place.
+
 ## Scripts
 
 The **Scripts** view (sidebar) keeps scripts you run on several hosts at
