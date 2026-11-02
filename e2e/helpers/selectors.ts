@@ -287,6 +287,11 @@ export const sel = {
   confirmClosePane: '[data-testid="confirm-close-pane"]',
   confirmClosePaneConfirm: '[data-testid="confirm-close-pane-confirm"]',
   // roadmap:forwards
+  connectionFormKindRemoteForward: '[data-testid="connection-form-kind-remoteforward"]',
+  connectionFormKindDynamicForward: '[data-testid="connection-form-kind-dynamicforward"]',
+  connectionFormRemotePort: '[data-testid="connection-form-remote-port"]',
+  connectionFormSocksPort: '[data-testid="connection-form-socks-port"]',
+  confirmStopForwardConfirm: '[data-testid="confirm-stop-forward-confirm"]',
   // roadmap:sftp
   // roadmap:snippets
   // roadmap:import
