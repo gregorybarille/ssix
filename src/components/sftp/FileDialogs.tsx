@@ -1,6 +1,6 @@
 import { useShallow } from "zustand/react/shallow";
 import { ConfirmDialog } from "../ConfirmDialog";
-import { FileFieldDialog } from "./FileFieldDialog";
+import { SingleFieldDialog } from "../ui/single-field-dialog";
 import { formatModeOctal, formatModeSymbolic, parseMode } from "@/lib/sftp";
 import { useSftpStore, type PaneSide } from "@/store/useSftpStore";
 import type { FileEntry } from "@/types";
@@ -46,7 +46,7 @@ export function FileDialogs() {
   return (
     <>
       {dialog?.kind === "mkdir" && (
-        <FileFieldDialog
+        <SingleFieldDialog
           idPrefix="files-name"
           title="New folder"
           description={`Create a folder in the folder shown for ${whereLabel(dialog.side)}.`}
@@ -57,7 +57,7 @@ export function FileDialogs() {
         />
       )}
       {dialog?.kind === "rename" && (
-        <FileFieldDialog
+        <SingleFieldDialog
           key={dialog.entry.path}
           idPrefix="files-name"
           title="Rename"
@@ -70,7 +70,7 @@ export function FileDialogs() {
         />
       )}
       {dialog?.kind === "chmod" && (
-        <FileFieldDialog
+        <SingleFieldDialog
           key={dialog.entry.path}
           idPrefix="files-chmod"
           title="Permissions"
