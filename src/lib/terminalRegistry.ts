@@ -48,6 +48,11 @@ function takesInput(sessionId: string): boolean {
   return terminals.has(sessionId) && !useAuthPromptStore.getState().prompts[sessionId];
 }
 
+/** A session's xterm, for what has no function of its own here. */
+export function registeredTerminal(sessionId: string): XTerm | undefined {
+  return terminals.get(sessionId);
+}
+
 /** Give the keyboard to a session's terminal, when it can take it. */
 export function focusSession(sessionId: string): void {
   terminals.get(sessionId)?.focus();

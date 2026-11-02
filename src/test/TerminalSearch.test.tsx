@@ -41,10 +41,7 @@ function fakePane(sessionId: string) {
     },
   };
   registerTerminal(sessionId, term as unknown as XTerm);
-  registerSearchablePane(sessionId, {
-    term: term as unknown as XTerm,
-    addon: addon as unknown as SearchAddon,
-  });
+  registerSearchablePane(sessionId, addon as unknown as SearchAddon);
   return { term, addon, report: (index: number, count: number) => listener({ resultIndex: index, resultCount: count }) };
 }
 

@@ -1,7 +1,7 @@
 import { create } from "zustand";
 import { isPanelOpen } from "@/lib/focus";
-import { activeSessionId } from "@/lib/terminalRegistry";
-import { clearTerminalSearch, focusSearchablePane } from "@/lib/terminalSearch";
+import { activeSessionId, focusSession } from "@/lib/terminalRegistry";
+import { clearTerminalSearch } from "@/lib/terminalSearch";
 
 /**
  * The terminal find bar (`FIND_COMBO`). One pane at a time has it open, and only a
@@ -40,6 +40,6 @@ export const useTerminalSearchStore = create<TerminalSearchState>((set, get) => 
     if (!sessionId) return;
     clearTerminalSearch(sessionId);
     set({ sessionId: null });
-    if (refocus) focusSearchablePane(sessionId);
+    if (refocus) focusSession(sessionId);
   },
 }));

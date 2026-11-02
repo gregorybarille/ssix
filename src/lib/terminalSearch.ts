@@ -1,5 +1,5 @@
 import type { SearchAddon } from "@xterm/addon-search";
-import type { Terminal as XTerm } from "@xterm/xterm";
+import { registeredTerminal } from "./terminalRegistry";
 import { searchHighlight } from "./terminalTheme";
 
 /**
@@ -7,19 +7,14 @@ import { searchHighlight } from "./terminalTheme";
  * `terminalSearch` extension fills this in; `useTerminalSearchStore` says
  * which pane has its bar open.
  */
-interface SearchablePane {
-  term: XTerm;
-  addon: SearchAddon;
-}
+const addons = new Map<string, SearchAddon>();
 
-const panes = new Map<string, SearchablePane>();
-
-export function registerSearchablePane(sessionId: string, pane: SearchablePane): void {
-  panes.set(sessionId, pane);
+export function registerSearchablePane(sessionId: string, addon: SearchAddon): void {
+  addons.set(sessionId, addon);
 }
 
 export function unregisterSearchablePane(sessionId: string): void {
-  panes.delete(sessionId);
+  addons.delete(sessionId);
 }
 
 export interface SearchResults {
@@ -44,24 +39,20 @@ export function findInTerminal(
   direction: SearchDirection,
   incremental = false,
 ): boolean {
-  const pane = panes.get(sessionId);
-  if (!pane) return false;
-  const decorations = searchHighlight(pane.term.options.theme ?? {});
+  const addon = addons.get(sessionId);
+  if (!addon) return false;
+  const decorations = searchHighlight(registeredTerminal(sessionId)?.options.theme ?? {});
   return direction === "next"
-    ? pane.addon.findNext(query, { incremental, decorations })
-    : pane.addon.findPrevious(query, { decorations });
+    ? addon.findNext(query, { incremental, decorations })
+    : addon.findPrevious(query, { decorations });
 }
 
 /** Take the highlights and the selected match away. */
 export function clearTerminalSearch(sessionId: string): void {
-  const pane = panes.get(sessionId);
-  if (!pane) return;
-  pane.addon.clearDecorations();
-  pane.term.clearSelection();
-}
-
-export function focusSearchablePane(sessionId: string): void {
-  panes.get(sessionId)?.term.focus();
+  const addon = addons.get(sessionId);
+  if (!addon) return;
+  addon.clearDecorations();
+  registeredTerminal(sessionId)?.clearSelection();
 }
 
 /** Follow a pane's result count. Returns a function that stops listening. */
@@ -69,9 +60,9 @@ export function onSearchResults(
   sessionId: string,
   listener: (results: SearchResults) => void,
 ): () => void {
-  const subscription = panes
+  const subscription = addons
     .get(sessionId)
-    ?.addon.onDidChangeResults(({ resultIndex, resultCount }) =>
+    ?.onDidChangeResults(({ resultIndex, resultCount }) =>
       listener({ index: resultIndex, count: resultCount }),
     );
   return () => subscription?.dispose();

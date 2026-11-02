@@ -21,7 +21,7 @@ export const terminalSearch: TerminalExtension = {
     term.options.allowProposedApi = true;
     const addon = new SearchAddon({ highlightLimit: SEARCH_HIGHLIGHT_LIMIT });
     term.loadAddon(addon);
-    registerSearchablePane(sessionId, { term, addon });
+    registerSearchablePane(sessionId, addon);
     return () => {
       const search = useTerminalSearchStore.getState();
       if (search.sessionId === sessionId) search.close({ refocus: false });
