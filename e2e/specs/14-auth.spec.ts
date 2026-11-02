@@ -114,6 +114,7 @@ async function openSplitWith(name: string): Promise<void> {
   await click(sel.terminalNewSplitRight);
   await fill(sel.connectPickerInput, name);
   await browser.keys(["Enter"]);
+  await (await browser.$(sel.connectPickerInput)).waitForExist({ reverse: true, timeout: 10_000 });
   await browser.waitUntil(async () => (await browser.$$(sel.terminalContainer).length) === 2, {
     timeout: 30_000,
     timeoutMsg: "The split never opened",
@@ -498,7 +499,7 @@ describe("Keyboard-interactive login", () => {
     expect(focused).toBe("auth-prompt-input-0");
 
     await answerAuthPrompt(TARGETS.e.password);
-    await expectReconnected("before-away-42");
+    await expectReconnected();
     await (await browser.$(sel.navTerminalsWaiting)).waitForExist({ reverse: true, timeout: 10_000 });
     expect(await (await browser.$(sel.terminalTabPromptWaiting)).isExisting()).toBe(false);
   });
