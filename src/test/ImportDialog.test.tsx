@@ -36,6 +36,7 @@ const item = (name: string, overrides: Partial<ImportItem> = {}): ImportItem => 
   proxy_command: null,
   notes: [],
   source: "~/.ssh/config:1",
+  preselected: true,
   ...overrides,
 });
 
@@ -196,6 +197,49 @@ describe("ImportDialog", () => {
         { input: { path: "~/.ssh/config", keys: ["key-web", "key-proxied"] } },
       ],
     ]);
+  });
+
+  it("leaves a row unticked when the backend says so, and lets it be chosen", async () => {
+    const user = userEvent.setup();
+    backendWith({
+      ...PREVIEW,
+      items: [
+        item("prod"),
+        item("prod-alt", {
+          preselected: false,
+          notes: ["Same destination as 'prod', so it starts unticked."],
+        }),
+      ],
+    });
+    await renderLoaded();
+    expect(checkbox("prod")).toBeChecked();
+    expect(checkbox("prod-alt")).not.toBeChecked();
+    expect(within(row("prod-alt")).getByText(/Same destination/)).toBeInTheDocument();
+    expect(screen.getByTestId("import-select-all")).toHaveAttribute("aria-checked", "mixed");
+    expect(screen.getByTestId("import-confirm")).toHaveTextContent("Import 1 connection");
+
+    await user.click(checkbox("prod"));
+    await user.click(checkbox("prod-alt"));
+    await user.click(screen.getByTestId("import-confirm"));
+
+    await screen.findByTestId("import-result");
+    expect(calls("import_ssh_config_apply")).toEqual([
+      ["import_ssh_config_apply", { input: { path: "~/.ssh/config", keys: ["key-prod-alt"] } }],
+    ]);
+  });
+
+  it("keeps what the user ticked when the preview is read again", async () => {
+    const user = userEvent.setup();
+    backendWith({ ...PREVIEW, items: [item("web"), item("alt", { preselected: false })] });
+    await renderLoaded();
+    await user.click(checkbox("web"));
+    await user.click(checkbox("alt"));
+
+    await user.click(screen.getByTestId("import-load"));
+    await waitFor(() => expect(calls("import_ssh_config_preview")).toHaveLength(2));
+    await waitFor(() => expect(screen.getByTestId("import-load")).toBeEnabled());
+    expect(checkbox("web")).not.toBeChecked();
+    expect(checkbox("alt")).toBeChecked();
   });
 
   it("toggles every row at once", async () => {

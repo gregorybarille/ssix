@@ -24,4 +24,8 @@ proxy_command: string | null,
 /**
  * Defaults the import chose and details it had to drop.
  */
-notes: Array<string>, source: string, };
+notes: Array<string>, source: string, 
+/**
+ * Whether the row starts ticked.
+ */
+preselected: boolean, };

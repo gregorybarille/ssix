@@ -39,6 +39,7 @@ const item: GenItem = {
   proxy_command: null,
   notes: [],
   source: "config:1",
+  preselected: true,
 };
 const category: GenSkipCategory = "name_clash";
 const skip: GenSkip = { name: "n", category, reason: "r", source: "config:1" };

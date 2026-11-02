@@ -383,6 +383,8 @@ export interface ImportItem {
   notes: string[];
   /** `file:line` of the Host or forward line. */
   source: string;
+  /** Whether the row starts ticked. */
+  preselected: boolean;
 }
 
 export interface ImportSkip {

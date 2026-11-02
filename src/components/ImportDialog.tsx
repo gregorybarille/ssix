@@ -174,7 +174,7 @@ function PreviewSections({
             />
           )}
           <h3 id="import-items-heading" className="text-sm font-semibold">
-            Will be created ({preview.items.length})
+            Can be created ({preview.items.length})
           </h3>
         </div>
         {preview.items.length === 0 ? (
@@ -251,15 +251,16 @@ export function ImportDialog({ open, onOpenChange }: ImportDialogProps) {
     })),
   );
   const [path, setPath] = React.useState(DEFAULT_CONFIG_PATH);
-  // Every row starts ticked, so a preview loaded again keeps what was unticked.
-  const [unpicked, setUnpicked] = React.useState<ReadonlySet<string>>(new Set());
+  // Only what the user changed: every other row keeps the backend's default,
+  // and a preview loaded again keeps these.
+  const [ticks, setTicks] = React.useState<ReadonlyMap<string, boolean>>(new Map());
   const [applyError, setApplyError] = React.useState<string | null>(null);
   const [result, setResult] = React.useState<ImportResult | null>(null);
 
   React.useEffect(() => {
     if (!open) return;
     setPath(DEFAULT_CONFIG_PATH);
-    setUnpicked(new Set());
+    setTicks(new Map());
     setApplyError(null);
     setResult(null);
     void loadPreview(DEFAULT_CONFIG_PATH);
@@ -272,16 +273,13 @@ export function ImportDialog({ open, onOpenChange }: ImportDialogProps) {
     void loadPreview(nextPath);
   };
 
-  const isPicked = (item: ImportItem) => !unpicked.has(item.key);
+  const isPicked = (item: ImportItem) => ticks.get(item.key) ?? item.preselected;
   const picked = preview?.items.filter(isPicked) ?? [];
 
   const setChecked = (items: ImportItem[], checked: boolean) => {
-    setUnpicked((current) => {
-      const next = new Set(current);
-      for (const item of items) {
-        if (checked) next.delete(item.key);
-        else next.add(item.key);
-      }
+    setTicks((current) => {
+      const next = new Map(current);
+      for (const item of items) next.set(item.key, checked);
       return next;
     });
   };

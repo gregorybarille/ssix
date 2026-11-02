@@ -11,7 +11,8 @@
 //! The rules for mapping a host (see also `docs/ssh-config-import.md`):
 //!
 //! - Each literal name on a `Host` line is one connection, named after it.
-//!   Two aliases that end up at the same place give one connection.
+//!   Of two aliases that end up at the same place, the later one starts
+//!   unticked: the user chooses, and neither reserves anything for the other.
 //! - No `User`: the login name, which is what `ssh` itself uses.
 //! - No `IdentityFile`: an agent credential, the nearest thing to what `ssh`
 //!   tries first. Several `IdentityFile`s: the first, because a credential
@@ -66,7 +67,8 @@ pub enum ImportSkipCategory {
     AlreadyImported,
     /// SSIX has a different connection under this name. It is never changed.
     NameClash,
-    /// An earlier entry of this config has the same name or destination.
+    /// An earlier entry of this config has the same name. (One with the same
+    /// destination is still offered, unticked.)
     Duplicate,
     /// Valid for `ssh`, but SSIX has no way to do it.
     Unsupported,
@@ -109,6 +111,8 @@ pub struct ImportItem {
     /// Defaults the import chose and details it had to drop.
     pub notes: Vec<String>,
     pub source: String,
+    /// Whether the row starts ticked.
+    pub preselected: bool,
 }
 
 /// An entry of the config that will not become a connection.
@@ -228,7 +232,7 @@ impl Refusal {
 }
 
 /// The credential a host needs, before it is known whether one exists.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize)]
 struct CredentialSpec {
     username: String,
     /// `None` means keys from the SSH agent.
@@ -247,7 +251,7 @@ impl CredentialSpec {
             }
             None => format!("{} (agent)", self.username),
         };
-        // Room for the " (2)" `free_credential_name` may add.
+        // Room for the " (2)" `CredentialBook::free_name` may add.
         name.chars().take(MAX_NAME_CHARS - 8).collect()
     }
 
@@ -278,55 +282,88 @@ impl CredentialSpec {
             key_path,
         })
     }
+}
 
-    /// A named credential that already says the same thing. Private ones
+/// The credentials a plan can share and the names it cannot take, indexed
+/// because a config can hold thousands of hosts with one key's file name.
+#[derive(Default)]
+struct CredentialBook {
+    /// What each named credential says, to its id and name. Private ones
     /// belong to their connection and are never shared.
-    fn find_in<'a>(&self, credentials: &'a [Credential]) -> Option<&'a Credential> {
-        credentials
-            .iter()
-            .find(|c| !c.is_private && Self::of_stored(c).as_ref() == Some(self))
-    }
+    shareable: HashMap<CredentialSpec, (String, String)>,
+    taken: HashSet<String>,
+    /// Per base name, the number to try next.
+    next_number: HashMap<String, usize>,
 }
 
-/// The name `spec` goes by in `credentials`, once it is created if need be.
-fn planned_credential_name(credentials: &[Credential], spec: &CredentialSpec) -> String {
-    match spec.find_in(credentials) {
-        Some(existing) => existing.name.clone(),
-        None => free_credential_name(credentials, &spec.default_name()),
+impl CredentialBook {
+    fn of(credentials: &[Credential]) -> Self {
+        let mut book = Self::default();
+        for credential in credentials {
+            book.taken.insert(credential.name.clone());
+            if credential.is_private {
+                continue;
+            }
+            if let Some(spec) = CredentialSpec::of_stored(credential) {
+                book.shareable
+                    .entry(spec)
+                    .or_insert_with(|| (credential.id.clone(), credential.name.clone()));
+            }
+        }
+        book
     }
-}
 
-fn free_credential_name(credentials: &[Credential], base: &str) -> String {
-    let taken = |name: &str| credentials.iter().any(|c| c.name == name);
-    if !taken(base) {
-        return base.to_string();
+    fn free_name(&self, base: &str) -> String {
+        if !self.taken.contains(base) {
+            return base.to_string();
+        }
+        let first = self.next_number.get(base).copied().unwrap_or(2);
+        (first..)
+            .map(|n| format!("{base} ({n})"))
+            .find(|name| !self.taken.contains(name))
+            .unwrap_or_else(|| base.to_string())
     }
-    (2..)
-        .map(|n| format!("{base} ({n})"))
-        .find(|name| !taken(name))
-        .unwrap_or_else(|| base.to_string())
-}
 
-/// Find the credential `spec` describes, or store it as `name`. Only a path
-/// and a username go in: there is nothing for the secrets file.
-fn ensure_credential(
-    data: &mut AppData,
-    spec: &CredentialSpec,
-    name: &str,
-) -> Result<String, String> {
-    if let Some(existing) = spec.find_in(&data.credentials) {
-        return Ok(existing.id.clone());
+    /// The name `spec` goes by, given what is in the book so far.
+    fn name_for(&self, spec: &CredentialSpec) -> String {
+        match self.shareable.get(spec) {
+            Some((_, name)) => name.clone(),
+            None => self.free_name(&spec.default_name()),
+        }
     }
-    validate_credential_fields(name, &spec.username, false)?;
-    let id = Uuid::new_v4().to_string();
-    data.credentials.push(Credential {
-        id: id.clone(),
-        name: name.to_string(),
-        username: spec.username.clone(),
-        kind: spec.kind(),
-        is_private: false,
-    });
-    Ok(id)
+
+    /// The credential `spec` needs, unless a shareable one exists. Only a path
+    /// and a username go in: there is nothing for the secrets file.
+    fn draft(&self, spec: &CredentialSpec) -> Result<Credential, String> {
+        let name = self.name_for(spec);
+        validate_credential_fields(&name, &spec.username, false)?;
+        Ok(Credential {
+            id: Uuid::new_v4().to_string(),
+            name,
+            username: spec.username.clone(),
+            kind: spec.kind(),
+            is_private: false,
+        })
+    }
+
+    /// Find the credential `spec` describes, or store it in `data` and enter
+    /// it here, so it takes its name and the next host can share it.
+    fn store(&mut self, data: &mut AppData, spec: &CredentialSpec) -> Result<String, String> {
+        if let Some((id, _)) = self.shareable.get(spec) {
+            return Ok(id.clone());
+        }
+        let credential = self.draft(spec)?;
+        let base = spec.default_name();
+        if credential.name != base {
+            *self.next_number.entry(base).or_insert(2) += 1;
+        }
+        let id = credential.id.clone();
+        self.taken.insert(credential.name.clone());
+        self.shareable
+            .insert(spec.clone(), (id.clone(), credential.name.clone()));
+        data.credentials.push(credential);
+        Ok(id)
+    }
 }
 
 /// One SSH server as the config describes it: a host, or a jump host.
@@ -646,6 +683,29 @@ impl PlannedConnection {
             json!(self.target_credential),
             json!(self.gateway_credential),
         )
+    }
+
+    /// The credentials it signs in with, first hop first, in the words the
+    /// connection form uses.
+    fn credentials_by_role(&self) -> Vec<(&CredentialSpec, &'static str)> {
+        let mut roles = Vec::new();
+        if let Some(spec) = &self.gateway_credential {
+            let role = if self.kind.is_forward() {
+                "SSH server credential"
+            } else {
+                "Jump host credential"
+            };
+            roles.push((spec, role));
+        }
+        if let Some(spec) = &self.target_credential {
+            let role = if self.gateway_credential.is_some() {
+                "Target credential"
+            } else {
+                "Credential"
+            };
+            roles.push((spec, role));
+        }
+        roles
     }
 
     fn fields(&self, target_id: Option<String>, gateway_id: Option<String>) -> ConnectionFields {
@@ -1006,9 +1066,8 @@ fn kind_name(kind: &ConnectionKind) -> &'static str {
 struct PlanItem {
     planned: PlannedConnection,
     key: String,
-    target_credential_name: Option<String>,
-    gateway_credential_name: Option<String>,
     credentials: Vec<ImportCredentialPlan>,
+    preselected: bool,
 }
 
 #[derive(Default)]
@@ -1016,6 +1075,9 @@ struct Plan {
     items: Vec<PlanItem>,
     skipped: Vec<ImportSkip>,
     notices: Vec<ImportNotice>,
+    /// The name each new credential asks for, to tell the rows that would
+    /// have to number theirs if an earlier row is ticked too.
+    new_credentials: HashMap<String, CredentialSpec>,
 }
 
 /// Connections the plan must not repeat: those stored, and those it has
@@ -1048,12 +1110,11 @@ impl KnownConnections {
             .or_insert((destination, stored));
     }
 
-    /// Why `planned` must not be created.
-    fn conflict(&self, planned: &PlannedConnection) -> Option<Refusal> {
-        let wanted = planned.signature().to_string();
+    /// Why a connection with this name and destination must not be offered.
+    fn refusal(&self, name: &str, destination: &str) -> Option<Refusal> {
         let refuse = |category, reason: String| Some(Refusal { category, reason });
-        if let Some((destination, stored)) = self.by_name.get(&planned.name) {
-            return match (*stored, *destination == wanted) {
+        if let Some((known, stored)) = self.by_name.get(name) {
+            return match (*stored, known == destination) {
                 (true, true) => refuse(
                     ImportSkipCategory::AlreadyImported,
                     "Already in SSIX".to_string(),
@@ -1061,8 +1122,7 @@ impl KnownConnections {
                 (true, false) => refuse(
                     ImportSkipCategory::NameClash,
                     format!(
-                        "A connection named '{}' already exists with another destination or key. It stays as it is; rename it or the Host to import this one",
-                        planned.name
+                        "A connection named '{name}' already exists with another destination or key. It stays as it is; rename it or the Host to import this one"
                     ),
                 ),
                 (false, _) => refuse(
@@ -1071,95 +1131,121 @@ impl KnownConnections {
                 ),
             };
         }
-        let (twin, stored) = self.by_destination.get(&wanted)?;
-        if *stored {
-            refuse(
+        match self.by_destination.get(destination) {
+            Some((twin, true)) => refuse(
                 ImportSkipCategory::AlreadyImported,
                 format!("Already in SSIX as '{twin}'"),
-            )
-        } else {
-            refuse(
-                ImportSkipCategory::Duplicate,
-                format!("Same destination as '{twin}' above"),
-            )
+            ),
+            _ => None,
+        }
+    }
+
+    /// The earlier row of this plan with the same destination, if any.
+    fn twin(&self, destination: &str) -> Option<&str> {
+        match self.by_destination.get(destination) {
+            Some((twin, false)) => Some(twin),
+            _ => None,
         }
     }
 }
 
+/// Run `planned` through the checks a real save runs, on its own: whether
+/// another row is ticked must not decide whether this one can be. `scratch`
+/// comes back as it was.
+fn check_row(
+    planned: &PlannedConnection,
+    scratch: &mut AppData,
+    book: &CredentialBook,
+) -> Result<(), String> {
+    fn stage(
+        spec: &Option<CredentialSpec>,
+        scratch: &mut AppData,
+        book: &CredentialBook,
+    ) -> Result<Option<String>, String> {
+        let Some(spec) = spec else {
+            return Ok(None);
+        };
+        if let Some((id, _)) = book.shareable.get(spec) {
+            return Ok(Some(id.clone()));
+        }
+        let credential = book.draft(spec)?;
+        let id = credential.id.clone();
+        scratch.credentials.push(credential);
+        Ok(Some(id))
+    }
+
+    let before = scratch.credentials.len();
+    let checked = stage(&planned.gateway_credential, scratch, book).and_then(|gateway_id| {
+        let target_id = stage(&planned.target_credential, scratch, book)?;
+        let mut fields = planned.fields(target_id, gateway_id);
+        check_connection(scratch, &mut fields, None)
+    });
+    scratch.credentials.truncate(before);
+    checked
+}
+
 impl Plan {
-    /// Try `planned` against `scratch`, the stored data plus what this plan
-    /// has admitted, through the same checks a real save runs.
+    /// Offer `planned` as a row, or say why not. `scratch` is the stored data,
+    /// and `book` its credentials: a row's name and validity are worked out
+    /// against those alone, because the other rows may end up unticked.
     fn admit(
         &mut self,
-        planned: PlannedConnection,
-        data: &AppData,
+        mut planned: PlannedConnection,
         scratch: &mut AppData,
+        book: &CredentialBook,
         known: &mut KnownConnections,
     ) {
-        if let Some(refusal) = known.conflict(&planned) {
+        let destination = planned.signature().to_string();
+        if let Some(refusal) = known.refusal(&planned.name, &destination) {
             self.skipped
                 .push(refusal.skip(&planned.name, &planned.source));
             return;
         }
-        let credentials_before = scratch.credentials.len();
+        if let Err(reason) = check_row(&planned, scratch, book) {
+            self.skipped
+                .push(Refusal::invalid(reason).skip(&planned.name, &planned.source));
+            return;
+        }
+
         let mut credentials = Vec::new();
-        let mut resolve = |scratch: &mut AppData,
-                           spec: &Option<CredentialSpec>,
-                           role: &str|
-         -> Result<(Option<String>, Option<String>), String> {
-            let Some(spec) = spec else {
-                return Ok((None, None));
-            };
-            let name = planned_credential_name(&scratch.credentials, spec);
-            let id = ensure_credential(scratch, spec, &name)?;
+        let mut notes = Vec::new();
+        for (spec, role) in planned.credentials_by_role() {
+            let name = book.name_for(spec);
+            let exists = book.shareable.contains_key(spec);
+            if !exists {
+                let first = self
+                    .new_credentials
+                    .entry(name.clone())
+                    .or_insert_with(|| spec.clone());
+                if first != spec {
+                    notes.push(format!(
+                        "If a host above with another key named {name} is ticked too, this credential's name gets a number"
+                    ));
+                }
+            }
             credentials.push(ImportCredentialPlan {
                 role: role.to_string(),
-                name: name.clone(),
+                name,
                 username: spec.username.clone(),
                 private_key_path: spec.key_path.clone(),
-                exists: spec.find_in(&data.credentials).is_some(),
+                exists,
             });
-            Ok((Some(id), Some(name)))
-        };
-        let two_hop_is_forward = planned.kind.is_forward();
-        let outcome = resolve(
-            scratch,
-            &planned.gateway_credential,
-            if two_hop_is_forward {
-                "SSH server credential"
-            } else {
-                "Jump host credential"
-            },
-        )
-        .and_then(|(gateway_id, gateway_name)| {
-            let role = if gateway_id.is_some() {
-                "Target credential"
-            } else {
-                "Credential"
-            };
-            let (target_id, target_name) = resolve(scratch, &planned.target_credential, role)?;
-            let mut fields = planned.fields(target_id, gateway_id);
-            check_connection(scratch, &mut fields, None)?;
-            insert_new_connection(scratch, fields);
-            Ok((target_name, gateway_name))
-        });
-        match outcome {
-            Ok((target_credential_name, gateway_credential_name)) => {
-                known.add(&planned.name, planned.signature().to_string(), false);
-                self.items.push(PlanItem {
-                    key: planned.key(),
-                    planned,
-                    target_credential_name,
-                    gateway_credential_name,
-                    credentials,
-                });
-            }
-            Err(reason) => {
-                scratch.credentials.truncate(credentials_before);
-                self.skipped
-                    .push(Refusal::invalid(reason).skip(&planned.name, &planned.source));
-            }
         }
+        planned.notes.extend(notes);
+
+        let twin = known.twin(&destination).map(str::to_string);
+        if let Some(twin) = &twin {
+            planned.notes.push(format!(
+                "Same destination as '{twin}', so it starts unticked. Tick it to have this name instead, or as well"
+            ));
+        }
+        known.add(&planned.name, destination, false);
+        self.items.push(PlanItem {
+            key: planned.key(),
+            planned,
+            credentials,
+            preselected: twin.is_none(),
+        });
     }
 
     fn into_preview(self, config: &ParsedConfig, path: String) -> ImportPreview {
@@ -1187,6 +1273,7 @@ impl Plan {
                     credentials: item.credentials,
                     proxy_command: item.planned.proxy_command,
                     notes: item.planned.notes,
+                    preselected: item.preselected,
                 })
                 .collect(),
             skipped: self.skipped,
@@ -1195,10 +1282,11 @@ impl Plan {
     }
 }
 
-/// Decide what importing `config` over `data` would do. Pure: the result
-/// comes from a scratch copy that is thrown away.
+/// Decide what importing `config` over `data` would do. Pure: nothing here
+/// depends on which rows the user will tick, and every check runs on a copy.
 fn build_plan(config: &ParsedConfig, data: &AppData, env: &ImportEnv) -> Plan {
     let mut scratch = data.clone();
+    let book = CredentialBook::of(&data.credentials);
     let mut known = KnownConnections::of(data);
     let mut plan = Plan::default();
     let mut hosts = 0;
@@ -1230,7 +1318,7 @@ fn build_plan(config: &ParsedConfig, data: &AppData, env: &ImportEnv) -> Plan {
                 }
                 for outcome in plan_alias(config, env, &name, &at) {
                     match outcome {
-                        Ok(planned) => plan.admit(planned, data, &mut scratch, &mut known),
+                        Ok(planned) => plan.admit(planned, &mut scratch, &book, &mut known),
                         Err(skip) => plan.skipped.push(skip),
                     }
                 }
@@ -1266,6 +1354,9 @@ fn apply_sync(input: &ImportApplyInput, env: &ImportEnv) -> Result<ImportResult,
         if !selected.is_subset(&planned) {
             return Err(STALE_PREVIEW.to_string());
         }
+        // Names come from what is really stored, in the order of the rows
+        // ticked: a row left unticked reserves nothing.
+        let mut book = CredentialBook::of(&data.credentials);
         let mut result = ImportResult::default();
         for item in plan
             .items
@@ -1273,19 +1364,11 @@ fn apply_sync(input: &ImportApplyInput, env: &ImportEnv) -> Result<ImportResult,
             .filter(|item| selected.contains(item.key.as_str()))
         {
             let credentials_before = data.credentials.len();
-            let mut credential_id =
-                |spec: &Option<CredentialSpec>, name: &Option<String>| match (spec, name) {
-                    (Some(spec), Some(name)) => ensure_credential(data, spec, name).map(Some),
-                    _ => Ok(None),
-                };
-            let target_id = credential_id(
-                &item.planned.target_credential,
-                &item.target_credential_name,
-            )?;
-            let gateway_id = credential_id(
-                &item.planned.gateway_credential,
-                &item.gateway_credential_name,
-            )?;
+            let mut store = |spec: &Option<CredentialSpec>| {
+                spec.as_ref().map(|s| book.store(data, s)).transpose()
+            };
+            let gateway_id = store(&item.planned.gateway_credential)?;
+            let target_id = store(&item.planned.target_credential)?;
             let mut fields = item.planned.fields(target_id, gateway_id);
             check_connection(data, &mut fields, None)?;
             result
@@ -2344,16 +2427,146 @@ mod tests {
         });
     }
 
+    const TWINS: &str =
+        "Host web web.prod\n  HostName 10.0.0.1\n  User deploy\n  IdentityFile ~/.ssh/id\n";
+
+    fn preselected(preview: &ImportPreview) -> Vec<&str> {
+        let ticked = preview.items.iter().filter(|i| i.preselected);
+        ticked.map(|i| i.name.as_str()).collect()
+    }
+
     #[test]
-    fn aliases_with_one_destination_give_one_connection() {
+    fn of_two_aliases_with_one_destination_the_later_starts_unticked() {
+        in_data_dir(|f| {
+            let preview = f.preview(TWINS);
+            assert_eq!(names(&preview), ["web", "web.prod"]);
+            assert_eq!(preselected(&preview), ["web"]);
+            let twin = item(&preview, "web.prod");
+            assert!(twin.notes.iter().any(|n| n.contains("'web'")), "{twin:#?}");
+            assert!(preview.skipped.is_empty(), "{:#?}", preview.skipped);
+        });
+    }
+
+    #[test]
+    fn unticking_an_alias_lets_its_twin_be_imported_instead() {
+        in_data_dir(|f| {
+            let preview = f.preview(TWINS);
+            let result = f
+                .apply(vec![item(&preview, "web.prod").key.clone()])
+                .unwrap();
+            assert_eq!(result.connections, ["web.prod"]);
+            assert_eq!(result.credentials, ["deploy@id"]);
+
+            // From now on the first alias is the one already imported.
+            let again = f.preview(TWINS);
+            assert!(again.items.is_empty(), "{:#?}", again.items);
+            let web = skip(&again, "web");
+            assert_eq!(web.category, ImportSkipCategory::AlreadyImported);
+            assert!(web.reason.contains("'web.prod'"), "{}", web.reason);
+        });
+    }
+
+    #[test]
+    fn ticking_both_aliases_creates_both_and_they_share_a_credential() {
+        in_data_dir(|f| {
+            let result = f.import(TWINS);
+            assert_eq!(result.connections, ["web", "web.prod"]);
+            assert_eq!(result.credentials, ["deploy@id"]);
+            let again = f.preview(TWINS);
+            assert!(again.items.is_empty(), "{:#?}", again.items);
+        });
+    }
+
+    #[test]
+    fn a_third_alias_names_the_first_and_forwards_follow_their_host() {
         in_data_dir(|f| {
             let preview = f.preview(
-                "Host web web.prod\n  HostName 10.0.0.1\n  User deploy\n  IdentityFile ~/.ssh/id\n",
+                "Host a b c\n  HostName s\n  User u\n  IdentityFile ~/.ssh/id\n  LocalForward 1 d:1\n",
             );
-            assert_eq!(names(&preview), ["web"]);
-            let twin = skip(&preview, "web.prod");
-            assert_eq!(twin.category, ImportSkipCategory::Duplicate);
-            assert!(twin.reason.contains("'web'"), "{}", twin.reason);
+            assert_eq!(preselected(&preview), ["a", "a (-L 1)"]);
+            let third = item(&preview, "c");
+            assert!(third.notes.iter().any(|n| n.contains("'a'")), "{third:#?}");
+            assert!(item(&preview, "c (-L 1)")
+                .notes
+                .iter()
+                .any(|n| n.contains("'a (-L 1)'")));
+        });
+    }
+
+    const SAME_FILE_NAME: &str =
+        "Host a\n  User u\n  IdentityFile /a/id\nHost b\n  User u\n  IdentityFile /b/id\nHost c\n  User u\n  IdentityFile /c/id\n";
+
+    fn credential_name_of(connection: &str) -> String {
+        credential_of(stored(connection).credential_id.as_deref().unwrap()).name
+    }
+
+    #[test]
+    fn a_credential_name_is_only_taken_by_the_rows_really_ticked() {
+        in_data_dir(|f| {
+            let preview = f.preview(SAME_FILE_NAME);
+            let result = f.apply(vec![item(&preview, "b").key.clone()]).unwrap();
+            assert_eq!(result.credentials, ["u@id"]);
+            assert_eq!(credential_name_of("b"), "u@id");
+        });
+    }
+
+    #[test]
+    fn credentials_with_one_name_are_numbered_in_row_order_when_ticked() {
+        in_data_dir(|f| {
+            let preview = f.preview(SAME_FILE_NAME);
+            let result = f.apply_all(&preview);
+            assert_eq!(result.credentials, ["u@id", "u@id (2)", "u@id (3)"]);
+            assert_eq!(credential_name_of("c"), "u@id (3)");
+        });
+    }
+
+    #[test]
+    fn the_preview_never_promises_a_number_a_tick_could_change() {
+        in_data_dir(|f| {
+            let preview = f.preview(SAME_FILE_NAME);
+            for name in ["a", "b", "c"] {
+                assert_eq!(item(&preview, name).credentials[0].name, "u@id");
+            }
+            let says_so = |name: &str| {
+                item(&preview, name)
+                    .notes
+                    .iter()
+                    .any(|n| n.contains("gets a number"))
+            };
+            assert!(!says_so("a"));
+            assert!(says_so("b"));
+            assert!(says_so("c"));
+        });
+    }
+
+    #[test]
+    fn hosts_sharing_a_new_credential_need_no_number() {
+        in_data_dir(|f| {
+            let preview = f.preview("Host a b\n  User u\n  IdentityFile /a/id\n");
+            assert!(item(&preview, "b").notes.is_empty(), "{preview:#?}");
+        });
+    }
+
+    #[test]
+    fn a_number_around_a_stored_name_is_skipped_over() {
+        in_data_dir(|f| {
+            with_data_mut(|data| {
+                for name in ["u@id", "u@id (2)"] {
+                    data.credentials.push(Credential {
+                        id: Uuid::new_v4().to_string(),
+                        name: name.to_string(),
+                        username: "someone-else".to_string(),
+                        kind: CredentialKind::Agent {},
+                        is_private: false,
+                    });
+                }
+                Ok(())
+            })
+            .unwrap();
+            let preview = f.preview(SAME_FILE_NAME);
+            assert_eq!(item(&preview, "a").credentials[0].name, "u@id (3)");
+            let result = f.apply_all(&preview);
+            assert_eq!(result.credentials, ["u@id (3)", "u@id (4)", "u@id (5)"]);
         });
     }
 
@@ -2390,14 +2603,19 @@ mod tests {
     fn an_existing_matching_credential_is_shared() {
         in_data_dir(|f| {
             let id = with_data_mut(|data| {
-                ensure_credential(
-                    data,
-                    &CredentialSpec {
+                let id = Uuid::new_v4().to_string();
+                data.credentials.push(Credential {
+                    id: id.clone(),
+                    name: "my deploy key".to_string(),
+                    username: "deploy".to_string(),
+                    kind: CredentialSpec {
                         username: "deploy".to_string(),
                         key_path: Some(f.key_path(".ssh/id_web")),
-                    },
-                    "my deploy key",
-                )
+                    }
+                    .kind(),
+                    is_private: false,
+                });
+                Ok(id)
             })
             .unwrap();
             let preview = f.preview(BASIC);

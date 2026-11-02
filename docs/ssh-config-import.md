@@ -4,9 +4,11 @@ The **Import** button in the Connections header turns the hosts of an OpenSSH
 client config into SSIX connections. It reads `~/.ssh/config` unless you name
 another file; PuTTY and MobaXterm sessions are not imported.
 
-Reading the file saves nothing. The side panel shows what will be created and
-what is skipped, each with a reason and the `file:line` it came from. Untick
-what you do not want and choose **Import**. Nothing else writes to your data.
+Reading the file saves nothing. The side panel shows what can be created and
+what is skipped, each with a reason and the `file:line` it came from. Rows start
+ticked unless the row says otherwise. Change the ticks and choose **Import**.
+Nothing else writes to your data, and what a row creates never depends on a row
+you left unticked.
 
 ## What is read
 
@@ -85,8 +87,12 @@ credential and add the passphrase.
 A credential is shared when one with the same username and the same path (or,
 for the agent, the same username) already exists. Private credentials, which
 belong to one connection, are never shared. New ones are named `user@keyfile` or
-`user (agent)`, with a number added if the name is taken. Only the credentials
-that the rows you ticked use are created.
+`user (agent)`. Only the credentials that the rows you ticked use are created.
+
+A number is added if the name is taken. Numbers follow the rows you ticked, in
+order, so unticking `/a/id` leaves `/b/id` with the plain `user@id`. Because the
+ticks can change, the preview shows a number only for a name that a stored
+credential holds. A row that would need one because of a row above it says so.
 
 ## Duplicates and name clashes
 
@@ -106,7 +112,7 @@ offered again.
 | A name and destination | The same name and destination | Skipped: already imported |
 | A name and destination | That destination under another name | Skipped: already imported as that name |
 | A name and destination | That name, with another destination or key | Skipped: **name clash**. The existing connection is left as it is |
-| Two aliases with one destination | | The first is created, the second skipped as a duplicate |
+| Two aliases with one destination | | Both are offered. The first starts ticked and the second unticked, so you can pick either or both |
 
 Importing the same file again therefore creates nothing. To import a host whose
 name clashes, rename the connection or the `Host`.
