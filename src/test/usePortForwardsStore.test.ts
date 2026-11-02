@@ -4,6 +4,7 @@ import { forwardStatusEvent } from "@/lib/events";
 import { invoke } from "@/lib/tauri";
 import {
   RELEASE_WAIT_MS,
+  runningForwardCount,
   usePortForwardsStore,
   type ForwardStatus,
 } from "@/store/usePortForwardsStore";
@@ -242,6 +243,26 @@ describe("usePortForwardsStore", () => {
 
     channel.onmessage({ kind: "error", message: "lost" });
     expect(store().sessions[0]).toMatchObject({ error: "lost", lost: true });
+  });
+});
+
+describe("runningForwardCount", () => {
+  it("counts running and starting forwards, not failed or lost ones", () => {
+    const row = (sessionId: string, more = {}) => ({
+      sessionId,
+      connectionName: "socks",
+      connection: conn,
+      ...more,
+    });
+    expect(
+      runningForwardCount([
+        row("running"),
+        row("starting", { retrying: true }),
+        row("failed", { error: "refused" }),
+        row("lost", { error: "gone", lost: true }),
+      ]),
+    ).toBe(2);
+    expect(runningForwardCount([])).toBe(0);
   });
 });
 

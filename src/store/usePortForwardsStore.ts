@@ -100,6 +100,11 @@ function endStatusSubscription(sessionId: string) {
   statusSubscriptions.delete(sessionId);
 }
 
+/** Forwards running or starting; a row left by one that failed or was lost is neither. */
+export function runningForwardCount(sessions: ForwardSession[]): number {
+  return sessions.filter((s) => !s.error).length;
+}
+
 interface PortForwardsState {
   sessions: ForwardSession[];
   /**
