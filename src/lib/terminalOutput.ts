@@ -13,6 +13,10 @@
  * in `src-tauri/src/ssh.rs`). Sharing the channel keeps them ordered with
  * the bytes and buffered alongside them, so a shell that exits before the
  * terminal mounts is still reported instead of lost.
+ *
+ * A dropped shell's recovery also comes over the channel (`ReconnectEvent`).
+ * Those events are for the pane, not the terminal, so the sink hands them to
+ * whoever owns the pane (`useTerminalsStore`) instead of its output handler.
  */
 
 import { assertTauriRuntime } from "./runtime";
@@ -21,6 +25,18 @@ import { assertTauriRuntime } from "./runtime";
 const MAX_BUFFERED_BYTES = 4 * 1024 * 1024;
 
 export type OutputEvent = { kind: "error"; message: string } | { kind: "closed" };
+
+/** A dropped shell's recovery; see `src/lib/reconnect.ts`. */
+export type ReconnectEvent =
+  | {
+      kind: "reconnecting";
+      attempt: number;
+      max_attempts: number;
+      delay_ms: number;
+      message: string;
+    }
+  | { kind: "reconnected" }
+  | { kind: "reconnect_stopped"; message: string };
 
 export interface OutputHandler {
   write: (chunk: Uint8Array) => void;
@@ -41,6 +57,8 @@ export class OutputSink {
   private handler: OutputHandler | null = null;
   private buffered: Item[] = [];
   private bufferedBytes = 0;
+  private reconnectListener: ((event: ReconnectEvent) => void) | null = null;
+  private pendingReconnectEvents: ReconnectEvent[] = [];
 
   push(chunk: Uint8Array): void {
     if (this.handler) {
@@ -64,6 +82,22 @@ export class OutputSink {
       return;
     }
     this.buffered.push(event);
+  }
+
+  pushReconnectEvent(event: ReconnectEvent): void {
+    if (this.reconnectListener) {
+      this.reconnectListener(event);
+      return;
+    }
+    this.pendingReconnectEvents.push(event);
+  }
+
+  /** Send reconnect events to `listener`, replaying any that came first. */
+  onReconnectEvent(listener: (event: ReconnectEvent) => void): void {
+    this.reconnectListener = listener;
+    const pending = this.pendingReconnectEvents;
+    this.pendingReconnectEvents = [];
+    for (const event of pending) listener(event);
   }
 
   /** Start delivering to `handler`, replaying anything buffered so far. */
@@ -106,6 +140,28 @@ function toEvent(payload: unknown): OutputEvent | null {
   return null;
 }
 
+function toReconnectEvent(payload: unknown): ReconnectEvent | null {
+  if (typeof payload !== "object" || payload === null) return null;
+  const p = payload as Record<string, unknown>;
+  const message = String(p.message ?? "");
+  switch (p.kind) {
+    case "reconnecting":
+      return {
+        kind: "reconnecting",
+        attempt: Number(p.attempt),
+        max_attempts: Number(p.max_attempts),
+        delay_ms: Number(p.delay_ms),
+        message,
+      };
+    case "reconnected":
+      return { kind: "reconnected" };
+    case "reconnect_stopped":
+      return { kind: "reconnect_stopped", message };
+    default:
+      return null;
+  }
+}
+
 /** Route one channel message (bytes or control event) into `sink`. */
 export function deliverChannelMessage(sink: OutputSink, payload: unknown): void {
   const bytes = toBytes(payload);
@@ -114,7 +170,12 @@ export function deliverChannelMessage(sink: OutputSink, payload: unknown): void 
     return;
   }
   const event = toEvent(payload);
-  if (event) sink.pushEvent(event);
+  if (event) {
+    sink.pushEvent(event);
+    return;
+  }
+  const reconnect = toReconnectEvent(payload);
+  if (reconnect) sink.pushReconnectEvent(reconnect);
 }
 
 /**

@@ -12,6 +12,8 @@ import {
 import { cn } from "@/lib/utils";
 import { AppSettings, Connection, OpenMode } from "@/types";
 import { getColorHex } from "@/lib/colors";
+import type { ReconnectState } from "@/lib/reconnect";
+import { useTerminalsStore } from "@/store/useTerminalsStore";
 import { Group, Panel, Separator as PanelSeparator } from "react-resizable-panels";
 import {
   DropdownMenu,
@@ -33,6 +35,8 @@ export interface TerminalSession {
   error?: string;
   /** True while a retry attempt is in flight. */
   retrying?: boolean;
+  /** Set while this pane's live shell has lost its connection. */
+  reconnect?: ReconnectState;
   /** The originating Connection, kept so Retry / Edit can reuse it. */
   connection?: Connection;
 }
@@ -72,29 +76,38 @@ function PaneRenderer({
   onEdit: (conn: Connection) => void;
   settings?: AppSettings;
 }) {
-  if (session.error || session.retrying) {
-    return (
-      <FailedTerminal
-        connectionName={session.connectionName}
-        error={session.error}
-        connection={session.connection}
-        isVisible={isVisible}
-        retrying={session.retrying}
-        onRetry={(conn) => onRetry(conn)}
-        onEdit={(conn) => onEdit(conn)}
-        onClose={onClose}
-      />
-    );
-  }
+  // A shell that lost its connection keeps its <Terminal> mounted, always at
+  // this position in the tree, so its scrollback survives the reconnect.
+  const neverConnected = !session.reconnect && (session.error || session.retrying);
   return (
-    <Terminal
-      sessionId={session.sessionId}
-      connectionName={session.connectionName}
-      isVisible={isVisible}
-      onDisconnect={onClose}
-      settings={settings}
-      connection={session.connection}
-    />
+    <>
+      {!neverConnected && (
+        <Terminal
+          sessionId={session.sessionId}
+          connectionName={session.connectionName}
+          isVisible={isVisible}
+          onDisconnect={onClose}
+          settings={settings}
+          connection={session.connection}
+        />
+      )}
+      {(neverConnected || session.reconnect) && (
+        <FailedTerminal
+          connectionName={session.connectionName}
+          error={session.error}
+          connection={session.connection}
+          isVisible={isVisible}
+          retrying={session.retrying}
+          reconnect={session.reconnect}
+          onCancelReconnect={() =>
+            void useTerminalsStore.getState().cancelReconnect(session.sessionId)
+          }
+          onRetry={(conn) => onRetry(conn)}
+          onEdit={(conn) => onEdit(conn)}
+          onClose={onClose}
+        />
+      )}
+    </>
   );
 }
 

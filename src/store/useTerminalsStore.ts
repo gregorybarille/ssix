@@ -2,6 +2,7 @@ import { errorMessage } from "@/lib/errors";
 import { create } from "zustand";
 import { invoke } from "@/lib/tauri";
 import { log as appLog } from "@/lib/log";
+import { paneUpdateForReconnectEvent } from "@/lib/reconnect";
 import { isForwardConnection } from "@/lib/sshTerms";
 import { createOutputChannel, disposeOutput, registerOutputSink } from "@/lib/terminalOutput";
 import type { Connection, OpenMode } from "@/types";
@@ -28,6 +29,10 @@ import { useSettingsStore } from "./useSettingsStore";
  * and shell connections into a new tab (or split into the active
  * tab, depending on `mode`). When the last tab closes, view falls
  * back to "connections" via the view store.
+ *
+ * A live shell whose connection drops stays in its pane: its worker reconnects
+ * under the same session id and reports over the output channel, and the pane
+ * follows along through `reconnect` (see `src/lib/reconnect.ts`).
  */
 const cancelled: Set<string> = new Set();
 
@@ -41,12 +46,16 @@ interface TerminalsState {
    * Open a connection. A forward of any kind hands off to the port forwards
    * store. Otherwise opens a shell session in a new tab or split.
    * `replaceSessionId` re-opens an existing failed pane in place,
-   * preserving its slot/order.
+   * preserving its slot/order; a pane whose shell dropped asks its worker to
+   * try again, which keeps the session and its scrollback.
    */
   connect: (
     conn: Connection,
     options?: { mode?: OpenMode; replaceSessionId?: string },
   ) => Promise<void>;
+
+  /** Stop a dropped shell's automatic reconnect. Its pane stays, ready to retry. */
+  cancelReconnect: (sessionId: string) => Promise<void>;
 
   /** Close one pane. If it's the only pane in its tab, the tab closes too. */
   closePane: (sessionId: string) => Promise<void>;
@@ -89,6 +98,22 @@ export const useTerminalsStore = create<TerminalsState>((set, get) => {
     }));
   };
 
+  const findPane = (sessionId: string): TerminalSession | undefined =>
+    get()
+      .tabs.flatMap((t) => t.panes)
+      .find((p) => p.sessionId === sessionId);
+
+  /**
+   * A pane still waiting for `ssh_connect` has no session to disconnect yet:
+   * remember to drop it when it arrives. A shell that is reconnecting has its
+   * session already, and `ssh_disconnect` reaches it.
+   */
+  const markIfStillConnecting = (pane: TerminalSession) => {
+    if (pane.retrying && !pane.error && !pane.reconnect) {
+      cancelled.add(pane.sessionId);
+    }
+  };
+
   const updateSessionEverywhere = (
     placeholderId: string,
     next: Partial<TerminalSession> & { sessionId?: string },
@@ -126,6 +151,22 @@ export const useTerminalsStore = create<TerminalsState>((set, get) => {
         connection: conn,
         retrying: true,
       };
+
+      if (replaceSessionId && findPane(replaceSessionId)?.reconnect) {
+        updateSessionEverywhere(replaceSessionId, { retrying: true });
+        try {
+          await invoke("ssh_reconnect", { sessionId: replaceSessionId });
+        } catch (err) {
+          // Its worker is gone, so the next retry has to start from scratch.
+          updateSessionEverywhere(replaceSessionId, {
+            reconnect: undefined,
+            retrying: false,
+            error: errorMessage(err),
+          });
+          appLog.error("ssh", `Reconnect failed for ${conn.name}: ${errorMessage(err)}`);
+        }
+        return;
+      }
 
       const setView = useViewStore.getState().setView;
       if (replaceSessionId) {
@@ -169,6 +210,9 @@ export const useTerminalsStore = create<TerminalsState>((set, get) => {
             ),
           })),
         }));
+        sink.onReconnectEvent((event) =>
+          updateSessionEverywhere(sessionId, paneUpdateForReconnectEvent(event, Date.now())),
+        );
         appLog.info("ssh", `Connected to ${conn.name}`);
       } catch (err) {
         if (cancelled.has(placeholderId)) {
@@ -183,15 +227,22 @@ export const useTerminalsStore = create<TerminalsState>((set, get) => {
       }
     },
 
+    cancelReconnect: async (sessionId) => {
+      try {
+        // The worker answers with `reconnect_stopped`, which updates the pane.
+        await invoke("ssh_cancel_reconnect", { sessionId });
+      } catch (err) {
+        appLog.error("ssh", `Could not cancel the reconnect: ${errorMessage(err)}`);
+      }
+    },
+
     closePane: async (sessionId) => {
       const { tabs, activeTabId } = get();
       let tabClosed: string | null = null;
       for (const tab of tabs) {
         const pane = tab.panes.find((p) => p.sessionId === sessionId);
         if (pane) {
-          if (pane.retrying && !pane.error) {
-            cancelled.add(sessionId);
-          }
+          markIfStillConnecting(pane);
           if (tab.panes.length === 1) {
             tabClosed = tab.id;
           }
@@ -235,11 +286,7 @@ export const useTerminalsStore = create<TerminalsState>((set, get) => {
       const { tabs, activeTabId } = get();
       const tab = tabs.find((t) => t.id === tabId);
       if (!tab) return;
-      for (const pane of tab.panes) {
-        if (pane.retrying && !pane.error) {
-          cancelled.add(pane.sessionId);
-        }
-      }
+      tab.panes.forEach(markIfStillConnecting);
       set((state) => {
         const remaining = state.tabs.filter((t) => t.id !== tabId);
         let nextActive = state.activeTabId;
