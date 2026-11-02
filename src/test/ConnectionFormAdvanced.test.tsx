@@ -98,8 +98,10 @@ describe("ConnectionForm advanced options", () => {
     await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
     const payload = onSubmit.mock.calls[0][0];
     expect(payload.agent_forwarding).toBe(false);
+    // What reaches the backend: IPC serializes to JSON, which drops `undefined`.
+    const sentOverIpc = JSON.parse(JSON.stringify(payload));
     for (const key of ["keepalive_interval", "auto_reconnect", "log_session", "folder"]) {
-      expect(payload).not.toHaveProperty(key);
+      expect(sentOverIpc).not.toHaveProperty(key);
     }
   });
 

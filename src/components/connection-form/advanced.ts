@@ -15,7 +15,7 @@ import type { Connection, ConnectionAdvanced } from "@/types";
  *
  * A new persisted option goes on `ConnectionAdvanced` in `src/types/index.ts`
  * (mirroring `ConnectionAdvanced` in `src-tauri/src/commands/connections.rs`),
- * then into {@link DEFAULT_CONNECTION_ADVANCED} and {@link advancedFromConnection}.
+ * then into {@link ADVANCED_KEYS}, which stops compiling until it is there.
  */
 export interface ConnectionFormSectionProps {
   advanced: ConnectionAdvanced;
@@ -23,37 +23,36 @@ export interface ConnectionFormSectionProps {
   onChange: (partial: Partial<ConnectionAdvanced>) => void;
 }
 
+/**
+ * Every option, in a fixed order. Loading a connection and the unsaved-changes
+ * guard both follow this list, so neither can miss an option.
+ */
+const ADVANCED_KEYS = Object.keys({
+  agent_forwarding: true,
+  keepalive_interval: true,
+  auto_reconnect: true,
+  log_session: true,
+  font_family: true,
+  font_size: true,
+  color_scheme: true,
+  folder: true,
+} satisfies Record<keyof ConnectionAdvanced, true>) as (keyof ConnectionAdvanced)[];
+
 /** A new connection's options: everything unset means "use the setting". */
 export const DEFAULT_CONNECTION_ADVANCED: ConnectionAdvanced = {
   agent_forwarding: false,
 };
 
-/** The options of a saved connection, for editing or cloning it. */
-export function advancedFromConnection(connection: Connection): ConnectionAdvanced {
-  return {
-    agent_forwarding: connection.agent_forwarding ?? false,
-    keepalive_interval: connection.keepalive_interval,
-    auto_reconnect: connection.auto_reconnect,
-    log_session: connection.log_session,
-    font_family: connection.font_family,
-    font_size: connection.font_size,
-    color_scheme: connection.color_scheme,
-    folder: connection.folder,
-  };
+/** The options as the form submits them. Serde fills in whatever is unset. */
+export function advancedPayload(advanced: ConnectionAdvanced): ConnectionAdvanced {
+  return { ...advanced, agent_forwarding: advanced.agent_forwarding ?? false };
 }
 
-/**
- * The options as the form submits them: unset fields are left out so the
- * payload only carries what the user chose (serde fills the defaults).
- */
-export function advancedPayload(advanced: ConnectionAdvanced): ConnectionAdvanced {
-  const payload: ConnectionAdvanced = { agent_forwarding: advanced.agent_forwarding ?? false };
-  for (const key of Object.keys(advanced) as (keyof ConnectionAdvanced)[]) {
-    if (key !== "agent_forwarding" && advanced[key] !== undefined) {
-      Object.assign(payload, { [key]: advanced[key] });
-    }
-  }
-  return payload;
+/** The options of a saved connection, for editing or cloning it. */
+export function advancedFromConnection(connection: Connection): ConnectionAdvanced {
+  return advancedPayload(
+    Object.fromEntries(ADVANCED_KEYS.map((key) => [key, connection[key]])) as ConnectionAdvanced,
+  );
 }
 
 /**
@@ -61,14 +60,6 @@ export function advancedPayload(advanced: ConnectionAdvanced): ConnectionAdvance
  * with unset fields as `null`, so the output never depends on insertion order.
  */
 export function serializeAdvanced(advanced: ConnectionAdvanced): string {
-  return JSON.stringify([
-    advanced.agent_forwarding ?? false,
-    advanced.keepalive_interval ?? null,
-    advanced.auto_reconnect ?? null,
-    advanced.log_session ?? null,
-    advanced.font_family ?? null,
-    advanced.font_size ?? null,
-    advanced.color_scheme ?? null,
-    advanced.folder ?? null,
-  ]);
+  const options = advancedPayload(advanced);
+  return JSON.stringify(ADVANCED_KEYS.map((key) => options[key] ?? null));
 }
