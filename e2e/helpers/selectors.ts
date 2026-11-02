@@ -387,4 +387,26 @@ export const sel = {
   importSkip: (name: string) => `[data-testid="import-skip"][data-name="${name}"]`,
   // roadmap:terminal-ux
   // roadmap:folders
+  layoutToggleFolders: '[data-testid="layout-toggle-folders"]',
+  folderTree: '[data-testid="folder-tree"]',
+  folderRow: (path: string) => `[data-testid="folder-row"][data-name="${path}"]`,
+  folderNoFolder: '[data-testid="folder-no-folder"]',
+  // Scoped under a folder row (see folderRow).
+  folderCount: '[data-testid="folder-count"]',
+  folderRename: '[data-testid="folder-rename"]',
+  folderDelete: '[data-testid="folder-delete"]',
+  folderMoveMenuItem: '//*[@role="menuitem"][contains(., "Move to folder")]',
+  folderMoveDialog: '[data-testid="folder-move-dialog"]',
+  folderMoveInput: '[data-testid="folder-move-input"]',
+  folderRenameDialog: '[data-testid="folder-rename-dialog"]',
+  folderRenameInput: '[data-testid="folder-rename-input"]',
+  folderRenameSubmit: '[data-testid="folder-rename-submit"]',
+  folderRenameError: '[data-testid="folder-rename-error"]',
+  folderRenamePreview: '[data-testid="folder-rename-preview"]',
+  folderDeleteDialog: '[data-testid="folder-delete-dialog"]',
+  folderDeleteContents: '[data-testid="folder-delete-contents"]',
+  folderDeleteConfirm: '[data-testid="folder-delete-dialog-confirm"]',
+  connectionFormFolder: '[data-testid="connection-form-folder"]',
+  connectionFormFolderError: '[data-testid="connection-form-folder-error"]',
+  folderPickerOption: (path: string) => `[data-testid="folder-picker-option"][data-name="${path}"]`,
 } as const;
