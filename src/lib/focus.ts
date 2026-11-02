@@ -36,14 +36,12 @@ export function nobodyTypingElsewhere(terminal: Element | null): boolean {
 }
 
 /**
- * Whether the keyboard is on something else in the tab of this terminal: another
- * pane, or the login prompt that just took it. Showing a split tab shows all of
- * its terminals, and each one asks for the keyboard a moment later.
+ * Whether the keyboard is already in this terminal's tab, say on the login prompt
+ * that just took it in the other pane. Showing a split tab shows all of its
+ * terminals, and each one asks for the keyboard a moment later.
  */
-export function anotherPaneHasFocus(terminal: Element | null): boolean {
-  const active = document.activeElement;
-  const tab = terminal?.closest('[role="tabpanel"]');
-  return !!active && !!tab?.contains(active) && !terminal?.contains(active);
+export function keyboardIsInItsTab(terminal: Element | null): boolean {
+  return !!terminal?.closest('[role="tabpanel"]')?.contains(document.activeElement);
 }
 
 /** `<input>` types that take no text, so focusing them is not "typing". */

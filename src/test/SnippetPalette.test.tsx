@@ -77,6 +77,7 @@ describe("SnippetPalette", () => {
   beforeEach(() => {
     mockInvoke.mockReset();
     useViewStore.setState({ view: "terminals", leaveGuard: null });
+    useAuthPromptStore.setState({ prompts: {} });
     useSnippetsStore.setState({ snippets: [], error: null, isLoading: false, paletteOpen: false });
   });
 
