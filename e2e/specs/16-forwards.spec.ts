@@ -499,4 +499,31 @@ describe("Remote and dynamic forwards", () => {
     );
     await stopForward("forward-16-relayed");
   });
+
+  it("starts a stopped forward again straight away, its port given back first", async () => {
+    await startForward("forward-16-socks");
+    for (let round = 0; round < 3; round += 1) {
+      await stopForward("forward-16-socks");
+      await startForward("forward-16-socks");
+      expect(await socksReply(SOCKS_PORT, CMD_CONNECT, ipv4([127, 0, 0, 1], 1))).toBe(
+        REPLY_CONNECTION_REFUSED,
+      );
+    }
+
+    await startForward("forward-16-remote");
+    await stopForward("forward-16-remote");
+    await startForward("forward-16-remote");
+    const { reply, client } = await socksRequest(
+      SOCKS_PORT,
+      CMD_CONNECT,
+      ipv4([127, 0, 0, 1], REMOTE_PORT),
+    );
+    expect(reply).toBe(REPLY_SUCCEEDED);
+    client.socket.write("again");
+    expect((await client.take(5)).toString()).toBe("again");
+    client.socket.destroy();
+
+    await stopForward("forward-16-remote");
+    await stopForward("forward-16-socks");
+  });
 });
