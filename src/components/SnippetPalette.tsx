@@ -128,13 +128,11 @@ export function SnippetPalette() {
           />
         )}
         {message && (
-          <p
-            role="alert"
-            data-testid="snippet-palette-error"
-            className="mx-6 mt-3 shrink-0 rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive"
-          >
-            {message}
-          </p>
+          <ErrorBanner
+            className="mx-6 mt-3 shrink-0"
+            message={message}
+            testId="snippet-palette-error"
+          />
         )}
         {picked ? (
           <VariablesForm

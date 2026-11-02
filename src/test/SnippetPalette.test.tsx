@@ -274,9 +274,12 @@ describe("SnippetPalette", () => {
   });
 
   describe("with no terminal", () => {
-    it("explains it up front", async () => {
+    it("explains it up front, in an alert", async () => {
       await openPalette();
-      expect(screen.getByTestId("snippet-palette-error")).toHaveTextContent(NO_TERMINAL_MESSAGE);
+      const banner = screen.getByTestId("snippet-palette-error");
+      expect(banner).toHaveTextContent(NO_TERMINAL_MESSAGE);
+      expect(banner).toHaveAttribute("role", "alert");
+      expect(banner).toHaveAttribute("aria-live", "assertive");
     });
 
     it("explains it when every pane of the tab failed", async () => {
