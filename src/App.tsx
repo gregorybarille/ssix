@@ -656,7 +656,7 @@ function App() {
                     {dialogs.confirmTagAction.connections.length === 1 ? "" : "s"}{" "}
                     tagged{" "}
                     <strong>{dialogs.confirmTagAction.label}</strong>?
-                    Local forwards will be skipped.
+                    Port forwards will be skipped.
                   </>
                 )}
               </>

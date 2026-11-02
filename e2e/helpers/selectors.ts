@@ -132,7 +132,7 @@ export const sel = {
   scpStatus: '[data-testid="scp-status"]',
 
   // Port forwards
-  // "Start" a forward = clicking Connect on its local forward connection
+  // "Start" a forward = clicking Connect on its forward connection
   // row, so the button is the same as the generic connect button.
   forwardRowByName: (name: string) =>
     `[data-testid^="forward-row-"][data-name="${name}"]`,

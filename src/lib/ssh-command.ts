@@ -15,7 +15,7 @@ import { isForwardConnection } from "@/lib/sshTerms";
  * - `dynamic_forward`: `ssh -D LOCAL [-i KEY] user@server[:port]`
  *
  * The username is resolved from the target credential when present, and
- * falls back to the SSH server's credential for `port_forward`. If no credential
+ * falls back to the SSH server's credential for the forwards. If no credential
  * matches (e.g. inline auth that hasn't been saved yet), the user portion is
  * omitted and the user is expected to fill it in.
  *

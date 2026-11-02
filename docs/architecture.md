@@ -62,7 +62,7 @@ UI -> Zustand store -> `invoke()` -> Tauri command -> storage / SSH subsystem ->
 ## Port Forward And Jump Host Model
 
 The stored fields keep their original names: `gateway_*` is the first hop
-(the SSH server of a local forward, the jump host of a jump connection) and
+(the SSH server of a port forward, the jump host of a jump connection) and
 `destination_*` the far end (the remote host or the target).
 
 - `remote_forward` (`ssh -R`) and `dynamic_forward` (`ssh -D`) are saved like a local forward and validated the same way. `ConnectionKind::is_forward()` and `isForwardConnection` (`src/lib/sshTerms.ts`) group the three kinds; none is a target for SCP or bulk connect.

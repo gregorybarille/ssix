@@ -505,7 +505,7 @@ export function ConnectionForm({
           throw new Error("Please fix the highlighted fields");
         }
 
-        // A local forward has no target credential.
+        // A forward has no target credential.
         let credentialId = needsTargetAuth ? formWithPorts.credential_id : undefined;
         let createdCredentialId: string | null = null;
         if (needsTargetAuth && authMethod !== "credential") {
@@ -783,7 +783,9 @@ export function ConnectionForm({
             placeholder={
               connectionType === "port_forward"
                 ? "api.internal"
-                : "internal.example.com"
+                : connectionType === "remote_forward"
+                  ? "127.0.0.1"
+                  : "internal.example.com"
             }
             value={form.destination_host ?? ""}
             onChange={(e) => {
@@ -798,7 +800,13 @@ export function ConnectionForm({
         <PortField
           id="destination_port"
           label={titleCase(terms.targetPort)}
-          placeholder={connectionType === "port_forward" ? "80" : "22"}
+          placeholder={
+            connectionType === "port_forward"
+              ? "80"
+              : connectionType === "remote_forward"
+                ? "3000"
+                : "22"
+          }
           value={portInputs.destination_port}
           onChange={(raw) => updatePort("destination_port", raw)}
           error={portErrors.destination_port}

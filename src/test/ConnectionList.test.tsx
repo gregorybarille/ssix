@@ -77,6 +77,46 @@ describe("ConnectionList", () => {
     expect(screen.getByText("jump host")).toBeInTheDocument();
   });
 
+  it("refuses SCP on every forward kind, naming forwards in general", () => {
+    const remoteForward: Connection = {
+      id: "4",
+      name: "webhook",
+      host: "gateway.dev",
+      port: 22,
+      type: "remote_forward",
+      gateway_host: "gateway.dev",
+      gateway_port: 22,
+      gateway_credential_id: "gw-cred",
+      remote_port: 8080,
+      destination_host: "127.0.0.1",
+      destination_port: 3000,
+    };
+    const dynamicForward: Connection = {
+      id: "5",
+      name: "socks",
+      host: "gateway.dev",
+      port: 22,
+      type: "dynamic_forward",
+      gateway_host: "gateway.dev",
+      gateway_port: 22,
+      gateway_credential_id: "gw-cred",
+      local_port: 1080,
+    };
+    render(
+      <ConnectionList
+        connections={[remoteForward, dynamicForward]}
+        credentials={mockCredentials}
+        onEdit={vi.fn()}
+        onDelete={vi.fn()}
+        onClone={vi.fn()}
+        onScp={vi.fn()}
+      />
+    );
+    const buttons = screen.getAllByRole("button", { name: "SCP not available for port forwards" });
+    expect(buttons).toHaveLength(2);
+    for (const button of buttons) expect(button).toBeDisabled();
+  });
+
   it("renders connect buttons for every connection kind when onConnect is provided", () => {
     render(
       <ConnectionList

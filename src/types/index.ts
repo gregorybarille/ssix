@@ -87,9 +87,7 @@ export type ConnectionType = ConnectionKind["type"];
 
 /**
  * The kinds that only authenticate to their SSH server and open no shell:
- * `ssh -L`, `-R` and `-D`. `remote_forward` and `dynamic_forward` are data
- * only until the forwards stream lands (`docs/roadmap.md`); the form does
- * not offer them and `ssh_connect` refuses them.
+ * `ssh -L`, `-R` and `-D`.
  */
 export const FORWARD_TYPES = ["port_forward", "remote_forward", "dynamic_forward"] as const;
 export type ForwardType = (typeof FORWARD_TYPES)[number];

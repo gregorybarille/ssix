@@ -90,7 +90,7 @@ export interface BulkScpDownloadInput {
 
 /**
  * Build the initial `BulkScpStep[]` array for an upload operation.
- * Local forwards become `"skipped"` rows so they're still
+ * Port forwards become `"skipped"` rows so they're still
  * visible in the progress UI (silent skips are confusing — the user
  * needs to see why the count dropped).
  */

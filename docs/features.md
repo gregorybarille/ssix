@@ -33,7 +33,7 @@ Each shell-capable connection can also define:
 ### Proxy command and WSL
 
 A connection can reach its first hop — the host of a direct connection,
-the jump host, or a local forward's SSH server — through a local
+the jump host, or a port forward's SSH server — through a local
 command instead of a TCP connection, like `ProxyCommand` in
 `ssh_config`. SSIX runs the command (`/bin/sh -c` on macOS and Linux,
 `cmd.exe /S /C` on Windows) and speaks SSH over its stdin and stdout.
@@ -48,7 +48,7 @@ On Windows the **Through WSL** button fills in `wsl.exe -e nc %h %p`,
 which connects from inside the default WSL distribution, so SSIX reaches
 hosts only WSL can see (its own network, or a VPN running there). The
 distribution needs `nc` (`netcat-openbsd` on Debian and Ubuntu). SCP and
-local forwards use the proxy too; the copied `ssh` command carries it as
+port forwards use the proxy too; the copied `ssh` command carries it as
 `-o ProxyCommand=…`.
 
 ## Credentials
@@ -95,7 +95,7 @@ changes, because the unsaved-changes baseline follows the fetched values.
 
 ### Host-key verification
 
-Every SSH connection — direct, the jump host, the target behind it, a local forward's SSH server, SCP and the public-key installer — verifies the server's host key before a password or key is sent.
+Every SSH connection — direct, the jump host, the target behind it, a port forward's SSH server, SCP and the public-key installer — verifies the server's host key before a password or key is sent.
 
 - The first time a `host:port` is seen its key is recorded in `~/.ssix/known_hosts` (OpenSSH format, so `ssh-keygen -F`/`-R` work on it).
 - If the key later differs the connection is refused. The failure view names the host, shows the new SHA256 fingerprint and offers **Trust new host key**, which forgets the stale entry and reconnects. Use it only when you know the server was reinstalled or re-keyed.
@@ -142,7 +142,7 @@ See [Port Forwards](forwards.md) for details.
 - upload directories recursively
 - download directories recursively
 - direct and jump host connections supported
-- local forwards are not SCP targets
+- port forwards are not SCP targets
 
 See [File Transfer](file-transfer.md) for behavior and limitations.
 
@@ -172,7 +172,7 @@ once.
   of a second later than a POSIX one: PowerShell first compiles
   the small helper that lets Cancel stop it.
 - Select a script to see its body and the hosts it can run on: every
-  direct and jump host connection (local forwards cannot run scripts).
+  direct and jump host connection (port forwards cannot run scripts).
   Tick hosts, or **All hosts**, and **Run on N hosts**.
 - The script starts on every picked host at the same time. Each host
   gets its own card as it finishes: success when it exits 0, otherwise
@@ -407,7 +407,7 @@ each one next to its input:
 - ConnectionForm: **Connection Name**, **Host** (direct), **Jump Host**
   + **Jump Host Credential** + **Target Host** (jump host), **SSH Server
   Host** + **SSH Server Credential** + **Remote Host** (local forward),
-  and the target authentication for Direct and Jump host (a local
+  and the target authentication for Direct and Jump host (a port
   forward only authenticates to its SSH server):
   - **Saved Credential**: a credential must be picked; "None" shows
     *"Credential is required"* (*"Target credential is required"*
@@ -432,7 +432,7 @@ responsive instead of nagging.
 
 The backend enforces the credential rule too: `add_connection`,
 `update_connection` and `clone_connection` refuse a Direct or Jump host
-connection without a credential, a jump host or local forward without a
+connection without a credential, a jump host or port forward without a
 credential for its jump host or SSH server,
 and any credential id that no longer exists. A connection never points
 at a deleted credential: deleting a credential that connections still
@@ -456,7 +456,7 @@ discoverable on the very first visit. Secondary actions (Transfer
 files, Clone, Edit, Delete) are likewise rendered in their resting
 state at all times: the v2 redesign deliberately removed the
 hover-reveal pattern so users know up-front exactly what is available
-on each row without any discovery cost. Local forwards
+on each row without any discovery cost. Port forwards
 render the Transfer-files (SCP) icon in a disabled state with an
 explanatory `title` tooltip rather than hiding it, so the affordance
 remains predictable across connection kinds.
@@ -514,7 +514,7 @@ primitive is keyboard-navigable end-to-end:
 Wired surfaces today:
 
 - **Connection rows / tiles** — Connect, Edit, Clone, Transfer files
-  (hidden for local forwards), separator, Copy SSH command, separator, Delete
+  (hidden for port forwards), separator, Copy SSH command, separator, Delete
   (destructive). "Copy SSH command" builds a portable `ssh` invocation
   from the connection + selected credential via `buildSshCommand` in
   `src/lib/ssh-command.ts` and writes it to the clipboard.
@@ -655,7 +655,7 @@ hosts that carry no tags) and offers two bulk actions:
   - Connections that have multiple tags appear under each of their
     tags so bulk actions on `prod` really do hit every prod host
     even when some are also in `db`.
-  - Local forwards are listed but greyed out — they can't
+  - Port forwards are listed but greyed out — they can't
     do SCP and the SCP commands reject them server-side.
 - The search bar in tag-groups mode filters tag labels only
   (case-insensitive substring), since the whole point of this view

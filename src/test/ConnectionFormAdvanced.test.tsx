@@ -155,6 +155,11 @@ describe("ConnectionForm with remote and dynamic forwards", () => {
     fireEvent.mouseDown(screen.getByTestId("connection-form-kind-remoteforward"), { button: 0 });
     expect(screen.getByTestId("connection-form-remote-port")).toBeInTheDocument();
     expect(screen.queryByTestId("connection-form-local-port")).not.toBeInTheDocument();
+    // Its target is on this machine's side, not somewhere behind the server.
+    expect(screen.getByTestId("connection-form-target-host")).toHaveAttribute(
+      "placeholder",
+      "127.0.0.1",
+    );
   });
 
   it("asks for the SOCKS port and no target when the dynamic forward tab is chosen", () => {
