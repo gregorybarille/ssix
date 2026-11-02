@@ -39,7 +39,7 @@ export function CredentialsView({
   );
   return (
     <>
-      <div className="flex items-center justify-between px-6 py-4 border-b border-border">
+      <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 px-6 py-4 border-b border-border">
         <h1 className="text-lg font-semibold">Credentials</h1>
         <div className="flex items-center gap-2">
           <LayoutToggle value={settings.credential_layout} onChange={onLayoutChange} />

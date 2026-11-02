@@ -584,6 +584,54 @@ describe("Folders", () => {
     });
   });
 
+  describe("in a small window, beside a panel", () => {
+    let usual: { width: number; height: number };
+
+    before(async () => {
+      usual = await browser.getWindowSize();
+      await browser.setWindowSize(800, 600);
+    });
+
+    after(async () => {
+      await browser.setWindowSize(usual.width, usual.height);
+    });
+
+    const listLayouts = [
+      { layout: "list", toggle: sel.layoutToggleList },
+      { layout: "folders", toggle: sel.layoutToggleFolders },
+    ];
+
+    for (const { layout, toggle } of listLayouts) {
+      it(`keeps the header's buttons in view and a name readable in the ${layout} layout`, async () => {
+        await navigateTo("connections");
+        await click(toggle);
+        await waitForRow(LOOSE);
+        await click(sel.addConnectionButton);
+        await (await browser.$(sel.connectionFormCancel)).waitForExist({ timeout: 10_000 });
+
+        const fit = await browser.execute(
+          (buttons: string[], row: string) => {
+            const view = document.querySelector("main")!.getBoundingClientRect();
+            const name = document.querySelector(row)!.querySelector("span.truncate")!;
+            return {
+              cutOff: buttons.filter((button) => {
+                const box = document.querySelector(button)!.getBoundingClientRect();
+                return box.left < view.left || box.right > view.right;
+              }),
+              nameCut: name.scrollWidth > name.clientWidth,
+            };
+          },
+          [sel.importConfigButton, sel.addConnectionButton],
+          sel.connectionRowByName(LOOSE),
+        );
+        expect(fit).toEqual({ cutOff: [], nameCut: false });
+
+        await click(sel.connectionFormCancel);
+        await waitForGone(sel.connectionFormCancel);
+      });
+    }
+  });
+
   describe("stored data from elsewhere", () => {
     it("repairs a path outside the rules instead of refusing to load", async () => {
       const data = readStored();

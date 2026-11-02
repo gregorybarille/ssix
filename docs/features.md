@@ -55,6 +55,11 @@ Hosts in `~/.ssh/config` can be imported: see [Import from SSH config](ssh-confi
 
 Connections can be filed in nested folders and shown as a tree: see [Folders](folders.md).
 
+In a narrow column, such as a small window with the side panel open, a view's header
+buttons wrap under its title, the Connections header shows Import and New Connection
+as icons, and a connection row's actions go on a line of their own, so the name stays
+readable.
+
 ## Credentials
 
 Supported credential modes:
