@@ -212,13 +212,24 @@ fn discard_channel(session: &Session, mut channel: Channel) {
     free_channel(session, channel);
 }
 
+/// Counts as reading the session for as long as it is held.
+struct SessionReader<'a>(&'a AtomicUsize);
+
+impl Drop for SessionReader<'_> {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, Ordering::SeqCst);
+    }
+}
+
 /// What a forward's supervisor and client threads share.
 struct Hub {
     clients: ClientSet,
     /// Clients with a tunnel up, as reported to the frontend.
     active: AtomicUsize,
-    /// How many read the session, for [`forward_bidi`]: the tunnels, plus
-    /// the supervisor of a remote forward, which reads it to accept.
+    /// How many read the session, for [`forward_bidi`], whose socket wait
+    /// misses packets another reader took in: the tunnels, clients opening a
+    /// channel, a probe, and the supervisor of a remote forward, which reads
+    /// it to accept.
     session_readers: AtomicUsize,
     /// Client threads still running, whatever stage they are at.
     in_flight: AtomicUsize,
@@ -255,6 +266,11 @@ impl Hub {
         });
     }
 
+    fn reading_session(&self) -> SessionReader<'_> {
+        self.session_readers.fetch_add(1, Ordering::SeqCst);
+        SessionReader(&self.session_readers)
+    }
+
     fn spawn_client(self: &Arc<Self>, work: impl FnOnce(&Hub) + Send + 'static) {
         self.in_flight.fetch_add(1, Ordering::SeqCst);
         let hub = Arc::clone(self);
@@ -267,14 +283,14 @@ impl Hub {
     /// Carry a client's bytes until either side closes or the forward ends.
     fn tunnel(&self, local: TcpStream, channel: Channel, session: &Session, label: String) {
         self.active.fetch_add(1, Ordering::SeqCst);
-        self.session_readers.fetch_add(1, Ordering::SeqCst);
+        let reading = self.reading_session();
         self.status("client_connected", Some(label.clone()));
         // `forward_bidi` takes the channel; this handle makes the free below
         // the one that counts.
         let last_handle = channel.clone();
         forward_bidi(local, channel, session, &self.session_readers);
         free_channel(session, last_handle);
-        self.session_readers.fetch_sub(1, Ordering::SeqCst);
+        drop(reading);
         self.active.fetch_sub(1, Ordering::SeqCst);
         self.status("client_closed", Some(label));
     }
@@ -386,11 +402,13 @@ impl SshUplink {
     /// not end it, the session is unusable and is cut here.
     fn open_direct(
         &self,
+        hub: &Hub,
         destination_host: &str,
         destination_port: u16,
         peer: SocketAddr,
     ) -> Result<Channel, ssh2::Error> {
         let _open = self.opens.lock().unwrap_or_else(|e| e.into_inner());
+        let _reading = hub.reading_session();
         let deadline = Instant::now() + OPEN_DEADLINE;
         let fds = [wake::fd_of(&self.socket)];
         let peer_ip = peer.ip().to_string();
@@ -593,7 +611,11 @@ fn supervise<U: Uplink>(
         // them, and at intervals otherwise.
         let idle = hub.in_flight.load(Ordering::SeqCst) == 0;
         if Instant::now() >= next_probe || (idle && uplink.has_input()) {
-            match uplink.probe(&control) {
+            let answer = {
+                let _reading = hub.reading_session();
+                uplink.probe(&control)
+            };
+            match answer {
                 Probe::Alive => {
                     missed_probes = 0;
                     next_probe = Instant::now() + timing.probe_interval;
@@ -708,7 +730,7 @@ pub(crate) fn start_port_forward<E: ForwardEvents>(
                     local_port, destination_host, destination_port
                 )
             });
-            match uplink.open_direct(&destination_host, destination_port, peer) {
+            match uplink.open_direct(hub, &destination_host, destination_port, peer) {
                 Ok(channel) => {
                     let label = format!("from {}", peer);
                     hub.tunnel(stream, channel, &uplink.session, label);
@@ -784,7 +806,7 @@ fn serve_socks_client(
         format!("SOCKS client {} connecting to {}.", peer, target)
     });
 
-    let channel = match uplink.open_direct(&target.host, target.port, peer) {
+    let channel = match uplink.open_direct(hub, &target.host, target.port, peer) {
         Ok(channel) => channel,
         Err(e) => {
             let _ = socks5::write_reply(&mut stream, socks5::reply_for_open_error(&e));
@@ -958,6 +980,46 @@ mod tests {
         script: Mutex<VecDeque<Probe>>,
         probes: AtomicUsize,
         closed: AtomicBool,
+        /// Runs inside every probe, where the real one reads the session.
+        on_probe: ProbeHook,
+    }
+
+    type ProbeHook = Mutex<Box<dyn FnMut(&TcpStream) + Send>>;
+
+    impl FakeUplink {
+        fn new(socket: TcpStream, script: &[Probe]) -> Self {
+            socket.set_nonblocking(true).unwrap();
+            Self {
+                socket,
+                script: Mutex::new(script.iter().copied().collect()),
+                probes: AtomicUsize::new(0),
+                closed: AtomicBool::new(false),
+                on_probe: Mutex::new(Box::new(|_| {})),
+            }
+        }
+    }
+
+    /// Run `supervise` over `uplink` and `incoming`, for the tests that need
+    /// more of either than a [`Fixture`] offers.
+    fn supervised(
+        uplink: &Arc<FakeUplink>,
+        incoming: Incoming,
+        timing: Timing,
+    ) -> (Arc<Hub>, Arc<Recorder>, SessionHandle) {
+        let events = Arc::new(Recorder::default());
+        let hub = Arc::new(Hub::new(
+            Box::new(Arc::clone(&events)),
+            0,
+            "test".to_string(),
+            0,
+        ));
+        let (handle, control) = control_channel().unwrap();
+        {
+            let hub = Arc::clone(&hub);
+            let uplink = Arc::clone(uplink);
+            thread::spawn(move || supervise(hub, uplink, incoming, control, timing));
+        }
+        (hub, events, handle)
     }
 
     impl Uplink for FakeUplink {
@@ -972,6 +1034,7 @@ mod tests {
         }
         fn probe(&self, _control: &ControlRx) -> Probe {
             self.probes.fetch_add(1, Ordering::SeqCst);
+            (self.on_probe.lock().unwrap())(&self.socket);
             if matches!(self.socket.peek(&mut [0u8; 1]), Ok(0)) {
                 return Probe::Dead;
             }
@@ -1002,13 +1065,7 @@ mod tests {
             let listener = bind_loopback(0).unwrap();
             let port = listener.local_addr().unwrap().port();
             let (socket, server_end) = socket_pair();
-            socket.set_nonblocking(true).unwrap();
-            let uplink = Arc::new(FakeUplink {
-                socket,
-                script: Mutex::new(script.iter().copied().collect()),
-                probes: AtomicUsize::new(0),
-                closed: AtomicBool::new(false),
-            });
+            let uplink = Arc::new(FakeUplink::new(socket, script));
             let clients_served = Arc::new(AtomicUsize::new(0));
             let serve: ServeTcp = {
                 let clients_served = Arc::clone(&clients_served);
@@ -1145,6 +1202,34 @@ mod tests {
         let reason = f.wait_for_end().expect("a reason for the frontend");
         assert!(reason.contains("Lost the connection"), "{}", reason);
         assert_dropped(&mut client);
+    }
+
+    #[test]
+    fn a_probe_counts_as_reading_the_session_while_it_runs() {
+        let (socket, _server_end) = socket_pair();
+        let uplink = Arc::new(FakeUplink::new(socket, &[]));
+        let incoming = Incoming::Tcp {
+            listener: bind_loopback(0).unwrap(),
+            serve: Arc::new(|_: &Hub, _: TcpStream, _: SocketAddr| {}),
+        };
+        let (hub, events, handle) = supervised(&uplink, incoming, timing(Duration::from_millis(1)));
+
+        let seen = Arc::new(AtomicUsize::new(usize::MAX));
+        {
+            let hub = Arc::clone(&hub);
+            let seen = Arc::clone(&seen);
+            *uplink.on_probe.lock().unwrap() = Box::new(move |_| {
+                seen.store(hub.session_readers.load(Ordering::SeqCst), Ordering::SeqCst);
+            });
+        }
+        wait_for("a probe", SOON, || {
+            seen.load(Ordering::SeqCst) != usize::MAX
+        });
+        assert_eq!(seen.load(Ordering::SeqCst), 1);
+
+        handle.send(SessionMsg::Disconnect).unwrap();
+        wait_for("the forward to end", SOON, || events.ended_with().is_some());
+        assert_eq!(hub.session_readers.load(Ordering::SeqCst), 0);
     }
 
     #[test]
@@ -1354,8 +1439,16 @@ mod live {
             for _ in 0..3 {
                 assert_eq!(uplink.probe(&control), Probe::Alive);
             }
-            let channel = uplink.open_direct(SSHD.0, SSHD.1, "127.0.0.1:1".parse().unwrap());
+            let hub = Hub::new(
+                Box::new(Arc::new(Recorder::default())),
+                0,
+                "test".to_string(),
+                0,
+            );
+            let peer = "127.0.0.1:1".parse().unwrap();
+            let channel = uplink.open_direct(&hub, SSHD.0, SSHD.1, peer);
             assert!(channel.is_ok());
+            assert_eq!(hub.session_readers.load(Ordering::SeqCst), 0);
             assert_eq!(uplink.probe(&control), Probe::Alive);
         });
     }
