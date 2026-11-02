@@ -131,6 +131,31 @@ async function dragRow(from: string, to: string): Promise<void> {
     .perform();
 }
 
+/**
+ * Open a row's menu as a right click does. WebKitWebDriver's own right click is
+ * not one: it reports the release as the left button, which clicks whatever is
+ * under the pointer, and the page goes on seeing the right button held, so no
+ * later press fires a pointerdown and every drag after it silently does nothing.
+ */
+async function rightClick(selector: string): Promise<void> {
+  const found = await browser.execute((s: string) => {
+    const element = document.querySelector<HTMLElement>(s);
+    if (!element) return false;
+    const box = element.getBoundingClientRect();
+    element.dispatchEvent(
+      new MouseEvent("contextmenu", {
+        bubbles: true,
+        cancelable: true,
+        button: 2,
+        clientX: box.left + box.width / 2,
+        clientY: box.top + box.height / 2,
+      }),
+    );
+    return true;
+  }, selector);
+  expect(found).toBe(true);
+}
+
 /** Open a menu item that the menu has just offered, from the keyboard. */
 async function chooseMenuItem(selector: string): Promise<void> {
   const item = await browser.$(selector);
@@ -457,7 +482,7 @@ describe("Folders", () => {
       await showTree();
       await fill(sel.connectionSearchInput, OWN_NAMES);
       await waitForRow(LOOSE);
-      await (await rowOf(LOOSE)).click({ button: "right" });
+      await rightClick(sel.connectionRowByName(LOOSE));
       await click(sel.folderMoveMenuItem);
 
       await click(sel.folderPickerToggle);
