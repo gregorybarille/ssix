@@ -6,7 +6,9 @@ mod known_hosts;
 mod logs;
 mod models;
 mod proxy;
+mod reconnect;
 mod remote_script;
+mod session_log;
 mod ssh;
 mod ssh_debug;
 mod storage;
@@ -83,6 +85,8 @@ pub fn run() {
             // (see docs/roadmap.md); keep each block together.
             // roadmap:auth
             // roadmap:resilience
+            commands::ssh::ssh_reconnect,
+            commands::ssh::ssh_cancel_reconnect,
             // roadmap:forwards
             // roadmap:sftp
             // roadmap:snippets

@@ -812,18 +812,18 @@ mod tests {
 /// CI runs them on the Linux test servers and on a Windows container
 /// (`docker/windows-sshd`).
 #[cfg(test)]
-mod live {
+pub(crate) mod live {
     use super::*;
     use crate::ssh::{open_authenticated_session, AuthMethod, Endpoint};
     use crate::storage::test_support::with_isolated_data_dir;
 
-    struct Target {
-        endpoint: Endpoint,
+    pub(crate) struct Target {
+        pub(crate) endpoint: Endpoint,
         platform: ScriptPlatform,
     }
 
     impl Target {
-        fn from_env() -> Self {
+        pub(crate) fn from_env() -> Self {
             let var = |name: &str| {
                 std::env::var(name)
                     .unwrap_or_else(|_| panic!("{} is not set; see `remote_script::live`", name))
