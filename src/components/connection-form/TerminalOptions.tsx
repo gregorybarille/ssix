@@ -30,9 +30,10 @@ function overrideText(choice: string): string | undefined {
  * it says here why and which field to change.
  */
 export function TerminalOptions({ advanced, onChange }: ConnectionFormSectionProps) {
-  const fontFamily = advanced.font_family ?? DEFAULT_CHOICE;
+  // Blank is stored as unset, but an older file can hold it, and no Select item may have it.
+  const fontFamily = advanced.font_family?.trim() || DEFAULT_CHOICE;
   const fontSize = advanced.font_size == null ? DEFAULT_CHOICE : String(advanced.font_size);
-  const colorScheme = advanced.color_scheme ?? DEFAULT_CHOICE;
+  const colorScheme = advanced.color_scheme?.trim() || DEFAULT_CHOICE;
   const unknownScheme =
     colorScheme !== DEFAULT_CHOICE && !isKnownColorScheme(colorScheme) ? colorScheme : null;
 

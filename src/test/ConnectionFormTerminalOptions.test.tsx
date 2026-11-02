@@ -36,6 +36,15 @@ describe("TerminalOptions", () => {
     expect(screen.queryByTestId("connection-form-color-scheme-error")).toBeNull();
   });
 
+  it.each(["", "   "])("takes a stored blank of %j for unset", (blank) => {
+    renderOptions({ font_family: blank, color_scheme: blank });
+    expect(screen.getByTestId("connection-form-font-family")).toHaveTextContent("Use app setting");
+    expect(screen.getByTestId("connection-form-color-scheme")).toHaveTextContent(
+      "Follow the app theme",
+    );
+    expect(screen.queryByTestId("connection-form-color-scheme-error")).toBeNull();
+  });
+
   it("shows what is saved", () => {
     renderOptions({ font_family: "Fira Code", font_size: 16, color_scheme: "dracula" });
     expect(screen.getByTestId("connection-form-font-family")).toHaveTextContent("Fira Code");
