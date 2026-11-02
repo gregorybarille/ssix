@@ -3,6 +3,7 @@ import { AppSettings } from "@/types";
 import { Separator } from "./ui/separator";
 import { Check } from "lucide-react";
 import { useDebouncedCallback } from "@/hooks/useDebouncedCallback";
+import { errorMessage } from "@/lib/errors";
 import { AppearanceSection } from "./settings/AppearanceSection";
 import { BackupsSection } from "./settings/BackupsSection";
 import { GitSyncSection } from "./settings/GitSyncSection";
@@ -74,11 +75,7 @@ export function SettingsPanel({ settings, onSave, onPreview }: SettingsPanelProp
         }
       } catch (error) {
         if (saveVersion !== latestSaveVersionRef.current) continue;
-        const message =
-          error instanceof Error && error.message.trim()
-            ? error.message.trim()
-            : "Failed to save settings.";
-        setSaveError(message);
+        setSaveError(errorMessage(error).trim() || "Failed to save settings.");
       }
     }
     isSavingRef.current = false;
