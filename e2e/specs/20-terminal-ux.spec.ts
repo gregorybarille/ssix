@@ -382,6 +382,17 @@ describe("Terminal UX", () => {
       });
     }
 
+    /** Back at this size: the question's panel takes width from the tab until it has gone. */
+    async function waitForSize(id: string, size: { cols: number; rows: number }): Promise<void> {
+      await browser.waitUntil(
+        async () => {
+          const { cols, rows } = await stateOf(id);
+          return cols === size.cols && rows === size.rows;
+        },
+        { timeout: 10_000, timeoutMsg: "The terminal did not take the whole tab again" },
+      );
+    }
+
     /** End the shell in `second`, and answer the question that follows. */
     async function closePane(second: string): Promise<void> {
       await typeIn(second, "exit\n");
@@ -423,12 +434,8 @@ describe("Terminal UX", () => {
       await waitForText(first, "ALT-42");
       await closePane(second);
       await waitForShare(first, 1, 1);
-      await browser.waitUntil(async () => (await stateOf(first)).cols === alone.cols, {
-        timeout: 10_000,
-        timeoutMsg: "The terminal did not take the whole tab again",
-      });
+      await waitForSize(first, alone);
       const back = await stateOf(first);
-      expect(back.rows).toBe(alone.rows);
       expect(back.altScreen).toBe(true);
       expect(back.bracketedPaste).toBe(true);
       expect(await isTagged(first)).toBe(true);
@@ -463,12 +470,8 @@ describe("Terminal UX", () => {
 
       await closePane(second);
       await waitForShare(first, 1, 1);
-      await browser.waitUntil(async () => (await stateOf(first)).rows === alone.rows, {
-        timeout: 10_000,
-        timeoutMsg: "The terminal did not take the whole tab again",
-      });
+      await waitForSize(first, alone);
       const back = await stateOf(first);
-      expect(back.cols).toBe(alone.cols);
       expect(back.bracketedPaste).toBe(true);
       expect(await isTagged(first)).toBe(true);
       expect(await textOf(first)).toContain("BEFORE-42");
