@@ -115,17 +115,28 @@ const grabPoint = (selector: string) =>
     return { x: Math.round(box.left + 30), y: Math.round(box.top + box.height / 2) };
   }, selector);
 
+/** One mouse across calls: a new id would be another mouse, with no button down. */
+const mouse = () =>
+  browser.action("pointer", { id: "folders-mouse", parameters: { pointerType: "mouse" } });
+
 async function dragRow(from: string, to: string): Promise<void> {
   const start = await grabPoint(from);
   const end = await grabPoint(to);
-  await browser
-    .action("pointer", { parameters: { pointerType: "mouse" } })
+  await mouse()
     .move({ x: start.x, y: start.y })
     .down({ button: 0 })
     .move({ x: start.x + 20, y: start.y + 4, duration: 100 })
     .move({ x: end.x, y: end.y, duration: 200 })
     .up({ button: 0 })
     .perform();
+}
+
+/** Open a menu item that the menu has just offered, from the keyboard. */
+async function chooseMenuItem(selector: string): Promise<void> {
+  const item = await browser.$(selector);
+  await item.waitForExist({ timeout: 10_000 });
+  await browser.execute((node: HTMLElement) => node.focus(), item as unknown as HTMLElement);
+  await browser.keys(["Enter"]);
 }
 
 /** Type a path into a folder field that may sit below the fold of the form. */
@@ -300,6 +311,14 @@ describe("Folders", () => {
       await waitForExpanded(EU, true);
       await browser.keys(["Home"]);
       await waitForFocusOn(sel.folderRow(PROD));
+
+      // One tab stop: Tab leaves the tree, past every button on its rows.
+      await browser.keys(["Tab"]);
+      await browser.waitUntil(
+        () =>
+          browser.execute((tree: string) => !document.activeElement?.closest(tree), sel.folderTree),
+        { timeout: 10_000, timeoutMsg: "Tab should leave the tree" },
+      );
     });
 
     it("opens a closed folder for a search, then gives its state back", async () => {
@@ -325,7 +344,7 @@ describe("Folders", () => {
 
     it("connects from a row", async () => {
       await showTree();
-      const connect = await (await rowOf(WEB)).$('[data-testid^="connect-button-"]');
+      const connect = await (await rowOf(WEB)).$(sel.connectionRowConnectButton);
       await connect.waitForClickable({ timeout: 10_000 });
       await connect.click();
       await waitForTerminalContains("server-a:~$", 30_000);
@@ -371,6 +390,55 @@ describe("Folders", () => {
 
       expect(await browser.$$(sel.terminalTabCloseAny).length).toBe(tabs);
       await (await browser.$(sel.folderTree)).waitForDisplayed({ timeout: 10_000 });
+      expect(await (await browser.$(sel.folderMoveError)).isExisting()).toBe(false);
+      await click(sel.connectionSearchClear);
+    });
+
+    it("does not connect when a drag comes back to its own row", async () => {
+      await showTree();
+      await fill(sel.connectionSearchInput, OWN_NAMES);
+      await waitForRow(LOOSE);
+      const tabs = await browser.$$(sel.terminalTabCloseAny).length;
+
+      await dragRow(sel.connectionRowByName(LOOSE), sel.connectionRowByName(LOOSE));
+      await (await browser.$(sel.folderTree)).waitForDisplayed({ timeout: 10_000 });
+      expect(await browser.$$(sel.terminalTabCloseAny).length).toBe(tabs);
+      expect(storedFolder(LOOSE)).toBe(EU);
+      await click(sel.connectionSearchClear);
+    });
+
+    it("cancels a drag with Escape, which goes no further than the drag", async () => {
+      await showTree();
+      await fill(sel.connectionSearchInput, OWN_NAMES);
+      await waitForRow(LOOSE);
+      // A side panel to close, should Escape get that far.
+      const edit = await (await rowOf(DB)).$(sel.connectionRowEditButton);
+      await edit.waitForClickable({ timeout: 10_000 });
+      await edit.click();
+      await (await browser.$(sel.connectionForm)).waitForExist({ timeout: 10_000 });
+      const tabs = await browser.$$(sel.terminalTabCloseAny).length;
+
+      const start = await grabPoint(sel.connectionRowByName(LOOSE));
+      const over = await grabPoint(sel.folderRow(PROD));
+      await mouse()
+        .move({ x: start.x, y: start.y })
+        .down({ button: 0 })
+        .move({ x: start.x + 20, y: start.y + 4, duration: 100 })
+        .move({ x: over.x, y: over.y, duration: 200 })
+        .perform(true);
+      await (await browser.$(sel.folderDragChip)).waitForExist({ timeout: 10_000 });
+      expect(await (await folderOf(PROD)).getAttribute("data-drop-target")).toBe("true");
+
+      await browser.keys(["Escape"]);
+      await waitForGone(sel.folderDragChip);
+      // Back on the row, where the release is also a click on it.
+      await mouse().move({ x: start.x, y: start.y, duration: 100 }).up({ button: 0 }).perform();
+
+      await (await browser.$(sel.connectionForm)).waitForExist({ timeout: 10_000 });
+      expect(await browser.$$(sel.terminalTabCloseAny).length).toBe(tabs);
+      expect(storedFolder(LOOSE)).toBe(EU);
+      await click(sel.connectionFormCancel);
+      await waitForGone(sel.connectionForm);
       await click(sel.connectionSearchClear);
     });
 
@@ -383,6 +451,22 @@ describe("Folders", () => {
         timeout: 10_000,
         timeoutMsg: "The row should sit in the no-folder section",
       });
+    });
+
+    it("moves with the picker, from the row's menu", async () => {
+      await showTree();
+      await fill(sel.connectionSearchInput, OWN_NAMES);
+      await waitForRow(LOOSE);
+      await (await rowOf(LOOSE)).click({ button: "right" });
+      await click(sel.folderMoveMenuItem);
+
+      await click(sel.folderPickerToggle);
+      await click(sel.folderPickerOption(EU));
+      expect(await (await browser.$(sel.folderMoveInput)).getValue()).toBe(EU);
+      await clickDialogFooterButton(sel.folderMoveSubmit);
+      await waitForGone(sel.folderMoveDialog);
+      await waitForStoredFolder(LOOSE, EU);
+      await click(sel.connectionSearchClear);
     });
 
     it("changes nothing when a drag ends back in the folder it started in", async () => {
@@ -398,11 +482,7 @@ describe("Folders", () => {
       await waitForRow(LOOSE);
       await focusRow(sel.connectionRowByName(LOOSE));
       await browser.keys(["Shift", "F10"]);
-
-      const item = await browser.$(sel.folderMoveMenuItem);
-      await item.waitForExist({ timeout: 10_000 });
-      await browser.execute((node: HTMLElement) => node.focus(), item as unknown as HTMLElement);
-      await browser.keys(["Enter"]);
+      await chooseMenuItem(sel.folderMoveMenuItem);
 
       await waitForFocusOn(sel.folderMoveInput);
       await fill(sel.folderMoveInput, PROD);
@@ -415,6 +495,15 @@ describe("Folders", () => {
   });
 
   describe("a folder", () => {
+    it("is renamed from the keyboard through its menu", async () => {
+      await showTree();
+      await focusRow(sel.folderRow(PROD));
+      await browser.keys(["Shift", "F10"]);
+      await chooseMenuItem(sel.folderRenameMenuItem);
+      await waitForFocusOn(sel.folderRenameInput);
+      await closeRenameWithEscape();
+    });
+
     it("refuses a rename into itself, and warns of a merge", async () => {
       await showTree();
       await openRename(PROD);
