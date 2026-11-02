@@ -546,6 +546,11 @@ impl Uplink for SshUplink {
 type ServeTcp = Arc<dyn Fn(&Hub, TcpStream, SocketAddr) + Send + Sync>;
 type ServeChannel = Arc<dyn Fn(&Hub, Channel) + Send + Sync>;
 
+/// Runs once each look of `Incoming::Queued` is over, for what can happen right
+/// after it.
+#[cfg(test)]
+type AfterLook = Box<dyn FnMut(&Arc<Hub>) + Send>;
+
 /// Where a forward's clients come from, and what serves each one.
 enum Incoming {
     /// A local or dynamic forward: a socket on this machine.
@@ -563,6 +568,7 @@ enum Incoming {
     Queued {
         waiting: Arc<AtomicUsize>,
         accepted: Arc<AtomicUsize>,
+        after_look: AfterLook,
     },
 }
 
@@ -597,8 +603,13 @@ impl Incoming {
                 }
             },
             #[cfg(test)]
-            Incoming::Queued { waiting, accepted } => {
+            Incoming::Queued {
+                waiting,
+                accepted,
+                after_look,
+            } => {
                 accepted.fetch_add(waiting.swap(0, Ordering::SeqCst), Ordering::SeqCst);
+                after_look(hub);
                 Ok(())
             }
         }
@@ -649,6 +660,10 @@ fn supervise<U: Uplink>(
         if stop_requested(&control) {
             break None;
         }
+        // Counted before looking: a client can read the next connection in
+        // from the session and leave right after the look, with nothing left
+        // on the socket to wake this thread for it.
+        let had_clients = hub.in_flight.load(Ordering::SeqCst) > 0;
         if let Err(e) = incoming.accept_all(&hub) {
             break Some(e);
         }
@@ -689,8 +704,10 @@ fn supervise<U: Uplink>(
             }
         }
 
-        // Looked at again: that can have started a client.
-        let idle = hub.in_flight.load(Ordering::SeqCst) == 0;
+        // Looked at again: that can have started a client. Only a look with no
+        // client around can have seen all there is, so one that had some is
+        // followed by another before sleeping on the socket.
+        let idle = !had_clients && hub.in_flight.load(Ordering::SeqCst) == 0;
         let mut fds = vec![control.wake.fd()];
         fds.extend(incoming.fd());
         let timeout = if idle {
@@ -1299,6 +1316,19 @@ mod tests {
         assert!(open_error_message(&refused, "db.internal", 5432).contains("connect failed"));
     }
 
+    fn expect_accepted_then_stop(
+        accepted: &AtomicUsize,
+        events: &Recorder,
+        handle: &SessionHandle,
+    ) {
+        wait_for("the connection to be accepted", SOON, || {
+            accepted.load(Ordering::SeqCst) == 1
+        });
+
+        handle.send(SessionMsg::Disconnect).unwrap();
+        wait_for("the forward to end", SOON, || events.ended_with().is_some());
+    }
+
     #[test]
     fn a_connection_a_probe_read_is_accepted_without_waiting_for_the_next_probe() {
         let (socket, mut server_end) = socket_pair();
@@ -1318,16 +1348,52 @@ mod tests {
         let incoming = Incoming::Queued {
             waiting,
             accepted: Arc::clone(&accepted),
+            after_look: Box::new(|_| {}),
         };
         let (_hub, events, handle) = supervised(&uplink, incoming, timing(NEVER));
 
         server_end.write_all(b"x").unwrap();
-        wait_for("the connection to be accepted", SOON, || {
-            accepted.load(Ordering::SeqCst) == 1
-        });
+        expect_accepted_then_stop(&accepted, &events, &handle);
+    }
 
-        handle.send(SessionMsg::Disconnect).unwrap();
-        wait_for("the forward to end", SOON, || events.ended_with().is_some());
+    #[test]
+    fn a_connection_the_last_client_read_on_its_way_out_is_accepted() {
+        let (socket, _server_end) = socket_pair();
+        let uplink = Arc::new(FakeUplink::new(socket, &[]));
+        let waiting = Arc::new(AtomicUsize::new(0));
+        let accepted = Arc::new(AtomicUsize::new(0));
+        let client_may_leave = Arc::new(AtomicUsize::new(0));
+        let after_look = {
+            let waiting = Arc::clone(&waiting);
+            let mut looks = 0;
+            Box::new(move |hub: &Arc<Hub>| {
+                looks += 1;
+                if looks == 1 {
+                    let client_may_leave = Arc::clone(&client_may_leave);
+                    hub.spawn_client(move |_| {
+                        while client_may_leave.load(Ordering::SeqCst) == 0 {
+                            thread::sleep(Duration::from_millis(1));
+                        }
+                    });
+                } else if looks == 2 {
+                    // The look found nothing. Now the client's last read queues
+                    // a connection, draining the socket, and the client goes.
+                    waiting.store(1, Ordering::SeqCst);
+                    client_may_leave.store(1, Ordering::SeqCst);
+                    while hub.in_flight.load(Ordering::SeqCst) > 0 {
+                        thread::sleep(Duration::from_millis(1));
+                    }
+                }
+            })
+        };
+        let incoming = Incoming::Queued {
+            waiting,
+            accepted: Arc::clone(&accepted),
+            after_look,
+        };
+        let (_hub, events, handle) = supervised(&uplink, incoming, timing(NEVER));
+
+        expect_accepted_then_stop(&accepted, &events, &handle);
     }
 
     #[test]
