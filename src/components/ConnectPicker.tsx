@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Connection, Credential } from "@/types";
 import { Search, Server, Network } from "lucide-react";
 import {
@@ -12,6 +12,7 @@ import { cn } from "@/lib/utils";
 import { getColorHex } from "@/lib/colors";
 import { connectionMatches, tokenize } from "@/lib/search";
 import { forwardEndpoint, isForwardConnection } from "@/lib/sshTerms";
+import { useListboxNavigation } from "@/hooks/useListboxNavigation";
 
 interface ConnectPickerProps {
   open: boolean;
@@ -39,30 +40,7 @@ export function ConnectPicker({
   onConnect,
 }: ConnectPickerProps) {
   const [query, setQuery] = useState("");
-  const [activeIndex, setActiveIndex] = useState(0);
   const inputRef = useRef<HTMLInputElement | null>(null);
-  const listRef = useRef<HTMLDivElement | null>(null);
-  /*
-    Audit-3 P2#11: hover/keyboard race.
-
-    Previous implementation set `onMouseEnter={() => setActiveIndex(idx)}`
-    on every row. That looks fine in isolation, but the active-row
-    `scrollIntoView` effect (which runs on every ArrowUp/Down) moves
-    a *different* row under a stationary cursor. The browser then
-    fires synthetic `mouseenter` events for whichever rows passed
-    under the cursor during the scroll — which clobbers the
-    keyboard's selection and "snaps back" the highlight to whatever
-    row happens to be under the pointer. Net effect: pressing
-    ArrowDown twice quickly sometimes only moves once, and the user
-    can never reach the bottom of a long list with the keyboard.
-
-    Standard fix: gate hover on actual pointer motion. We track a
-    `pointerMovedRef` that flips true on `pointermove` and false on
-    every keystroke. `onPointerEnter` only changes the selection
-    when the pointer genuinely moved (i.e. the user is hovering by
-    intent, not because the list scrolled under them).
-  */
-  const pointerMovedRef = useRef(false);
 
   const getCredentialName = (credId?: string) => {
     if (!credId) return null;
@@ -76,63 +54,24 @@ export function ConnectPicker({
     [connections, tokens],
   );
 
-  // Reset query/selection whenever the picker is reopened.
-  useEffect(() => {
-    if (open) {
-      setQuery("");
-      setActiveIndex(0);
-    }
-  }, [open]);
-
-  // Clamp activeIndex when the filtered list shrinks.
-  useEffect(() => {
-    if (activeIndex >= filtered.length) {
-      setActiveIndex(filtered.length === 0 ? 0 : filtered.length - 1);
-    }
-  }, [filtered.length, activeIndex]);
-
-  // Keep the active row scrolled into view.
-  useEffect(() => {
-    const list = listRef.current;
-    if (!list) return;
-    const row = list.querySelector<HTMLElement>(
-      `[data-index="${activeIndex}"]`,
-    );
-    if (row && typeof row.scrollIntoView === "function") {
-      row.scrollIntoView({ block: "nearest" });
-    }
-  }, [activeIndex, filtered.length]);
-
   const choose = (conn: Connection | undefined) => {
     if (!conn) return;
     onConnect(conn);
     onOpenChange(false);
   };
 
-  const onKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === "ArrowDown") {
-      e.preventDefault();
-      pointerMovedRef.current = false;
-      setActiveIndex((i) => (filtered.length === 0 ? 0 : (i + 1) % filtered.length));
-    } else if (e.key === "ArrowUp") {
-      e.preventDefault();
-      pointerMovedRef.current = false;
-      setActiveIndex((i) =>
-        filtered.length === 0 ? 0 : (i - 1 + filtered.length) % filtered.length,
-      );
-    } else if (e.key === "Home") {
-      e.preventDefault();
-      pointerMovedRef.current = false;
+  const { activeIndex, setActiveIndex, onKeyDown, listProps, rowProps } = useListboxNavigation({
+    count: filtered.length,
+    onChoose: (index) => choose(filtered[index]),
+  });
+
+  // Reset query/selection whenever the picker is reopened.
+  useEffect(() => {
+    if (open) {
+      setQuery("");
       setActiveIndex(0);
-    } else if (e.key === "End") {
-      e.preventDefault();
-      pointerMovedRef.current = false;
-      if (filtered.length > 0) setActiveIndex(filtered.length - 1);
-    } else if (e.key === "Enter") {
-      e.preventDefault();
-      choose(filtered[activeIndex]);
     }
-  };
+  }, [open, setActiveIndex]);
 
   const listboxId = "connect-picker-list";
   const activeId =
@@ -195,13 +134,10 @@ export function ConnectPicker({
           </p>
         ) : (
           <div
-            ref={listRef}
+            {...listProps}
             id={listboxId}
             role="listbox"
             aria-label="Matching connections"
-            onPointerMove={() => {
-              pointerMovedRef.current = true;
-            }}
             className="max-h-[320px] overflow-y-auto py-1"
           >
             {filtered.map((conn, idx) => {
@@ -209,18 +145,12 @@ export function ConnectPicker({
               const isActive = idx === activeIndex;
               return (
                 <div
+                  {...rowProps(idx)}
                   key={conn.id}
                   id={`connect-picker-row-${idx}`}
-                  data-index={idx}
                   data-name={conn.name}
                   role="option"
                   aria-selected={isActive}
-                  onPointerEnter={() => {
-                    // Only follow the pointer if it actually moved
-                    // (vs. the row sliding under a stationary cursor
-                    // because of keyboard-driven scrollIntoView).
-                    if (pointerMovedRef.current) setActiveIndex(idx);
-                  }}
                   onClick={() => choose(conn)}
                   className={cn(
                     "flex items-center gap-3 px-3 py-2 cursor-pointer transition-colors",
