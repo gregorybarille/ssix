@@ -1170,7 +1170,7 @@ mod live {
         with_password_session(|session| {
             let mut channel = session.channel_session().unwrap();
             request_forwarding_to(session, &mut channel, &debug(), &agent.socket);
-            channel.exec("sleep 30").unwrap();
+            channel.exec("sleep 5").unwrap();
             session.set_blocking(false);
             let pump = ForwardPump::start(session).expect("granted");
             let started = Instant::now();
