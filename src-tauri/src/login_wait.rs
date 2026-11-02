@@ -36,6 +36,33 @@ const POLL: Duration = Duration::from_millis(100);
 /// Says neither "auth" nor anything a login failure says: the failure view and
 /// the retry rules both take it for what it is, a connection problem.
 pub(crate) const STALLED: &str = "The server stopped answering during login";
+/// The same for a connection that failed before the login sent anything secret.
+/// Only then does a reconnect retry it: once a password or key has gone out, a
+/// close can be a server hanging up on it and a timeout a server still judging it,
+/// and sending it again could lock the account.
+pub(crate) const LOST: &str = "The connection was lost during login";
+
+/// Whether a login step failed because the connection did, rather than by an
+/// answer from the server. libssh2 reports a keyboard-interactive request whose
+/// reply never came with the code it uses for a refusal, and only the text tells
+/// them apart.
+pub(crate) fn connection_failed(error: &ssh2::Error) -> bool {
+    let ssh2::ErrorCode::Session(code) = error.code() else {
+        return false;
+    };
+    match code {
+        libssh2_sys::LIBSSH2_ERROR_SOCKET_SEND
+        | libssh2_sys::LIBSSH2_ERROR_SOCKET_RECV
+        | libssh2_sys::LIBSSH2_ERROR_SOCKET_DISCONNECT
+        | libssh2_sys::LIBSSH2_ERROR_SOCKET_TIMEOUT
+        | libssh2_sys::LIBSSH2_ERROR_TIMEOUT => true,
+        libssh2_sys::LIBSSH2_ERROR_AUTHENTICATION_FAILED
+        | libssh2_sys::LIBSSH2_ERROR_PUBLICKEY_UNVERIFIED => {
+            error.message().starts_with("Waiting for")
+        }
+        _ => false,
+    }
+}
 
 /// Why a step stopped before libssh2 finished it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -234,6 +261,38 @@ mod tests {
     }
 
     #[test]
+    fn a_lost_connection_reads_as_a_connection_problem() {
+        assert!(!LOST.to_lowercase().contains("auth"));
+        assert!(crate::reconnect::is_retryable_connect_error(LOST));
+    }
+
+    #[test]
+    fn only_a_failing_connection_counts_as_one() {
+        let failed = |code, reason| {
+            connection_failed(&ssh2::Error::new(ssh2::ErrorCode::Session(code), reason))
+        };
+        for (code, reason) in [
+            (-13, "socket disconnect"),
+            (-9, "Timed out waiting on socket"),
+            (-7, "Unable to send userauth request"),
+            (-30, "Timed out waiting for data"),
+            (-43, "Error recving"),
+            (-18, "Waiting for keyboard USERAUTH response"),
+        ] {
+            assert!(failed(code, reason), "{reason}");
+        }
+        for (code, reason) in [
+            (-18, "Authentication failed (keyboard-interactive)"),
+            (-18, "Username/PublicKey combination invalid"),
+            (-19, "Invalid signature for supplied public key"),
+            (-16, "Unable to extract public key from private key file"),
+            (-1, "failed to write temporary SSH key"),
+        ] {
+            assert!(!failed(code, reason), "{reason}");
+        }
+    }
+
+    #[test]
     fn a_stall_after_an_answer_comes_before_libssh2_gives_up() {
         const LIBSSH2_PACKET_READ_TIMEOUT: Duration = Duration::from_secs(60);
         assert!(REPLY_STALL < LIBSSH2_PACKET_READ_TIMEOUT);
@@ -318,6 +377,22 @@ pub(crate) mod test_support {
 
         pub(crate) fn freeze(&self) {
             self.frozen.store(true, Ordering::SeqCst);
+        }
+
+        /// Close both sides, which is what a dropped connection looks like. Returns
+        /// once the relay has stopped, so nothing sent from here on gets through.
+        pub(crate) fn cut(&self) {
+            self.stop.store(true, Ordering::SeqCst);
+            thread::sleep(Duration::from_millis(200));
+        }
+
+        /// Close both sides after `delay`, while a test waits on a reply.
+        pub(crate) fn cut_after(&self, delay: Duration) {
+            let stop = self.stop.clone();
+            thread::spawn(move || {
+                thread::sleep(delay);
+                stop.store(true, Ordering::SeqCst);
+            });
         }
 
         /// A session through this relay, ready for its login.
