@@ -35,12 +35,24 @@ function swallowTrailingClick() {
 }
 
 /**
+ * Keep a press from selecting text until what this returns is called. The rows
+ * being dragged are `select-none`, but WebKit can start a selection on a press
+ * on one regardless, and as the pointer moves that selection runs across the
+ * page to whatever can be selected, lighting up the search box.
+ */
+function preventSelection(): () => void {
+  const prevent = (event: Event) => event.preventDefault();
+  window.addEventListener("selectstart", prevent, true);
+  return () => window.removeEventListener("selectstart", prevent, true);
+}
+
+/**
  * A drag cancelled with the button still down: its release is still to come,
  * and the click that goes with it must not count either. A cancel or a new
  * press means that release was lost, and nothing may stay behind to eat a
- * later, real click.
+ * later, real click. `onSettled` hears when the wait is over, either way.
  */
-function swallowClickOfComingRelease() {
+function swallowClickOfComingRelease(onSettled: () => void) {
   const onRelease = () => {
     stopWaiting();
     swallowTrailingClick();
@@ -49,6 +61,7 @@ function swallowClickOfComingRelease() {
     window.removeEventListener("pointerup", onRelease, true);
     window.removeEventListener("pointercancel", stopWaiting, true);
     window.removeEventListener("pointerdown", stopWaiting, true);
+    onSettled();
   };
   window.addEventListener("pointerup", onRelease, true);
   window.addEventListener("pointercancel", stopWaiting, true);
@@ -81,6 +94,7 @@ export function usePointerDrag<T>(targetAt: (x: number, y: number) => T | null) 
       endDrag.current?.();
       const { clientX: startX, clientY: startY } = event;
       let dragging = false;
+      const allowSelection = preventSelection();
 
       const onMove = (e: PointerEvent) => {
         if (!dragging) {
@@ -107,16 +121,21 @@ export function usePointerDrag<T>(targetAt: (x: number, y: number) => T | null) 
         if (e.key !== "Escape") return;
         e.stopPropagation();
         e.preventDefault();
-        end();
-        swallowClickOfComingRelease();
+        stopFollowing();
+        // The button is still down, so the pointer could yet select something.
+        swallowClickOfComingRelease(allowSelection);
       };
-      const end = () => {
+      const stopFollowing = () => {
         window.removeEventListener("pointermove", onMove);
         window.removeEventListener("pointerup", onUp);
         window.removeEventListener("pointercancel", end);
         window.removeEventListener("keydown", onKey, true);
         endDrag.current = null;
         setChip(null);
+      };
+      const end = () => {
+        stopFollowing();
+        allowSelection();
       };
       window.addEventListener("pointermove", onMove);
       window.addEventListener("pointerup", onUp);

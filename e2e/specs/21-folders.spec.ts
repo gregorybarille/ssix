@@ -453,6 +453,8 @@ describe("Folders", () => {
         .perform(true);
       await (await browser.$(sel.folderDragChip)).waitForExist({ timeout: 10_000 });
       expect(await (await folderOf(PROD)).getAttribute("data-drop-target")).toBe("true");
+      // Left to itself, this press would run a selection up into the search box.
+      expect(await browser.execute(() => document.getSelection()?.type)).not.toBe("Range");
 
       await browser.keys(["Escape"]);
       await waitForGone(sel.folderDragChip);

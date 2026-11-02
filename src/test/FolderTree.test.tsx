@@ -673,6 +673,65 @@ describe("dragging", () => {
     expect(handlers.onConnect).toHaveBeenCalledTimes(1);
   });
 
+  describe("selecting text", () => {
+    /** Whether a selection may start: `fireEvent` says if nobody prevented it. */
+    const canSelect = () =>
+      fireEvent(document.body, new Event("selectstart", { bubbles: true, cancelable: true }));
+
+    it("waits for the release of a press that never moved", () => {
+      show();
+      expect(canSelect()).toBe(true);
+      fireEvent.pointerDown(connectionRow("top")!, { button: 0, clientX: 0, clientY: 0 });
+      expect(canSelect()).toBe(false);
+      fireEvent.pointerUp(window, { clientX: 0, clientY: 0 });
+      expect(canSelect()).toBe(true);
+    });
+
+    it("waits for the end of a drag", () => {
+      show();
+      dragOnto(connectionRow("top")!, connectionRow("top"));
+      expect(canSelect()).toBe(false);
+      drop();
+      expect(canSelect()).toBe(true);
+    });
+
+    it("waits for the release after Escape, with the button still down", () => {
+      show();
+      dragOnto(connectionRow("top")!, connectionRow("top"));
+      cancelWithEscape();
+      expect(canSelect()).toBe(false);
+      drop();
+      expect(canSelect()).toBe(true);
+    });
+
+    it("comes back when a pointercancel takes the release away", () => {
+      show();
+      dragOnto(connectionRow("top")!, connectionRow("top"));
+      fireEvent.pointerCancel(window);
+      expect(canSelect()).toBe(true);
+
+      dragOnto(connectionRow("top")!, connectionRow("top"));
+      cancelWithEscape();
+      fireEvent.pointerCancel(window);
+      expect(canSelect()).toBe(true);
+    });
+
+    it("does not pile up when a new press replaces a release that never came", () => {
+      show();
+      dragOnto(connectionRow("top")!, connectionRow("top"));
+      cancelWithEscape();
+      fireEvent.pointerDown(connectionRow("top")!, { button: 0, clientX: 0, clientY: 0 });
+      fireEvent.pointerUp(window, { clientX: 0, clientY: 0 });
+      expect(canSelect()).toBe(true);
+    });
+
+    it("leaves a press that is not the start of a drag alone", () => {
+      show();
+      fireEvent.pointerDown(connectionRow("top")!, { button: 2, clientX: 0, clientY: 0 });
+      expect(canSelect()).toBe(true);
+    });
+  });
+
   describe("with the side panel open", () => {
     const onOpenChange = vi.fn();
 
