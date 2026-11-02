@@ -71,8 +71,9 @@ export function isTypingSurface(target: EventTarget | null): boolean {
 
 /**
  * True while a side panel or palette is open. Panels are non-modal: the view
- * beside one stays clickable, but the keyboard belongs to the panel.
+ * beside one stays clickable, but the keyboard belongs to the panel. One on its
+ * way out, still animating, is not open.
  */
 export function isPanelOpen(): boolean {
-  return document.querySelector('[data-slot="app-panel-content"]') !== null;
+  return document.querySelector('[data-slot="app-panel-content"]:not([data-state="closed"])') !== null;
 }

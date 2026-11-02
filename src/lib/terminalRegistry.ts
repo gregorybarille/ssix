@@ -48,6 +48,18 @@ function takesInput(sessionId: string): boolean {
   return terminals.has(sessionId) && !useAuthPromptStore.getState().prompts[sessionId];
 }
 
+/**
+ * Whether a pane of this session's tab is still connecting. Splitting a tab gives
+ * the pane already there a new terminal at once, and the keyboard is meant for
+ * the pane the user asked for.
+ */
+export function tabIsStillOpeningPane(sessionId: string): boolean {
+  const tab = useTerminalsStore
+    .getState()
+    .tabs.find((candidate) => candidate.panes.some((pane) => pane.sessionId === sessionId));
+  return !!tab?.panes.some((pane) => pane.retrying);
+}
+
 /** Give the keyboard to a session's terminal, when it can take it. */
 export function focusSession(sessionId: string): void {
   terminals.get(sessionId)?.focus();
