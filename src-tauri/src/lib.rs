@@ -112,6 +112,10 @@ pub fn run() {
             commands::sftp::edit::sftp_edit_save,
             commands::sftp::edit::sftp_edit_close,
             // roadmap:snippets
+            commands::snippets::get_snippets,
+            commands::snippets::add_snippet,
+            commands::snippets::update_snippet,
+            commands::snippets::delete_snippet,
             // roadmap:import
             // roadmap:terminal-ux
             // roadmap:folders

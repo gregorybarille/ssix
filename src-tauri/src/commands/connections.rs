@@ -530,7 +530,7 @@ fn clone_connection_sync(input: CloneConnectionInput) -> Result<Connection, Stri
 }
 
 /// Trim, drop empties, and dedupe a tag vector while preserving first-seen order.
-fn normalize_tags(tags: Vec<String>) -> Vec<String> {
+pub(crate) fn normalize_tags(tags: Vec<String>) -> Vec<String> {
     let mut seen = std::collections::HashSet::new();
     let mut out = Vec::new();
     for t in tags {

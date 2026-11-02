@@ -516,8 +516,7 @@ impl Default for AppData {
     }
 }
 
-/// A saved command the user pastes into a terminal (roadmap: snippets).
-/// Data only: no command reads or writes snippets yet.
+/// A saved command the user pastes into a terminal (see `commands/snippets.rs`).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(test, derive(TS))]
 #[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
