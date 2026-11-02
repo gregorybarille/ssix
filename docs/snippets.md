@@ -47,9 +47,10 @@ Sending a line break to a shell is the same as pressing Enter, so:
 
 SSIX only knows what the terminal has seen. Leaving the Terminals view unmounts
 its terminals, so one you come back to has forgotten that the shell asked for
-bracketed paste, and several lines are refused until the next prompt: press
-Enter once. The reverse also holds: a program that asked for it and then crashed
-leaves it on until something turns it off.
+bracketed paste, and several lines are refused until the next prompt. A terminal
+takes no keys while a panel is open, so close the palette, click the terminal,
+press Enter at an empty prompt and try again. The reverse also holds: a program
+that asked for it and then crashed leaves it on until something turns it off.
 
 ## Variables
 

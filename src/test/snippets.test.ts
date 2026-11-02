@@ -312,6 +312,10 @@ describe("planPaste and the registry", () => {
     expect(planPaste("a\nb")).toEqual({ error: SEVERAL_LINES_MESSAGE });
   });
 
+  it("gives advice that works with the palette open, where a terminal takes no keys", () => {
+    expect(SEVERAL_LINES_MESSAGE).toMatch(/Close this palette.*press Enter/);
+  });
+
   it("explains why a tab is refused", () => {
     live("s1");
     activate("s1");
