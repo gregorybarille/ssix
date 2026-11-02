@@ -52,6 +52,8 @@ share one slot, and `none` counts as the first value.
   connecting on a default.
 - **A relative `IdentityFile`**, which depends on the directory `ssh` runs in,
   and one using a token other than `%d %h %n %p %r %u %%`.
+- **A token in a username**, in `User` or in `ProxyJump %r@bastion`: a credential
+  stores a username as written, so it would sign in as `%r`.
 
 An import reads at most 1 MiB across 64 files and plans at most 2000 hosts.
 `Include` cycles stop at the file that would repeat. Anything left out this way

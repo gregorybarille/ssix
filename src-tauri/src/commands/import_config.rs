@@ -452,7 +452,14 @@ fn server_plan(
     };
 
     let username = match (user, &resolved.user) {
-        (Some(user), _) => user.to_string(),
+        (Some(user), _) => {
+            if user.contains('%') {
+                return Err(Refusal::unsupported(format!(
+                    "The user '{user}' in ProxyJump uses a token, which SSIX cannot expand"
+                )));
+            }
+            user.to_string()
+        }
         (None, Some(value)) => {
             let raw = value.single().map_err(Refusal::invalid)?;
             if raw.contains('%') {
@@ -1672,6 +1679,27 @@ mod tests {
                 "{:?}",
                 b.notes
             );
+        });
+    }
+
+    #[test]
+    fn a_token_in_the_proxy_jump_user_is_refused_as_it_is_in_user() {
+        in_data_dir(|f| {
+            let preview = f.preview(
+                "Host a\n  User app\n  ProxyJump %r@bastion\nHost b\n  User app\n  ProxyJump ssh://%u@bastion:2200\nHost bastion\n  User ops\n",
+            );
+            assert_eq!(names(&preview), ["bastion"]);
+            for (name, token) in [("a", "%r"), ("b", "%u")] {
+                let refused = skip(&preview, name);
+                assert_eq!(refused.category, ImportSkipCategory::Unsupported);
+                assert!(
+                    refused.reason.starts_with("Jump host bastion:"),
+                    "{}",
+                    refused.reason
+                );
+                assert!(refused.reason.contains(token), "{}", refused.reason);
+                assert!(refused.reason.contains("token"), "{}", refused.reason);
+            }
         });
     }
 
