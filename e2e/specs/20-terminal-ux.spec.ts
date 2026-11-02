@@ -2,6 +2,7 @@
  * Spec 20: the terminal beyond a plain shell.
  *
  *   • it keeps its scrollback and session across views, off screen;
+ *   • the terminal that stays is the same one when its tab splits or a split closes;
  *   • find in the scrollback (Ctrl+Shift+F);
  *   • links, which come from output and so are not to be trusted;
  *   • broadcast input across the panes of a tab;
@@ -106,9 +107,9 @@ async function openShell(name: string, prompt = PROMPT_A): Promise<string> {
 }
 
 /** Open a connection beside the shell of the active tab. */
-async function splitWith(name: string): Promise<void> {
+async function splitWith(name: string, how: string = sel.terminalNewSplitRight): Promise<void> {
   await click(sel.terminalNewMenu);
-  await click(sel.terminalNewSplitRight);
+  await click(how);
   await click(sel.connectPickerOption(name));
 }
 
@@ -129,6 +130,18 @@ async function waitForText(id: string, needle: string, timeout = 30_000): Promis
     timeout,
     timeoutMsg: `The terminal never showed ${JSON.stringify(needle)}`,
   });
+}
+
+/** The shell of a pane split in beside `first`, once it is up. */
+async function secondPane(first: string): Promise<string> {
+  await browser.waitUntil(async () => (await sessionIds()).length === 2, {
+    timeout: 30_000,
+    timeoutMsg: "The split never opened a second terminal",
+  });
+  const second = (await sessionIds()).find((id) => id !== first);
+  if (!second) throw new Error("No second pane");
+  await waitForText(second, PROMPT_A);
+  return second;
 }
 
 async function waitForFocus(id: string): Promise<void> {
@@ -274,18 +287,6 @@ describe("Terminal UX", () => {
   });
 
   describe("a terminal that just opened", () => {
-    /** The shell of a pane split in beside `first`, once it is up. */
-    async function secondPane(first: string): Promise<string> {
-      await browser.waitUntil(async () => (await sessionIds()).length === 2, {
-        timeout: 30_000,
-        timeoutMsg: "The split never opened a second terminal",
-      });
-      const second = (await sessionIds()).find((id) => id !== first);
-      if (!second) throw new Error("No second pane");
-      await waitForText(second, PROMPT_A);
-      return second;
-    }
-
     it("takes the keyboard with no click", async () => {
       await createConnectionA("conn-20-fresh");
       const id = await openShell("conn-20-fresh");
@@ -322,6 +323,171 @@ describe("Terminal UX", () => {
       await press("\n");
       await waitForText(first, "TYPING-42", 10_000);
       expect(await textOf(second)).not.toContain("TYPING");
+    });
+  });
+
+  describe("a tab split and put back", () => {
+    /** Tag a terminal's element. A new terminal in its place would not have the tag. */
+    const tagTerminal = (id: string) =>
+      browser.execute((session: string) => {
+        const element = document.querySelector<HTMLElement>(`[data-session-id="${session}"] .xterm`);
+        if (element) element.dataset.tagged = "yes";
+      }, id);
+
+    const isTagged = (id: string) =>
+      browser.execute(
+        (session: string) =>
+          document.querySelector<HTMLElement>(`[data-session-id="${session}"] .xterm`)?.dataset.tagged === "yes",
+        id,
+      );
+
+    /** The terminal's share of its tab, across and down. */
+    const shareOfTab = (id: string) =>
+      browser.execute((session: string) => {
+        const container = document.querySelector(`[data-session-id="${session}"]`);
+        const tab = container?.closest('[role="tabpanel"]');
+        if (!container || !tab) return { across: 0, down: 0 };
+        const inner = container.getBoundingClientRect();
+        const outer = tab.getBoundingClientRect();
+        return { across: inner.width / outer.width, down: inner.height / outer.height };
+      }, id);
+
+    async function waitForShare(id: string, across: number, down: number): Promise<void> {
+      await browser.waitUntil(
+        async () => {
+          const share = await shareOfTab(id);
+          return Math.abs(share.across - across) < 0.02 && Math.abs(share.down - down) < 0.02;
+        },
+        {
+          timeout: 10_000,
+          timeoutMsg: `The terminal never took ${across} x ${down} of its tab`,
+        },
+      );
+    }
+
+    /** What a program in this terminal asked for, so that a new terminal would not have it. */
+    async function askForBracketedPaste(id: string): Promise<void> {
+      await typeIn(id, "printf '\\033[?2004h'\n");
+      await browser.waitUntil(async () => (await stateOf(id)).bracketedPaste, {
+        timeout: 10_000,
+        timeoutMsg: "Bracketed paste never turned on",
+      });
+    }
+
+    async function waitForAltScreen(id: string, on: boolean): Promise<void> {
+      await browser.waitUntil(async () => (await stateOf(id)).altScreen === on, {
+        timeout: 10_000,
+        timeoutMsg: `The alternate screen never went ${on ? "on" : "off"}`,
+      });
+    }
+
+    /** End the shell in `second`, and answer the question that follows. */
+    async function closePane(second: string): Promise<void> {
+      await typeIn(second, "exit\n");
+      await clickDialogFooterButton(sel.confirmClosePaneConfirm);
+      await browser.waitUntil(async () => (await sessionIds()).length === 1, {
+        timeout: 10_000,
+        timeoutMsg: "The pane did not close",
+      });
+    }
+
+    it("keeps the terminal that stays, in full, when split to the right and put back", async () => {
+      await createConnectionA("conn-20-keep");
+      await createConnectionA("conn-20-keep-beside");
+      const first = await openShell("conn-20-keep");
+      await waitForShare(first, 1, 1);
+      await typeIn(first, "echo BEFORE-$((40+2))\n");
+      await waitForText(first, "BEFORE-42");
+      await askForBracketedPaste(first);
+      await tagTerminal(first);
+      const alone = await stateOf(first);
+
+      await splitWith("conn-20-keep-beside");
+      const second = await secondPane(first);
+      await waitForShare(first, 0.5, 1);
+      await browser.waitUntil(async () => (await stateOf(first)).cols < alone.cols * 0.6, {
+        timeout: 10_000,
+        timeoutMsg: "The terminal did not fit its half of the tab",
+      });
+      const beside = await stateOf(first);
+      expect(beside.cols).toBeGreaterThan(alone.cols * 0.4);
+      expect(beside.rows).toBe(alone.rows);
+      expect(beside.bracketedPaste).toBe(true);
+      expect(await isTagged(first)).toBe(true);
+      expect(await textOf(first)).toContain("BEFORE-42");
+
+      // A full-screen program stays one when the split closes under it.
+      await typeIn(first, "printf '\\033[?1049h'; echo ALT-$((40+2))\n");
+      await waitForAltScreen(first, true);
+      await waitForText(first, "ALT-42");
+      await closePane(second);
+      await waitForShare(first, 1, 1);
+      await browser.waitUntil(async () => (await stateOf(first)).cols === alone.cols, {
+        timeout: 10_000,
+        timeoutMsg: "The terminal did not take the whole tab again",
+      });
+      const back = await stateOf(first);
+      expect(back.rows).toBe(alone.rows);
+      expect(back.altScreen).toBe(true);
+      expect(back.bracketedPaste).toBe(true);
+      expect(await isTagged(first)).toBe(true);
+      expect(await textOf(first)).toContain("ALT-42");
+
+      // The server was told, and the scrollback is there behind the program.
+      await typeIn(first, "printf '\\033[?1049l'; stty size\n");
+      await waitForAltScreen(first, false);
+      await waitForText(first, `${alone.rows} ${alone.cols}`);
+      expect(await textOf(first)).toContain("BEFORE-42");
+    });
+
+    it("keeps it through a split down too", async () => {
+      await createConnectionA("conn-20-down");
+      await createConnectionA("conn-20-down-below");
+      const first = await openShell("conn-20-down");
+      await typeIn(first, "echo BEFORE-$((40+2))\n");
+      await waitForText(first, "BEFORE-42");
+      await askForBracketedPaste(first);
+      await tagTerminal(first);
+      const alone = await stateOf(first);
+
+      await splitWith("conn-20-down-below", sel.terminalNewSplitDown);
+      const second = await secondPane(first);
+      await waitForShare(first, 1, 0.5);
+      await browser.waitUntil(async () => (await stateOf(first)).rows < alone.rows * 0.6, {
+        timeout: 10_000,
+        timeoutMsg: "The terminal did not fit its half of the tab",
+      });
+      expect((await stateOf(first)).cols).toBe(alone.cols);
+      expect(await isTagged(first)).toBe(true);
+
+      await closePane(second);
+      await waitForShare(first, 1, 1);
+      await browser.waitUntil(async () => (await stateOf(first)).rows === alone.rows, {
+        timeout: 10_000,
+        timeoutMsg: "The terminal did not take the whole tab again",
+      });
+      const back = await stateOf(first);
+      expect(back.cols).toBe(alone.cols);
+      expect(back.bracketedPaste).toBe(true);
+      expect(await isTagged(first)).toBe(true);
+      expect(await textOf(first)).toContain("BEFORE-42");
+    });
+
+    it("gives the keyboard to the pane that stays when a failed one is dismissed", async () => {
+      await createConnectionA("conn-20-stays");
+      await createDroppableConnection("conn-20-never");
+      const first = await openShell("conn-20-stays");
+      refuseConnections();
+      await splitWith("conn-20-never");
+
+      await click(sel.failedTerminalDismiss);
+      await browser.waitUntil(async () => (await sessionIds()).length === 1, {
+        timeout: 10_000,
+        timeoutMsg: "The failed pane did not close",
+      });
+      await waitForFocus(first);
+      await press("echo STAYS-$((40+2))\n");
+      await waitForText(first, "STAYS-42", 10_000);
     });
   });
 
@@ -599,7 +765,7 @@ describe("Terminal UX", () => {
       }
       const toggleState = async (pressed: string, indicator: boolean) => {
         expect(await (await browser.$(sel.broadcastToggle)).getAttribute("aria-pressed")).toBe(pressed);
-        expect(await (await browser.$(sel.broadcastIndicator)).isExisting()).toBe(indicator);
+        expect(await (await browser.$(sel.broadcastIndicator)).isDisplayed()).toBe(indicator);
       };
 
       await toggleState("false", false);

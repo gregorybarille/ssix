@@ -30,9 +30,10 @@ A terminal that just opened takes the keyboard too, unless a side panel has it o
 you are typing somewhere else by the time it connects. In a split, that puts it in
 the new pane unless you have gone back to typing in the old one.
 
-One thing does start over: splitting a tab, or closing a split back to one pane,
-gives the pane that stays a new terminal with an empty scrollback. Its shell goes
-on running.
+Splitting a tab, or closing a split back to one pane, leaves the terminal that
+stays as it is: same scrollback, same screen, and it remembers what the program in
+it asked for. Only its size changes. Dismissing a pane that failed gives that
+terminal the keyboard, unless a side panel has it or you are typing somewhere else.
 
 ## Find
 

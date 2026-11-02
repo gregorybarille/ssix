@@ -16,6 +16,7 @@ import {
 import { cn } from "@/lib/utils";
 import { AppSettings, Connection, OpenMode } from "@/types";
 import { getColorHex } from "@/lib/colors";
+import { isPanelOpen, nobodyTypingElsewhere } from "@/lib/focus";
 import { focusSession } from "@/lib/terminalRegistry";
 import type { ReconnectState } from "@/lib/reconnect";
 import { useConnectionsStore } from "@/store/useConnectionsStore";
@@ -92,6 +93,7 @@ function BroadcastFrame() {
 
 function PaneRenderer({
   session,
+  alone,
   isVisible,
   onClose,
   onRetry,
@@ -99,6 +101,8 @@ function PaneRenderer({
   settings,
 }: {
   session: TerminalSession;
+  /** The only pane of its tab. */
+  alone: boolean;
   isVisible: boolean;
   onClose: () => void;
   onRetry: (conn: Connection) => void;
@@ -113,6 +117,16 @@ function PaneRenderer({
   const saved = useConnectionsStore((s) =>
     s.connections.find((c) => c.id === session.connection?.id),
   );
+  // Closing a split leaves this terminal as it was, and the keyboard with a pane
+  // that is gone: it comes here, unless a panel or someone typing has it.
+  const wasAlone = React.useRef(alone);
+  React.useEffect(() => {
+    const leftAlone = alone && !wasAlone.current;
+    wasAlone.current = alone;
+    if (leftAlone && isVisible && !isPanelOpen() && nobodyTypingElsewhere(null)) {
+      focusSession(session.sessionId);
+    }
+  }, [alone, isVisible, session.sessionId]);
   // A login prompt has the whole pane until it closes, also over a shell that is
   // reconnecting. Its terminal stays where it is underneath, inert: it keeps its
   // scrollback, and cannot take the focus and an answer with it from the prompt.
@@ -415,6 +429,7 @@ export function TerminalTabs({
             </DropdownMenuItem>
             <DropdownMenuItem
               onClick={() => onNewTab("split_down")}
+              data-testid="terminal-new-split-down"
               disabled={
                 !activeTabId ||
                 (tabs.find((t) => t.id === activeTabId)?.panes.length ?? 0) >= 2
@@ -432,31 +447,9 @@ export function TerminalTabs({
       <div className="flex-1 min-h-0 relative">
         {tabs.map((tab) => {
           const isActiveTab = tab.id === activeTabId;
-          if (tab.mode === "single" || tab.panes.length === 1) {
-            const pane = tab.panes[0];
-            return (
-              <div
-                key={tab.id}
-                role="tabpanel"
-                id={`terminal-panel-${tab.id}`}
-                aria-labelledby={`terminal-tab-${tab.id}`}
-                className="absolute inset-0"
-                style={{ display: isActiveTab ? "block" : "none" }}
-              >
-                {pane && (
-                  <PaneRenderer
-                    session={pane}
-                    isVisible={isActiveTab && !hidden}
-                    onClose={() => onClosePane(tab.id, pane.sessionId)}
-                    onRetry={(c) => onRetry(c, pane.sessionId)}
-                    onEdit={(c) => onEdit(c, pane.sessionId)}
-                    settings={settings}
-                  />
-                )}
-              </div>
-            );
-          }
-          const direction = tab.mode === "horizontal" ? "horizontal" : "vertical";
+          // One tree whatever the number of panes: splitting a tab or closing a
+          // split changes the Panels beside a terminal, and never the terminal.
+          const direction = tab.mode === "vertical" ? "vertical" : "horizontal";
           return (
             <div
               key={tab.id}
@@ -478,10 +471,11 @@ export function TerminalTabs({
                         )}
                       />
                     )}
-                    <Panel defaultSize={50} minSize={15}>
+                    <Panel id={pane.sessionId} minSize={15}>
                       <div className="h-full w-full relative">
                         <PaneRenderer
                           session={pane}
+                          alone={tab.panes.length === 1}
                           isVisible={isActiveTab && !hidden}
                           onClose={() => onClosePane(tab.id, pane.sessionId)}
                           onRetry={(c) => onRetry(c, pane.sessionId)}

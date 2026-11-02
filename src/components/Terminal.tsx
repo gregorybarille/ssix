@@ -9,7 +9,6 @@ import {
   activeSessionId,
   isHeldEnter,
   registerTerminal,
-  tabIsStillOpeningPane,
   unregisterTerminal,
 } from "@/lib/terminalRegistry";
 import { terminalAppearance } from "@/lib/terminalTheme";
@@ -286,12 +285,9 @@ export function Terminal({ sessionId, isVisible, onDisconnect, settings, connect
     resizeObserver.observe(termRef.current);
 
     // The effect above ran before this terminal existed, so opening is up to this one.
-    const mayTakeKeyboard =
-      isVisibleRef.current &&
-      !isPanelOpen() &&
-      !tabIsStillOpeningPane(sessionId) &&
-      nobodyTypingElsewhere(termRef.current);
-    if (mayTakeKeyboard) term.focus();
+    if (isVisibleRef.current && !isPanelOpen() && nobodyTypingElsewhere(termRef.current)) {
+      term.focus();
+    }
 
     return () => {
       dataDisposable.dispose();

@@ -263,6 +263,7 @@ export const sel = {
   terminalTabPromptWaiting: '[data-testid="terminal-tab-prompt-waiting"]',
   terminalNewMenu: '[data-testid="terminal-new-menu"]',
   terminalNewSplitRight: '[data-testid="terminal-new-split-right"]',
+  terminalNewSplitDown: '[data-testid="terminal-new-split-down"]',
   connectPickerInput: '[data-testid="connect-picker-input"]',
   // roadmap:resilience
   // The status view of a shell that lost its connection (phase: waiting | stopped).

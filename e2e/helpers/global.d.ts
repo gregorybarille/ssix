@@ -8,6 +8,7 @@ interface Window {
     fontFamily: string | undefined;
     background: string | undefined;
     bracketedPaste: boolean;
+    altScreen: boolean;
     focused: boolean;
     viewportY: number;
   } | null;

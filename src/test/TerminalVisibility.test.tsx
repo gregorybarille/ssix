@@ -318,35 +318,6 @@ describe("a terminal off screen", () => {
     });
   });
 
-  describe("when it has just opened beside a pane still connecting", () => {
-    const splitting = (retrying: boolean) =>
-      useTerminalsStore.setState({
-        tabs: [
-          {
-            id: "t1",
-            mode: "horizontal",
-            panes: [
-              { sessionId: "s1", connectionName: "stays" },
-              { sessionId: "new", connectionName: "asked for", retrying },
-            ],
-          },
-        ],
-        activeTabId: "t1",
-      });
-
-    it("leaves the keyboard for that pane", () => {
-      splitting(true);
-      render(element());
-      expect(term().focus).not.toHaveBeenCalled();
-    });
-
-    it("takes it once nothing in the tab is connecting", () => {
-      splitting(false);
-      render(element());
-      expect(term().focus).toHaveBeenCalledOnce();
-    });
-  });
-
   it("does not count a panel on its way out as open", () => {
     const panel = document.createElement("div");
     panel.dataset.slot = "app-panel-content";

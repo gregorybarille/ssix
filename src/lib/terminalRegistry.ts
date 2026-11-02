@@ -48,18 +48,6 @@ function takesInput(sessionId: string): boolean {
   return terminals.has(sessionId) && !useAuthPromptStore.getState().prompts[sessionId];
 }
 
-/**
- * Whether a pane of this session's tab is still connecting. Splitting a tab gives
- * the pane already there a new terminal at once, and the keyboard is meant for
- * the pane the user asked for.
- */
-export function tabIsStillOpeningPane(sessionId: string): boolean {
-  const tab = useTerminalsStore
-    .getState()
-    .tabs.find((candidate) => candidate.panes.some((pane) => pane.sessionId === sessionId));
-  return !!tab?.panes.some((pane) => pane.retrying);
-}
-
 /** Give the keyboard to a session's terminal, when it can take it. */
 export function focusSession(sessionId: string): void {
   terminals.get(sessionId)?.focus();
@@ -84,9 +72,6 @@ export function writeToSession(sessionId: string, text: string): boolean {
 /**
  * Whether the program in this session asked for bracketed paste (DECSET 2004),
  * so line breaks inside a paste reach it as text instead of pressing Enter.
- * A terminal knows only what it has seen, which starts over when its pane opens
- * again (a split tab closing to one pane, say): bash and zsh ask again at their
- * next prompt.
  */
 export function acceptsBracketedPaste(sessionId: string): boolean {
   return terminals.get(sessionId)?.modes.bracketedPasteMode ?? false;
@@ -159,6 +144,8 @@ export interface TerminalState {
   fontFamily: string | undefined;
   background: string | undefined;
   bracketedPaste: boolean;
+  /** A full-screen program has the screen: `buffer.active` is its own. */
+  altScreen: boolean;
   focused: boolean;
   /** The buffer line at the top of the screen. */
   viewportY: number;
@@ -175,6 +162,7 @@ export function terminalState(sessionId: string): TerminalState | null {
     fontFamily: term.options.fontFamily,
     background: term.options.theme?.background,
     bracketedPaste: term.modes.bracketedPasteMode,
+    altScreen: term.buffer.active.type === "alternate",
     focused: document.activeElement === term.textarea,
     viewportY: term.buffer.active.viewportY,
   };
