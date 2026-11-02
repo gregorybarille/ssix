@@ -18,6 +18,10 @@
 //! "auth" and is not retryable (`crate::reconnect`), so nobody is asked again
 //! and again by a connection they walked away from.
 //!
+//! The server going silent is different: nobody walked away, the network did.
+//! The exchange runs through `crate::login_wait`, so that silence is told apart
+//! from someone typing and ends the attempt as a connection failure.
+//!
 //! Answers are passed along and dropped. Nothing here logs, stores or formats
 //! them, and [`Reply`] has no `Debug` so that they cannot be logged by accident.
 
@@ -32,16 +36,13 @@ use serde::Serialize;
 use ssh2::{KeyboardInteractivePrompt, Prompt, Session};
 use tauri::ipc::{Channel, InvokeResponseBody};
 
-use crate::ssh::{wake, Endpoint};
+use crate::login_wait::{LoginWait, REPLY_STALL, REQUEST_STALL};
+use crate::ssh::{is_eagain, wake, Endpoint};
 use crate::ssh_debug::SshDebug;
 
 /// How long a pane may wait for an answer. A server usually gives up first
 /// (OpenSSH's `LoginGraceTime` is two minutes).
 const ANSWER_TIMEOUT: Duration = Duration::from_secs(300);
-/// libssh2's timeout during the exchange. It counts from the start of the
-/// call and includes the time spent in the callback, so the 15 s setup timeout
-/// would fail any answer that took longer than that to type.
-const EXCHANGE_TIMEOUT_MS: u32 = 900_000;
 /// Longest server text passed on, per field and for instructions gathered over
 /// several rounds. Anything longer is not a prompt.
 const MAX_TEXT_CHARS: usize = 4096;
@@ -144,6 +145,51 @@ pub(crate) fn current_pane() -> Option<Scope> {
     SCOPE.with(|scope| scope.borrow().clone())
 }
 
+/// The flag set once nobody wants the result of this thread's attempt.
+pub(crate) fn attempt_flag() -> Option<Arc<AtomicBool>> {
+    SCOPE.with(|scope| scope.borrow().as_ref().and_then(|s| s.cancelled.clone()))
+}
+
+/// How much silence from the server to accept during the exchange.
+#[derive(Clone, Copy)]
+struct Stalls {
+    before_a_question: Duration,
+    after_an_answer: Duration,
+}
+
+const STALLS: Stalls = Stalls {
+    before_a_question: REQUEST_STALL,
+    after_an_answer: REPLY_STALL,
+};
+
+/// Talk to the server until the exchange ends. Whatever stops it on our side
+/// lands in `prompter.given_up`. The session is dropped after that, so leaving
+/// libssh2 in the middle of the exchange cannot matter.
+fn exchange(
+    session: &Session,
+    username: &str,
+    prompter: &mut PanePrompter,
+    stalls: Stalls,
+) -> Result<(), ssh2::Error> {
+    let mut wait = LoginWait::begin(session, prompter.cancelled.clone());
+    loop {
+        match session.userauth_keyboard_interactive(username, prompter) {
+            Err(e) if is_eagain(&e) && prompter.given_up.is_none() => {
+                let stall = if prompter.asked {
+                    stalls.after_an_answer
+                } else {
+                    stalls.before_a_question
+                };
+                if let Err(stopped) = wait.pause(stall, prompter.answering) {
+                    prompter.give_up(stopped.message());
+                    return Err(e);
+                }
+            }
+            finished => return finished,
+        }
+    }
+}
+
 /// Run keyboard-interactive authentication, asking in `pane`. A server that
 /// advertises the method and then asks nothing (no PAM behind it) has only
 /// refused the credential, so `refused_before` stays the answer.
@@ -163,14 +209,12 @@ pub(crate) fn authenticate(
         username: endpoint.username.clone(),
         socket: Some(wake::fd_of(session)),
         timeout: ANSWER_TIMEOUT,
+        answering: Duration::ZERO,
         instructions: String::new(),
         given_up: None,
         debug: debug.clone(),
     };
-    let setup_timeout = session.timeout();
-    session.set_timeout(EXCHANGE_TIMEOUT_MS);
-    let result = session.userauth_keyboard_interactive(&endpoint.username, &mut prompter);
-    session.set_timeout(setup_timeout);
+    let result = exchange(session, &endpoint.username, &mut prompter, STALLS);
     if let Some(reason) = prompter.given_up {
         return Err(reason.to_string());
     }
@@ -258,9 +302,11 @@ struct PanePrompter {
     /// The session's socket, to end the conversation when giving up.
     socket: Option<wake::Fd>,
     timeout: Duration,
+    /// How long the exchange has been waiting for the user so far.
+    answering: Duration,
     /// Text of a round with no questions, kept for the next one that has some.
     instructions: String,
-    /// Set when the user or the timeout ended the exchange.
+    /// Set when something on our side ended the exchange.
     given_up: Option<&'static str>,
     debug: SshDebug,
 }
@@ -298,7 +344,9 @@ impl PanePrompter {
                 })
                 .collect(),
         });
+        let waiting = Instant::now();
         let received = self.wait_for_reply(&answers);
+        self.answering += waiting.elapsed();
         PENDING.remove(&prompt_id);
         self.send(&AuthEvent::AuthPromptClosed {
             prompt_id: &prompt_id,
@@ -404,6 +452,7 @@ mod tests {
             username: "me".into(),
             socket: None,
             timeout,
+            answering: Duration::ZERO,
             instructions: String::new(),
             given_up: None,
             debug: SshDebug::new(0, "host:22"),
@@ -611,6 +660,20 @@ mod tests {
     }
 
     #[test]
+    fn the_time_spent_answering_is_kept_apart() {
+        let (mut prompter, events) = prompter(Duration::from_secs(5));
+        let watcher = events.clone();
+        let responder = thread::spawn(move || {
+            let id = wait_for_prompt(&watcher);
+            thread::sleep(Duration::from_millis(50));
+            answer(&id, vec!["1".into()]).unwrap();
+        });
+        prompter.prompt("", "", &prompts(&[("OTP: ", false)]));
+        responder.join().unwrap();
+        assert!(prompter.answering >= Duration::from_millis(50));
+    }
+
+    #[test]
     fn a_round_without_questions_is_not_asking() {
         let (mut prompter, _events) = prompter(Duration::from_secs(5));
         assert!(prompter.prompt("", "Nothing to ask.", &[]).is_empty());
@@ -717,6 +780,8 @@ mod tests {
 #[cfg(test)]
 mod live {
     use super::*;
+    use crate::login_wait::test_support::FreezingProxy;
+    use crate::login_wait::STALLED;
     use crate::ssh::{connect_endpoint, open_authenticated_session_over_stream, AuthMethod};
     use crate::storage::test_support::with_isolated_data_dir;
     use std::sync::Mutex;
@@ -864,6 +929,152 @@ mod live {
             "the saved password must not be tried: {error}"
         );
         assert!(error.contains("only a terminal pane"), "{error}");
+    }
+
+    /// Run the exchange through `proxy` with short limits, handing each prompt's
+    /// id to `respond`. Returns why it stopped, if it was stopped, what libssh2
+    /// said, and how long it all took.
+    fn exchange_through(
+        target: &Target,
+        proxy: &FreezingProxy,
+        cancelled: Option<Arc<AtomicBool>>,
+        stalls: Stalls,
+        respond: impl Fn(&str) + Send + Sync + 'static,
+    ) -> (Option<&'static str>, Result<(), ssh2::Error>, Duration) {
+        let session = session_up_to_login(proxy, target);
+        let sink: Sink = Arc::new(move |json: String| {
+            let event: serde_json::Value = serde_json::from_str(&json).unwrap();
+            if event["kind"] == "auth_prompt" {
+                respond(event["prompt_id"].as_str().unwrap());
+            }
+        });
+        let mut prompter = prompter_for(target, &session, cancelled, sink);
+        let started = Instant::now();
+        let result = exchange(&session, &target.username, &mut prompter, stalls);
+        (prompter.given_up, result, started.elapsed())
+    }
+
+    /// A session through `proxy` that got as far as a real login does before its
+    /// exchange: the method list.
+    fn session_up_to_login(proxy: &FreezingProxy, target: &Target) -> Session {
+        let session = proxy.session();
+        let _ = crate::libssh2_ext::userauth_list(&session, &target.username);
+        session
+    }
+
+    fn prompter_for(
+        target: &Target,
+        session: &Session,
+        cancelled: Option<Arc<AtomicBool>>,
+        sink: Sink,
+    ) -> PanePrompter {
+        PanePrompter {
+            sink,
+            cancelled,
+            asked: false,
+            host: "proxied".into(),
+            username: target.username.clone(),
+            socket: Some(wake::fd_of(session)),
+            timeout: Duration::from_secs(30),
+            answering: Duration::ZERO,
+            instructions: String::new(),
+            given_up: None,
+            debug: SshDebug::new(0, "proxied"),
+        }
+    }
+
+    /// For a server that must not get as far as asking.
+    fn silent_prompter(
+        target: &Target,
+        session: &Session,
+        cancelled: Option<Arc<AtomicBool>>,
+    ) -> PanePrompter {
+        let sink: Sink = Arc::new(|_| panic!("the server should not get to ask"));
+        prompter_for(target, session, cancelled, sink)
+    }
+
+    const SHORT_STALLS: Stalls = Stalls {
+        before_a_question: Duration::from_secs(1),
+        after_an_answer: Duration::from_secs(1),
+    };
+
+    fn proxy_to(target: &Target) -> FreezingProxy {
+        FreezingProxy::to(&format!("{}:{}", target.host, target.port))
+    }
+
+    fn assert_stalled(given_up: Option<&'static str>, took: Duration) {
+        assert_eq!(given_up, Some(STALLED));
+        assert!(crate::reconnect::is_retryable_connect_error(STALLED));
+        assert!(took < Duration::from_secs(10), "took {took:?}");
+    }
+
+    #[test]
+    #[ignore = "needs a keyboard-interactive server (SSIX_LIVE_KBDINT_SSH)"]
+    fn live_keyboard_stall_before_the_question_can_be_retried() {
+        let Some(target) = target() else { return };
+        let proxy = proxy_to(&target);
+        let session = session_up_to_login(&proxy, &target);
+        proxy.freeze();
+        let mut prompter = silent_prompter(&target, &session, None);
+        let started = Instant::now();
+        let _ = exchange(&session, &target.username, &mut prompter, SHORT_STALLS);
+        assert_stalled(prompter.given_up, started.elapsed());
+    }
+
+    #[test]
+    #[ignore = "needs a keyboard-interactive server (SSIX_LIVE_KBDINT_SSH)"]
+    fn live_keyboard_stall_after_the_answer_can_be_retried() {
+        let Some(target) = target() else { return };
+        let proxy = proxy_to(&target);
+        let frozen = proxy.frozen.clone();
+        let (given_up, _, took) =
+            exchange_through(&target, &proxy, None, SHORT_STALLS, move |id| {
+                frozen.store(true, Ordering::SeqCst);
+                let id = id.to_string();
+                thread::spawn(move || answer(&id, vec!["anything".into()]).unwrap());
+            });
+        assert_stalled(given_up, took);
+    }
+
+    /// The other half of the finding: nothing used to notice a cancelled attempt
+    /// while libssh2 waited for a server that said nothing.
+    #[test]
+    #[ignore = "needs a keyboard-interactive server (SSIX_LIVE_KBDINT_SSH)"]
+    fn live_keyboard_stall_notices_a_cancelled_attempt() {
+        let Some(target) = target() else { return };
+        let proxy = proxy_to(&target);
+        let session = session_up_to_login(&proxy, &target);
+        proxy.freeze();
+        let flag = Arc::new(AtomicBool::new(false));
+        let mut prompter = silent_prompter(&target, &session, Some(flag.clone()));
+        let canceller = thread::spawn(move || {
+            thread::sleep(Duration::from_millis(300));
+            flag.store(true, Ordering::SeqCst);
+        });
+        let started = Instant::now();
+        let _ = exchange(&session, &target.username, &mut prompter, STALLS);
+        canceller.join().unwrap();
+        assert_eq!(prompter.given_up, Some(CANCELLED));
+        assert!(started.elapsed() < Duration::from_secs(5));
+    }
+
+    #[test]
+    #[ignore = "needs a keyboard-interactive server (SSIX_LIVE_KBDINT_SSH)"]
+    fn live_keyboard_slow_answer_is_not_a_stall() {
+        let Some(target) = target() else { return };
+        let proxy = proxy_to(&target);
+        let password = target.password.clone();
+        let (given_up, result, took) =
+            exchange_through(&target, &proxy, None, SHORT_STALLS, move |id| {
+                let (id, password) = (id.to_string(), password.clone());
+                thread::spawn(move || {
+                    thread::sleep(Duration::from_secs(3));
+                    answer(&id, vec![password]).unwrap();
+                });
+            });
+        assert_eq!(given_up, None);
+        result.expect("logged in");
+        assert!(took >= Duration::from_secs(3));
     }
 
     /// The shape of a real 2FA login: a first factor the server accepts only

@@ -1,6 +1,8 @@
 //! The SSH agent: logging in with its keys, and forwarding it to a server.
 //!
-//! **Logging in.** Each key the agent holds is offered in turn, as `ssh` does.
+//! **Logging in.** Each key the agent holds is offered in turn, as `ssh` does,
+//! through `crate::login_wait`: a signature can take as long as a touch, which
+//! must not read as a server that stopped answering.
 //!
 //! **FIDO2 (`sk-*`) keys.** The agent does the signing, so there is no key
 //! handling here, but libssh2's own agent path cannot carry the result. An
@@ -38,15 +40,12 @@
 //! opens without it.
 
 use std::path::Path;
+use std::time::Duration;
 
 use ssh2::{Agent, PublicKey, Session};
 
+use crate::login_wait::{Interrupted, LoginWait, REQUEST_STALL, STALLED};
 use crate::ssh_debug::SshDebug;
-
-/// libssh2's timeout while logging in with the agent. It counts from the start
-/// of the call, including the time the agent takes to sign, which for a
-/// security key means waiting for a touch.
-const AGENT_LOGIN_TIMEOUT_MS: u32 = 120_000;
 
 /// Log in with the first key in the agent that the server accepts.
 pub(crate) fn authenticate(
@@ -58,16 +57,25 @@ pub(crate) fn authenticate(
 }
 
 /// As [`authenticate`], with `socket` in place of `SSH_AUTH_SOCK` when given.
-/// Every failure says "auth", which is how it reads as a login failure rather
-/// than a connection problem wherever it is shown, and none of them is one a
-/// reconnect should retry (`crate::reconnect`).
 fn authenticate_via(
     session: &Session,
     username: &str,
     debug: &SshDebug,
     socket: Option<&Path>,
 ) -> Result<(), String> {
-    log_in(session, username, debug, socket).map_err(|e| format!("Agent auth failed: {}", e))
+    log_in(session, username, debug, socket, REQUEST_STALL).map_err(agent_failure)
+}
+
+/// What a failure says. All but one say "auth", which is how they read as a login
+/// failure rather than a connection problem wherever they are shown, and none of
+/// those is one a reconnect should retry (`crate::reconnect`). A server that
+/// stopped answering is a connection problem, and is left to read as one.
+fn agent_failure(reason: String) -> String {
+    if reason == STALLED {
+        reason
+    } else {
+        format!("Agent auth failed: {}", reason)
+    }
 }
 
 fn log_in(
@@ -75,6 +83,7 @@ fn log_in(
     username: &str,
     debug: &SshDebug,
     socket: Option<&Path>,
+    stall: Duration,
 ) -> Result<(), String> {
     let mut agent = session
         .agent()
@@ -101,10 +110,7 @@ fn log_in(
         return Err("The SSH agent holds no keys. Add one with ssh-add".to_string());
     }
 
-    let setup_timeout = session.timeout();
-    session.set_timeout(AGENT_LOGIN_TIMEOUT_MS);
-    let result = offer_keys(session, &agent, &keys, username, debug, socket);
-    session.set_timeout(setup_timeout);
+    let result = offer_keys(session, &agent, &keys, username, debug, socket, stall);
     let _ = agent.disconnect();
     result
 }
@@ -116,7 +122,9 @@ fn offer_keys(
     username: &str,
     debug: &SshDebug,
     socket: Option<&Path>,
+    stall: Duration,
 ) -> Result<(), String> {
+    let mut wait = LoginWait::begin(session, crate::auth_prompt::attempt_flag());
     let mut last_error = String::new();
     for key in keys {
         debug.at(1, || {
@@ -127,10 +135,13 @@ fn offer_keys(
             )
         });
         let attempt = if is_security_key(key.blob()) {
-            authenticate_security_key(session, username, key.blob(), socket)
+            authenticate_security_key(&mut wait, stall, session, username, key.blob(), socket)
         } else {
-            agent.userauth(username, key).map_err(|e| e.to_string())
+            wait.until_done(stall, || agent.userauth(username, key))
+                .map(|attempt| attempt.map_err(|e| e.to_string()))
         };
+        // The next key would meet the same silence, or nobody wants it.
+        let attempt = attempt.map_err(|stopped| stopped.message().to_string())?;
         match attempt {
             Ok(()) if session.authenticated() => return Ok(()),
             Ok(()) => last_error = "the server did not finish the login".to_string(),
@@ -167,12 +178,16 @@ fn is_security_key(blob: &[u8]) -> bool {
 
 #[cfg(windows)]
 fn authenticate_security_key(
+    _wait: &mut LoginWait<'_>,
+    _stall: Duration,
     _session: &Session,
     _username: &str,
     _blob: &[u8],
     _socket: Option<&Path>,
-) -> Result<(), String> {
-    Err("Security keys in the SSH agent are not supported on Windows yet".to_string())
+) -> Result<Result<(), String>, Interrupted> {
+    Ok(Err(
+        "Security keys in the SSH agent are not supported on Windows yet".to_string(),
+    ))
 }
 
 #[cfg(unix)]
@@ -187,50 +202,63 @@ mod sign {
 
     use ssh2::Session;
 
-    use super::{ssh_string, AGENT_LOGIN_TIMEOUT_MS};
+    use super::{ssh_string, Interrupted, LoginWait};
     use crate::libssh2_ext;
 
+    /// How long a security key may take to sign, which means waiting for a touch.
+    const SIGNATURE_TIMEOUT: Duration = Duration::from_secs(120);
     const SSH_AGENT_FAILURE: u8 = 5;
     const SSH_AGENTC_SIGN_REQUEST: u8 = 13;
     const SSH_AGENT_SIGN_RESPONSE: u8 = 14;
     /// OpenSSH's limit on one agent message.
     const MAX_AGENT_MESSAGE: usize = 256 * 1024;
 
-    pub(super) fn authenticate_security_key(
-        session: &Session,
-        username: &str,
-        blob: &[u8],
-        socket: Option<&Path>,
-    ) -> Result<(), String> {
+    fn connect_to_agent(socket: Option<&Path>) -> Result<UnixStream, String> {
         let path = match socket {
             Some(path) => path.to_path_buf(),
             None => std::env::var_os("SSH_AUTH_SOCK")
                 .map(PathBuf::from)
                 .ok_or("SSH_AUTH_SOCK is not set")?,
         };
-        let mut agent =
+        let agent =
             UnixStream::connect(&path).map_err(|e| format!("Could not reach the agent: {}", e))?;
         agent
-            .set_read_timeout(Some(Duration::from_millis(AGENT_LOGIN_TIMEOUT_MS as u64)))
+            .set_read_timeout(Some(SIGNATURE_TIMEOUT))
             .map_err(|e| format!("Could not set up the agent connection: {}", e))?;
+        Ok(agent)
+    }
+
+    pub(super) fn authenticate_security_key(
+        wait: &mut LoginWait<'_>,
+        stall: Duration,
+        session: &Session,
+        username: &str,
+        blob: &[u8],
+        socket: Option<&Path>,
+    ) -> Result<Result<(), String>, Interrupted> {
+        let mut agent = match connect_to_agent(socket) {
+            Ok(agent) => agent,
+            Err(reason) => return Ok(Err(reason)),
+        };
 
         // libssh2's callback returns only a code, so the reason waits here.
         let mut failure = None;
-        let result =
-            libssh2_ext::userauth_publickey(session, username, blob, |data| match sign_with_agent(
-                &mut agent, blob, data,
-            ) {
-                Ok(signature) => Some(signature),
-                Err(e) => {
-                    failure = Some(e);
-                    None
+        let result = wait.until_done(stall, || {
+            libssh2_ext::userauth_publickey(session, username, blob, |data| {
+                match sign_with_agent(&mut agent, blob, data) {
+                    Ok(signature) => Some(signature),
+                    Err(e) => {
+                        failure = Some(e);
+                        None
+                    }
                 }
-            });
-        match (result, failure) {
+            })
+        })?;
+        Ok(match (result, failure) {
             (Ok(()), _) => Ok(()),
             (Err(_), Some(reason)) => Err(reason),
             (Err(e), None) => Err(e.to_string()),
-        }
+        })
     }
 
     /// Ask the agent to sign `data` and return what follows the method name
@@ -792,6 +820,7 @@ mod tests {
 mod live {
     use super::forward::{request_forwarding_to, ForwardPump};
     use super::*;
+    use crate::login_wait::test_support::FreezingProxy;
     use crate::ssh::{open_authenticated_session, AuthMethod, Endpoint};
     use crate::storage::test_support::with_isolated_data_dir;
     use base64::Engine;
@@ -876,7 +905,7 @@ mod live {
     }
 
     /// One connection's worth of the agent protocol: list keys, sign.
-    fn serve_agent_connection(mut client: UnixStream, keys: &[TestKey]) {
+    fn serve_agent_connection(mut client: UnixStream, keys: &[TestKey], signing_takes: Duration) {
         loop {
             let mut len = [0u8; 4];
             if client.read_exact(&mut len).is_err() {
@@ -897,6 +926,7 @@ mod live {
                     }
                 }
                 Some(13) => {
+                    thread::sleep(signing_takes);
                     let (blob, rest) = ssh_string(&message[1..]).expect("key blob");
                     let (data, _) = ssh_string(rest).expect("data");
                     match keys.iter().find(|key| key.blob() == blob) {
@@ -930,6 +960,11 @@ mod live {
 
     /// Serve `keys` over a Unix socket until the test process exits.
     fn start_agent(keys: Vec<TestKey>) -> TestAgent {
+        start_slow_agent(keys, Duration::ZERO)
+    }
+
+    /// As [`start_agent`], taking `signing_takes` to sign, as a touch does.
+    fn start_slow_agent(keys: Vec<TestKey>, signing_takes: Duration) -> TestAgent {
         let dir =
             std::env::temp_dir().join(format!("ssix-{}", &uuid::Uuid::new_v4().to_string()[..8]));
         std::fs::create_dir_all(&dir).unwrap();
@@ -938,7 +973,7 @@ mod live {
         thread::spawn(move || {
             for client in listener.incoming().flatten() {
                 let keys = keys.clone();
-                thread::spawn(move || serve_agent_connection(client, &keys));
+                thread::spawn(move || serve_agent_connection(client, &keys, signing_takes));
             }
         });
         TestAgent { dir, socket }
@@ -1071,6 +1106,46 @@ mod live {
         assert!(error.contains("Agent auth failed"), "{error}");
         assert!(error.contains("Could not reach an SSH agent"), "{error}");
         assert!(!crate::reconnect::is_retryable_connect_error(&error));
+    }
+
+    /// A network that stops is not a refused key. With one key after another
+    /// it used to end as "accepted none", which a reconnect does not retry.
+    #[test]
+    #[ignore = "needs a Unix SSH server (SSIX_LIVE_SSH)"]
+    fn live_agent_login_stall_can_be_retried() {
+        let proxy = FreezingProxy::to(&password_endpoint().addr());
+        let session = proxy.session();
+        let refused = TestKey::new(random_seed(), false, "ssix-live-stalled");
+        let agent = start_agent(vec![refused]);
+        let _ = crate::libssh2_ext::userauth_list(&session, &username());
+        proxy.freeze();
+
+        let started = Instant::now();
+        let stall = Duration::from_secs(1);
+        let error = log_in(&session, &username(), &debug(), Some(&agent.socket), stall)
+            .map_err(agent_failure)
+            .unwrap_err();
+
+        assert_eq!(error, crate::login_wait::STALLED);
+        assert!(crate::reconnect::is_retryable_connect_error(&error));
+        assert!(started.elapsed() < Duration::from_secs(10));
+        assert!(session.is_blocking());
+    }
+
+    /// A signature takes as long as the touch does, and libssh2 is inside its
+    /// call meanwhile, on both of the paths a key can take.
+    #[test]
+    #[ignore = "needs a Unix SSH server (SSIX_LIVE_SSH)"]
+    fn live_agent_signature_wait_is_not_a_stall() {
+        for security_key in [false, true] {
+            let key = TestKey::new(random_seed(), security_key, "ssix-live-touch");
+            let agent = start_slow_agent(vec![key.clone()], Duration::from_secs(2));
+            with_password_session(|session| authorize(session, &key));
+            let session = unauthenticated_session();
+            let stall = Duration::from_millis(500);
+            log_in(&session, &username(), &debug(), Some(&agent.socket), stall).unwrap();
+            assert!(session.authenticated());
+        }
     }
 
     #[test]

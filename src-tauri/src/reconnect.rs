@@ -30,7 +30,7 @@ pub(crate) const STABLE_SHELL: Duration = Duration::from_secs(60);
 /// an allow-list, a failure nobody thought of is never retried against a
 /// server that may lock the account. Each entry is part of a message from
 /// `ssh.rs`; jump hosts wrap them, so they are searched anywhere.
-const RETRYABLE_ERRORS: [&str; 11] = [
+const RETRYABLE_ERRORS: [&str; 12] = [
     "Failed to resolve",
     "No addresses resolved",
     "TCP connect to",
@@ -42,6 +42,7 @@ const RETRYABLE_ERRORS: [&str; 11] = [
     "Failed to connect inner SSH session",
     "via jump host timed out",
     "forwarder exited",
+    crate::login_wait::STALLED,
 ];
 
 pub(crate) fn is_retryable_connect_error(message: &str) -> bool {
@@ -400,6 +401,7 @@ mod tests {
             "Target connect via jump host timed out after 25s",
             "Target connect via jump host failed: forwarder exited",
             "Failed to connect inner SSH session: refused",
+            crate::login_wait::STALLED,
         ] {
             assert!(is_retryable_connect_error(retryable), "{retryable}");
         }

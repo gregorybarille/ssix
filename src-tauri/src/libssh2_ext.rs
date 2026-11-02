@@ -345,7 +345,8 @@ pub(crate) fn userauth_list(session: &Session, username: &str) -> Result<String,
 }
 
 /// `publickey` authentication with `key_blob`, signing through `sign`, which
-/// returns the bytes libssh2 puts after the method name in the signature.
+/// returns the bytes libssh2 puts after the method name in the signature. On a
+/// non-blocking session, call again with the same arguments after `EAGAIN`.
 pub(crate) fn userauth_publickey<F>(
     session: &Session,
     username: &str,
@@ -380,6 +381,13 @@ where
     if rc == 0 {
         return Ok(());
     }
+    // libssh2 often says this without recording it as the session's last error.
+    if rc == raw::LIBSSH2_ERROR_EAGAIN {
+        return Err(ssh2::Error::new(
+            ssh2::ErrorCode::Session(rc),
+            "the session would block",
+        ));
+    }
     Err(ssh2::Error::last_session_error(session).unwrap_or_else(|| {
         ssh2::Error::new(
             ssh2::ErrorCode::Session(rc),
@@ -394,9 +402,7 @@ mod tests {
 
     #[test]
     fn a_method_list_that_is_not_utf8_still_decodes() {
-        let list = CStr::from_bytes_with_nul(b"publickey,pass\xffword,keyboard-interactive\0")
-            .expect("one terminating NUL");
-        let methods = decode_method_list(list);
+        let methods = decode_method_list(c"publickey,pass\xffword,keyboard-interactive");
         let names: Vec<&str> = methods.split(',').collect();
         assert_eq!(names[0], "publickey");
         assert_eq!(names[1], "pass\u{fffd}word");

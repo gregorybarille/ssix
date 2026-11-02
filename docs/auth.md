@@ -73,6 +73,9 @@ Empty answers are allowed, since some servers only want Enter.
   on a server that locks accounts.
 - A prompt left unanswered for five minutes ends the attempt. Most servers give
   up sooner (OpenSSH's `LoginGraceTime` is two minutes).
+- A server that goes silent during the exchange ends it too, after 15 s before
+  its first question and 55 s after an answer, which leaves time to approve a
+  push on a phone. Time spent on your answer never counts.
 
 ### During a reconnect
 
@@ -88,6 +91,8 @@ A dropped shell that needs answers asks again in the same pane
   same way. Nothing asks again until you press **Retry**, so walking away from a
   dropped session cannot lock an account or fill the pane with prompts. A failed
   agent login stops it too.
+- A server that goes silent mid-login does not stop it: that is the network
+  failing again, so the reconnect tries again, and asks again once it gets through.
 - Closing the pane or tab, or anything else that ends the attempt, closes a
   waiting prompt within a moment.
 - A prompt in a background tab waits there, and nothing draws attention to it
@@ -102,7 +107,8 @@ message saying so; use a key or the agent for those.
 
 A `sk-ed25519` or `sk-ecdsa` key works through the agent: load it with `ssh-add`
 and use an SSH Agent credential. The agent does the signing, and SSIX waits up
-to two minutes for it, enough for a touch.
+to two minutes for it, enough for a touch. That wait does not count as the server
+going silent.
 
 libssh2's own agent login cannot carry such a signature: it drops the flags and
 counter that end one, and the server rejects the result. So SSIX asks the agent

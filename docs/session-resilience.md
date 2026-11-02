@@ -145,7 +145,9 @@ when a session opens: changing the settings does not affect open sessions.
   each attempt asks in the pane and waits for you. Cancelling, a wrong answer or
   five minutes without one stops the retries and leaves **Retry**
   ([details](auth.md#during-a-reconnect)).
-- A network loss during login stops the retries and leaves **Retry**: it reads
-  as a failed login, and those are never retried.
+- A network loss during a password or key login stops the retries and leaves
+  **Retry**: it reads as a failed login, and those are never retried. During a
+  keyboard-interactive or agent login SSIX can tell them apart, so a server that
+  goes silent there is retried.
 - Windows has no readiness notification yet, so a session there checks the
   socket every 5 ms, as it already does for its output.
