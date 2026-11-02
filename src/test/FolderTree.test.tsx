@@ -945,6 +945,15 @@ describe("rename", () => {
     expect(folderRow("prod")).toHaveAttribute("aria-expanded", "true");
   });
 
+  it("breaks only what does not fit, not the words of its description", async () => {
+    const user = userEvent.setup();
+    show();
+    await open(user, "prod");
+    const description = screen.getByText(/^Everything in prod/);
+    expect(description).toHaveClass("break-words");
+    expect(description).not.toHaveClass("break-all");
+  });
+
   it("makes one backend call and takes the whole answer", async () => {
     const user = userEvent.setup();
     const renamed = [
@@ -1071,6 +1080,20 @@ describe("delete", () => {
     await user.click(within(folderRow(path)!).getByRole("button", { name: `Delete folder ${path}` }));
     return screen.findByTestId("folder-delete-dialog");
   };
+
+  it("breaks only what does not fit, not the paths it names", async () => {
+    const user = userEvent.setup();
+    show();
+    const dialog = await open(user, "prod/eu");
+    const names = [
+      within(dialog).getByText("prod/eu", { selector: "strong" }),
+      within(dialog).getByText("prod", { selector: "strong" }),
+    ];
+    for (const name of names) {
+      expect(name).toHaveClass("break-words");
+      expect(name).not.toHaveClass("break-all");
+    }
+  });
 
   it("goes through the confirm dialog, with the real count and destination", async () => {
     const user = userEvent.setup();

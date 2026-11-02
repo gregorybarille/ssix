@@ -100,7 +100,7 @@ export function SingleFieldDialog({
       <DialogContent data-testid={`${idPrefix}-dialog`} onCloseAutoFocus={onCloseAutoFocus}>
         <DialogHeader>
           <DialogTitle>{title}</DialogTitle>
-          <DialogDescription className="break-all">{description}</DialogDescription>
+          <DialogDescription className="break-words">{description}</DialogDescription>
         </DialogHeader>
         <form onSubmit={submitWithoutReset(submitAction)} className="space-y-4">
           <div className="space-y-2">

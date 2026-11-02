@@ -524,12 +524,12 @@ export function FolderTree({
         title="Delete folder?"
         description={
           <>
-            Delete <strong className="break-all">{deleting}</strong> and its subfolders? This{" "}
+            Delete <strong className="break-words">{deleting}</strong> and its subfolders? This{" "}
             {deletingParent ? "moves" : "takes"}{" "}
             <span data-testid="folder-delete-contents">{deletingContents}</span>{" "}
             {deletingParent ? (
               <>
-                to <strong className="break-all">{deletingParent}</strong>.
+                to <strong className="break-words">{deletingParent}</strong>.
               </>
             ) : (
               "out of any folder."
