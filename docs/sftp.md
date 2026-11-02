@@ -57,7 +57,8 @@ cancelled.
   onto an existing file, and `ssh2` does not expose its `posix-rename` extension,
   so the old file moves aside, the new one takes its name, and the old one is
   removed. A rename that fails puts the old file back, but there is a brief
-  moment when the name does not exist.
+  moment when the name does not exist. If putting it back fails too, the error
+  names where the old file and the new copy are, and neither is removed.
 - **A target that is a symlink is written through**, so the link stays and the
   file it points to changes.
 

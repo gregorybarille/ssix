@@ -709,12 +709,24 @@ pub(super) fn stage_upload(
 /// Put a staged file in place, keeping the replaced file's permissions and,
 /// where the server allows it, its owner.
 pub(super) fn commit_upload(sftp: &Sftp, staged: &str, target: &RemoteTarget) -> Result<(), Stop> {
-    let committed = keep_attributes(sftp, staged, target)
-        .and_then(|()| replace_remote(sftp, staged, &target.path));
-    if committed.is_err() {
-        let _ = sftp.unlink(Path::new(staged));
+    if let Err(error) = keep_attributes(sftp, staged, target) {
+        discard_upload(sftp, staged);
+        return Err(Stop::Failed(error));
     }
-    committed.map_err(Stop::Failed)
+    place_staged(sftp, staged, &target.path).map_err(Stop::Failed)
+}
+
+/// Replace `target` with `staged`, removing `staged` only if it is not the
+/// one copy left of the new content with the target's name empty.
+fn place_staged(calls: &dyn ReplaceCalls, staged: &str, target: &str) -> Result<(), String> {
+    match replace_remote(calls, staged, target) {
+        Ok(()) => Ok(()),
+        Err(ReplaceFailure::Untouched(error)) => {
+            let _ = calls.unlink(staged);
+            Err(error)
+        }
+        Err(ReplaceFailure::Stranded(error)) => Err(error),
+    }
 }
 
 /// Removes a staged file that will not be committed.
@@ -752,30 +764,76 @@ fn keep_attributes(sftp: &Sftp, staged: &str, target: &RemoteTarget) -> Result<(
     Ok(())
 }
 
+/// How a replace that failed left things on the server.
+#[derive(Debug, PartialEq)]
+enum ReplaceFailure {
+    /// The target is as it was, so the staged copy is of no further use.
+    Untouched(String),
+    /// The target's name is empty: the old file is aside and the new one
+    /// still staged. Neither may be removed, and the message names both.
+    Stranded(String),
+}
+
+/// The calls a replace makes, so a test can refuse any of them.
+trait ReplaceCalls {
+    fn rename(&self, from: &str, to: &str) -> Result<(), ssh2::Error>;
+    fn exists(&self, path: &str) -> Result<bool, ssh2::Error>;
+    fn unlink(&self, path: &str) -> Result<(), ssh2::Error>;
+}
+
+impl ReplaceCalls for Sftp {
+    fn rename(&self, from: &str, to: &str) -> Result<(), ssh2::Error> {
+        Sftp::rename(self, Path::new(from), Path::new(to), None)
+    }
+
+    fn exists(&self, path: &str) -> Result<bool, ssh2::Error> {
+        missing_or(self.lstat(Path::new(path))).map(|stat| stat.is_some())
+    }
+
+    fn unlink(&self, path: &str) -> Result<(), ssh2::Error> {
+        Sftp::unlink(self, Path::new(path))
+    }
+}
+
 /// Rename `staged` onto `target`. SFTP's rename refuses an existing target
 /// on OpenSSH, whose atomic `posix-rename` extension ssh2 does not expose,
 /// so the old file moves aside for a moment and moves back if that fails.
-fn replace_remote(sftp: &Sftp, staged: &str, target: &str) -> Result<(), String> {
-    let (staged_path, target_path) = (Path::new(staged), Path::new(target));
-    let first_try = match sftp.rename(staged_path, target_path, None) {
+fn replace_remote(
+    calls: &dyn ReplaceCalls,
+    staged: &str,
+    target: &str,
+) -> Result<(), ReplaceFailure> {
+    let untouched =
+        |action: &str, e: &ssh2::Error| ReplaceFailure::Untouched(call_error(action, target, e));
+    let first_try = match calls.rename(staged, target) {
         Ok(()) => return Ok(()),
         Err(e) => e,
     };
-    let exists = missing_or(sftp.lstat(target_path))
-        .map_err(|e| call_error("Could not read", target, &e))?
-        .is_some();
+    let exists = calls
+        .exists(target)
+        .map_err(|e| untouched("Could not read", &e))?;
     if !exists {
-        return Err(call_error("Could not write", target, &first_try));
+        return Err(untouched("Could not write", &first_try));
     }
-    let dir = remote_parent(target).ok_or_else(|| format!("{} has no folder", target))?;
+    let dir = remote_parent(target)
+        .ok_or_else(|| ReplaceFailure::Untouched(format!("{} has no folder", target)))?;
     let aside = join_remote(&dir, &temp_name());
-    sftp.rename(target_path, Path::new(&aside), None)
-        .map_err(|e| call_error("Could not replace", target, &e))?;
-    if let Err(e) = sftp.rename(staged_path, target_path, None) {
-        let _ = sftp.rename(Path::new(&aside), target_path, None);
-        return Err(call_error("Could not replace", target, &e));
+    calls
+        .rename(target, &aside)
+        .map_err(|e| untouched("Could not replace", &e))?;
+    if let Err(e) = calls.rename(staged, target) {
+        return Err(match calls.rename(&aside, target) {
+            Ok(()) => untouched("Could not replace", &e),
+            Err(restore) => ReplaceFailure::Stranded(format!(
+                "{}. Putting the old file back failed too ({}): it is now {}, and the new copy is {}",
+                call_error("Could not replace", target, &e),
+                restore.message(),
+                aside,
+                staged
+            )),
+        });
     }
-    if let Err(e) = sftp.unlink(Path::new(&aside)) {
+    if let Err(e) = calls.unlink(&aside) {
         log_local(
             "warn",
             "sftp",
@@ -927,6 +985,8 @@ where
 mod tests {
     use super::super::browse::{save_forward, TempDir};
     use super::*;
+    use std::cell::{Cell, RefCell};
+    use std::collections::BTreeSet;
     use std::io::{self, Cursor};
     use std::sync::Mutex;
 
@@ -1036,6 +1096,104 @@ mod tests {
         symlink(tmp.0.join("dir"), tmp.0.join("dirlink")).unwrap();
         assert!(local_target(&tmp.0.join("dir")).is_err());
         assert!(local_target(&tmp.0.join("dirlink")).is_err());
+    }
+
+    /// A server whose renames refuse an existing target, like OpenSSH's, and
+    /// refuse the calls a test lists, counted from zero.
+    struct ScriptedServer {
+        files: RefCell<BTreeSet<String>>,
+        refused_renames: Vec<usize>,
+        renames: Cell<usize>,
+    }
+
+    impl ScriptedServer {
+        fn new(files: &[&str], refused_renames: &[usize]) -> Self {
+            Self {
+                files: RefCell::new(files.iter().map(|f| f.to_string()).collect()),
+                refused_renames: refused_renames.to_vec(),
+                renames: Cell::new(0),
+            }
+        }
+
+        fn files(&self) -> Vec<String> {
+            self.files.borrow().iter().cloned().collect()
+        }
+    }
+
+    impl ReplaceCalls for ScriptedServer {
+        fn rename(&self, from: &str, to: &str) -> Result<(), ssh2::Error> {
+            let call = self.renames.replace(self.renames.get() + 1);
+            let refused = ssh2::Error::new(ssh2::ErrorCode::SFTP(4), "refused");
+            if self.refused_renames.contains(&call) {
+                return Err(refused);
+            }
+            let mut files = self.files.borrow_mut();
+            if files.contains(to) || !files.remove(from) {
+                return Err(refused);
+            }
+            files.insert(to.to_string());
+            Ok(())
+        }
+
+        fn exists(&self, path: &str) -> Result<bool, ssh2::Error> {
+            Ok(self.files.borrow().contains(path))
+        }
+
+        fn unlink(&self, path: &str) -> Result<(), ssh2::Error> {
+            self.files.borrow_mut().remove(path);
+            Ok(())
+        }
+    }
+
+    const STAGED: &str = "/d/.ssix-part-new";
+    const TARGET: &str = "/d/f.txt";
+
+    #[test]
+    fn replacing_moves_the_old_file_aside_and_removes_it() {
+        let server = ScriptedServer::new(&[STAGED, TARGET], &[]);
+        place_staged(&server, STAGED, TARGET).unwrap();
+        assert_eq!(server.files(), [TARGET]);
+    }
+
+    #[test]
+    fn a_new_target_needs_one_rename() {
+        let server = ScriptedServer::new(&[STAGED], &[]);
+        place_staged(&server, STAGED, TARGET).unwrap();
+        assert_eq!(server.files(), [TARGET]);
+        assert_eq!(server.renames.get(), 1);
+    }
+
+    #[test]
+    fn a_target_that_cannot_move_aside_stays_and_the_new_copy_goes() {
+        // Rename 0 meets the existing target; rename 1 is the move aside.
+        let server = ScriptedServer::new(&[STAGED, TARGET], &[1]);
+        let err = place_staged(&server, STAGED, TARGET).unwrap_err();
+        assert!(err.contains("Could not replace"), "{}", err);
+        assert_eq!(server.files(), [TARGET]);
+    }
+
+    #[test]
+    fn a_failed_replace_puts_the_old_file_back_and_removes_the_new_copy() {
+        let server = ScriptedServer::new(&[STAGED, TARGET], &[2]);
+        let err = place_staged(&server, STAGED, TARGET).unwrap_err();
+        assert!(err.contains("Could not replace"), "{}", err);
+        assert!(!err.contains("failed too"), "{}", err);
+        assert_eq!(server.files(), [TARGET]);
+    }
+
+    #[test]
+    fn a_failed_rollback_says_where_both_copies_are_and_removes_neither() {
+        let server = ScriptedServer::new(&[STAGED, TARGET], &[2, 3]);
+        let err = place_staged(&server, STAGED, TARGET).unwrap_err();
+
+        let files = server.files();
+        assert_eq!(files.len(), 2, "{:?}", files);
+        assert!(files.contains(&STAGED.to_string()), "{:?}", files);
+        assert!(!files.contains(&TARGET.to_string()), "{:?}", files);
+        let aside = files.iter().find(|f| *f != STAGED).unwrap();
+        assert!(err.contains("failed too"), "{}", err);
+        assert!(err.contains(aside.as_str()), "{}", err);
+        assert!(err.contains(STAGED), "{}", err);
     }
 
     #[test]
