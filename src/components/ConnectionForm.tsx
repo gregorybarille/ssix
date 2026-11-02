@@ -45,6 +45,7 @@ import { CONNECTION_KIND_TABS, ForwardKinds } from "./connection-form/ForwardKin
 import { AuthOptions } from "./connection-form/AuthOptions";
 import { SessionOptions } from "./connection-form/SessionOptions";
 import { TerminalOptions } from "./connection-form/TerminalOptions";
+import { FolderField } from "./connection-form/FolderField";
 import {
   DEFAULT_CONNECTION_ADVANCED,
   advancedFromConnection,
@@ -55,6 +56,7 @@ import { InstallKeyDialog } from "./InstallKeyDialog";
 import { TagInput } from "./ui/tag-input";
 import { RadioGroup, RadioGroupItem } from "./ui/radio-group";
 import { COLOR_VALUES } from "@/lib/colors";
+import { parseFolderPath } from "@/lib/folders";
 import { parsePort } from "@/lib/port";
 import { detectPlatform, WSL_PROXY_COMMAND } from "@/lib/platform";
 import { UploadCloud } from "lucide-react";
@@ -62,6 +64,7 @@ import { cn } from "@/lib/utils";
 import { submitWithoutReset } from "@/lib/formSubmit";
 import { useUnsavedChangesGuard } from "@/hooks/useUnsavedChangesGuard";
 import { useLeaveViewGuard } from "@/hooks/useLeaveViewGuard";
+import { useConnectionsStore } from "@/store/useConnectionsStore";
 import { useDialogsStore } from "@/store/useDialogsStore";
 import { ConfirmDialog } from "./ConfirmDialog";
 
@@ -297,6 +300,7 @@ export function ConnectionForm({
     | "destination_host"
     | "gateway_credential_id"
     | "credential_id"
+    | "folder"
     | `inline_${CredentialFieldKey}`;
   const { fieldErrors, setFieldErrors, clearFieldError } = useFieldErrors<FieldKey>();
 
@@ -316,8 +320,10 @@ export function ConnectionForm({
   // close. It is derived from the same values the effect below writes
   // into state, so it can never be a stale snapshot of the previous render.
   const baselineRef = useRef<string>("");
+  const loadedFolderRef = useRef<string | undefined>(undefined);
   useEffect(() => {
     const init = initialFormState(connection, isClone);
+    loadedFolderRef.current = init.advanced.folder;
     setForm(init.form);
     setPortInputs(init.portInputs);
     setConnectionType(init.connectionType);
@@ -333,6 +339,26 @@ export function ConnectionForm({
     setSaveCredential(EMPTY_INLINE.saveCredential);
     baselineRef.current = serializeFormState({ ...init, ...EMPTY_INLINE });
   }, [connection, open, isClone]);
+
+  // The list stays usable beside this panel, so a drag or a folder rename can
+  // move this connection while the form is open. Saving must not put it back,
+  // so the field follows the stored folder unless the user typed their own.
+  const storedFolder = useConnectionsStore((s) => {
+    const stored = connection && s.connections.find((c) => c.id === connection.id);
+    return stored ? (stored.folder ?? null) : undefined;
+  });
+  useEffect(() => {
+    if (!open || !connection || storedFolder === undefined) return;
+    const folder = storedFolder ?? undefined;
+    const loaded = loadedFolderRef.current;
+    if (folder === loaded) return;
+    loadedFolderRef.current = folder;
+    setAdvanced((current) => (current.folder === loaded ? { ...current, folder } : current));
+    baselineRef.current = serializeFormState({
+      ...initialFormState({ ...connection, folder }, isClone),
+      ...EMPTY_INLINE,
+    });
+  }, [connection, open, isClone, storedFolder]);
 
   const currentSnapshot = serializeFormState({
     form,
@@ -371,6 +397,15 @@ export function ConnectionForm({
   const terms = hopTerms(connectionType === "direct" ? "jump_shell" : connectionType);
   // A forward only authenticates to its SSH server.
   const needsTargetAuth = !isForwardType(connectionType);
+  // Forwards are listed in Port forwards, not in the folder tree.
+  const showsFolder = !isForwardType(connectionType);
+
+  const updateFolder = (raw: string) => {
+    updateAdvanced({ folder: raw || undefined });
+    const { error: why } = parseFolderPath(raw);
+    if (why) setFieldErrors((errs) => ({ ...errs, folder: why }));
+    else clearFieldError("folder");
+  };
 
   const defaultCredentialName = (method: AuthMethod) => {
     const base = form.name.trim() || "connection";
@@ -500,6 +535,10 @@ export function ConnectionForm({
         if (needsTargetAuth) {
           Object.assign(newFieldErrors, authFieldErrors(formWithPorts.credential_id));
         }
+        const parsedFolder = parseFolderPath(advanced.folder ?? "");
+        if (showsFolder && parsedFolder.error) {
+          newFieldErrors.folder = parsedFolder.error;
+        }
         if (Object.keys(newFieldErrors).length > 0) {
           setFieldErrors(newFieldErrors);
           throw new Error("Please fix the highlighted fields");
@@ -548,6 +587,9 @@ export function ConnectionForm({
           tags: formWithPorts.tags ?? [],
           color: formWithPorts.color,
           ...advancedPayload(advanced),
+          // A hidden field cannot show why it is refused: text left in it
+          // before the kind became a forward gives way to the saved folder.
+          folder: parsedFolder.error ? connection?.folder : (parsedFolder.path ?? undefined),
         };
         const gateway = {
           gateway_host: formWithPorts.gateway_host ?? "",
@@ -1046,6 +1088,14 @@ export function ConnectionForm({
           Used for filtering — matches in the Connections search box.
         </p>
       </div>
+
+      {showsFolder && (
+        <FolderField
+          value={advanced.folder ?? ""}
+          onChange={updateFolder}
+          error={fieldErrors.folder}
+        />
+      )}
 
       <div className="space-y-2">
         <h3 id="conn-color-heading" className="text-sm font-medium">
