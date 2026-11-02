@@ -35,4 +35,40 @@ tags?: Array<string>,
 /**
  * Optional Open Color name (e.g. "blue", "violet") used as the tab accent.
  */
-color?: string | null, } & ({ "type": "direct" } | { "type": "port_forward", gateway_host: string, gateway_port: number, gateway_credential_id: string, local_port: number, destination_host: string, destination_port: number, } | { "type": "jump_shell", gateway_host: string, gateway_port: number, gateway_credential_id: string, destination_host: string, destination_port: number, } | { "type": "tunnel", gateway_host: string, gateway_port: number, gateway_credential_id: string | null, destination_host: string, destination_port: number, });
+color?: string | null, 
+/**
+ * Forward the local SSH agent to the remote host (`ssh -A`).
+ * Stored only for now (roadmap: auth).
+ */
+agent_forwarding: boolean, 
+/**
+ * Seconds between keepalive requests, 0 for none; `None` uses
+ * `AppSettings::keepalive_interval`. Stored only for now (roadmap: resilience).
+ */
+keepalive_interval?: number | null, 
+/**
+ * Reconnect after the session drops; `None` uses `AppSettings::auto_reconnect`.
+ */
+auto_reconnect?: boolean | null, 
+/**
+ * Log the session's output to disk; `None` uses `AppSettings::session_log_enabled`.
+ */
+log_session?: boolean | null, 
+/**
+ * Terminal font family for this connection; `None` uses the setting
+ * (roadmap: terminal-ux).
+ */
+font_family?: string | null, 
+/**
+ * Terminal font size for this connection; `None` uses the setting.
+ */
+font_size?: number | null, 
+/**
+ * Terminal colour scheme for this connection; `None` uses the setting.
+ */
+color_scheme?: string | null, 
+/**
+ * Folder path the connection is filed under, `/`-separated
+ * (`prod/eu`); `None` is the root (roadmap: folders).
+ */
+folder?: string | null, } & ({ "type": "direct" } | { "type": "port_forward", gateway_host: string, gateway_port: number, gateway_credential_id: string, local_port: number, destination_host: string, destination_port: number, } | { "type": "jump_shell", gateway_host: string, gateway_port: number, gateway_credential_id: string, destination_host: string, destination_port: number, } | { "type": "remote_forward", gateway_host: string, gateway_port: number, gateway_credential_id: string, remote_port: number, destination_host: string, destination_port: number, } | { "type": "dynamic_forward", gateway_host: string, gateway_port: number, gateway_credential_id: string, local_port: number, } | { "type": "tunnel", gateway_host: string, gateway_port: number, gateway_credential_id: string | null, destination_host: string, destination_port: number, });

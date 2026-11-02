@@ -156,7 +156,7 @@ Continuous integration (`.github/workflows/test.yml`, required on PRs):
 End-to-end:
 
 - WebdriverIO + `tauri-driver` drives the real built Tauri app against
-  the four Dockerized SSH servers in `docker/docker-compose.yml`.
+  the five Dockerized SSH servers in `docker/docker-compose.yml`.
 - **CI-only by default**: runs on every push to `main` via
   `.github/workflows/e2e.yml` (advisory status — does not block merges).
   Trigger manually from the Actions tab via `workflow_dispatch`.

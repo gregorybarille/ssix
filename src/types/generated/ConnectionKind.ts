@@ -12,6 +12,12 @@
  * without requiring SSH keys on the gateway. The destination credential is the
  * top-level `Connection.credential_id`. Conceptually `ssh -J gateway destination`.
  *
+ * `RemoteForward` (`ssh -R`) asks the gateway to listen on `remote_port` and
+ * forwards every connection it accepts back to `destination_host:destination_port`
+ * on this machine's side. `DynamicForward` (`ssh -D`) runs a local SOCKS5 proxy on
+ * `local_port` whose connections are dialled by the gateway. Both are data-only
+ * so far: connecting them is not implemented yet (roadmap: forwards).
+ *
  * Legacy data with `type: "tunnel"` is migrated to `JumpShell` on load.
  */
-export type ConnectionKind = { "type": "direct" } | { "type": "port_forward", gateway_host: string, gateway_port: number, gateway_credential_id: string, local_port: number, destination_host: string, destination_port: number, } | { "type": "jump_shell", gateway_host: string, gateway_port: number, gateway_credential_id: string, destination_host: string, destination_port: number, } | { "type": "tunnel", gateway_host: string, gateway_port: number, gateway_credential_id: string | null, destination_host: string, destination_port: number, };
+export type ConnectionKind = { "type": "direct" } | { "type": "port_forward", gateway_host: string, gateway_port: number, gateway_credential_id: string, local_port: number, destination_host: string, destination_port: number, } | { "type": "jump_shell", gateway_host: string, gateway_port: number, gateway_credential_id: string, destination_host: string, destination_port: number, } | { "type": "remote_forward", gateway_host: string, gateway_port: number, gateway_credential_id: string, remote_port: number, destination_host: string, destination_port: number, } | { "type": "dynamic_forward", gateway_host: string, gateway_port: number, gateway_credential_id: string, local_port: number, } | { "type": "tunnel", gateway_host: string, gateway_port: number, gateway_credential_id: string | null, destination_host: string, destination_port: number, };

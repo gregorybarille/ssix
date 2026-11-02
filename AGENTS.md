@@ -6,6 +6,7 @@
 > - `docs/features.md` — feature catalogue and keyboard shortcuts
 > - `docs/file-transfer.md` — SCP/file transfer behaviour and constraints
 > - `docs/git-sync.md` — git-sync export feature
+> - `docs/roadmap.md` — validated feature roadmap, stream ownership and rules
 > - `docs/troubleshooting.md` — common failure modes and fixes
 
 ## Build & Test
@@ -24,8 +25,9 @@
 - **Tauri v2** desktop app: React/Vite frontend (`src/`) + Rust backend (`src-tauri/`)
 - **Frontend state**: Zustand stores in `src/store/` call Tauri via `src/lib/tauri.ts` (lazy-loaded for test mocking; rejects with a readable message outside the desktop runtime, see `src/lib/runtime.ts`). A store's `error` is its last load failure, rendered with `<ErrorBanner>`; form-driven mutations pass `{ recordError: false }` and show their own errors
 - **Backend commands**: `src-tauri/src/commands/` → registered in `lib.rs` `invoke_handler![]`
-- **SSH sessions**: `ssh2` crate, one thread per session; the command layer talks to a worker through `SessionHandle` (mpsc + wake pipe). Shell output streams as raw bytes over a Tauri `Channel` (`src/lib/terminalOutput.ts` → `ssh_connect { onOutput }`), with `error`/`closed` notifications as JSON `OutputEvent`s on the same channel; local forwards emit `ssix:forward:status:{id}` (use helpers in `src-tauri/src/ssh.rs` + `src/lib/events.ts`). Every handshake goes through `open_authenticated_session_over_stream` (timeouts + host-key verification in `known_hosts.rs`) — never call `Session::handshake` elsewhere
-- **Terminal**: xterm.js, stays mounted when hidden; local forwards live in `PortForwardsView`, not the terminal tab bar
+- **SSH sessions**: `ssh2` crate, one thread per session; the command layer talks to a worker through `SessionHandle` (mpsc + wake pipe). Shell output streams as raw bytes over a Tauri `Channel` (`src/lib/terminalOutput.ts` → `ssh_connect { onOutput }`), with `error`/`closed` notifications as JSON `OutputEvent`s on the same channel; local forwards live in `src-tauri/src/forwards.rs` and emit `ssix:forward:status:{id}` (use helpers there + `src/lib/events.ts`). Every handshake goes through `open_authenticated_session_over_stream` (timeouts + host-key verification in `known_hosts.rs`) — never call `Session::handshake` elsewhere
+- **Terminal**: xterm.js, stays mounted when hidden; local forwards live in `PortForwardsView`, not the terminal tab bar. New terminal behaviour is a `TerminalExtension` under `src/components/terminal/`, not an edit to `Terminal.tsx`
+- **Registries**: add views to `src/lib/views.ts`, form options to the section files under `src/components/connection-form/`, settings to `src/components/settings/`; shared lists carry `// roadmap:<stream>` anchors (see "Extension Points" in `docs/architecture.md`)
 - **Persistence**: File-based at `~/.ssix/data.json`. All writes MUST use `atomic_write()` — never `fs::write` directly
 - **Models**: `src/types/index.ts` ↔ `src-tauri/src/models.rs` must stay in sync (snake_case throughout). `cargo test` regenerates ts-rs bindings into `src/types/generated/`; `src/test/typesParity.test.ts` fails when a generated field is missing from the hand-written index.ts. CI: run `cargo test && git diff --exit-code src/types/generated/`.
 - **IDs**: Generated server-side with `uuid::Uuid::new_v4()`; frontend never generates IDs
@@ -71,7 +73,7 @@
 - **Dialogs**: Opened from React state (no `<DialogTrigger>`); `<DialogContent>` docks into the side panel column (`kind="panel"`, `"confirm"` for confirmations, `"palette"` only for the quick-connect picker) and handles focus-restore automatically. Never add floating or modal overlays
 - **Mutex hygiene**: Prefer atomics, channels and `DashMap` over a shared `Mutex` in worker threads; where a `Mutex` is unavoidable recover from poisoning with `lock().unwrap_or_else(|e| e.into_inner())`, and use `lock().map_err(...)?` on the managed-state path
 - **Port inputs**: Use `parsePort` from `src/lib/port.ts` — never `parseInt(input) || 22`
-- **Keyboard shortcuts**: Register via `useGlobalShortcuts`; document new ones in `docs/features.md`
+- **Keyboard shortcuts**: Add an entry to `SHORTCUTS` in `src/hooks/useGlobalShortcuts.ts`; document new ones in `docs/features.md`
 - **Context menus**: Always use `<ContextMenu>` + `useContextMenu()`; wire `onKeyDown` on every trigger
 - **Reduced motion**: Handled globally in `globals.css` with `0.01ms` (not `0s`) — never add component-level bypasses
 
@@ -87,7 +89,8 @@ Point at `http://localhost:1420` (run `npm run dev` first). Add to `~/.copilot/m
 - **Stack**: `tauri-driver` + WebdriverIO + Mocha (TypeScript). Specs in `e2e/specs/`, helpers in `e2e/helpers/`, selectors in `e2e/helpers/selectors.ts` (single source of truth).
 - **CI**: `.github/workflows/e2e.yml` runs on push to `main`, version tag pushes (`v*`), pull requests, and `workflow_dispatch`. Advisory status — not a required PR gate, but failures surface on the PR.
 - **Local**: `npm run e2e` runs the suite inside a Linux container (tauri-driver doesn't run on macOS). Requires Docker.
+- **Several checkouts**: every worktree is the same Compose project by default, so `npm run e2e` in one recreates another's fixtures. Run side by side with `COMPOSE_PROJECT_NAME=ssix-<name> SSIX_PORT_PREFIX=<3 digits> npm run e2e` (see `docker/README.md`).
 - **Storage isolation**: `SSIX_DATA_DIR` env var (honored by `storage::data_dir()` and `keychain::secrets_path()`) points to a per-suite `mkdtemp`. The Tauri app is spawned once via `tauri-driver` and inherits the env, so all specs share one data dir — cross-spec isolation relies on every spec using unique credential / connection names.
-- **SSH targets**: `docker/docker-compose.yml` defines four alpine sshd servers (`server-a/b/c/d`) with healthchecks. The `e2e-runner` service (under `e2e` profile) is the dockerized runner.
+- **SSH targets**: `docker/docker-compose.yml` defines five alpine sshd servers (`server-a/b/c/d/e`) with healthchecks; `server-e` is keyboard-interactive only. The `e2e-runner` service (under `e2e` profile) is the dockerized runner.
 - **Adding a testid**: register the selector in `e2e/helpers/selectors.ts`, add `data-testid="<kebab>"` to the component, and (if the element represents a row) include `data-name` so specs can locate by user-visible name.
 - **Artifacts**: failures upload `e2e/.artifacts/` (screenshots) from CI.

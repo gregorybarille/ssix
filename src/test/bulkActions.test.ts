@@ -40,6 +40,36 @@ describe("isBulkActionable", () => {
     expect(isBulkActionable(portfwd("1", "tun"))).toBe(false);
     expect(isBulkActionable(direct("2", "a"))).toBe(true);
   });
+
+  it("rejects remote and dynamic forwards, which open no shell either", () => {
+    const remote: Connection = {
+      id: "3",
+      name: "r",
+      host: "g",
+      port: 22,
+      type: "remote_forward",
+      gateway_host: "g",
+      gateway_port: 22,
+      gateway_credential_id: "c",
+      remote_port: 8080,
+      destination_host: "127.0.0.1",
+      destination_port: 3000,
+    };
+    const dynamic: Connection = {
+      id: "4",
+      name: "d",
+      host: "g",
+      port: 22,
+      type: "dynamic_forward",
+      gateway_host: "g",
+      gateway_port: 22,
+      gateway_credential_id: "c",
+      local_port: 1080,
+    };
+    expect(isBulkActionable(remote)).toBe(false);
+    expect(isBulkActionable(dynamic)).toBe(false);
+    expect(planBulkUpload([remote], { localPath: "/a", recursive: false })[0].status).toBe("skipped");
+  });
 });
 
 describe("planBulkUpload", () => {
@@ -50,7 +80,7 @@ describe("planBulkUpload", () => {
     );
     expect(plan[0].status).toBe("pending");
     expect(plan[1].status).toBe("skipped");
-    expect(plan[1].error).toMatch(/local forward/i);
+    expect(plan[1].error).toMatch(/port forward/i);
   });
 
   it("falls back to conn.remote_path when remotePath is unset", () => {

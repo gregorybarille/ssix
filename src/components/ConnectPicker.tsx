@@ -11,6 +11,7 @@ import { Input } from "./ui/input";
 import { cn } from "@/lib/utils";
 import { getColorHex } from "@/lib/colors";
 import { connectionMatches, tokenize } from "@/lib/search";
+import { forwardEndpoint, isForwardConnection } from "@/lib/sshTerms";
 
 interface ConnectPickerProps {
   open: boolean;
@@ -21,8 +22,8 @@ interface ConnectPickerProps {
 }
 
 function endpointSubtitle(conn: Connection): string {
-  if (conn.type === "port_forward") {
-    return `127.0.0.1:${conn.local_port} → ${conn.destination_host}:${conn.destination_port}`;
+  if (isForwardConnection(conn)) {
+    return forwardEndpoint(conn);
   }
   if (conn.type === "jump_shell") {
     return `${conn.destination_host}:${conn.destination_port} via ${conn.gateway_host}`;

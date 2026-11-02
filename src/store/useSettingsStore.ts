@@ -31,6 +31,10 @@ const DEFAULT_SETTINGS: AppSettings = {
   backup_enabled: true,
   backup_interval_hours: 24,
   backup_keep: 10,
+  keepalive_interval: 30,
+  auto_reconnect: true,
+  reconnect_max_attempts: 5,
+  session_log_enabled: false,
 };
 
 // Audit-4 Dup H1: same async-action pattern as the other stores.

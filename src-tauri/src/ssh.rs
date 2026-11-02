@@ -1,5 +1,5 @@
-//! SSH sessions on top of `ssh2`: interactive shells, local port forwards and
-//! jump host bridging.
+//! SSH sessions on top of `ssh2`: interactive shells and jump host bridging.
+//! Local forwards (`ssh -L`) build on the helpers here from `crate::forwards`.
 //!
 //! Every live session is one OS thread. The command layer talks to it through
 //! a [`SessionHandle`] — an mpsc queue plus a wake-up pipe — so a keystroke
@@ -18,23 +18,22 @@
 use std::io::{self, Read, Write};
 use std::net::{Shutdown, SocketAddr, TcpListener, TcpStream, ToSocketAddrs};
 use std::path::Path;
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender, TryRecvError};
 use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant};
 
-use serde::Serialize;
 use ssh2::Session;
 
 use crate::ssh_debug::{host_key_type_name, SshDebug};
 use tauri::ipc::{Channel, InvokeResponseBody};
-use tauri::{AppHandle, Emitter, Manager};
+use tauri::{AppHandle, Manager};
 
 /// TCP connect timeout for every outbound connection (direct host or gateway).
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 /// libssh2 timeout for blocking calls during setup (handshake, auth, channel open).
-const SESSION_TIMEOUT_MS: u32 = 15_000;
+pub(crate) const SESSION_TIMEOUT_MS: u32 = 15_000;
 /// Longest an idle worker waits for socket readiness before re-checking its queue.
 /// Idle wait for a forwarder that shares its session with other clients.
 const SHARED_WAIT_MAX: Duration = Duration::from_millis(10);
@@ -59,6 +58,9 @@ pub enum AuthMethod {
         private_key: String,
         passphrase: Option<String>,
     },
+    /// Keys held by the SSH agent. Not implemented yet (roadmap: auth):
+    /// `authenticate` refuses it with a clear message.
+    Agent,
 }
 
 /// Where to connect and as whom.
@@ -129,7 +131,7 @@ impl SessionContext {
         }
     }
 
-    fn log(&self, level: &str, source: &str, message: String) {
+    pub(crate) fn log(&self, level: &str, source: &str, message: String) {
         crate::logs::log(&self.app, level, source, message);
     }
 
@@ -137,15 +139,9 @@ impl SessionContext {
         self.send_event(OutputEvent::Error { message });
     }
 
-    fn emit_forward_status(&self, status: ForwardStatus) {
-        let _ = self
-            .app
-            .emit(&forward_status_event(&self.session_id), status);
-    }
-
     /// Put the session in the registry before its worker starts, so a
     /// worker that exits at once still finds (and removes) its own entry.
-    fn register(&self, handle: SessionHandle) -> Result<(), String> {
+    pub(crate) fn register(&self, handle: SessionHandle) -> Result<(), String> {
         let state = self
             .app
             .try_state::<SshState>()
@@ -155,7 +151,7 @@ impl SessionContext {
     }
 
     /// Drop the session from the registry and tell the frontend it is gone.
-    fn finish(&self) {
+    pub(crate) fn finish(&self) {
         if let Some(state) = self.app.try_state::<SshState>() {
             state.sessions.remove(&self.session_id);
         }
@@ -188,12 +184,12 @@ impl SessionHandle {
 }
 
 /// Worker side of the control channel.
-struct ControlRx {
-    rx: Receiver<SessionMsg>,
-    wake: wake::WakeReceiver,
+pub(crate) struct ControlRx {
+    pub(crate) rx: Receiver<SessionMsg>,
+    pub(crate) wake: wake::WakeReceiver,
 }
 
-fn control_channel() -> Result<(SessionHandle, ControlRx), String> {
+pub(crate) fn control_channel() -> Result<(SessionHandle, ControlRx), String> {
     let (tx, rx) = mpsc::channel();
     let (waker, wake) = wake::pair().map_err(|e| format!("Failed to create wake pipe: {}", e))?;
     Ok((
@@ -332,22 +328,6 @@ impl SshState {
     }
 }
 
-/// Status payload a local forward emits on `ssix:forward:status:{id}`.
-#[derive(Serialize, Clone)]
-pub struct ForwardStatus {
-    pub state: &'static str, // "listening" | "client_connected" | "client_closed" | "error"
-    pub local_port: u16,
-    pub destination: String,
-    pub message: Option<String>,
-    pub active_clients: usize,
-}
-
-/// Event names are namespaced under `ssix:` and mirrored in
-/// `src/lib/events.ts`; both sides MUST go through these helpers.
-pub(crate) fn forward_status_event(session_id: &str) -> String {
-    format!("ssix:forward:status:{}", session_id)
-}
-
 pub(crate) fn build_startup_command(
     remote_path: Option<&str>,
     login_command: Option<&str>,
@@ -415,7 +395,7 @@ pub(crate) fn connect_tcp(host: &str, port: u16) -> Result<TcpStream, String> {
 }
 
 /// Open the stream to `endpoint`: a TCP connection, or its proxy command.
-fn connect_endpoint(endpoint: &Endpoint, verbosity: u8) -> Result<TcpStream, String> {
+pub(crate) fn connect_endpoint(endpoint: &Endpoint, verbosity: u8) -> Result<TcpStream, String> {
     let debug = SshDebug::new(verbosity, endpoint.addr());
     debug.at(1, || {
         format!("Connecting to {} port {}.", endpoint.host, endpoint.port)
@@ -499,7 +479,11 @@ pub(crate) fn open_authenticated_session_over_stream(
     Ok(session)
 }
 
-fn authenticate(session: &Session, endpoint: &Endpoint, debug: &SshDebug) -> Result<(), String> {
+pub(crate) fn authenticate(
+    session: &Session,
+    endpoint: &Endpoint,
+    debug: &SshDebug,
+) -> Result<(), String> {
     let username = &endpoint.username;
     // Listing the methods sends a "none" request, as `ssh -v` does. A
     // server that accepts it leaves nothing else to do.
@@ -521,6 +505,7 @@ fn authenticate(session: &Session, endpoint: &Endpoint, debug: &SshDebug) -> Res
         AuthMethod::Password(_) => "password".to_string(),
         AuthMethod::Key { path, .. } => format!("publickey ({})", path),
         AuthMethod::KeyMemory { .. } => "publickey (stored key)".to_string(),
+        AuthMethod::Agent => "publickey (agent)".to_string(),
     };
     debug.at(1, || {
         format!("Next authentication method: {} as {}", method, username)
@@ -538,6 +523,9 @@ fn authenticate(session: &Session, endpoint: &Endpoint, debug: &SshDebug) -> Res
             passphrase,
         } => authenticate_pubkey_memory(session, username, private_key, passphrase.as_deref())
             .map_err(|e| format!("Key auth failed: {}", e))?,
+        AuthMethod::Agent => {
+            return Err("SSH agent authentication is not available yet".to_string());
+        }
     }
 
     if !session.authenticated() {
@@ -583,7 +571,7 @@ fn authenticate_pubkey_memory(
 
 /// Authenticate over `tcp`, request a PTY, start a shell and run the startup
 /// command. The session is switched to non-blocking mode before returning.
-fn open_shell_over_stream(
+pub(crate) fn open_shell_over_stream(
     tcp: TcpStream,
     endpoint: &Endpoint,
     opts: &ShellOptions,
@@ -829,10 +817,10 @@ fn run_io_loop(
 }
 
 // ---------------------------------------------------------------------------
-// Hops: local forwards (ssh -L) and jump hosts (ssh -J)
+// Hops: jump hosts (ssh -J); local forwards share these from `crate::forwards`
 // ---------------------------------------------------------------------------
 
-/// Open the session to the first hop: the SSH server of a local forward or
+/// Open the session to the first hop: the SSH server of a forward or
 /// the jump host of a jump connection. `role` names it in errors and debug
 /// lines.
 pub(crate) fn open_hop_session(
@@ -845,38 +833,6 @@ pub(crate) fn open_hop_session(
     });
     open_authenticated_session(hop, verbosity, None)
         .map_err(|e| format!("{} {}: {}", role, hop.addr(), e))
-}
-
-/// Open a `direct-tcpip` channel on a non-blocking session, waiting for the
-/// socket whenever libssh2 asks to be called again.
-fn open_direct_tcpip(
-    session: &Session,
-    destination_host: &str,
-    destination_port: u16,
-    peer: SocketAddr,
-) -> Result<ssh2::Channel, String> {
-    let deadline = Instant::now() + Duration::from_millis(SESSION_TIMEOUT_MS as u64);
-    let fds = [wake::fd_of(session)];
-    let peer_ip = peer.ip().to_string();
-    loop {
-        match session.channel_direct_tcpip(
-            destination_host,
-            destination_port,
-            Some((&peer_ip, peer.port())),
-        ) {
-            Ok(channel) => return Ok(channel),
-            Err(e) if is_eagain(&e) => {
-                if Instant::now() >= deadline {
-                    return Err(format!(
-                        "timed out opening a channel to {}:{}",
-                        destination_host, destination_port
-                    ));
-                }
-                wake::wait_readable(&fds, Duration::from_millis(50));
-            }
-            Err(e) => return Err(e.to_string()),
-        }
-    }
 }
 
 /// Forward bytes between a local TCP socket and an SSH `direct-tcpip`
@@ -1039,130 +995,6 @@ pub(crate) fn bridge_via_jump_host(
             Err("Target connect via jump host failed: forwarder exited".to_string())
         }
     }
-}
-
-/// Listen on `127.0.0.1:local_port` and forward every accepted connection
-/// through the SSH server `gateway` to `destination_host:destination_port`
-/// (`ssh -L`).
-///
-/// Only `SessionMsg::Disconnect` is meaningful for a port forward; `Write`
-/// and `Resize` are ignored. Bind and SSH server errors are returned
-/// synchronously.
-pub fn start_port_forward(
-    gateway: Endpoint,
-    local_port: u16,
-    destination_host: String,
-    destination_port: u16,
-    verbosity: u8,
-    ctx: SessionContext,
-) -> Result<SessionHandle, String> {
-    let bind_addr = SocketAddr::from(([127, 0, 0, 1], local_port));
-    let listener = TcpListener::bind(bind_addr)
-        .map_err(|e| format!("Failed to bind 127.0.0.1:{}: {}", local_port, e))?;
-
-    let session = open_hop_session(&gateway, "SSH server", verbosity)?;
-    let debug = SshDebug::new(verbosity, gateway.addr());
-    debug.at(1, || {
-        format!(
-            "Local forwarding listening on 127.0.0.1 port {}.",
-            local_port
-        )
-    });
-    // Non-blocking so one slow client can never stall the others: libssh2
-    // serialises every call made on a session.
-    session.set_blocking(false);
-
-    let (handle, control) = control_channel()?;
-    ctx.register(handle.clone())?;
-    let stop = Arc::new(AtomicBool::new(false));
-    let active = Arc::new(AtomicUsize::new(0));
-    let destination = format!("{}:{}", destination_host, destination_port);
-    let ctx = Arc::new(ctx);
-
-    let status = {
-        let ctx = Arc::clone(&ctx);
-        let destination = destination.clone();
-        let active = Arc::clone(&active);
-        move |state: &'static str, message: Option<String>| {
-            ctx.emit_forward_status(ForwardStatus {
-                state,
-                local_port,
-                destination: destination.clone(),
-                message,
-                active_clients: active.load(Ordering::SeqCst),
-            });
-        }
-    };
-    status("listening", None);
-
-    // Control thread: block on the queue; on Disconnect (or when the handle
-    // is dropped) raise the stop flag and poke the listener so accept()
-    // returns.
-    {
-        let stop = Arc::clone(&stop);
-        thread::spawn(move || {
-            loop {
-                match control.rx.recv() {
-                    Ok(SessionMsg::Disconnect) | Err(_) => break,
-                    Ok(_) => {}
-                }
-            }
-            stop.store(true, Ordering::SeqCst);
-            let _ = TcpStream::connect_timeout(&bind_addr, Duration::from_secs(1));
-        });
-    }
-
-    thread::spawn(move || {
-        loop {
-            let (local_stream, peer) = match listener.accept() {
-                Ok(accepted) => accepted,
-                Err(e) => {
-                    ctx.log(
-                        "error",
-                        "forward",
-                        format!("session {}: accept failed: {}", ctx.session_id, e),
-                    );
-                    status("error", Some(format!("accept failed: {}", e)));
-                    break;
-                }
-            };
-            if stop.load(Ordering::SeqCst) {
-                break;
-            }
-
-            let session = session.clone();
-            let destination_host = destination_host.clone();
-            let active = Arc::clone(&active);
-            let status = status.clone();
-            let debug = debug.clone();
-            thread::spawn(move || {
-                debug.at(1, || {
-                    format!(
-                        "Connection to port {} forwarding to {} port {} requested.",
-                        local_port, destination_host, destination_port
-                    )
-                });
-                let channel =
-                    match open_direct_tcpip(&session, &destination_host, destination_port, peer) {
-                        Ok(channel) => channel,
-                        Err(e) => {
-                            status("error", Some(format!("channel_direct_tcpip failed: {}", e)));
-                            return;
-                        }
-                    };
-                active.fetch_add(1, Ordering::SeqCst);
-                status("client_connected", Some(format!("from {}", peer)));
-                forward_bidi(local_stream, channel, &session, &active);
-                active.fetch_sub(1, Ordering::SeqCst);
-                status("client_closed", Some(format!("from {}", peer)));
-                debug.at(2, || format!("Forwarded connection from {} closed.", peer));
-            });
-        }
-        drop(listener);
-        ctx.finish();
-    });
-
-    Ok(handle)
 }
 
 /// Open an interactive shell on `destination`, reached through the jump host

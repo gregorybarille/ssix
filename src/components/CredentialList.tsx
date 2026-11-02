@@ -1,12 +1,24 @@
 import { useState } from "react";
-import { Credential, LayoutMode } from "@/types";
+import { Credential, CredentialType, LayoutMode } from "@/types";
 import { Button } from "./ui/button";
 import { Badge } from "./ui/badge";
-import { Key, Lock, Edit, Trash2, UploadCloud } from "lucide-react";
+import { Key, KeyRound, Lock, Edit, Trash2, UploadCloud, type LucideIcon } from "lucide-react";
 import { InstallKeyDialog } from "./InstallKeyDialog";
 import { EmptyState } from "./ui/EmptyState";
 import { cn } from "@/lib/utils";
 import { useRovingFocus } from "@/hooks/useRovingFocus";
+
+/** How each credential kind reads in the list. */
+const KIND_DISPLAY: Record<CredentialType, { icon: LucideIcon; badge: string; noun: string }> = {
+  password: { icon: Lock, badge: "Password", noun: "password" },
+  ssh_key: { icon: Key, badge: "SSH Key", noun: "SSH key" },
+  agent: { icon: KeyRound, badge: "SSH Agent", noun: "SSH agent" },
+};
+
+function KindIcon({ type }: { type: CredentialType }) {
+  const Icon = KIND_DISPLAY[type].icon;
+  return <Icon className="h-5 w-5 text-muted-foreground" aria-hidden="true" />;
+}
 
 interface CredentialListProps {
   credentials: Credential[];
@@ -110,7 +122,7 @@ export function CredentialList({
                 role="listitem"
                 data-testid={`credential-row-${cred.id}`}
                 data-name={cred.name}
-                aria-label={`${cred.name}, ${cred.type === "ssh_key" ? "SSH key" : "password"} credential`}
+                aria-label={`${cred.name}, ${KIND_DISPLAY[cred.type].noun} credential`}
                 className={cn(
                   "group rounded-lg border p-3 hover:bg-accent transition-colors flex flex-col gap-2 cursor-pointer",
                   "focus:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background",
@@ -118,15 +130,11 @@ export function CredentialList({
               >
                 <div className="flex items-start justify-between gap-2">
                   <div className="flex items-center gap-2 min-w-0">
-                    {cred.type === "ssh_key" ? (
-                      <Key className="h-5 w-5 text-muted-foreground" aria-hidden="true" />
-                    ) : (
-                      <Lock className="h-5 w-5 text-muted-foreground" aria-hidden="true" />
-                    )}
+                    <KindIcon type={cred.type} />
                     <span className="font-medium text-sm truncate">{cred.name}</span>
                   </div>
                   <Badge variant="secondary" className="text-xs shrink-0">
-                    {cred.type === "ssh_key" ? "SSH Key" : "Password"}
+                    {KIND_DISPLAY[cred.type].badge}
                   </Badge>
                 </div>
                 <p className="text-xs text-muted-foreground truncate">
@@ -159,24 +167,20 @@ export function CredentialList({
             role="listitem"
             data-testid={`credential-row-${cred.id}`}
             data-name={cred.name}
-            aria-label={`${cred.name}, ${cred.type === "ssh_key" ? "SSH key" : "password"} credential`}
+            aria-label={`${cred.name}, ${KIND_DISPLAY[cred.type].noun} credential`}
             className={cn(
               "group flex items-center gap-3 rounded-lg p-3 hover:bg-accent transition-colors cursor-pointer",
               "focus:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background",
             )}
           >
             <div className="flex-shrink-0">
-              {cred.type === "ssh_key" ? (
-                <Key className="h-5 w-5 text-muted-foreground" aria-hidden="true" />
-              ) : (
-                <Lock className="h-5 w-5 text-muted-foreground" aria-hidden="true" />
-              )}
+              <KindIcon type={cred.type} />
             </div>
             <div className="flex-1 min-w-0">
               <div className="flex items-center gap-2">
                 <span className="font-medium text-sm truncate">{cred.name}</span>
                 <Badge variant="secondary" className="text-xs shrink-0">
-                  {cred.type === "ssh_key" ? "SSH Key" : "Password"}
+                  {KIND_DISPLAY[cred.type].badge}
                 </Badge>
               </div>
               <p className="text-xs text-muted-foreground truncate">

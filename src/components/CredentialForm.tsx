@@ -1,5 +1,6 @@
 import { useActionState, useState, useEffect, useRef } from "react";
-import { Credential, CredentialSecrets, UpdateCredentialPayload } from "@/types";
+import { Credential, CredentialSecrets, CredentialType, UpdateCredentialPayload } from "@/types";
+import { CREDENTIAL_KIND_TABS } from "./credential-form/kinds";
 import { useCredentialsStore } from "@/store/useCredentialsStore";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
@@ -38,7 +39,7 @@ type KeySource = "path" | "inline";
 type CredentialFormState = {
   name: string;
   username: string;
-  credType: "password" | "ssh_key";
+  credType: CredentialType;
   password: string;
   keySource: KeySource;
   privateKeyPath: string;
@@ -115,7 +116,7 @@ export function CredentialForm({
 }: CredentialFormProps) {
   const [name, setName] = useState("");
   const [username, setUsername] = useState("");
-  const [credType, setCredType] = useState<"password" | "ssh_key">("password");
+  const [credType, setCredType] = useState<CredentialType>("password");
   const [password, setPassword] = useState("");
   const [keySource, setKeySource] = useState<KeySource>("path");
   const [privateKeyPath, setPrivateKeyPath] = useState("");
@@ -269,6 +270,9 @@ export function CredentialForm({
         let kindFields: Partial<Credential>;
         if (credType === "password") {
           kindFields = { password: keepSecrets ? "" : password };
+        } else if (credType === "agent") {
+          // An agent credential stores no secret: the key lives in the agent.
+          kindFields = {};
         } else if (keySource === "path") {
           kindFields = {
             private_key_path: privateKeyPath,
@@ -400,15 +404,14 @@ export function CredentialForm({
 
           <Tabs
             value={credType}
-            onValueChange={(v) => setCredType(v as "password" | "ssh_key")}
+            onValueChange={(v) => setCredType(v as CredentialType)}
           >
             <TabsList className="w-full">
-              <TabsTrigger value="password" className="flex-1" data-testid="credential-form-kind-password">
-                Password
-              </TabsTrigger>
-              <TabsTrigger value="ssh_key" className="flex-1" data-testid="credential-form-kind-sshkey">
-                SSH Key
-              </TabsTrigger>
+              {CREDENTIAL_KIND_TABS.map(({ type, label, testId }) => (
+                <TabsTrigger key={type} value={type} className="flex-1" data-testid={testId}>
+                  {label}
+                </TabsTrigger>
+              ))}
             </TabsList>
             <TabsContent value="password" className="space-y-4 mt-4">
               <div className="space-y-2">

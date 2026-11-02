@@ -245,4 +245,14 @@ export const sel = {
   settingsLoadError: '[data-testid="settings-load-error"]',
   settingsLoadErrorRetry: '[data-testid="settings-load-error-retry"]',
   scriptsLoadError: '[data-testid="scripts-load-error"]',
+
+  // Each roadmap stream appends its selectors under its own anchor.
+  // roadmap:auth
+  // roadmap:resilience
+  // roadmap:forwards
+  // roadmap:sftp
+  // roadmap:snippets
+  // roadmap:import
+  // roadmap:terminal-ux
+  // roadmap:folders
 } as const;

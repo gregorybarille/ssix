@@ -33,6 +33,10 @@ const settings: AppSettings = {
   backup_enabled: true,
   backup_interval_hours: 24,
   backup_keep: 10,
+  keepalive_interval: 30,
+  auto_reconnect: true,
+  reconnect_max_attempts: 5,
+  session_log_enabled: false,
 };
 
 const LOAD_ERROR = "/home/u/.ssix/data.json is not valid SSIX data: expected value at line 1";

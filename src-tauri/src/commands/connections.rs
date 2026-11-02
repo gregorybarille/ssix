@@ -1,4 +1,5 @@
 use crate::commands::blocking;
+use crate::commands::settings::validate_keepalive_interval;
 use crate::models::{AppData, Connection, ConnectionKind, Credential, CredentialKind};
 use crate::storage::{load_data, with_data_mut};
 use serde::Deserialize;
@@ -31,6 +32,65 @@ pub struct ConnectionFields {
     pub tags: Vec<String>,
     #[serde(default)]
     pub color: Option<String>,
+    #[serde(flatten)]
+    pub advanced: ConnectionAdvanced,
+}
+
+/// The per-connection options the roadmap streams fill in (auth,
+/// resilience, terminal, folders). Flattened into `ConnectionFields` so the
+/// wire format stays flat, and copied onto the connection as one unit so a
+/// stream adding a field edits this struct and `apply_to` only.
+#[derive(Debug, Default, Deserialize)]
+pub struct ConnectionAdvanced {
+    #[serde(default)]
+    pub agent_forwarding: bool,
+    #[serde(default)]
+    pub keepalive_interval: Option<u16>,
+    #[serde(default)]
+    pub auto_reconnect: Option<bool>,
+    #[serde(default)]
+    pub log_session: Option<bool>,
+    #[serde(default)]
+    pub font_family: Option<String>,
+    #[serde(default)]
+    pub font_size: Option<u8>,
+    #[serde(default)]
+    pub color_scheme: Option<String>,
+    #[serde(default)]
+    pub folder: Option<String>,
+}
+
+impl ConnectionAdvanced {
+    /// Refuse an option a later session could not use, when it is saved
+    /// rather than when something first reads it. Blank text is fine: it is
+    /// stored as unset. `color_scheme` is only checked for shape here, since
+    /// the terminal-ux stream owns the list of palettes.
+    fn validate(&self) -> Result<(), String> {
+        if let Some(seconds) = self.keepalive_interval {
+            validate_keepalive_interval(seconds)?;
+        }
+        if let Some(size) = self.font_size {
+            if !(8..=32).contains(&size) {
+                return Err("Font size must be between 8 and 32".to_string());
+            }
+        }
+        validate_option_text("Font family", self.font_family.as_deref(), 128)?;
+        validate_option_text("Color scheme", self.color_scheme.as_deref(), 64)?;
+        validate_option_text("Folder", self.folder.as_deref(), 512)
+    }
+
+    /// Store the options on `connection`; blank text is stored as unset and
+    /// a folder path is kept `/`-separated without leading or trailing slashes.
+    fn apply_to(self, connection: &mut Connection) {
+        connection.agent_forwarding = self.agent_forwarding;
+        connection.keepalive_interval = self.keepalive_interval;
+        connection.auto_reconnect = self.auto_reconnect;
+        connection.log_session = self.log_session;
+        connection.font_family = normalize_optional_text(self.font_family);
+        connection.font_size = self.font_size;
+        connection.color_scheme = normalize_optional_text(self.color_scheme);
+        connection.folder = normalize_folder(self.folder);
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -83,6 +143,86 @@ fn validate_connection_fields(name: &str, host: &str, port: u16) -> Result<(), S
     Ok(())
 }
 
+fn validate_option_text(label: &str, value: Option<&str>, max: usize) -> Result<(), String> {
+    let Some(value) = value else { return Ok(()) };
+    if value.chars().count() > max || value.chars().any(char::is_control) {
+        return Err(format!(
+            "{label} must be {max} characters or fewer, with no control characters"
+        ));
+    }
+    Ok(())
+}
+
+/// The hosts and ports a kind adds to the top-level ones, which
+/// `validate_connection_fields` already checks.
+fn validate_connection_kind(kind: &ConnectionKind) -> Result<(), String> {
+    fn host(label: &str, value: &str) -> Result<(), String> {
+        if value.trim().is_empty() {
+            return Err(format!("{label} is required"));
+        }
+        Ok(())
+    }
+    fn port(label: &str, value: u16) -> Result<(), String> {
+        if value == 0 {
+            return Err(format!("{label} must be between 1 and 65535"));
+        }
+        Ok(())
+    }
+    match kind {
+        ConnectionKind::Direct | ConnectionKind::LegacyTunnel { .. } => Ok(()),
+        ConnectionKind::PortForward {
+            gateway_host,
+            gateway_port,
+            local_port,
+            destination_host,
+            destination_port,
+            ..
+        } => {
+            host("SSH server host", gateway_host)?;
+            port("SSH server port", *gateway_port)?;
+            port("Local port", *local_port)?;
+            host("Remote host", destination_host)?;
+            port("Remote port", *destination_port)
+        }
+        ConnectionKind::JumpShell {
+            gateway_host,
+            gateway_port,
+            destination_host,
+            destination_port,
+            ..
+        } => {
+            host("Jump host", gateway_host)?;
+            port("Jump host port", *gateway_port)?;
+            host("Target host", destination_host)?;
+            port("Target port", *destination_port)
+        }
+        ConnectionKind::RemoteForward {
+            gateway_host,
+            gateway_port,
+            remote_port,
+            destination_host,
+            destination_port,
+            ..
+        } => {
+            host("SSH server host", gateway_host)?;
+            port("SSH server port", *gateway_port)?;
+            port("Remote port", *remote_port)?;
+            host("Local target host", destination_host)?;
+            port("Local target port", *destination_port)
+        }
+        ConnectionKind::DynamicForward {
+            gateway_host,
+            gateway_port,
+            local_port,
+            ..
+        } => {
+            host("SSH server host", gateway_host)?;
+            port("SSH server port", *gateway_port)?;
+            port("Local port", *local_port)
+        }
+    }
+}
+
 /// Every kind that opens a shell needs a credential for it, and each
 /// credential a connection names must exist. Otherwise the connection
 /// saves fine and only fails once the user tries to connect.
@@ -119,7 +259,16 @@ fn validate_connection_credentials(
             check("jump host credential", Some(gateway_credential_id))?;
             check("target credential", credential_id)
         }
+        // Every forward kind only authenticates to its SSH server.
         ConnectionKind::PortForward {
+            gateway_credential_id,
+            ..
+        }
+        | ConnectionKind::RemoteForward {
+            gateway_credential_id,
+            ..
+        }
+        | ConnectionKind::DynamicForward {
             gateway_credential_id,
             ..
         } => check("SSH server credential", Some(gateway_credential_id)),
@@ -155,6 +304,8 @@ fn check_connection(
 ) -> Result<(), String> {
     f.name = f.name.trim().to_string();
     validate_connection_fields(&f.name, &f.host, f.port)?;
+    validate_connection_kind(&f.kind)?;
+    f.advanced.validate()?;
     f.proxy_command = normalize_optional_text(f.proxy_command.take());
     if let Some(command) = &f.proxy_command {
         crate::proxy::validate(command)?;
@@ -180,6 +331,7 @@ fn insert_new_connection(data: &mut AppData, f: ConnectionFields) -> Connection 
     connection.remote_path = normalize_remote_path(f.remote_path);
     connection.tags = normalize_tags(f.tags);
     connection.color = f.color;
+    f.advanced.apply_to(&mut connection);
     data.connections.push(connection.clone());
     connection
 }
@@ -233,6 +385,7 @@ fn apply_update(
     data.connections[idx].remote_path = normalize_remote_path(f.remote_path);
     data.connections[idx].tags = normalize_tags(f.tags);
     data.connections[idx].color = f.color;
+    f.advanced.apply_to(&mut data.connections[idx]);
     let updated = data.connections[idx].clone();
 
     // If the credential changed and the old one was private, check whether it
@@ -408,11 +561,123 @@ fn normalize_remote_path(value: Option<String>) -> Option<String> {
     normalize_optional_text(value).map(|path| path.replace('\\', "/"))
 }
 
+/// A folder path as stored: `/`-separated segments, each trimmed, with no
+/// empty segment (`" prod / eu/ "` becomes `prod/eu`; a blank path is unset).
+fn normalize_folder(value: Option<String>) -> Option<String> {
+    let segments: Vec<&str> = value
+        .as_deref()
+        .unwrap_or_default()
+        .split(['/', '\\'])
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .collect();
+    if segments.is_empty() {
+        None
+    } else {
+        Some(segments.join("/"))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::models::{Connection, ConnectionKind, Credential, CredentialKind};
     use crate::storage::test_support::with_isolated_data_dir;
+
+    fn remote_forward(gateway_credential_id: &str) -> ConnectionKind {
+        ConnectionKind::RemoteForward {
+            gateway_host: "bastion".to_string(),
+            gateway_port: 22,
+            gateway_credential_id: gateway_credential_id.to_string(),
+            remote_port: 9000,
+            destination_host: "127.0.0.1".to_string(),
+            destination_port: 3000,
+        }
+    }
+
+    fn dynamic_forward(gateway_credential_id: &str) -> ConnectionKind {
+        ConnectionKind::DynamicForward {
+            gateway_host: "bastion".to_string(),
+            gateway_port: 22,
+            gateway_credential_id: gateway_credential_id.to_string(),
+            local_port: 1080,
+        }
+    }
+
+    #[test]
+    fn test_kind_validation_accepts_complete_kinds() {
+        assert!(validate_connection_kind(&ConnectionKind::Direct).is_ok());
+        assert!(validate_connection_kind(&remote_forward("cred")).is_ok());
+        assert!(validate_connection_kind(&dynamic_forward("cred")).is_ok());
+    }
+
+    #[test]
+    fn test_kind_validation_refuses_blank_hosts_and_port_zero() {
+        let mut blank_gateway = remote_forward("cred");
+        if let ConnectionKind::RemoteForward { gateway_host, .. } = &mut blank_gateway {
+            *gateway_host = "  ".to_string();
+        }
+        assert_eq!(
+            validate_connection_kind(&blank_gateway).unwrap_err(),
+            "SSH server host is required"
+        );
+
+        let mut no_remote_port = remote_forward("cred");
+        if let ConnectionKind::RemoteForward { remote_port, .. } = &mut no_remote_port {
+            *remote_port = 0;
+        }
+        assert_eq!(
+            validate_connection_kind(&no_remote_port).unwrap_err(),
+            "Remote port must be between 1 and 65535"
+        );
+
+        let mut no_local_port = dynamic_forward("cred");
+        if let ConnectionKind::DynamicForward { local_port, .. } = &mut no_local_port {
+            *local_port = 0;
+        }
+        assert_eq!(
+            validate_connection_kind(&no_local_port).unwrap_err(),
+            "Local port must be between 1 and 65535"
+        );
+    }
+
+    #[test]
+    fn test_advanced_validation_bounds_the_options() {
+        let valid = ConnectionAdvanced {
+            keepalive_interval: Some(0),
+            font_size: Some(14),
+            font_family: Some("JetBrains Mono".to_string()),
+            color_scheme: Some("  ".to_string()),
+            folder: Some("prod/eu".to_string()),
+            ..ConnectionAdvanced::default()
+        };
+        assert!(valid.validate().is_ok());
+
+        for invalid in [
+            ConnectionAdvanced {
+                keepalive_interval: Some(3601),
+                ..ConnectionAdvanced::default()
+            },
+            ConnectionAdvanced {
+                font_size: Some(0),
+                ..ConnectionAdvanced::default()
+            },
+            ConnectionAdvanced {
+                font_family: Some("x".repeat(129)),
+                ..ConnectionAdvanced::default()
+            },
+            ConnectionAdvanced {
+                color_scheme: Some("blue\n".to_string()),
+                ..ConnectionAdvanced::default()
+            },
+            ConnectionAdvanced {
+                folder: Some("y".repeat(513)),
+                ..ConnectionAdvanced::default()
+            },
+        ] {
+            assert!(invalid.validate().is_err(), "{invalid:?}");
+        }
+    }
 
     fn password_credential(name: &str) -> Credential {
         Credential::new(
@@ -459,7 +724,78 @@ mod tests {
             remote_path: None,
             tags: Vec::new(),
             color: None,
+            advanced: ConnectionAdvanced::default(),
         }
+    }
+
+    #[test]
+    fn test_validate_credentials_for_new_forward_kinds_needs_only_the_gateway() {
+        let creds = vec![password_credential("a")];
+        let id = creds[0].id.as_str();
+        for make in [remote_forward, dynamic_forward] {
+            assert!(validate_connection_credentials(&creds, None, &make(id)).is_ok());
+            assert_eq!(
+                validate_connection_credentials(&creds, None, &make("")),
+                Err("SSH server credential is required".to_string())
+            );
+            assert_eq!(
+                validate_connection_credentials(&creds, None, &make("gone")),
+                Err("The selected SSH server credential no longer exists".to_string())
+            );
+        }
+    }
+
+    #[test]
+    fn test_folder_paths_are_normalized() {
+        assert_eq!(normalize_folder(None), None);
+        assert_eq!(normalize_folder(Some("  ".into())), None);
+        assert_eq!(normalize_folder(Some("/prod/".into())), Some("prod".into()));
+        assert_eq!(
+            normalize_folder(Some(" prod / eu//west ".into())),
+            Some("prod/eu/west".into())
+        );
+        assert_eq!(
+            normalize_folder(Some("prod\\eu".into())),
+            Some("prod/eu".into())
+        );
+    }
+
+    #[test]
+    fn test_advanced_options_are_saved_and_updated() {
+        with_isolated_data_dir(|| {
+            let cred = password_credential("a");
+            store_credential(&cred);
+            let mut fields = direct_fields(Some(cred.id.clone()));
+            fields.advanced = ConnectionAdvanced {
+                agent_forwarding: true,
+                keepalive_interval: Some(10),
+                auto_reconnect: Some(false),
+                log_session: Some(true),
+                font_family: Some(" Fira Code ".into()),
+                font_size: Some(16),
+                color_scheme: Some("".into()),
+                folder: Some("prod/eu/".into()),
+            };
+            let conn = add_connection_sync(AddConnectionInput { fields }).unwrap();
+            assert!(conn.agent_forwarding);
+            assert_eq!(conn.keepalive_interval, Some(10));
+            assert_eq!(conn.auto_reconnect, Some(false));
+            assert_eq!(conn.log_session, Some(true));
+            assert_eq!(conn.font_family.as_deref(), Some("Fira Code"));
+            assert_eq!(conn.font_size, Some(16));
+            assert_eq!(conn.color_scheme, None);
+            assert_eq!(conn.folder.as_deref(), Some("prod/eu"));
+
+            // An update without the options clears them, like every other field.
+            let updated = update_connection_sync(UpdateConnectionInput {
+                id: conn.id.clone(),
+                fields: direct_fields(Some(cred.id.clone())),
+            })
+            .unwrap();
+            assert!(!updated.agent_forwarding);
+            assert_eq!(updated.keepalive_interval, None);
+            assert_eq!(updated.folder, None);
+        });
     }
 
     #[test]

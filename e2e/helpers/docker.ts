@@ -47,7 +47,7 @@ export interface SshTarget {
  */
 const inside = process.env.E2E_INSIDE_DOCKER === "1";
 
-export const TARGETS: Record<"a" | "b" | "c" | "d", SshTarget> = {
+export const TARGETS: Record<"a" | "b" | "c" | "d" | "e", SshTarget> = {
   a: {
     host: inside ? "server-a" : "127.0.0.1",
     probeHost: inside ? "server-a" : "127.0.0.1",
@@ -65,11 +65,11 @@ export const TARGETS: Record<"a" | "b" | "c" | "d", SshTarget> = {
     password: "passb",
   },
   c: {
-    // server-c is on a private docker network only — never published
-    // on the host. It's only reachable through a jump host (server-a),
-    // so `host` stays as the docker hostname even outside docker. The
-    // probe checks the published 2203 port, which proves only that the
-    // server is up; actual dialling happens via server-a.
+    // server-c is on a private docker network only, so Docker publishes
+    // nothing for it and 2203 has no listener on the host. It's only
+    // reachable through a jump host (server-a), so `host` stays as the
+    // docker hostname even outside docker. Only the dockerized runner can
+    // probe it; see REACHABLE_TARGETS.
     host: "server-c",
     probeHost: inside ? "server-c" : "127.0.0.1",
     probePort: inside ? 22 : 2203,
@@ -78,12 +78,23 @@ export const TARGETS: Record<"a" | "b" | "c" | "d", SshTarget> = {
     password: "passc",
   },
   d: {
+    // Same as server-c: private network only, not probeable from the host.
     host: "server-d",
     probeHost: inside ? "server-d" : "127.0.0.1",
     probePort: inside ? 22 : 2204,
     sshPort: 22,
     user: "userd",
     password: "passd",
+  },
+  e: {
+    // Keyboard-interactive only: `password` answers PAM's "Password:" prompt;
+    // the password auth method itself is refused.
+    host: inside ? "server-e" : "127.0.0.1",
+    probeHost: inside ? "server-e" : "127.0.0.1",
+    probePort: inside ? 22 : 2205,
+    sshPort: inside ? 22 : 2205,
+    user: "usere",
+    password: "passe",
   },
 };
 
@@ -104,13 +115,18 @@ function tcpPing(host: string, port: number, timeoutMs = 1000): Promise<boolean>
   });
 }
 
+/** The targets this test process can reach directly. */
+const REACHABLE_TARGETS: ReadonlyArray<keyof typeof TARGETS> = inside
+  ? ["a", "b", "c", "d", "e"]
+  : ["a", "b", "e"];
+
 /**
  * Block until every named target's sshd is accepting connections.
  * Throws after `totalTimeoutMs` so a stuck container doesn't make
  * the test hang silently.
  */
 export async function waitForServers(
-  keys: ReadonlyArray<keyof typeof TARGETS> = ["a", "b", "c", "d"],
+  keys: ReadonlyArray<keyof typeof TARGETS> = REACHABLE_TARGETS,
   totalTimeoutMs = 60_000,
 ): Promise<void> {
   const deadline = Date.now() + totalTimeoutMs;

@@ -6,11 +6,19 @@ services:
         USER_NAME: usera
         USER_PASS: passa
     hostname: server-a
+    # Set here, not in the shared Dockerfile: only server-a is the fixture for
+    # remote forwards (ssh -R), whose clients choose the address to bind.
+    command:
+      - /usr/sbin/sshd
+      - -D
+      - -e
+      - -o
+      - GatewayPorts=clientspecified
     networks:
       - public
       - private_a
     ports:
-      - "2201:22"
+      - "${SSIX_PORT_PREFIX:-220}1:22"
     healthcheck:
       # busybox nc on alpine: -z probes the port without sending data.
       # Used by `docker compose up --wait` so CI / E2E doesn't race sshd
@@ -32,7 +40,7 @@ services:
       - public
       - private_b
     ports:
-      - "2202:22"
+      - "${SSIX_PORT_PREFIX:-220}2:22"
     healthcheck:
       test: ["CMD", "nc", "-z", "localhost", "22"]
       interval: 2s
@@ -50,7 +58,7 @@ services:
     networks:
       - private_a
     ports:
-      - "2203:22"
+      - "${SSIX_PORT_PREFIX:-220}3:22"
     healthcheck:
       test: ["CMD", "nc", "-z", "localhost", "22"]
       interval: 2s
@@ -68,7 +76,28 @@ services:
     networks:
       - private_b
     ports:
-      - "2204:22"
+      - "${SSIX_PORT_PREFIX:-220}4:22"
+    healthcheck:
+      test: ["CMD", "nc", "-z", "localhost", "22"]
+      interval: 2s
+      timeout: 2s
+      retries: 15
+      start_period: 2s
+
+  # Keyboard-interactive only: the "Password:" prompt comes from PAM, and the
+  # password method is off. The fixture for prompts answered in the terminal.
+  server-e:
+    build:
+      context: .
+      dockerfile: Dockerfile.kbdint
+      args:
+        USER_NAME: usere
+        USER_PASS: passe
+    hostname: server-e
+    networks:
+      - public
+    ports:
+      - "${SSIX_PORT_PREFIX:-220}5:22"
     healthcheck:
       test: ["CMD", "nc", "-z", "localhost", "22"]
       interval: 2s
@@ -85,7 +114,7 @@ services:
   # or via `npm run e2e`.
   #
   # Attached to all three networks so it can reach every server by
-  # hostname (server-a..d). Cargo registry, target/ and node_modules
+  # hostname (server-a..e). Cargo registry, target/ and node_modules
   # live in named volumes so warm rebuilds stay fast.
   # ---------------------------------------------------------------------
   e2e-runner:
@@ -114,6 +143,8 @@ services:
       server-c:
         condition: service_healthy
       server-d:
+        condition: service_healthy
+      server-e:
         condition: service_healthy
 
 networks:

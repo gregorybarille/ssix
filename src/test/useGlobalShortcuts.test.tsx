@@ -4,7 +4,12 @@ import {
   useGlobalShortcuts,
   isTypingSurface,
   blockedByTypingSurface,
+  SHORTCUTS,
+  TABLE_SHORTCUTS,
 } from "@/hooks/useGlobalShortcuts";
+import { useDialogsStore } from "@/store/useDialogsStore";
+import { useTerminalsStore } from "@/store/useTerminalsStore";
+import { useViewStore } from "@/store/useViewStore";
 
 // Mirror the same platform detection used by the hook so tests are
 // platform-independent: on macOS jsdom/CI the mod key is Meta, elsewhere Ctrl.
@@ -134,5 +139,49 @@ describe("useGlobalShortcuts", () => {
     // On any platform a Ctrl+Cmd combo is unusual; we don't want to claim it.
     dispatch({ key: "k", ctrlKey: true, metaKey: true });
     expect(onK).not.toHaveBeenCalled();
+  });
+});
+
+describe("shortcut table", () => {
+  it("has one row per combo, each described", () => {
+    const combos = SHORTCUTS.map((s) => s.combo);
+    expect(new Set(combos).size).toBe(combos.length);
+    for (const shortcut of SHORTCUTS) expect(shortcut.description).not.toBe("");
+  });
+
+  it("mod+k opens the quick connect picker", () => {
+    renderHook(() => useGlobalShortcuts(TABLE_SHORTCUTS));
+    useDialogsStore.getState().setPickerOpen(false);
+    dispatch({ key: "k", [MOD]: true });
+    expect(useDialogsStore.getState().pickerOpen).toBe(true);
+    useDialogsStore.getState().setPickerOpen(false);
+  });
+
+  it("mod+comma opens settings", () => {
+    renderHook(() => useGlobalShortcuts(TABLE_SHORTCUTS));
+    useViewStore.setState({ view: "connections", leaveGuard: null });
+    dispatch({ key: ",", [MOD]: true });
+    expect(useViewStore.getState().view).toBe("settings");
+    useViewStore.setState({ view: "connections" });
+  });
+
+  it("mod+1 to mod+9 select the matching terminal tab", () => {
+    const selectTabByIndex = vi.fn();
+    const original = useTerminalsStore.getState().selectTabByIndex;
+    useTerminalsStore.setState({ selectTabByIndex });
+    renderHook(() => useGlobalShortcuts(TABLE_SHORTCUTS));
+    dispatch({ key: "1", [MOD]: true });
+    dispatch({ key: "9", [MOD]: true });
+    expect(selectTabByIndex.mock.calls).toEqual([[0], [8]]);
+    useTerminalsStore.setState({ selectTabByIndex: original });
+  });
+
+  it("lets a map passed to the hook override a table row", () => {
+    const override = vi.fn();
+    renderHook(() => useGlobalShortcuts({ ...TABLE_SHORTCUTS, "mod+k": override }));
+    useDialogsStore.getState().setPickerOpen(false);
+    dispatch({ key: "k", [MOD]: true });
+    expect(override).toHaveBeenCalledTimes(1);
+    expect(useDialogsStore.getState().pickerOpen).toBe(false);
   });
 });

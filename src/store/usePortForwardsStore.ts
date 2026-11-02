@@ -2,6 +2,7 @@ import { errorMessage } from "@/lib/errors";
 import { create } from "zustand";
 import { invoke } from "@/lib/tauri";
 import { log as appLog } from "@/lib/log";
+import { isForwardConnection } from "@/lib/sshTerms";
 import { createOutputChannel } from "@/lib/terminalOutput";
 import type { Connection } from "@/types";
 import type { ForwardSession } from "@/components/PortForwardsView";
@@ -23,7 +24,7 @@ const cancelled: Set<string> = new Set();
 interface PortForwardsState {
   sessions: ForwardSession[];
   /**
-   * Start a local forward (`ssh -L`) for a port_forward connection.
+   * Start a forward for a connection of any forward kind.
    * Routes the user to the port forwards view immediately and inserts a placeholder session
    * that flips to either "connected" (success), "error" (failure),
    * or simply disappears (user cancelled before the IPC resolved).
@@ -42,14 +43,13 @@ export const usePortForwardsStore = create<PortForwardsState>((set, get) => ({
   sessions: [],
 
   startForward: async (conn) => {
-    // Audit-4 Phase 4b: forwards are only meaningful for port_forward
-    // connections. The picker filters by kind === "port_forward" but
-    // we assert here so the discriminated `connection` field on the
+    // Audit-4 Phase 4b: forwards are only meaningful for forward kinds.
+    // We assert here so the discriminated `connection` field on the
     // resulting ForwardSession is correctly narrowed.
-    if (conn.type !== "port_forward") {
+    if (!isForwardConnection(conn)) {
       appLog.error(
         "forward",
-        `Refusing to start a forward for non-port_forward connection ${conn.name}`,
+        `Refusing to start a forward for non-forward connection ${conn.name}`,
       );
       return;
     }

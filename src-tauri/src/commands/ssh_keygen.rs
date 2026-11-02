@@ -349,6 +349,9 @@ fn derive_public_key_for_credential(credential_id: &str) -> Result<String, Strin
         CredentialKind::Password { .. } => {
             Err("This credential is a password, not an SSH key".to_string())
         }
+        CredentialKind::Agent {} => {
+            Err("This credential uses the SSH agent; its public key is not stored here".to_string())
+        }
         CredentialKind::SshKey {
             private_key,
             private_key_path,

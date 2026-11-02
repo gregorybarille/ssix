@@ -1,11 +1,15 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { autoCopySelection } from "@/components/terminal/autoCopySelection";
+import type { TerminalExtensionContext } from "@/components/terminal/extensions";
+import type { AppSettings } from "@/types";
 
 /**
  * Audit-3 P1#1: Terminal clipboard interactions.
  *
- * The Terminal component uses xterm.js which cannot run in jsdom, so we
- * verify the clipboard integration by exercising the same callbacks that
- * Terminal.tsx wires up. This file pins three behaviors:
+ * The Terminal component uses xterm.js which cannot run in jsdom. Auto-copy
+ * is a terminal extension and is tested directly against a stand-in for
+ * xterm; the keyboard and ssh_write behaviour still live in Terminal.tsx, so
+ * those tests exercise a copy of its callbacks. This file pins three behaviors:
  *
  *   1. Auto-copy on selection is OPT-IN (gated on
  *      `settings.auto_copy_selection`). The default (false) MUST NOT
@@ -47,65 +51,87 @@ describe("Terminal — auto-copy on selection (opt-in)", () => {
   });
 
   /**
-   * Mirrors the `onSelectionChange` body in `src/components/Terminal.tsx`:
-   *   if (!autoCopyEnabledRef.current) return;
-   *   const sel = term.getSelection();
-   *   if (sel) navigator.clipboard.writeText(sel)...
-   * The ref dereference is the part we care about — without it, every
-   * highlight clobbers the system clipboard.
+   * Runs the real extension against a stand-in for xterm. `settings` is what
+   * the terminal's context would hand out at that moment, so changing it
+   * models the setting being toggled while the terminal stays mounted.
    */
-  function makeSelectionHandler(opts: {
-    autoCopyEnabled: { current: boolean };
+  function mountExtension(opts: {
+    settings: { current: Pick<AppSettings, "auto_copy_selection"> | undefined };
     getSelection: () => string;
   }) {
-    return () => {
-      if (!opts.autoCopyEnabled.current) return;
-      const sel = opts.getSelection();
-      if (sel) {
-        navigator.clipboard.writeText(sel).catch(() => {});
-      }
-    };
+    let onSelection: () => void = () => {};
+    const dispose = vi.fn();
+    const ctx = {
+      term: {
+        getSelection: opts.getSelection,
+        onSelectionChange: (listener: () => void) => {
+          onSelection = listener;
+          return { dispose };
+        },
+      },
+      sessionId: "s1",
+      get settings() {
+        return opts.settings.current;
+      },
+    } as unknown as TerminalExtensionContext;
+    const cleanup = autoCopySelection.onCreate?.(ctx);
+    return { select: () => onSelection(), cleanup, dispose };
   }
 
   it("does NOT write to clipboard when auto-copy is disabled (default)", () => {
-    const handler = makeSelectionHandler({
-      autoCopyEnabled: { current: false },
+    const { select } = mountExtension({
+      settings: { current: { auto_copy_selection: false } },
       getSelection: () => "highlighted but should NOT be copied",
     });
-    handler();
+    select();
+    expect(navigator.clipboard.writeText).not.toHaveBeenCalled();
+  });
+
+  it("does NOT write to clipboard before settings are known", () => {
+    const { select } = mountExtension({
+      settings: { current: undefined },
+      getSelection: () => "highlighted but should NOT be copied",
+    });
+    select();
     expect(navigator.clipboard.writeText).not.toHaveBeenCalled();
   });
 
   it("writes to clipboard when auto-copy is enabled and selection non-empty", () => {
-    const handler = makeSelectionHandler({
-      autoCopyEnabled: { current: true },
+    const { select } = mountExtension({
+      settings: { current: { auto_copy_selection: true } },
       getSelection: () => "selected text",
     });
-    handler();
+    select();
     expect(navigator.clipboard.writeText).toHaveBeenCalledWith("selected text");
   });
 
   it("does not write when auto-copy enabled but selection is empty", () => {
-    const handler = makeSelectionHandler({
-      autoCopyEnabled: { current: true },
+    const { select } = mountExtension({
+      settings: { current: { auto_copy_selection: true } },
       getSelection: () => "",
     });
-    handler();
+    select();
     expect(navigator.clipboard.writeText).not.toHaveBeenCalled();
   });
 
-  it("respects live updates to the ref (no remount required)", () => {
-    const ref = { current: false };
-    const handler = makeSelectionHandler({
-      autoCopyEnabled: ref,
-      getSelection: () => "x",
-    });
-    handler();
+  it("respects live updates to the setting (no remount required)", () => {
+    const settings = { current: { auto_copy_selection: false } };
+    const { select } = mountExtension({ settings, getSelection: () => "x" });
+    select();
     expect(navigator.clipboard.writeText).not.toHaveBeenCalled();
     // User flips the setting — next selection should copy.
-    ref.current = true;
-    handler();
+    settings.current = { auto_copy_selection: true };
+    select();
     expect(navigator.clipboard.writeText).toHaveBeenCalledWith("x");
+  });
+
+  it("releases the selection listener when the terminal goes away", () => {
+    const { cleanup, dispose } = mountExtension({
+      settings: { current: { auto_copy_selection: true } },
+      getSelection: () => "x",
+    });
+    if (cleanup) cleanup();
+    expect(dispose).toHaveBeenCalledTimes(1);
   });
 });
 

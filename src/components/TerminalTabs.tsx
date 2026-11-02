@@ -93,6 +93,7 @@ function PaneRenderer({
       isVisible={isVisible}
       onDisconnect={onClose}
       settings={settings}
+      connection={session.connection}
     />
   );
 }

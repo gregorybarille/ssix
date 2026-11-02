@@ -1,5 +1,6 @@
 import { useMemo, useState } from "react";
-import { Connection, Credential } from "@/types";
+import { Connection, Credential, ForwardConnection } from "@/types";
+import { forwardEndpoint, hopTerms, isForwardConnection } from "@/lib/sshTerms";
 import { Button } from "./ui/button";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { Cable, ChevronDown, ChevronRight, Copy, Pencil, Play, Trash2, X } from "lucide-react";
@@ -9,9 +10,9 @@ export interface ForwardSession {
   sessionId: string;
   connectionName: string;
   // Audit-4 Phase 4b: a forward session is, by construction, only ever
-  // started for a port_forward connection. Narrow at the source so the
+  // started for a forward connection. Narrow at the source so the
   // row's prop type doesn't need a runtime guard.
-  connection: Extract<Connection, { type: "port_forward" }>;
+  connection: ForwardConnection;
   error?: string;
   retrying?: boolean;
 }
@@ -37,7 +38,7 @@ export function PortForwardsView({
   onDelete,
   onClone,
 }: PortForwardsViewProps) {
-  const forwardDefs = connections.filter((c) => c.type === "port_forward");
+  const forwardDefs = connections.filter(isForwardConnection);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   /*
    * Audit-2 #2: stopping a live forward is destructive — every TCP
@@ -64,7 +65,7 @@ export function PortForwardsView({
     return map;
   }, [sessions]);
 
-  const getLatestSession = (conn: Extract<Connection, { type: "port_forward" }>) =>
+  const getLatestSession = (conn: ForwardConnection) =>
     latestSessionByConnectionId.get(conn.id) ?? null;
 
   const getStatus = (session: ForwardSession | null) => {
@@ -152,7 +153,7 @@ export function PortForwardsView({
                       <span className="min-w-0">
                         <span className="block truncate text-sm font-medium">{conn.name}</span>
                         <span className="block truncate text-xs text-muted-foreground">
-                          127.0.0.1:{conn.local_port} → {conn.destination_host}:{conn.destination_port}
+                          {forwardEndpoint(conn)}
                         </span>
                       </span>
                     </button>
@@ -198,10 +199,16 @@ export function PortForwardsView({
                         <dd>{conn.gateway_host}:{conn.gateway_port}</dd>
                         <dt className="text-muted-foreground">Credential</dt>
                         <dd>{getCredentialName(conn.gateway_credential_id)}</dd>
-                        <dt className="text-muted-foreground">Remote</dt>
-                        <dd>{conn.destination_host}:{conn.destination_port}</dd>
-                        <dt className="text-muted-foreground">Local port</dt>
-                        <dd>{conn.local_port}</dd>
+                        {conn.type !== "dynamic_forward" && (
+                          <>
+                            <dt className="text-muted-foreground">{hopTerms(conn.type).target}</dt>
+                            <dd>{conn.destination_host}:{conn.destination_port}</dd>
+                          </>
+                        )}
+                        <dt className="text-muted-foreground">
+                          {conn.type === "remote_forward" ? "Remote port" : "Local port"}
+                        </dt>
+                        <dd>{conn.type === "remote_forward" ? conn.remote_port : conn.local_port}</dd>
                         {session?.error && (
                           <>
                             <dt className="text-muted-foreground">Error</dt>

@@ -1,10 +1,11 @@
 use crate::commands::blocking;
+use crate::forwards::start_port_forward;
 use crate::keychain;
 use crate::models::{Connection, ConnectionKind, Credential, CredentialKind};
 use crate::ssh::{
     bridge_via_jump_host, build_startup_command, open_authenticated_session,
-    open_authenticated_session_over_stream, start_jump_shell, start_port_forward,
-    start_ssh_session, AuthMethod, Endpoint, SessionContext, SessionMsg, ShellOptions, SshState,
+    open_authenticated_session_over_stream, start_jump_shell, start_ssh_session, AuthMethod,
+    Endpoint, SessionContext, SessionMsg, ShellOptions, SshState,
 };
 use crate::storage;
 use tauri::ipc::{Channel, InvokeResponseBody};
@@ -44,6 +45,7 @@ pub(crate) fn resolve_credential(
                 ));
             }
         },
+        CredentialKind::Agent {} => AuthMethod::Agent,
     };
     Ok((username, auth))
 }
@@ -156,7 +158,10 @@ pub(crate) fn connect_session(
                 ),
             })
         }
-        ConnectionKind::PortForward { .. } | ConnectionKind::LegacyTunnel { .. } => Err(format!(
+        ConnectionKind::PortForward { .. }
+        | ConnectionKind::RemoteForward { .. }
+        | ConnectionKind::DynamicForward { .. }
+        | ConnectionKind::LegacyTunnel { .. } => Err(format!(
             "{} is only available for direct and jump host connections",
             feature
         )),
@@ -253,6 +258,13 @@ pub async fn ssh_connect(
                 dest_cred_id,
             )?;
             start_jump_shell(gateway, destination, opts, ctx)
+        }
+        // Data-only until the forwards stream lands (docs/roadmap.md).
+        ConnectionKind::RemoteForward { .. } => {
+            Err("Remote forwards (ssh -R) are not supported yet".to_string())
+        }
+        ConnectionKind::DynamicForward { .. } => {
+            Err("Dynamic forwards (ssh -D) are not supported yet".to_string())
         }
         ConnectionKind::LegacyTunnel { .. } => Err(
             "Legacy tunnel connection encountered after migration. Please re-save this connection."
