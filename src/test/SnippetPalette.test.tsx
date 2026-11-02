@@ -79,6 +79,14 @@ const variable = (name: string) =>
   document.querySelector<HTMLInputElement>(`[data-testid="snippet-variable"][data-name="${name}"]`);
 const paletteOpen = () => useSnippetsStore.getState().paletteOpen;
 
+/** Choosing a snippet sends nothing, and the palette stays open and says why. */
+function expectChoosingRefused(message: string) {
+  fireEvent.keyDown(search(), { key: "Enter" });
+  expect(writes()).toEqual([]);
+  expect(paletteOpen()).toBe(true);
+  expect(screen.getByTestId("snippet-palette-error")).toHaveTextContent(message);
+}
+
 describe("SnippetPalette", () => {
   beforeEach(() => {
     mockInvoke.mockReset();
@@ -331,10 +339,7 @@ describe("SnippetPalette", () => {
       await openPalette();
       expect(screen.getByTestId("snippet-palette-error")).toHaveTextContent(RECONNECTING_MESSAGE);
 
-      fireEvent.keyDown(search(), { key: "Enter" });
-      expect(writes()).toEqual([]);
-      expect(paletteOpen()).toBe(true);
-      expect(screen.getByTestId("snippet-palette-error")).toHaveTextContent(RECONNECTING_MESSAGE);
+      expectChoosingRefused(RECONNECTING_MESSAGE);
     });
 
     it("pastes into the healthy pane beside it, and names that one", async () => {
@@ -369,10 +374,7 @@ describe("SnippetPalette", () => {
 
     it("stays open and sends nothing when a snippet is chosen", async () => {
       await openPalette();
-      fireEvent.keyDown(search(), { key: "Enter" });
-      expect(writes()).toEqual([]);
-      expect(paletteOpen()).toBe(true);
-      expect(screen.getByTestId("snippet-palette-error")).toHaveTextContent(NO_TERMINAL_MESSAGE);
+      expectChoosingRefused(NO_TERMINAL_MESSAGE);
     });
 
     it("does not ask for values it could not use", async () => {
