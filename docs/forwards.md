@@ -103,7 +103,10 @@ it does not read the connection's keepalive setting.
 - **One channel open at a time per session.** libssh2 keeps the state of an open
   on the session, so concurrent opens would get each other's replies. They are
   queued, which means a destination the server takes long to answer holds up
-  other clients of the same forward, for up to 15 s each.
+  other clients of the same forward, for up to 15 s each. Several unreachable
+  destinations can therefore delay the others by several times 15 s, and a
+  confirmation that arrives after its 15 s leaves a channel open on the server
+  until the session ends.
 - **Closing is not half-closing.** When a client closes its side, the channel
   closes in both directions, so a protocol that keeps reading after sending EOF
   loses the rest. This is how `forward_bidi` has always worked.
