@@ -36,6 +36,19 @@ export interface ShortcutBinding {
 }
 export type ShortcutMap = Record<string, ShortcutHandler | ShortcutBinding>;
 
+const isMac = (() => {
+  if (typeof navigator === "undefined") return false;
+  return /Mac|iPhone|iPad|iPod/i.test(navigator.platform || "");
+})();
+
+/**
+ * What opens the find bar. Cmd+F is nobody else's on macOS. Elsewhere Ctrl+F is
+ * the shell's ("forward one character" in readline) and that of programs such as
+ * `less` and `vim`, so it stays theirs and this takes Ctrl+Shift+F.
+ */
+export const findCombo = (mac: boolean): string => (mac ? "mod+f" : "mod+shift+f");
+export const FIND_COMBO = findCombo(isMac);
+
 /** One row of the shortcut table. */
 export interface ShortcutEntry extends ShortcutBinding {
   /** Normalized as described above, e.g. `"mod+shift+n"`. */
@@ -77,11 +90,11 @@ export const SHORTCUTS: readonly ShortcutEntry[] = [
   },
   // roadmap:terminal-ux
   {
-    combo: "mod+f",
+    combo: FIND_COMBO,
     description: "Find in the visible terminal",
     handler: () => useTerminalSearchStore.getState().open(),
-    // Its main use is from inside a terminal, where this takes Ctrl+F from the
-    // shell on Linux and Windows: `terminalSearch.ts` keeps the key from xterm.
+    // Its main use is from inside a terminal: `terminalSearch.ts` keeps the key
+    // from the program in it.
     allowInTypingSurface: true,
   },
 ];
@@ -93,11 +106,6 @@ export const TABLE_SHORTCUTS: ShortcutMap = Object.fromEntries(
     { handler, allowInTypingSurface },
   ]),
 );
-
-const isMac = (() => {
-  if (typeof navigator === "undefined") return false;
-  return /Mac|iPhone|iPad|iPod/i.test(navigator.platform || "");
-})();
 
 /**
  * Whether a shortcut must stay out of the focused typing surface.

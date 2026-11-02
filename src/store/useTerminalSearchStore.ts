@@ -4,7 +4,7 @@ import { activeSessionId } from "@/lib/terminalRegistry";
 import { clearTerminalSearch, focusSearchablePane } from "@/lib/terminalSearch";
 
 /**
- * The terminal find bar (Mod+F). One pane at a time has it open, and only a
+ * The terminal find bar (`FIND_COMBO`). One pane at a time has it open, and only a
  * pane the user can see: the bar closes when its pane is hidden.
  */
 interface TerminalSearchState {

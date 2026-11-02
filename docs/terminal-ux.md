@@ -32,7 +32,8 @@ on running.
 
 ## Find
 
-`Mod+F` opens the find bar on the visible pane that last had the keyboard.
+`Cmd+F` on macOS, or `Ctrl+Shift+F` on Linux and Windows, opens the find bar on the
+visible pane that last had the keyboard.
 
 | Key | Action |
 |---|---|
@@ -40,16 +41,14 @@ on running.
 | `Shift+Enter` | Previous match |
 | `Escape` | Close, and give the keyboard back to the terminal |
 
-`Mod+F` again brings the keyboard back to an open bar. It does nothing outside
+The same shortcut again brings the keyboard back to an open bar. It does nothing outside
 the Terminals view or while a side panel is open, and the bar closes when its
 pane is hidden. It says how many matches there are, up to 1000 (it can still move
 beyond those), and **No matches** in words. It covers a corner of the pane rather
 than taking a row, which would resize the session for the length of a search.
 
-**On Linux and Windows this takes `Ctrl+F` from the shell**, where it is readline's
-"forward one character", and from programs such as `less` or `vim`. It never
-reaches them, so use the right arrow there. It is the one exception to `Ctrl`
-combos passing through to a terminal. On macOS `Cmd+F` was never the shell's.
+`Ctrl+F` stays with the terminal on every platform: it is readline's "forward one
+character", and programs such as `less` and `vim` have their own use for it.
 
 While the bar is open, moving between matches does not trigger
 **auto-copy on selection**.
@@ -142,5 +141,5 @@ if they differ.
 Extensions see a terminal once it exists, and cannot change how it is mounted.
 So `Terminal.tsx` itself holds what depends on visibility: fitting, focus, refusing
 keys off screen, the deferred question about an ended shell, and applying the
-look. It also calls the `onKey` hook, which is how `terminalSearch` keeps `Mod+F`
+look. It also calls the `onKey` hook, which is how `terminalSearch` keeps its shortcut
 from xterm: xterm handles a key before the window's shortcut listener sees it.

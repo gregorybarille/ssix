@@ -2,7 +2,7 @@
  * Spec 20: the terminal beyond a plain shell.
  *
  *   • it keeps its scrollback and session across views, off screen;
- *   • find in the scrollback (Ctrl+F);
+ *   • find in the scrollback (Ctrl+Shift+F);
  *   • links, which come from output and so are not to be trusted;
  *   • broadcast input across the panes of a tab;
  *   • a connection's own font and colours.
@@ -152,7 +152,7 @@ async function typeIn(id: string, text: string): Promise<void> {
   await press(text);
 }
 
-const findShortcut = () => browser.keys(["Control", "f"]);
+const findShortcut = () => browser.keys(["Control", "Shift", "f"]);
 
 async function expectGone(selector: string): Promise<void> {
   await browser.pause(SETTLE_MS);
@@ -229,7 +229,7 @@ async function waitForSearchInputFocus(): Promise<void> {
   );
 }
 
-/** Ctrl+F to the find bar, Escape out of it, and the keyboard is back in the terminal. */
+/** The shortcut to the find bar, Escape out of it, and the keyboard is back in the terminal. */
 async function openFindThenEscape(id: string): Promise<void> {
   await findShortcut();
   await waitForSearchInputFocus();
@@ -415,7 +415,7 @@ describe("Terminal UX", () => {
       await waitForText(id, "BACK-42");
     });
 
-    it("keeps Ctrl+F from the program in the terminal", async () => {
+    it("keeps its shortcut from the program in the terminal, and leaves Ctrl+F to it", async () => {
       await createConnectionA("conn-20-find-key");
       const id = await openShell("conn-20-find-key");
       await typeIn(id, "cat -v\n");
@@ -425,6 +425,12 @@ describe("Terminal UX", () => {
       await press("MARK\n");
       await waitForText(id, "MARK\nMARK");
       expect(await textOf(id)).not.toContain("^F");
+      expect(await textOf(id)).not.toContain("^[");
+
+      await browser.keys(["Control", "f"]);
+      await press("\n");
+      await waitForText(id, "^F");
+      await expectGone(sel.terminalSearch);
       await browser.keys(["Control", "d"]);
     });
 

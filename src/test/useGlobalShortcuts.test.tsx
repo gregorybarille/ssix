@@ -7,6 +7,8 @@ import {
   isTypingSurface,
   blockedByTypingSurface,
   SHORTCUTS,
+  FIND_COMBO,
+  findCombo,
   TABLE_SHORTCUTS,
 } from "@/hooks/useGlobalShortcuts";
 import { useDialogsStore } from "@/store/useDialogsStore";
@@ -45,8 +47,16 @@ describe("SHORTCUTS", () => {
     expect(combos.filter((combo, i) => combos.indexOf(combo) !== i)).toEqual([]);
   });
 
+  it("takes Cmd+F on macOS and Ctrl+Shift+F elsewhere, clear of every other combo", () => {
+    expect(findCombo(true)).toBe("mod+f");
+    expect(findCombo(false)).toBe("mod+shift+f");
+    const others = SHORTCUTS.map((s) => s.combo).filter((combo) => combo !== FIND_COMBO);
+    expect(others).not.toContain(findCombo(true));
+    expect(others).not.toContain(findCombo(false));
+  });
+
   it("opens the find bar from inside a terminal, the one place it is any use", () => {
-    const find = SHORTCUTS.find((s) => s.combo === "mod+f");
+    const find = SHORTCUTS.find((s) => s.combo === FIND_COMBO);
     expect(find?.allowInTypingSurface).toBe(true);
     useViewStore.setState({ view: "terminals" });
     useTerminalSearchStore.setState({ sessionId: null });

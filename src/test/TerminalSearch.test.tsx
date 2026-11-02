@@ -261,22 +261,47 @@ describe("the find bar", () => {
   });
 });
 
+describe("the find shortcut, per platform", () => {
+  it.each([
+    ["macOS", "MacIntel", { key: "f", metaKey: true }],
+    ["Linux", "Linux x86_64", { key: "F", ctrlKey: true, shiftKey: true }],
+    ["Windows", "Win32", { key: "F", ctrlKey: true, shiftKey: true }],
+  ])("is its own on %s, and Ctrl+F stays the program's", async (_os, platform, find) => {
+    vi.resetModules();
+    const stub = vi.spyOn(navigator, "platform", "get").mockReturnValue(platform);
+    const { normalizeEvent, TABLE_SHORTCUTS } = await import("@/hooks/useGlobalShortcuts");
+    const { terminalSearch: extension } = await import("@/components/terminal/terminalSearch");
+    const ctx = { sessionId: "s1" } as TerminalExtensionContext;
+    const opensFind = (event: KeyboardEvent) =>
+      TABLE_SHORTCUTS[normalizeEvent(event) ?? ""] !== undefined;
+
+    const shortcut = new KeyboardEvent("keydown", find);
+    expect(opensFind(shortcut)).toBe(true);
+    expect(extension.onKey?.(ctx, shortcut)).toBe(false);
+
+    const ctrlF = new KeyboardEvent("keydown", { key: "f", ctrlKey: true });
+    expect(opensFind(ctrlF)).toBe(false);
+    expect(extension.onKey?.(ctx, ctrlF)).toBe(true);
+
+    stub.mockRestore();
+    vi.resetModules();
+  });
+});
+
 describe("the terminal-search extension", () => {
   const IS_MAC = /Mac|iPhone|iPad|iPod/i.test(navigator.platform || "");
-  const mod = IS_MAC ? { metaKey: true } : { ctrlKey: true };
-  const other = IS_MAC ? { ctrlKey: true } : { metaKey: true };
+  const find = IS_MAC ? { key: "f", metaKey: true } : { key: "F", ctrlKey: true, shiftKey: true };
   const ctx = { sessionId: "s1" } as TerminalExtensionContext;
   const passes = (init: KeyboardEventInit) =>
     terminalSearch.onKey?.(ctx, new KeyboardEvent("keydown", init));
 
   it("keeps the find shortcut from xterm and nothing else", () => {
-    expect(passes({ key: "f", ...mod })).toBe(false);
-    expect(passes({ key: "F", ...mod })).toBe(false);
+    expect(passes(find)).toBe(false);
+    expect(passes({ ...find, key: find.key === "f" ? "F" : "f" })).toBe(false);
     expect(passes({ key: "f" })).toBe(true);
-    expect(passes({ key: "f", ...other })).toBe(true);
-    expect(passes({ key: "f", shiftKey: true, ...mod })).toBe(true);
-    expect(passes({ key: "f", altKey: true, ...mod })).toBe(true);
-    expect(passes({ key: "c", ...mod })).toBe(true);
+    expect(passes({ key: "f", ctrlKey: true })).toBe(true);
+    expect(passes({ ...find, altKey: true })).toBe(true);
+    expect(passes({ ...find, key: "c" })).toBe(true);
   });
 
   it("closes its pane's bar and stops taking part when the terminal goes", () => {

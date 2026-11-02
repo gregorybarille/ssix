@@ -100,7 +100,7 @@ const connection = { id: "c1", name: "prod" } as Connection;
 const resizes = () => mocks.invoke.mock.calls.filter(([command]) => command === "ssh_resize");
 const key = (init: KeyboardEventInit, type = "keydown") => new KeyboardEvent(type, init);
 const IS_MAC = /Mac|iPhone|iPad|iPod/i.test(navigator.platform || "");
-const FIND = IS_MAC ? { key: "f", metaKey: true } : { key: "f", ctrlKey: true };
+const FIND = IS_MAC ? { key: "f", metaKey: true } : { key: "F", ctrlKey: true, shiftKey: true };
 
 function stubPaneSize(width: number, height: number) {
   vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(width);
@@ -319,9 +319,10 @@ describe("a terminal off screen", () => {
     expect(term().keyHandler(key({ key: "a" }, "keypress"))).toBe(true);
   });
 
-  it("keeps Mod+F from a visible terminal, so that no program receives it", () => {
+  it("keeps the find shortcut from a visible terminal, and leaves Ctrl+F to the program", () => {
     render(element());
     expect(term().keyHandler(key(FIND))).toBe(false);
+    expect(term().keyHandler(key({ key: "f", ctrlKey: true }))).toBe(true);
   });
 
   it("still writes output that arrives while hidden", () => {

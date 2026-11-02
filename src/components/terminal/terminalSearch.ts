@@ -1,5 +1,5 @@
 import { SearchAddon } from "@xterm/addon-search";
-import { normalizeEvent } from "@/hooks/useGlobalShortcuts";
+import { FIND_COMBO, normalizeEvent } from "@/hooks/useGlobalShortcuts";
 import {
   registerSearchablePane,
   SEARCH_HIGHLIGHT_LIMIT,
@@ -8,14 +8,11 @@ import {
 import { useTerminalSearchStore } from "@/store/useTerminalSearchStore";
 import type { TerminalExtension } from "./extensions";
 
-/** Normalized as in `SHORTCUTS`, which opens the find bar. */
-const FIND_SHORTCUT = "mod+f";
-
 /**
  * Search in a terminal's scrollback. The find bar itself is
- * `TerminalSearchBar`; this gives every terminal its addon, and keeps Mod+F
- * from a program in the terminal: xterm handles keys before the window's
- * shortcut listener sees them, and would send Ctrl+F on to the shell.
+ * `TerminalSearchBar`; this gives every terminal its addon, and keeps the
+ * shortcut from a program in the terminal: xterm handles keys before the
+ * window's shortcut listener sees them.
  */
 export const terminalSearch: TerminalExtension = {
   id: "terminal-search",
@@ -32,6 +29,6 @@ export const terminalSearch: TerminalExtension = {
     };
   },
   onKey(_ctx, event) {
-    return normalizeEvent(event) !== FIND_SHORTCUT;
+    return normalizeEvent(event) !== FIND_COMBO;
   },
 };

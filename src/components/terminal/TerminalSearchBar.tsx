@@ -21,7 +21,7 @@ function resultsLabel(results: SearchResults): string {
 }
 
 /**
- * Find in one pane's scrollback (Mod+F). It docks over a corner of the pane
+ * Find in one pane's scrollback (`FIND_COMBO`). It docks over a corner of the pane
  * rather than taking a row from it, which would resize the session just for a
  * search. Enter goes to the next match, Shift+Enter to the previous, and
  * Escape closes the bar and hands the keyboard back to the terminal.

@@ -607,7 +607,7 @@ macOS and `Ctrl` everywhere else.
 | `Mod+W`        | Close the active terminal tab (with confirm if live)     |
 | `Mod+1`…`Mod+9`| Switch to terminal tab N                                 |
 | `Mod+Shift+S`  | Paste a snippet into the active terminal ([Snippets](snippets.md)) |
-| `Mod+F`        | Find in the visible terminal: see [Terminal UX](terminal-ux.md#find) |
+| `Cmd+F` on macOS, `Ctrl+Shift+F` elsewhere | Find in the visible terminal: see [Terminal UX](terminal-ux.md#find) |
 
 On macOS the shortcuts work everywhere, including while a terminal
 has focus: `Cmd+K`, `Cmd+W` or `Cmd+1` are never consumed by the shell
@@ -622,9 +622,9 @@ field has a use for `Ctrl+Shift+S`. To avoid swallowing those bindings,
 combos that mix `Ctrl` and `Cmd` simultaneously are ignored on every
 platform.
 
-`Mod+F` is the exception: finding text in a terminal is its whole point, so
-it works from inside one. On Linux and Windows that takes `Ctrl+F` from the
-shell and any program in it.
+The find shortcut also works from inside a terminal, which is its whole point.
+It is `Cmd+F` on macOS and `Ctrl+Shift+F` on Linux and Windows, so `Ctrl+F` stays
+with the shell and any program in it.
 
 The terminal tab strip itself also implements its own WAI-ARIA
 keyboard model (Arrow keys, Home/End, Delete) — see the Terminals
