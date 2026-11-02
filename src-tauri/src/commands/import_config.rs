@@ -2419,6 +2419,28 @@ mod tests {
     }
 
     #[test]
+    fn an_import_lands_outside_any_folder_and_leaves_existing_folders_alone() {
+        in_data_dir(|f| {
+            const FILED: &str = "Host filed\n  HostName filed.example.com\n  User first\n  IdentityFile ~/.ssh/id\n";
+            f.import(FILED);
+            with_data_mut(|data| {
+                data.connections[0].folder = Some("prod/eu".to_string());
+                Ok(())
+            })
+            .unwrap();
+
+            f.import(BASIC);
+            assert_eq!(stored("web").folder, None);
+            assert_eq!(stored("filed").folder.as_deref(), Some("prod/eu"));
+
+            // The same file again recognises the filed connection and offers
+            // nothing that could take it out of its folder.
+            assert!(f.preview(FILED).items.is_empty());
+            assert_eq!(stored("filed").folder.as_deref(), Some("prod/eu"));
+        });
+    }
+
+    #[test]
     fn a_name_clash_is_shown_and_the_existing_connection_is_left_alone() {
         in_data_dir(|f| {
             f.import("Host web\n  HostName original.example.com\n  User first\n  IdentityFile ~/.ssh/id\n");

@@ -3,7 +3,8 @@ import type { Connection } from "@/types";
 /**
  * Client-side connection search shared by the Connections view and the
  * Connect Picker. Terms are whitespace-separated, case-insensitive and
- * AND-matched across name, host, jump host / SSH server, target / remote host and tags.
+ * AND-matched across name, host, jump host / SSH server, target / remote host, tags
+ * and folder path.
  *
  * Filtering happens on the already-loaded list: there is no backend
  * round trip per keystroke, and the store keeps the full, unfiltered
@@ -23,6 +24,7 @@ export function connectionMatches(conn: Connection, tokens: string[]): boolean {
     "destination_host" in conn ? conn.destination_host : undefined,
     conn.type !== "direct" ? conn.gateway_host : undefined,
     ...(conn.tags ?? []),
+    conn.folder,
   ]
     .filter(Boolean)
     .join(" ")

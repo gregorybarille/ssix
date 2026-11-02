@@ -424,6 +424,11 @@ fn default_theme() -> String {
 fn default_layout() -> String {
     "list".to_string()
 }
+
+/// What the credential and port forward lists can show.
+pub const LIST_LAYOUTS: [&str; 3] = ["list", "tile", "tags"];
+/// What the connection list can show: the folder tree exists only there.
+pub const CONNECTION_LAYOUTS: [&str; 4] = ["list", "tile", "tags", "folders"];
 fn default_open_mode() -> String {
     "tab".to_string()
 }
@@ -438,6 +443,43 @@ fn default_backup_interval_hours() -> u32 {
 }
 fn default_backup_keep() -> u32 {
     10
+}
+
+impl AppSettings {
+    /// A stored layout this build cannot show (a hand edit, a newer build, or
+    /// the folder tree on a list that has none) falls back to the plain list
+    /// instead of leaving a view with nothing to render. Returns whether any changed.
+    pub fn reset_unknown_layouts(&mut self) -> bool {
+        let mut any = false;
+        let mut reset = |layout: &mut String, known: &[&str]| {
+            if !known.contains(&layout.as_str()) {
+                *layout = default_layout();
+                any = true;
+            }
+        };
+        reset(&mut self.connection_layout, &CONNECTION_LAYOUTS);
+        reset(&mut self.credential_layout, &LIST_LAYOUTS);
+        reset(&mut self.tunnel_layout, &LIST_LAYOUTS);
+        any
+    }
+
+    /// Refuse a layout its list cannot show, so it can never be stored.
+    pub fn check_layouts(&self) -> Result<(), String> {
+        for (label, layout, known) in [
+            (
+                "connection",
+                &self.connection_layout,
+                &CONNECTION_LAYOUTS[..],
+            ),
+            ("credential", &self.credential_layout, &LIST_LAYOUTS[..]),
+            ("port forward", &self.tunnel_layout, &LIST_LAYOUTS[..]),
+        ] {
+            if !known.contains(&layout.as_str()) {
+                return Err(format!("The {label} list has no {layout:?} layout"));
+            }
+        }
+        Ok(())
+    }
 }
 
 impl Default for AppSettings {
@@ -606,6 +648,8 @@ impl AppData {
         // Step 1: legacy variants are dropped on every load (cheap, idempotent).
         let migrated = self.migrate_legacy_kinds();
         let dropped = self.drop_dangling_credential_refs();
+        let folders = self.clean_stored_folders();
+        let layouts = self.settings.reset_unknown_layouts();
 
         // Step 2: future-proofing scaffold. Add branches here as the
         // schema evolves:
@@ -616,7 +660,34 @@ impl AppData {
         //   if self.schema_version < 3 { … }
 
         self.schema_version = CURRENT_SCHEMA_VERSION;
-        migrated || dropped || loaded_version != CURRENT_SCHEMA_VERSION
+        migrated || dropped || folders || layouts || loaded_version != CURRENT_SCHEMA_VERSION
+    }
+
+    /// Bring every stored folder path inside the rules. A path the rules
+    /// refuse came from a hand edit or an older build, and must not stop the
+    /// app from loading or block the next save of its connection (whose form
+    /// may not even show the field). Returns whether any path changed.
+    pub fn clean_stored_folders(&mut self) -> bool {
+        let mut any = false;
+        for conn in &mut self.connections {
+            let Some(folder) = conn.folder.as_deref() else {
+                continue;
+            };
+            let cleaned = crate::folder_path::sanitize_stored(folder);
+            if cleaned.as_deref() != Some(folder) {
+                crate::logs::log_local(
+                    "warn",
+                    "migration",
+                    format!(
+                        "Connection {} had the folder {:?}, which is not a valid path; it is now {:?}",
+                        conn.id, folder, cleaned
+                    ),
+                );
+                conn.folder = cleaned;
+                any = true;
+            }
+        }
+        any
     }
 
     /// Clear credential references whose credential no longer exists.
@@ -1173,6 +1244,67 @@ mod tests {
         "settings": {"font_size": 14, "font_family": "JetBrains Mono", "color_scheme": "blue", "theme": "dark"},
         "scripts": []
     }"#;
+
+    /// A `data.json` whose folders and layouts the current rules refuse.
+    const OUT_OF_RULES_DATA: &str = r#"{
+        "schema_version": 1,
+        "credentials": [],
+        "connections": [
+            {"id": "a", "name": "dots", "host": "h", "port": 22, "type": "direct", "folder": "prod/../eu"},
+            {"id": "b", "name": "ctrl", "host": "h", "port": 22, "type": "direct", "folder": "pr\u0007od\n"},
+            {"id": "c", "name": "blank", "host": "h", "port": 22, "type": "direct", "folder": " // "},
+            {"id": "d", "name": "slashes", "host": "h", "port": 22, "type": "direct", "folder": "/prod\\eu/"},
+            {"id": "e", "name": "fine", "host": "h", "port": 22, "type": "direct", "folder": "prod/eu"},
+            {"id": "f", "name": "fwd", "host": "h", "port": 22, "type": "dynamic_forward", "folder": "..",
+             "gateway_host": "gw", "gateway_port": 22, "gateway_credential_id": "", "local_port": 1080}
+        ],
+        "settings": {
+            "font_size": 14, "font_family": "JetBrains Mono", "color_scheme": "blue", "theme": "dark",
+            "connection_layout": "matrix", "credential_layout": "folders", "tunnel_layout": "folders"
+        },
+        "scripts": []
+    }"#;
+
+    #[test]
+    fn test_stored_values_the_rules_refuse_still_load() {
+        let mut data: AppData = serde_json::from_str(OUT_OF_RULES_DATA).unwrap();
+        assert!(data.migrate_to_current());
+        let folders: Vec<Option<&str>> = data
+            .connections
+            .iter()
+            .map(|c| c.folder.as_deref())
+            .collect();
+        assert_eq!(
+            folders,
+            vec![
+                Some("prod/eu"),
+                Some("prod"),
+                None,
+                Some("prod/eu"),
+                Some("prod/eu"),
+                None
+            ]
+        );
+        assert_eq!(data.settings.connection_layout, "list");
+        assert_eq!(data.settings.credential_layout, "list");
+        assert_eq!(data.settings.tunnel_layout, "list");
+        // Now inside the rules, so a second pass has nothing to repair.
+        assert!(!data.migrate_to_current());
+    }
+
+    #[test]
+    fn test_the_folders_layout_survives_a_load_on_the_connection_list_only() {
+        let mut settings = AppSettings {
+            connection_layout: "folders".to_string(),
+            ..AppSettings::default()
+        };
+        assert!(!settings.reset_unknown_layouts());
+        assert_eq!(settings.connection_layout, "folders");
+        settings.tunnel_layout = "folders".to_string();
+        assert!(settings.reset_unknown_layouts());
+        assert_eq!(settings.connection_layout, "folders");
+        assert_eq!(settings.tunnel_layout, "list");
+    }
 
     #[test]
     fn test_pre_foundation_data_loads_with_defaults() {

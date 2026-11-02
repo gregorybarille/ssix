@@ -1,4 +1,4 @@
-import { FONT_FAMILIES, FONT_SIZES, LayoutMode, OPEN_COLORS, OpenMode } from "@/types";
+import { ConnectionLayout, FONT_FAMILIES, FONT_SIZES, OPEN_COLORS, OpenMode } from "@/types";
 import { COLOR_VALUES } from "@/lib/colors";
 import { cn } from "@/lib/utils";
 import { Label } from "../ui/label";
@@ -172,7 +172,7 @@ export function AppearanceSection({ form, applySettings }: SettingsSectionProps)
             <Label htmlFor={key}>{label}</Label>
             <Select
               value={form[key]}
-              onValueChange={(v) => applySettings({ [key]: v as LayoutMode })}
+              onValueChange={(v) => applySettings({ [key]: v as ConnectionLayout })}
             >
               <SelectTrigger id={key}>
                 <SelectValue />
@@ -181,14 +181,17 @@ export function AppearanceSection({ form, applySettings }: SettingsSectionProps)
                 <SelectItem value="list">List</SelectItem>
                 <SelectItem value="tile">Tiles</SelectItem>
                 {/*
-                 * "Tag groups" is a connections-only mode — tag
-                 * grouping doesn't make sense for credentials or
-                 * port forwards. Hiding it elsewhere keeps the user from
-                 * picking a setting that would silently fall back
-                 * to "tile" at render time.
+                 * "Tag groups" and "Folders" are connections-only modes —
+                 * neither makes sense for credentials or port forwards.
+                 * Hiding them elsewhere keeps the user from picking a
+                 * setting that would silently fall back to "tile" at render
+                 * time, or that `save_settings` would refuse.
                  */}
                 {key === "connection_layout" && (
                   <SelectItem value="tags">Tag groups</SelectItem>
+                )}
+                {key === "connection_layout" && (
+                  <SelectItem value="folders">Folders</SelectItem>
                 )}
               </SelectContent>
             </Select>

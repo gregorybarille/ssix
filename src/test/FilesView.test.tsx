@@ -6,6 +6,7 @@ import { useConnectionsStore } from "@/store/useConnectionsStore";
 import { useSftpStore } from "@/store/useSftpStore";
 import type { Connection, FileEntry, FileListing, PaneTarget } from "@/types";
 import { renderInPanel } from "./panel";
+import { withPointerCoordinates } from "./pointerEvents";
 
 vi.mock("@/lib/tauri", () => ({ invoke: vi.fn() }));
 const invokeMock = vi.mocked(invoke);
@@ -338,6 +339,8 @@ describe("changing files", () => {
     );
     expect(calls("sftp_mkdir")).toEqual([{ target: { side: "remote", session_id: "s1" }, dir: "/home/me", name: "new" }]);
 
+    // The button stays disabled until the refused action has finished.
+    await waitFor(() => expect(screen.getByTestId("files-name-submit")).toBeEnabled());
     answer();
     fireEvent.click(screen.getByTestId("files-name-submit"));
     await waitFor(() => expect(screen.queryByTestId("files-name-dialog")).not.toBeInTheDocument());
@@ -617,19 +620,7 @@ describe("dragging", () => {
     fireEvent.pointerMove(window, { clientX: point.x, clientY: point.y });
   };
 
-  // jsdom's PointerEvent drops the coordinates fireEvent sets, so give them back.
-  beforeEach(() => {
-    class TestPointerEvent extends MouseEvent {}
-    vi.stubGlobal("PointerEvent", TestPointerEvent);
-    Object.defineProperty(window, "PointerEvent", {
-      configurable: true,
-      writable: true,
-      value: TestPointerEvent,
-    });
-  });
-  afterEach(() => {
-    vi.unstubAllGlobals();
-  });
+  withPointerCoordinates();
 
   const lastInput = () => {
     const [args] = calls("sftp_start_transfer").slice(-1) as {
@@ -693,6 +684,28 @@ describe("dragging", () => {
 
     await act(async () => {});
     expect(calls("sftp_start_transfer")).toEqual([]);
+  });
+});
+
+describe("a drag cancelled with Escape", () => {
+  withPointerCoordinates();
+
+  it("does not select the row the release lands on", async () => {
+    await show();
+    fireEvent.click(row("local", "b.txt"));
+    fireEvent.pointerDown(row("local", "a.txt"), { button: 0, clientX: 0, clientY: 0 });
+    document.elementFromPoint = vi.fn(() => screen.getByTestId("files-list-remote"));
+    fireEvent.pointerMove(window, { clientX: 50, clientY: 50 });
+    fireEvent.keyDown(document.body, { key: "Escape" });
+    expect(screen.queryByTestId("files-drag-chip")).not.toBeInTheDocument();
+
+    // The button stays down for a while after Escape.
+    await act(() => new Promise<void>((resolve) => setTimeout(resolve)));
+    fireEvent.pointerUp(window, { clientX: 0, clientY: 0 });
+    fireEvent.click(row("local", "a.txt"));
+
+    expect(row("local", "a.txt")).not.toHaveAttribute("aria-current");
+    expect(row("local", "b.txt")).toHaveAttribute("aria-current", "true");
   });
 });
 
