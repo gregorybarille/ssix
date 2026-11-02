@@ -4,7 +4,7 @@ import { FitAddon } from "@xterm/addon-fit";
 import { WebglAddon } from "@xterm/addon-webgl";
 import { invoke } from "@/lib/tauri";
 import { attachOutput } from "@/lib/terminalOutput";
-import { registerTerminal, unregisterTerminal } from "@/lib/terminalRegistry";
+import { isHeldEnter, registerTerminal, unregisterTerminal } from "@/lib/terminalRegistry";
 import { terminalTheme } from "@/lib/terminalTheme";
 import { AppSettings, Connection } from "@/types";
 import {
@@ -147,6 +147,11 @@ export function Terminal({ sessionId, isVisible, onDisconnect, settings, connect
      * focus while a panel is open. Never forward keystrokes in that state.
      */
     term.attachCustomKeyEventHandler((e) => {
+      if (isHeldEnter(sessionId, e)) {
+        // Without this the browser goes on to fire keypress, and xterm sends that.
+        e.preventDefault();
+        return false;
+      }
       if (e.type !== "keydown") return true;
       if (isPanelOpen()) {
         return false;

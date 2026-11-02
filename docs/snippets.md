@@ -15,7 +15,8 @@ AND-matched), move with `↑`/`↓`/`Home`/`End`, press `↵` or click to paste,
 split that is the pane that last had focus, and clicking another pane changes it.
 
 After a paste the keyboard goes to that terminal, so your next Enter runs the
-command.
+command. An Enter still held down from choosing the snippet does not count: the
+terminal ignores its repeats until you let go.
 
 | Situation | What happens |
 |---|---|

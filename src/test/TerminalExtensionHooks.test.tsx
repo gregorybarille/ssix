@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { render } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
+import { SnippetPalette } from "@/components/SnippetPalette";
 import { Terminal } from "@/components/Terminal";
 import {
   registerTerminalExtension,
@@ -8,7 +9,10 @@ import {
   type TerminalExtensionContext,
 } from "@/components/terminal/extensions";
 import { activeSessionId, writeToSession } from "@/lib/terminalRegistry";
-import type { AppSettings, Connection } from "@/types";
+import { useSnippetsStore } from "@/store/useSnippetsStore";
+import { useTerminalsStore } from "@/store/useTerminalsStore";
+import type { AppSettings, Connection, Snippet } from "@/types";
+import { renderInPanel } from "./panel";
 
 /**
  * xterm.js cannot run in jsdom, so a stand-in records what `Terminal` does
@@ -135,6 +139,66 @@ describe("Terminal extension hooks", () => {
         {...props}
       />,
     );
+
+  describe("after a paste from the palette", () => {
+    const uptime: Snippet = { id: "1", name: "uptime", command: "uptime" };
+
+    /** What xterm does with a key: ask the custom handler, then send it to the shell. */
+    const press = (type: string, repeat = false) => {
+      const event = new KeyboardEvent(type, { key: "Enter", repeat, cancelable: true });
+      if (mocks.term?.keyHandler(event) !== false && type !== "keyup") {
+        mocks.term?.onDataListener("\r");
+      }
+      return event;
+    };
+    const writes = () => mocks.invoke.mock.calls.filter(([cmd]) => cmd === "ssh_write");
+
+    function MountedPalette() {
+      return useSnippetsStore((s) => s.paletteOpen) ? <SnippetPalette /> : null;
+    }
+
+    /** Choose the snippet with Enter, and wait for the terminal to get the keyboard. */
+    async function pasteWithEnter() {
+      mocks.invoke.mockImplementation(async (cmd: string) =>
+        cmd === "get_snippets" ? [uptime] : undefined,
+      );
+      useTerminalsStore.setState({
+        tabs: [
+          { id: "t1", mode: "single", panes: [{ sessionId: "s1", connectionName: "prod" }] },
+        ],
+        activeTabId: "t1",
+      });
+      useSnippetsStore.setState({ snippets: [uptime], paletteOpen: true });
+      mount();
+      renderInPanel(<MountedPalette />);
+      fireEvent.keyDown(await screen.findByTestId("snippet-palette-search"), { key: "Enter" });
+      await vi.waitFor(() => expect(mocks.term?.focused).toBe(1));
+      expect(writes()).toEqual([["ssh_write", { sessionId: "s1", data: "uptime" }]]);
+    }
+
+    afterEach(() => {
+      useSnippetsStore.setState({ snippets: [], paletteOpen: false });
+      useTerminalsStore.setState({ tabs: [], activeTabId: null });
+    });
+
+    it("sends nothing while the Enter that chose the snippet repeats", async () => {
+      await pasteWithEnter();
+      const held = [press("keydown", true), press("keypress", true), press("keydown", true)];
+      expect(writes()).toHaveLength(1);
+      expect(held.every((event) => event.defaultPrevented)).toBe(true);
+    });
+
+    it("lets the user's next Enter through once that one is released", async () => {
+      await pasteWithEnter();
+      press("keydown", true);
+      press("keyup");
+      press("keydown");
+      expect(writes()).toEqual([
+        ["ssh_write", { sessionId: "s1", data: "uptime" }],
+        ["ssh_write", { sessionId: "s1", data: "\r" }],
+      ]);
+    });
+  });
 
   describe("becoming visible", () => {
     const props = {

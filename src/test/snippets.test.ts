@@ -13,7 +13,7 @@ import {
 import { tokenize } from "@/lib/search";
 import {
   acceptsBracketedPaste,
-  focusSession,
+  handKeyboardTo,
   registerTerminal,
   unregisterTerminal,
 } from "@/lib/terminalRegistry";
@@ -324,12 +324,12 @@ describe("planPaste and the registry", () => {
 
   it("knows nothing about a session with no terminal", () => {
     expect(acceptsBracketedPaste("unknown")).toBe(false);
-    expect(() => focusSession("unknown")).not.toThrow();
+    expect(() => handKeyboardTo("unknown")).not.toThrow();
   });
 
   it("gives a session's terminal the keyboard", () => {
     const { focus } = live("s1");
-    focusSession("s1");
+    handKeyboardTo("s1");
     expect(focus).toHaveBeenCalledOnce();
   });
 });

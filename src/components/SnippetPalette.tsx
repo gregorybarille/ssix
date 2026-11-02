@@ -25,7 +25,7 @@ import {
   snippetMatches,
   snippetVariables,
 } from "@/lib/snippets";
-import { activeSessionId, focusSession, writeToSession } from "@/lib/terminalRegistry";
+import { activeSessionId, handKeyboardTo, writeToSession } from "@/lib/terminalRegistry";
 import { cn } from "@/lib/utils";
 import { useSnippetsStore } from "@/store/useSnippetsStore";
 import { useTerminalsStore } from "@/store/useTerminalsStore";
@@ -111,7 +111,7 @@ export function SnippetPalette() {
           // After a paste the next key is the user's Enter, whatever had focus before.
           if (pastedTo.current) {
             event.preventDefault();
-            focusSession(pastedTo.current);
+            handKeyboardTo(pastedTo.current);
           }
         }}
       >

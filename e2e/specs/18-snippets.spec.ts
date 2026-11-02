@@ -119,6 +119,26 @@ async function waitForPane(index: number, text: string): Promise<void> {
   });
 }
 
+/** An Enter at whatever has the keyboard. WebDriver's own keys never auto-repeat. */
+async function enterEvent(type: "keydown" | "keyup", repeat: boolean): Promise<void> {
+  await browser.execute(
+    (eventType: string, isRepeat: boolean) => {
+      document.activeElement?.dispatchEvent(
+        new KeyboardEvent(eventType, {
+          key: "Enter",
+          code: "Enter",
+          keyCode: 13,
+          repeat: isRepeat,
+          bubbles: true,
+          cancelable: true,
+        }),
+      );
+    },
+    type,
+    repeat,
+  );
+}
+
 async function expectNotInTerminal(text: string): Promise<void> {
   await browser.pause(QUIET_MS);
   expect(await readTerminalText()).not.toContain(text);
@@ -307,6 +327,23 @@ describe("Snippets", () => {
     await waitForTerminalContains("echo '{{.Names}} {{open'", 10_000);
     await browser.keys(["Enter"]);
     await waitForTerminalContains("\n{{.Names}} {{open", 10_000);
+  });
+
+  it("does not run the command while the Enter that chose it is held down", async () => {
+    await saveSnippet("snip-18-held", ["echo held-$((4*4))"]);
+    await click(sel.navTerminals);
+    await openPaletteFromTerminal();
+    await choose("snip-18-held");
+    await waitForPaletteClosed();
+    await waitForTerminalContains("echo held-$((4*4))", 10_000);
+
+    for (let i = 0; i < 5; i++) await enterEvent("keydown", true);
+    await expectNotInTerminal("held-16");
+
+    // Once released, the same event reaches the shell, so the wait above proved something.
+    await enterEvent("keyup", false);
+    await enterEvent("keydown", true);
+    await waitForTerminalContains("held-16", 10_000);
   });
 
   it("keeps a backslash in front of a variable when it is doubled", async () => {

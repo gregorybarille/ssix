@@ -3,6 +3,8 @@ import type { Terminal as XTerm } from "@xterm/xterm";
 import type { TerminalTab } from "@/components/TerminalTabs";
 import {
   activeSessionId,
+  handKeyboardTo,
+  isHeldEnter,
   registerTerminal,
   terminalText,
   unregisterTerminal,
@@ -17,7 +19,7 @@ vi.mock("@/lib/tauri", () => ({ invoke }));
 function liveTerminal(sessionId: string): { focus: () => void } {
   const textarea = document.createElement("textarea");
   document.body.appendChild(textarea);
-  registerTerminal(sessionId, { textarea } as unknown as XTerm);
+  registerTerminal(sessionId, { textarea, focus: () => {} } as unknown as XTerm);
   return { focus: () => textarea.dispatchEvent(new FocusEvent("focus")) };
 }
 
@@ -146,6 +148,49 @@ describe("terminalRegistry", () => {
       second.focus();
       unregisterTerminal("s2");
       expect(activeSessionId()).toBe("s1");
+    });
+  });
+
+  describe("isHeldEnter", () => {
+    const key = (type: string, init: KeyboardEventInit = {}) =>
+      new KeyboardEvent(type, { key: "Enter", ...init });
+    const repeat = (type = "keydown") => key(type, { repeat: true });
+
+    it("catches the repeats of an Enter pressed before the terminal had the keyboard", () => {
+      liveTerminal("s1");
+      handKeyboardTo("s1");
+      expect(isHeldEnter("s1", repeat())).toBe(true);
+      expect(isHeldEnter("s1", repeat("keypress"))).toBe(true);
+      expect(isHeldEnter("s1", repeat())).toBe(true);
+    });
+
+    it("lets Enter through once it has been released", () => {
+      liveTerminal("s1");
+      handKeyboardTo("s1");
+      expect(isHeldEnter("s1", key("keyup"))).toBe(false);
+      expect(isHeldEnter("s1", repeat())).toBe(false);
+    });
+
+    it("lets a fresh press through, and holding that one repeats as usual", () => {
+      liveTerminal("s1");
+      handKeyboardTo("s1");
+      expect(isHeldEnter("s1", key("keydown"))).toBe(false);
+      expect(isHeldEnter("s1", repeat())).toBe(false);
+    });
+
+    it("leaves other keys and other panes alone", () => {
+      liveTerminal("s1");
+      handKeyboardTo("s1");
+      expect(isHeldEnter("s1", new KeyboardEvent("keydown", { key: "a", repeat: true }))).toBe(false);
+      expect(isHeldEnter("s2", repeat())).toBe(false);
+      expect(isHeldEnter("s1", repeat())).toBe(true);
+    });
+
+    it("forgets a pane that closes", () => {
+      liveTerminal("s1");
+      handKeyboardTo("s1");
+      unregisterTerminal("s1");
+      expect(isHeldEnter("s1", repeat())).toBe(false);
     });
   });
 
