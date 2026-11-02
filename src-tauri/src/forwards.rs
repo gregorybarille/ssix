@@ -464,10 +464,12 @@ impl Uplink for SshUplink {
                 return Probe::Dead;
             }
             wake::wait_readable(&fds, Duration::from_millis(50));
+            // In this order: a stop that lands after the drain leaves its wake
+            // for the next wait, and one before it is seen by the check.
+            control.wake.drain();
             if stop_requested(control) {
                 return Probe::Stopped;
             }
-            control.wake.drain();
         }
     }
 
