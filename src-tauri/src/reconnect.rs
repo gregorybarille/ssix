@@ -409,6 +409,13 @@ mod tests {
             "SSH agent authentication is not available yet",
             "Jump host j:22: Password auth failed: x",
             "Target connect via jump host failed: Key auth failed: x",
+            "Keyboard-interactive auth failed: [Session(-18)] Authentication failed",
+            "Keyboard-interactive auth failed: [Session(-13)] socket disconnect",
+            crate::auth_prompt::CANCELLED,
+            crate::auth_prompt::TIMED_OUT,
+            "Agent auth failed: Could not reach an SSH agent: refused",
+            "Agent auth failed: The SSH agent holds no keys. Add one with ssh-add",
+            "Agent auth failed: the server accepted none of the 1 key(s) in the SSH agent (x)",
             HOST_KEY_FAILURE,
             "Jump host j:22: HOST_KEY_MISMATCH host=j port=22 fingerprint=x",
             "h:22 did not present a host key",
@@ -430,6 +437,27 @@ mod tests {
         assert_eq!(h.opens(), 1);
         assert!(h.events().last().unwrap().contains("Password auth failed"));
         h.close();
+    }
+
+    /// Someone who walks away from a prompt, cancels it or gets it wrong is
+    /// not asked again until they press Retry. Each of these is what a spec
+    /// (`/auth/i`) and the status bar read, so each has to say "auth" too.
+    #[test]
+    fn a_login_that_needed_an_answer_or_an_agent_is_never_retried() {
+        for failure in [
+            crate::auth_prompt::CANCELLED,
+            crate::auth_prompt::TIMED_OUT,
+            "Keyboard-interactive auth failed: [Session(-18)] Authentication failed",
+            "Agent auth failed: The SSH agent holds no keys. Add one with ssh-add",
+        ] {
+            assert!(failure.to_lowercase().contains("auth"), "{failure}");
+            let h = Harness::start(FIVE_TRIES, instantly, move |_| Err(failure.to_string()));
+            h.wait_for_event("reconnect_stopped");
+            thread::sleep(Duration::from_millis(50));
+            assert_eq!(h.opens(), 1, "{failure}");
+            assert!(h.events().last().unwrap().contains(failure), "{failure}");
+            h.close();
+        }
     }
 
     #[test]

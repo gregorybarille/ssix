@@ -21,10 +21,17 @@
 //! them: signing is the local agent's decision, as it is with `ssh`.
 //!
 //! That pump needs the session to be non-blocking, which a shell's session is
-//! once `open_shell_over_stream` returns. It only reads a channel once its data
-//! is in libssh2's queue, which the shell's worker fills as it reads the
-//! socket. Reading the socket itself would take packets the worker sleeps on,
-//! and delay the shell's output.
+//! once `start_shell` returns. It only reads a channel once its data is in
+//! libssh2's queue, which the shell's worker fills as it reads the socket.
+//! Reading the socket itself would take packets the worker sleeps on, and delay
+//! the shell's output.
+//!
+//! The pump has no part in deciding whether the connection is alive. Only the
+//! worker tells its keepalive watchdog that something arrived, so agent traffic
+//! going out cannot make a dead connection look alive. It never flushes a
+//! channel either, for the reason `write_all_nonblocking` in `crate::ssh` gives.
+//! Each shell has its own pump: a reconnect asks for forwarding again and starts
+//! a new one, because the old session's grant died with it.
 //!
 //! Forwarding is Unix-only: it needs libssh2's raw channels and the agent's
 //! socket. On Windows a connection that enables it says so in the log and
@@ -51,7 +58,19 @@ pub(crate) fn authenticate(
 }
 
 /// As [`authenticate`], with `socket` in place of `SSH_AUTH_SOCK` when given.
+/// Every failure says "auth", which is how it reads as a login failure rather
+/// than a connection problem wherever it is shown, and none of them is one a
+/// reconnect should retry (`crate::reconnect`).
 fn authenticate_via(
+    session: &Session,
+    username: &str,
+    debug: &SshDebug,
+    socket: Option<&Path>,
+) -> Result<(), String> {
+    log_in(session, username, debug, socket).map_err(|e| format!("Agent auth failed: {}", e))
+}
+
+fn log_in(
     session: &Session,
     username: &str,
     debug: &SshDebug,
@@ -122,7 +141,7 @@ fn offer_keys(
         }
     }
     Err(format!(
-        "Agent auth failed: the server accepted none of the {} key(s) in the SSH agent ({})",
+        "the server accepted none of the {} key(s) in the SSH agent ({})",
         keys.len(),
         last_error
     ))
@@ -1029,14 +1048,18 @@ mod live {
         let session = unauthenticated_session();
         let error =
             authenticate_via(&session, &username(), &debug(), Some(&agent.socket)).unwrap_err();
+        assert!(error.contains("Agent auth failed"), "{error}");
         assert!(error.contains("holds no keys"), "{error}");
+        assert!(!crate::reconnect::is_retryable_connect_error(&error));
 
         let refused = TestKey::new(random_seed(), false, "ssix-live-refused");
         let agent = start_agent(vec![refused]);
         let session = unauthenticated_session();
         let error =
             authenticate_via(&session, &username(), &debug(), Some(&agent.socket)).unwrap_err();
+        assert!(error.contains("Agent auth failed"), "{error}");
         assert!(error.contains("accepted none of the 1 key(s)"), "{error}");
+        assert!(!crate::reconnect::is_retryable_connect_error(&error));
     }
 
     #[test]
@@ -1045,7 +1068,9 @@ mod live {
         let session = unauthenticated_session();
         let missing = std::env::temp_dir().join("ssix-no-such-agent.sock");
         let error = authenticate_via(&session, &username(), &debug(), Some(&missing)).unwrap_err();
+        assert!(error.contains("Agent auth failed"), "{error}");
         assert!(error.contains("Could not reach an SSH agent"), "{error}");
+        assert!(!crate::reconnect::is_retryable_connect_error(&error));
     }
 
     #[test]
@@ -1087,6 +1112,9 @@ mod live {
             let mut channel = session.channel_session().unwrap();
             request_forwarding_to(session, &mut channel, &debug(), socket);
             channel.exec(command).unwrap();
+            // As the shell's worker runs: keepalives go out next to the pump.
+            session.set_keepalive(true, 1);
+            let fd = crate::ssh::wake::fd_of(session);
             session.set_blocking(false);
             let pump = ForwardPump::start(session);
             assert!(pump.is_some(), "forwarding was not granted");
@@ -1099,6 +1127,7 @@ mod live {
                     Ok(n) => output.push_str(&String::from_utf8_lossy(&buf[..n])),
                     Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
                         assert!(Instant::now() < deadline, "timed out; got {output:?}");
+                        crate::ssh::send_due_keepalive(session, fd).unwrap();
                         thread::sleep(Duration::from_millis(2));
                     }
                     Err(e) => panic!("read failed: {e}"),
@@ -1160,6 +1189,22 @@ mod live {
         assert!(output.contains("ssix-live-busy"), "{output}");
         assert!(output.trim_end().ends_with("done"), "{}", output.len());
         assert!(output.matches('x').count() >= 2_000_000);
+    }
+
+    /// Long enough for keepalives to go out between the agent's connections.
+    /// Their answers stay queued in libssh2 for the life of the session, and
+    /// must not stop the pump from seeing what arrives for its channels.
+    #[test]
+    #[ignore = "needs a Unix SSH server (SSIX_LIVE_SSH)"]
+    fn live_forwarding_works_between_keepalives() {
+        let key = TestKey::new(random_seed(), false, "ssix-live-keepalive");
+        let agent = start_agent(vec![key]);
+        let output = run_with_forwarding(
+            &agent.socket,
+            "for i in 1 2 3 4; do ssh-add -L; sleep 1; done; echo done",
+        );
+        assert_eq!(output.matches("ssix-live-keepalive").count(), 4, "{output}");
+        assert!(output.trim_end().ends_with("done"), "{output}");
     }
 
     /// Stopping must not hang or leave the session unusable for what remains.

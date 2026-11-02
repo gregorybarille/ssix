@@ -705,7 +705,7 @@ pub(crate) fn authenticate(
                         username
                     )
                 });
-                crate::auth_prompt::authenticate(session, endpoint, debug)?;
+                crate::auth_prompt::authenticate(session, endpoint, debug, &error)?;
                 if !session.authenticated() {
                     return Err("Authentication failed".to_string());
                 }
@@ -890,7 +890,7 @@ pub fn start_ssh_session(
     ctx: SessionContext,
     resilience: ShellResilience,
 ) -> Result<SessionHandle, String> {
-    let _prompts = crate::auth_prompt::PromptScope::enter(&ctx.output);
+    let _prompts = crate::auth_prompt::PromptScope::enter(&ctx.output, None);
     let shell = open_shell(&target, &opts)?;
     let (handle, control) = control_channel()?;
     ctx.register(handle.clone())?;
@@ -1327,7 +1327,7 @@ fn run_io_loop(shell: OpenShell, io: &mut ShellIo) -> ShellEnd {
 /// queued, and until the next one comes due every other packet is refused as
 /// "try again". A write waiting on that would never see the next one, and
 /// would time out on a healthy connection.
-fn send_due_keepalive(session: &Session, fd: wake::Fd) -> Result<(), ssh2::Error> {
+pub(crate) fn send_due_keepalive(session: &Session, fd: wake::Fd) -> Result<(), ssh2::Error> {
     if !wake::is_writable(fd) {
         return Ok(());
     }
@@ -1557,7 +1557,7 @@ pub fn start_jump_shell(
     ctx: SessionContext,
     resilience: ShellResilience,
 ) -> Result<SessionHandle, String> {
-    let _prompts = crate::auth_prompt::PromptScope::enter(&ctx.output);
+    let _prompts = crate::auth_prompt::PromptScope::enter(&ctx.output, None);
     let shell = open_jump_shell(&gateway, &destination, &opts)?;
     let (handle, control) = control_channel()?;
     ctx.register(handle.clone())?;

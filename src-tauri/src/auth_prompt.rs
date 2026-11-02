@@ -6,18 +6,26 @@
 //! by `AuthEvent` in `src/lib/authPrompt.ts`), and waits for `ssh_auth_answer`
 //! or `ssh_auth_cancel`.
 //!
-//! Only a shell has a pane to ask in. `start_ssh_session` and
-//! `start_jump_shell` enter a [`PromptScope`] for the thread doing the
-//! connecting, which is why `authenticate` needs no extra parameter and why
-//! SCP, script runs and forwards refuse such a server with a clear message.
+//! Only a shell has a pane to ask in. `start_ssh_session`, `start_jump_shell`
+//! and a reconnect attempt (`reopen_shell`) enter a [`PromptScope`] for the
+//! thread doing the connecting, which is why `authenticate` needs no extra
+//! parameter and why SCP, script runs and forwards refuse such a server with a
+//! clear message.
+//!
+//! A reconnect attempt can be abandoned while a prompt waits: closing the pane
+//! or cancelling the reconnect sets its flag, which ends the wait as Cancel
+//! does. Every way out of a prompt fails the login with a message that says
+//! "auth" and is not retryable (`crate::reconnect`), so nobody is asked again
+//! and again by a connection they walked away from.
 //!
 //! Answers are passed along and dropped. Nothing here logs, stores or formats
 //! them, and [`Reply`] has no `Debug` so that they cannot be logged by accident.
 
 use std::cell::RefCell;
-use std::sync::mpsc::{self, RecvTimeoutError, Sender};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
 use std::sync::{Arc, LazyLock};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use dashmap::DashMap;
 use serde::Serialize;
@@ -38,9 +46,12 @@ const EXCHANGE_TIMEOUT_MS: u32 = 900_000;
 const MAX_TEXT_CHARS: usize = 4096;
 /// Longest answers accepted over IPC, in total.
 const MAX_ANSWER_BYTES: usize = 64 * 1024;
+/// How often a waiting prompt looks at its attempt's cancel flag.
+const CANCEL_POLL: Duration = Duration::from_millis(100);
 
-const CANCELLED: &str = "Authentication cancelled";
-const TIMED_OUT: &str = "Timed out waiting for an answer to the server's prompt";
+pub(crate) const CANCELLED: &str = "Authentication cancelled";
+pub(crate) const TIMED_OUT: &str =
+    "Authentication timed out waiting for an answer to the server's prompt";
 
 enum Reply {
     Answers(Vec<String>),
@@ -87,24 +98,35 @@ pub(crate) fn cancel(prompt_id: &str) {
 /// Where a prompt goes: the JSON of one event for the pane.
 type Sink = Arc<dyn Fn(String) + Send + Sync>;
 
+#[derive(Clone)]
+struct Scope {
+    sink: Sink,
+    /// Set once nobody wants this attempt's result (`reconnect::OpenAttempt`).
+    cancelled: Option<Arc<AtomicBool>>,
+}
+
 thread_local! {
-    static SCOPE: RefCell<Option<Sink>> = const { RefCell::new(None) };
+    static SCOPE: RefCell<Option<Scope>> = const { RefCell::new(None) };
 }
 
 /// While this lives, connecting on this thread may ask questions in the pane
-/// behind `output`.
+/// behind `output`. `cancelled`, when given, ends a waiting prompt once set.
 pub(crate) struct PromptScope(());
 
 impl PromptScope {
-    pub(crate) fn enter(output: &Channel<InvokeResponseBody>) -> Self {
+    pub(crate) fn enter(
+        output: &Channel<InvokeResponseBody>,
+        cancelled: Option<Arc<AtomicBool>>,
+    ) -> Self {
         let output = output.clone();
-        Self::with_sink(Arc::new(move |json| {
+        let sink: Sink = Arc::new(move |json| {
             let _ = output.send(InvokeResponseBody::Json(json));
-        }))
+        });
+        Self::install(Scope { sink, cancelled })
     }
 
-    fn with_sink(sink: Sink) -> Self {
-        SCOPE.with(|scope| *scope.borrow_mut() = Some(sink));
+    fn install(scope: Scope) -> Self {
+        SCOPE.with(|current| *current.borrow_mut() = Some(scope));
         Self(())
     }
 }
@@ -120,17 +142,22 @@ pub(crate) fn has_pane() -> bool {
     SCOPE.with(|scope| scope.borrow().is_some())
 }
 
-/// Run keyboard-interactive authentication, asking in this thread's pane.
+/// Run keyboard-interactive authentication, asking in this thread's pane. A
+/// server that advertises the method and then asks nothing (no PAM behind it)
+/// has only refused the credential, so `refused_before` stays the answer.
 pub(crate) fn authenticate(
     session: &Session,
     endpoint: &Endpoint,
     debug: &SshDebug,
+    refused_before: &str,
 ) -> Result<(), String> {
-    let sink = SCOPE
+    let Scope { sink, cancelled } = SCOPE
         .with(|scope| scope.borrow().clone())
-        .ok_or("Only a terminal pane can ask for keyboard-interactive answers")?;
+        .ok_or("Keyboard-interactive auth needs a terminal pane to ask in")?;
     let mut prompter = PanePrompter {
         sink,
+        cancelled,
+        asked: false,
         host: endpoint.addr(),
         username: endpoint.username.clone(),
         socket: Some(wake::fd_of(session)),
@@ -146,7 +173,10 @@ pub(crate) fn authenticate(
     if let Some(reason) = prompter.given_up {
         return Err(reason.to_string());
     }
-    result.map_err(|e| format!("Keyboard-interactive auth failed: {}", e))
+    match result {
+        Err(_) if !prompter.asked => Err(refused_before.to_string()),
+        other => other.map_err(|e| format!("Keyboard-interactive auth failed: {}", e)),
+    }
 }
 
 #[derive(Serialize)]
@@ -182,6 +212,10 @@ fn printable(text: &str) -> String {
 
 struct PanePrompter {
     sink: Sink,
+    /// Set once nobody wants this attempt's result.
+    cancelled: Option<Arc<AtomicBool>>,
+    /// Whether the server put a question to the user.
+    asked: bool,
     host: String,
     username: String,
     /// The session's socket, to end the conversation when giving up.
@@ -226,22 +260,39 @@ impl PanePrompter {
                 })
                 .collect(),
         });
-        let received = answers.recv_timeout(self.timeout);
+        let received = self.wait_for_reply(&answers);
         PENDING.remove(&prompt_id);
         self.send(&AuthEvent::AuthPromptClosed {
             prompt_id: &prompt_id,
         });
         match received {
-            Ok(Reply::Answers(answers)) => Some(answers),
-            Ok(Reply::Cancelled) | Err(RecvTimeoutError::Disconnected) => {
-                self.give_up(CANCELLED);
-                None
-            }
-            Err(RecvTimeoutError::Timeout) => {
-                self.give_up(TIMED_OUT);
+            Ok(answers) => Some(answers),
+            Err(reason) => {
+                self.give_up(reason);
                 None
             }
         }
+    }
+
+    /// The answers, or why there will be none.
+    fn wait_for_reply(&self, replies: &Receiver<Reply>) -> Result<Vec<String>, &'static str> {
+        let deadline = Instant::now() + self.timeout;
+        while !self.attempt_abandoned() {
+            let left = deadline.saturating_duration_since(Instant::now());
+            match replies.recv_timeout(left.min(CANCEL_POLL)) {
+                Ok(Reply::Answers(answers)) => return Ok(answers),
+                Ok(Reply::Cancelled) | Err(RecvTimeoutError::Disconnected) => break,
+                Err(RecvTimeoutError::Timeout) if left <= CANCEL_POLL => return Err(TIMED_OUT),
+                Err(RecvTimeoutError::Timeout) => {}
+            }
+        }
+        Err(CANCELLED)
+    }
+
+    fn attempt_abandoned(&self) -> bool {
+        self.cancelled
+            .as_ref()
+            .is_some_and(|flag| flag.load(Ordering::SeqCst))
     }
 
     /// End the conversation by closing the socket: libssh2 cannot abort from
@@ -271,6 +322,9 @@ impl KeyboardInteractivePrompt for PanePrompter {
         prompts: &[Prompt<'a>],
     ) -> Vec<String> {
         let blank = || vec![String::new(); prompts.len()];
+        if self.attempt_abandoned() {
+            self.give_up(CANCELLED);
+        }
         if self.given_up.is_some() {
             return blank();
         }
@@ -280,6 +334,7 @@ impl KeyboardInteractivePrompt for PanePrompter {
             self.instructions.push_str(&printable(instructions));
             return Vec::new();
         }
+        self.asked = true;
         self.debug.at(1, || {
             format!("The server asks {} question(s).", prompts.len())
         });
@@ -313,6 +368,8 @@ mod tests {
                 let event = serde_json::from_str(&json).unwrap();
                 sink_events.lock().unwrap().push(event);
             }),
+            cancelled: None,
+            asked: false,
             host: "host:22".into(),
             username: "me".into(),
             socket: None,
@@ -439,6 +496,76 @@ mod tests {
     }
 
     #[test]
+    fn a_cancelled_attempt_ends_a_waiting_prompt_and_closes_it() {
+        let (mut prompter, events) = prompter(Duration::from_secs(60));
+        let flag = Arc::new(AtomicBool::new(false));
+        prompter.cancelled = Some(flag.clone());
+        let watcher = events.clone();
+        let canceller = thread::spawn(move || {
+            let id = wait_for_prompt(&watcher);
+            flag.store(true, Ordering::SeqCst);
+            id
+        });
+
+        let started = Instant::now();
+        let answers = prompter.prompt("", "", &prompts(&[("OTP: ", false)]));
+        let id = canceller.join().unwrap();
+
+        assert!(started.elapsed() < Duration::from_secs(5));
+        assert_eq!(answers, [""]);
+        assert_eq!(prompter.given_up, Some(CANCELLED));
+        assert!(!PENDING.contains_key(&id));
+        let events = events.lock().unwrap();
+        assert_eq!(events.len(), 2);
+        assert_eq!(events[1]["kind"], "auth_prompt_closed");
+        assert_eq!(events[1]["prompt_id"], id.as_str());
+    }
+
+    #[test]
+    fn a_cancelled_attempt_asks_nothing() {
+        let (mut prompter, events) = prompter(Duration::from_secs(60));
+        prompter.cancelled = Some(Arc::new(AtomicBool::new(true)));
+        assert_eq!(prompter.prompt("", "", &prompts(&[("OTP: ", false)])), [""]);
+        assert_eq!(prompter.given_up, Some(CANCELLED));
+        assert!(events.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn an_attempt_still_wanted_can_be_answered() {
+        let (mut prompter, events) = prompter(Duration::from_secs(5));
+        prompter.cancelled = Some(Arc::new(AtomicBool::new(false)));
+        let watcher = events.clone();
+        let responder = thread::spawn(move || {
+            answer(&wait_for_prompt(&watcher), vec!["ok".into()]).unwrap();
+        });
+        assert_eq!(
+            prompter.prompt("", "", &prompts(&[("OTP: ", false)])),
+            ["ok"]
+        );
+        responder.join().unwrap();
+        assert!(prompter.asked);
+        assert!(prompter.given_up.is_none());
+    }
+
+    /// Whatever ends a prompt ends the reconnect too: asking again would have
+    /// the pane nagging someone who already left, and each round can count
+    /// against the account.
+    #[test]
+    fn giving_up_is_an_auth_failure_that_is_not_retried() {
+        for reason in [CANCELLED, TIMED_OUT] {
+            assert!(reason.to_lowercase().contains("auth"), "{reason}");
+            assert!(!crate::reconnect::is_retryable_connect_error(reason));
+        }
+    }
+
+    #[test]
+    fn a_round_without_questions_is_not_asking() {
+        let (mut prompter, _events) = prompter(Duration::from_secs(5));
+        assert!(prompter.prompt("", "Nothing to ask.", &[]).is_empty());
+        assert!(!prompter.asked);
+    }
+
+    #[test]
     fn a_round_without_questions_carries_its_text_to_the_next_one() {
         let (mut prompter, events) = prompter(Duration::from_secs(5));
         assert!(prompter
@@ -480,7 +607,10 @@ mod tests {
     #[test]
     fn a_scope_lasts_as_long_as_its_guard_and_only_on_its_thread() {
         assert!(!has_pane());
-        let scope = PromptScope::with_sink(Arc::new(|_| {}));
+        let scope = PromptScope::install(Scope {
+            sink: Arc::new(|_| {}),
+            cancelled: None,
+        });
         assert!(has_pane());
         assert!(!thread::spawn(has_pane).join().unwrap());
         drop(scope);
@@ -556,7 +686,10 @@ mod live {
         };
         let mut result = None;
         with_isolated_data_dir(|| {
-            let _scope = PromptScope::with_sink(sink);
+            let _scope = PromptScope::install(Scope {
+                sink,
+                cancelled: None,
+            });
             let tcp = connect_endpoint(&endpoint, 0).expect("tcp connect");
             result = Some(open_authenticated_session_over_stream(
                 tcp, &endpoint, 0, None,
@@ -601,6 +734,7 @@ mod live {
             error.contains("Keyboard-interactive auth failed"),
             "{error}"
         );
+        assert!(!crate::reconnect::is_retryable_connect_error(&error));
     }
 
     #[test]
