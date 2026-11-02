@@ -161,6 +161,22 @@ describe("ConnectionForm's folder", () => {
     );
   });
 
+  it("gives way to where the row is now, not where it was when the form opened", async () => {
+    const user = userEvent.setup();
+    const { onSubmit } = renderForm(tunnel);
+    await user.click(screen.getByTestId("connection-form-kind-direct"));
+    await user.clear(folderField());
+    await user.type(folderField(), "a/..");
+    await user.click(screen.getByTestId("connection-form-kind-dynamicforward"));
+    act(() =>
+      useConnectionsStore.setState({ connections: [saved, { ...tunnel, folder: "dragged/here" }] }),
+    );
+    await user.click(submit());
+    await waitFor(() =>
+      expect(onSubmit).toHaveBeenCalledWith(expect.objectContaining({ folder: "dragged/here" })),
+    );
+  });
+
   it("clones into the same folder", async () => {
     const user = userEvent.setup();
     const { onSubmit } = renderForm(saved, { isClone: true });

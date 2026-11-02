@@ -589,7 +589,7 @@ export function ConnectionForm({
           ...advancedPayload(advanced),
           // A hidden field cannot show why it is refused: text left in it
           // before the kind became a forward gives way to the saved folder.
-          folder: parsedFolder.error ? connection?.folder : (parsedFolder.path ?? undefined),
+          folder: parsedFolder.error ? loadedFolderRef.current : (parsedFolder.path ?? undefined),
         };
         const gateway = {
           gateway_host: formWithPorts.gateway_host ?? "",
