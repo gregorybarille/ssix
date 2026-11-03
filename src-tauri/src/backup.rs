@@ -28,7 +28,7 @@ const FORMAT: u32 = 1;
 const PREFIX: &str = "ssix-backup-";
 const MANIFEST: &str = "manifest.json";
 /// The files a backup holds, in archive order. `data.json` is required.
-const FILES: [&str; 3] = ["data.json", "secrets.json", "known_hosts"];
+pub(crate) const FILES: [&str; 3] = ["data.json", "secrets.json", "known_hosts"];
 /// File names with their contents, in `FILES` order.
 type Files = Vec<(String, Vec<u8>)>;
 
@@ -190,7 +190,7 @@ fn manifest_files(files: &[(String, Vec<u8>)]) -> Vec<ManifestFile> {
 }
 
 #[cfg(unix)]
-fn ensure_private_dir(dir: &Path) -> Result<(), String> {
+pub(crate) fn ensure_private_dir(dir: &Path) -> Result<(), String> {
     use std::os::unix::fs::PermissionsExt;
     fs::create_dir_all(dir).map_err(|e| format!("Could not create {}: {}", dir.display(), e))?;
     fs::set_permissions(dir, fs::Permissions::from_mode(0o700))
@@ -198,7 +198,7 @@ fn ensure_private_dir(dir: &Path) -> Result<(), String> {
 }
 
 #[cfg(not(unix))]
-fn ensure_private_dir(dir: &Path) -> Result<(), String> {
+pub(crate) fn ensure_private_dir(dir: &Path) -> Result<(), String> {
     fs::create_dir_all(dir).map_err(|e| format!("Could not create {}: {}", dir.display(), e))
 }
 
@@ -410,7 +410,7 @@ pub fn restore(name: &str) -> Result<Option<BackupInfo>, String> {
     let dir = backups_dir();
     let files = read_verified(&dir.join(name))?;
     let data_dir = crate::storage::data_dir();
-    with_files_locked(|| {
+    let safety = with_files_locked(|| {
         let live = read_live_files()?;
         let safety = if has_data(&live) {
             Some(write_archive(
@@ -430,8 +430,7 @@ pub fn restore(name: &str) -> Result<Option<BackupInfo>, String> {
             let path = data_dir.join(target);
             match files.iter().find(|(name, _)| name == target) {
                 Some((_, bytes)) => {
-                    let mode = (target != "data.json").then_some(0o600);
-                    crate::storage::atomic_write(&path, bytes, mode).map_err(keep_note)?;
+                    crate::storage::atomic_write(&path, bytes, Some(0o600)).map_err(keep_note)?;
                 }
                 None => match fs::remove_file(&path) {
                     Ok(()) => {}
@@ -441,7 +440,17 @@ pub fn restore(name: &str) -> Result<Option<BackupInfo>, String> {
             }
         }
         Ok(safety)
-    })
+    })?;
+    // An old archive can bring back rows holding secrets inline, which the
+    // next edit would wipe if they stayed that way until the next launch.
+    if let Err(e) = crate::storage::persist_migrations() {
+        crate::logs::log_local(
+            "warn",
+            "backup",
+            format!("Could not repair the restored data: {}", e),
+        );
+    }
+    Ok(safety)
 }
 
 pub fn delete(name: &str) -> Result<(), String> {
@@ -597,6 +606,35 @@ mod tests {
     }
 
     #[test]
+    fn a_restore_moves_secrets_an_old_archive_holds_inline() {
+        with_isolated_data_dir(|| {
+            let mut data = crate::models::AppData::default();
+            data.credentials.push(crate::models::Credential {
+                id: "old".into(),
+                name: "old".into(),
+                username: "u".into(),
+                kind: crate::models::CredentialKind::Password {
+                    password: "plain-password".into(),
+                },
+                is_private: false,
+            });
+            write_live("data.json", &serde_json::to_string(&data).unwrap());
+            let backup = create(BackupReason::Manual).unwrap();
+
+            restore(&backup.name).unwrap();
+
+            assert!(!live("data.json").unwrap().contains("plain-password"));
+            assert_eq!(
+                crate::keychain::snapshot_for_credential("old")
+                    .unwrap()
+                    .password
+                    .as_deref(),
+                Some("plain-password")
+            );
+        });
+    }
+
+    #[test]
     fn backup_then_restore_brings_every_file_back() {
         with_isolated_data_dir(|| {
             write_live("data.json", &data_json(15));
@@ -635,6 +673,24 @@ mod tests {
             let mode = |p: &Path| fs::metadata(p).unwrap().permissions().mode() & 0o777;
             assert_eq!(mode(&backups_dir().join(&backup.name)), 0o600);
             assert_eq!(mode(&backups_dir()), 0o700);
+        });
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_restore_writes_every_file_private() {
+        use std::os::unix::fs::PermissionsExt;
+        with_isolated_data_dir(|| {
+            write_live("data.json", &data_json(14));
+            write_live("secrets.json", "{}");
+            write_live("known_hosts", "");
+            let backup = create(BackupReason::Manual).unwrap();
+            restore(&backup.name).unwrap();
+            for name in FILES {
+                let path = crate::storage::data_dir().join(name);
+                let mode = fs::metadata(path).unwrap().permissions().mode() & 0o777;
+                assert_eq!(mode, 0o600, "{}", name);
+            }
         });
     }
 

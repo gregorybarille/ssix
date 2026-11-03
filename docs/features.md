@@ -282,6 +282,9 @@ half-written backup in the list.
 
 - generate keypairs
 - choose storage mode for generated keys
+- a passphrase set while generating fills in the credential's Passphrase field,
+  so saving the credential is enough to log in with the encrypted key;
+  generating a key with none clears the field
 - install public key on remote hosts
 - **Browse for an existing private key** via the native file picker:
   the SSH Key tab in the credential form has a folder icon next to the

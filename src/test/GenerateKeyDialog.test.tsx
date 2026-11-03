@@ -88,6 +88,21 @@ describe("GenerateKeyDialog", () => {
     });
   });
 
+  it.each([
+    ["the passphrase it encrypted the key with", "secret-pp"],
+    ["an empty passphrase for an unencrypted key", ""],
+  ])("hands back %s", async (_label, passphrase) => {
+    const key = { private_key_path: "/k", private_key: "PEM", public_key: "ssh-ed25519 AAAA" };
+    vi.mocked(invoke).mockResolvedValue(key);
+    const onGenerated = vi.fn();
+    render(<GenerateKeyDialog open onOpenChange={vi.fn()} onGenerated={onGenerated} />);
+    fireEvent.change(screen.getByTestId("generate-key-passphrase"), {
+      target: { value: passphrase },
+    });
+    fireEvent.click(screen.getByTestId("generate-key-submit"));
+    await waitFor(() => expect(onGenerated).toHaveBeenCalledWith(key, "default", passphrase));
+  });
+
   it("blocks custom_path submit with an empty path and announces the error", async () => {
     render(
       <GenerateKeyDialog

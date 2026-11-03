@@ -226,8 +226,11 @@ export function CredentialForm({
   }, [open, requestClose, setCredFormGuard]);
   useLeaveViewGuard(open, requestClose, () => onOpenChange(false));
 
-  const handleGenerated = (key: GeneratedKey, mode: KeyStorageMode) => {
+  const handleGenerated = (key: GeneratedKey, mode: KeyStorageMode, keyPassphrase: string) => {
     setGeneratedPublicKey(key.public_key);
+    // The field now describes the new key, so a key with none clears the old
+    // one's; the change also turns keepSecrets off.
+    setPassphrase(keyPassphrase);
     if (mode === "inline") {
       setKeySource("inline");
       setPrivateKey(key.private_key);
