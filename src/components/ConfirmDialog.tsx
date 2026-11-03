@@ -33,9 +33,8 @@ export interface ConfirmDialogProps {
 
 /**
  * Generic Yes/No confirmation. Built on Radix so it gets Escape-to-close
- * and aria-labelledby/aria-describedby for free. It shows as a compact
- * card at the top of the right-hand panel column, above the panel it is
- * about, never as a blocking overlay.
+ * and aria-labelledby/aria-describedby for free. It shows in the middle of
+ * the window, and the app behind it waits for the answer.
  *
  * Default focus lands on the cancel button — never on the destructive
  * action — so a careless Enter press cannot delete data.
@@ -81,7 +80,7 @@ export function ConfirmDialog({
   };
 
   return (
-    <Dialog open={open} onOpenChange={(o) => !busy && onOpenChange(o)}>
+    <Dialog modal open={open} onOpenChange={(o) => !busy && onOpenChange(o)}>
       <DialogContent kind="confirm" data-testid={testId} onCloseAutoFocus={onCloseAutoFocus}>
         <DialogHeader>
           <DialogTitle>{title}</DialogTitle>

@@ -678,6 +678,7 @@ function App() {
 
         {/* Orphaned private credential prompt */}
         <Dialog
+          modal
           open={!!dialogs.orphanCredDialog}
           onOpenChange={(open) => {
             if (!open) dialogs.setOrphanCredDialog(null);

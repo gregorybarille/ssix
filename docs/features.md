@@ -356,12 +356,11 @@ and (on Windows / Linux) the minimize / maximize / close window controls.
 
 ## Side Panel
 
-Nothing in SSIX opens a floating window. Editors (connection,
+Editors (connection,
 credential, script and snippet forms), the snippet palette, SCP and bulk SCP, key generation and key install open
 in a panel column on the right of the app, beside the current view, so
-the list you came from stays visible and usable. Confirmations appear as
-a compact card at the top of that column, above the panel they are about.
-The column only takes room while something is open in it.
+the list you came from stays visible and usable. The column only takes room
+while something is open in it.
 
 - A panel stays open while you click or tab around the view beside it;
   Escape, **Cancel** or its close button close it.
@@ -369,8 +368,9 @@ The column only takes room while something is open in it.
   Connection**) replaces the open one at once if it is unchanged, and
   asks first if it has unsaved changes (see
   [Unsaved-changes guard](#unsaved-changes-guard)).
-- The quick-connect picker (Cmd/Ctrl+K) is the exception: it stays a
-  centred palette.
+- Two things do not use the column. The quick-connect picker (Cmd/Ctrl+K) is a
+  centred palette, and confirmations appear in the middle of the window (see
+  [Destructive-Action Confirmations](#destructive-action-confirmations)).
 
 `<DialogContent>` portals into the column (`src/components/ui/panel-slot.tsx`,
 mounted by `App`), and its `kind` prop picks `panel`, `confirm` or
@@ -386,13 +386,18 @@ SSIX shows an in-app confirmation before any destructive action:
 - closing a live terminal pane
 - closing a tab whose panes still hold a live SSH session
 
-Confirmation panels default focus to the **Cancel** button so an
+A confirmation appears in the middle of the window and dims the app behind it,
+which waits for the answer, including an open side panel. Escape, **Cancel** or
+its close button dismiss it; a click outside does nothing, so a stray one cannot
+answer it.
+
+Confirmations default focus to the **Cancel** button so an
 accidental Enter press never destroys data. Failed/never-opened
 sessions can be dismissed without confirmation since there is nothing
 to lose.
 
-When a panel closes — whether through Cancel, Confirm or the Escape
-key — focus returns to the control that opened it. This holds even when the panel is opened from React state rather
+When a panel or confirmation closes — whether through Cancel, Confirm or the
+Escape key — focus returns to the control that opened it. This holds even when the panel is opened from React state rather
 than via `<DialogTrigger>` (the pattern used everywhere in SSIX), which
 the stock Radix focus-restore can't always handle on its own. The
 shared `<DialogContent>` primitive in `src/components/ui/dialog.tsx`

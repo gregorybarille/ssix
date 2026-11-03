@@ -4,8 +4,8 @@ import { cn } from "@/lib/utils";
 
 /**
  * Where dialogs render: a column on the right of the app, next to the
- * current view, so editors, SCP, key tools and confirmations open beside
- * the list instead of over it. `<DialogContent>` portals into the element
+ * current view, so editors, SCP and key tools open beside the list instead
+ * of over it. `<DialogContent>` portals into the element
  * this context holds; outside a provider (unit tests) it falls back to
  * `document.body`.
  */
@@ -26,8 +26,7 @@ export function usePanelSlot(): HTMLElement | null {
 }
 
 /**
- * The column itself. Hidden while empty; confirmations stack above the
- * panel they belong to (see `DialogContent`'s `kind`).
+ * The column itself. Hidden while empty.
  */
 export function PanelSlot({ className }: { className?: string }) {
   const context = React.useContext(PanelSlotContext);
