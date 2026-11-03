@@ -554,7 +554,11 @@ describe("Remote and dynamic forwards", () => {
     await remove.click();
     await clickDialogFooterButton(sel.confirmDeleteConnectionConfirm);
 
-    await (await rowOf("forward-16-deleted")).waitForExist({ timeout: 10_000, reverse: true });
+    // Looked up afresh on each try: a lookup that lands mid-removal throws a stale element error.
+    await browser.waitUntil(async () => !(await (await rowOf("forward-16-deleted")).isExisting()), {
+      timeout: 10_000,
+      timeoutMsg: "The deleted forward's row stayed in the list",
+    });
     await waitUntilRefused("127.0.0.1", DELETED_SOCKS_PORT, "The deleted forward's port");
   });
 });
