@@ -51,6 +51,7 @@ import {
   sshdPid,
   waitForPhase,
 } from "../helpers/reconnect.js";
+import { readFocusTrace, startFocusTrace } from "../helpers/focus-trace.js";
 import { sel } from "../helpers/selectors.js";
 import { AGENT_KEY_COMMENT, agentPublicKey } from "../helpers/ssh-agent.js";
 
@@ -81,15 +82,20 @@ async function createAgentCredential(name: string, username: string): Promise<vo
 
 /** Open `name` beside the active tab's shell. */
 async function openSplitWith(name: string): Promise<void> {
+  // This has failed now and then in CI with the picker closed and nothing dialled,
+  // and never locally. If it does again, the trace says where the Enter went.
+  await startFocusTrace();
   await click(sel.terminalNewMenu);
   await click(sel.terminalNewSplitRight);
   await fill(sel.connectPickerInput, name);
   await browser.keys(["Enter"]);
   await (await browser.$(sel.connectPickerInput)).waitForExist({ reverse: true, timeout: 10_000 });
-  await browser.waitUntil(async () => (await browser.$$(sel.terminalContainer).length) === 2, {
-    timeout: 30_000,
-    timeoutMsg: "The split never opened",
-  });
+  const opened = await browser
+    .waitUntil(async () => (await browser.$$(sel.terminalContainer).length) === 2, {
+      timeout: 30_000,
+    })
+    .catch(() => false);
+  if (!opened) throw new Error(`The split never opened. The page saw:\n${await readFocusTrace()}`);
 }
 
 async function terminalPanes(): Promise<string[]> {
