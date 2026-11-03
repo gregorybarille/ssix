@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { screen, fireEvent, waitFor } from "@testing-library/react";
+import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { ConnectPicker } from "@/components/ConnectPicker";
@@ -35,7 +35,7 @@ describe("Side panel layout", () => {
     });
   });
 
-  it("shows confirmations as a card at the top of the panel column", () => {
+  it("shows confirmations in the middle of the app, not in the panel column", () => {
     const { slot } = renderInPanel(
       <ConfirmDialog
         open
@@ -47,8 +47,42 @@ describe("Side panel layout", () => {
       />,
     );
     const card = screen.getByTestId("confirm");
-    expect(slot()).toContainElement(card);
     expect(card).toHaveAttribute("data-kind", "confirm");
+    expect(slot()).not.toContainElement(card);
+    expect(card.className).toMatch(/top-\[50%\]/);
+    expect(card.className).toMatch(/left-\[50%\]/);
+    const overlay = document.querySelector('[data-slot="dialog-overlay"]');
+    expect(overlay).toBeInTheDocument();
+    // Fading out, it would take the click meant for what is behind it.
+    expect(overlay?.className).not.toMatch(/data-\[state=closed\]/);
+  });
+
+  it("keeps the app out of reach until a confirmation is answered", async () => {
+    const onOpenChange = vi.fn();
+    const onConfirm = vi.fn();
+    render(
+      <>
+        <button>Behind</button>
+        <ConfirmDialog
+          open
+          onOpenChange={onOpenChange}
+          title="Delete web?"
+          description="It is removed for good."
+          onConfirm={onConfirm}
+          testId="confirm"
+        />
+      </>,
+    );
+    // Hidden from assistive technology, and clicks outside answer nothing.
+    expect(screen.queryByRole("button", { name: "Behind" })).not.toBeInTheDocument();
+    fireEvent.pointerDown(document.querySelector('[data-slot="dialog-overlay"]')!);
+    fireEvent.click(document.querySelector('[data-slot="dialog-overlay"]')!);
+    expect(onOpenChange).not.toHaveBeenCalled();
+    expect(onConfirm).not.toHaveBeenCalled();
+    // Enter on what has focus cancels: it is never the destructive button.
+    expect(screen.getByTestId("confirm-cancel")).toHaveFocus();
+    fireEvent.keyDown(screen.getByTestId("confirm"), { key: "Escape" });
+    expect(onOpenChange).toHaveBeenCalledWith(false);
   });
 
   it("keeps the quick-connect palette centred over the app", () => {

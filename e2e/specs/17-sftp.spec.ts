@@ -683,7 +683,11 @@ describe("Files view (SFTP)", () => {
     await click(sel.filesDelete("remote"));
     await (await browser.$(sel.filesDeleteConfirm)).waitForClickable({ timeout: 10_000 });
 
-    await click(sel.filesDisconnect);
+    // The dialog keeps this button out of a person's reach. What is tested is the
+    // session ending while the dialog is open, as a dropped connection would.
+    await browser.execute((selector: string) => {
+      document.querySelector<HTMLElement>(selector)!.click();
+    }, sel.filesDisconnect);
     await nothingMatches(sel.filesDeleteConfirm, "The delete dialog outlived its connection");
 
     await pickOption(sel.filesConnectionSelect, "conn-17-a");

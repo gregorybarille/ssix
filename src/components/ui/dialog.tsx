@@ -28,19 +28,21 @@ function DialogPortal({
 /**
  * How a dialog sits in the app:
  * - `panel` (default): fills the right-hand panel column beside the view.
- * - `confirm`: a compact card at the top of that column, above any panel
- *   it is about.
+ * - `confirm`: centred over a dimmed app, which waits for the answer. Its
+ *   `<Dialog>` takes `modal`, which is what keeps the app out of reach.
  * - `palette`: centred over the app, for the quick-connect picker.
  */
 type DialogKind = "panel" | "confirm" | "palette";
 
+const CENTERED =
+  "fixed top-[50%] left-[50%] z-50 max-h-[calc(100vh-5rem)] w-full max-w-[calc(100vw-2rem)] translate-x-[-50%] translate-y-[-50%] rounded-xl border border-border/80 bg-card p-6 shadow-2xl shadow-black/25 outline-none ring-1 ring-white/5";
+
 const KIND_CLASSES: Record<DialogKind, string> = {
   panel:
     "relative flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto border-b border-border bg-card p-6 outline-none last:border-b-0",
-  confirm:
-    "relative order-first flex shrink-0 flex-col gap-4 border-b-2 border-primary/40 bg-muted/40 p-5 outline-none",
+  confirm: `${CENTERED} flex flex-col gap-4 overflow-y-auto sm:max-w-md [&_[data-slot=dialog-title]]:pr-6`,
   palette:
-    "fixed top-[50%] left-[50%] z-50 grid max-h-[calc(100vh-5rem)] w-full max-w-[calc(100vw-2rem)] translate-x-[-50%] translate-y-[-50%] gap-4 overflow-hidden rounded-xl border border-border/80 bg-card p-6 shadow-2xl shadow-black/25 duration-200 outline-none ring-1 ring-white/5 data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=closed]:zoom-out-95 data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=open]:zoom-in-95 sm:max-w-lg",
+    `${CENTERED} grid gap-4 overflow-hidden duration-200 data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=closed]:zoom-out-95 data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=open]:zoom-in-95 sm:max-w-lg`,
 };
 
 function DialogClose({
@@ -49,6 +51,10 @@ function DialogClose({
   return <DialogPrimitive.Close data-slot="dialog-close" {...props} />;
 }
 
+/**
+ * Fades in but not out: it stays clickable until it is removed, so fading out
+ * it would take the click meant for what is behind it.
+ */
 function DialogOverlay({
   className,
   ...props
@@ -57,7 +63,7 @@ function DialogOverlay({
     <DialogPrimitive.Overlay
       data-slot="dialog-overlay"
       className={cn(
-        "fixed inset-0 z-50 bg-black/50 data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:animate-in data-[state=open]:fade-in-0",
+        "fixed inset-0 z-50 bg-black/50 data-[state=open]:animate-in data-[state=open]:fade-in-0",
         className,
       )}
       {...props}
@@ -137,7 +143,8 @@ function DialogContent({
   ensureFocusTrackerInstalled();
 
   return (
-    <DialogPortal data-slot="dialog-portal" container={kind === "palette" ? undefined : slot}>
+    <DialogPortal data-slot="dialog-portal" container={kind === "panel" ? slot : undefined}>
+      {kind === "confirm" && <DialogOverlay />}
       <DialogPrimitive.Content
         data-slot="app-panel-content"
         data-kind={kind}
@@ -145,7 +152,8 @@ function DialogContent({
           onInteractOutside?.(event);
           // A panel sits beside the view the user keeps working in, so
           // clicking or tabbing there never closes it; Escape, Cancel and
-          // the close button do.
+          // the close button do. A stray click must not answer a confirmation
+          // either.
           if (kind !== "palette") event.preventDefault();
         }}
         onOpenAutoFocus={(event) => {

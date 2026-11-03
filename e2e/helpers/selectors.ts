@@ -37,7 +37,7 @@ export const sel = {
   // Each sidebar button's tooltip is `${its testid}-tooltip`.
   navTooltip: (navTestId: string) => `[data-testid="${navTestId}-tooltip"]`,
 
-  // The right-hand column every editor, SCP panel and confirmation opens in.
+  // The right-hand column every editor and SCP panel opens in.
   appPanelSlot: '[data-testid="app-panel-slot"]',
 
   // Logs view: one row per entry, with `data-level` (info, warn, debug…).

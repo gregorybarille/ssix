@@ -231,6 +231,22 @@ describe("Connections CRUD", () => {
     const deleteButton = await row.$(sel.credentialRowDeleteButton);
     await deleteButton.waitForClickable({ timeout: 10_000 });
     await deleteButton.click();
+
+    // A confirmation sits in the middle of the window, not in the side panel.
+    const placement = await browser.execute((selector: string) => {
+      const box = document.querySelector(selector)!.getBoundingClientRect();
+      return {
+        offCentreX: Math.abs(box.left + box.width / 2 - window.innerWidth / 2),
+        offCentreY: Math.abs(box.top + box.height / 2 - window.innerHeight / 2),
+        inPanel: !!document.querySelector(selector)!.closest('[data-testid="app-panel-slot"]'),
+        dimmed: !!document.querySelector('[data-slot="dialog-overlay"]'),
+      };
+    }, sel.confirmDeleteCredential);
+    expect(placement.offCentreX).toBeLessThan(2);
+    expect(placement.offCentreY).toBeLessThan(2);
+    expect(placement.inPanel).toBe(false);
+    expect(placement.dimmed).toBe(true);
+
     await clickDialogFooterButton(sel.confirmDeleteCredentialConfirm);
 
     const error = await browser.$(sel.confirmDeleteCredentialError);
