@@ -40,14 +40,20 @@ longer surfaces them as standalone destructive operations.
 
 The primary `Sync` action performs these steps:
 
-1. Export sanitized snapshot
-2. Fetch remote updates
-3. Fast-forward pull if the branch is behind
+1. Fetch remote updates
+2. If the branch is behind: discard uncommitted changes under `.ssix-sync/`, then fast-forward pull
+3. Export sanitized snapshot
 4. Stage `.ssix-sync/`
 5. Commit if there are local exported changes
 6. Push if the branch is ahead
 
 The sync flow stops on the first failing git step and surfaces the git output.
+
+Exporting comes after the pull because a pull is refused when it would overwrite a changed snapshot, and exporting first would hit that on every retry. Only `.ssix-sync/` is discarded, so keep nothing of your own there. It holds derived data: when a pull then fails, nothing is lost, since the next Sync exports again.
+
+Sync and Commit commit `.ssix-sync/` and nothing else. Anything else you have staged stays staged and is not pushed by Sync's commit.
+
+Sync only fast-forwards. If the branch and the remote have diverged, for example after a Commit that was not pushed while another machine pushed, it stops and changes nothing. Rebase or merge in the repository, then Sync again. A conflict in `.ssix-sync/` can be resolved either way, because Sync exports over it.
 
 ## Notes
 

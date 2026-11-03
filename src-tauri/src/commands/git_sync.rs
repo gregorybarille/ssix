@@ -129,7 +129,7 @@ fn git_sync_status_sync() -> Result<GitSyncStatus, String> {
 fn status_in(repo_path: &Path, settings: &AppSettings) -> Result<GitSyncStatus, String> {
     let branch = sync_branch(repo_path, settings)?;
     let remote = configured_remote(settings)?;
-    let porcelain = git(repo_path, &["status", "--short", EXPORT_DIR])?;
+    let porcelain = git(repo_path, &["status", "--short", "--", EXPORT_DIR])?;
     let changed_files = porcelain
         .stdout
         .lines()
@@ -241,8 +241,8 @@ fn commit_in(
         return Err("Commit message is required".to_string());
     }
 
-    git(repo_path, &["add", EXPORT_DIR])?;
-    let status = git(repo_path, &["status", "--short", EXPORT_DIR])?;
+    git(repo_path, &["add", "--", EXPORT_DIR])?;
+    let status = git(repo_path, &["status", "--short", "--", EXPORT_DIR])?;
     if status.stdout.trim().is_empty() {
         return Ok(GitSyncActionResult {
             stdout: "No changes to commit.".to_string(),
@@ -251,7 +251,7 @@ fn commit_in(
         });
     }
 
-    let result = git(repo_path, &["commit", "-m", message])?;
+    let result = commit_snapshot(repo_path, message)?;
     Ok(to_action_result(result))
 }
 
@@ -271,15 +271,21 @@ fn sync_in(repo_path: &Path, data: &AppData) -> Result<GitSyncRunResult, String>
     let mut steps = Vec::new();
     let mut combined_output = String::new();
 
-    export_snapshot(repo_path, data)?;
-    steps.push("Exported sanitized snapshot".to_string());
-
     let fetch = fetch_remote(repo_path, &remote, &branch)?;
     append_output(&mut combined_output, &fetch);
     steps.push(format!("Fetched {}", remote));
 
-    let (_, behind_before_pull) = ahead_behind(repo_path, &remote, Some(&branch))?;
+    let (ahead_before_pull, behind_before_pull) = ahead_behind(repo_path, &remote, Some(&branch))?;
     if behind_before_pull > 0 {
+        if ahead_before_pull > 0 {
+            return Err(format!(
+                "This repository and branch {} of {} have diverged ({} local and {} remote commit(s)), and Sync only fast-forwards. \
+                 In the repository, rebase or merge onto the remote branch, then Sync again. \
+                 A conflict in {}/ can be resolved either way: Sync exports it again.",
+                branch, remote, ahead_before_pull, behind_before_pull, EXPORT_DIR
+            ));
+        }
+        discard_snapshot(repo_path)?;
         let pull = git(repo_path, &["pull", "--ff-only", &remote, &branch])?;
         append_output(&mut combined_output, &pull);
         steps.push(format!(
@@ -288,15 +294,18 @@ fn sync_in(repo_path: &Path, data: &AppData) -> Result<GitSyncRunResult, String>
         ));
     }
 
-    let status = git(repo_path, &["status", "--short", EXPORT_DIR])?;
+    export_snapshot(repo_path, data)?;
+    steps.push("Exported sanitized snapshot".to_string());
+
+    let status = git(repo_path, &["status", "--short", "--", EXPORT_DIR])?;
     let changed_files = status
         .stdout
         .lines()
         .filter_map(parse_status_path)
         .collect::<Vec<_>>();
     if !changed_files.is_empty() {
-        git(repo_path, &["add", EXPORT_DIR])?;
-        let commit = git(repo_path, &["commit", "-m", DEFAULT_COMMIT_MESSAGE])?;
+        git(repo_path, &["add", "--", EXPORT_DIR])?;
+        let commit = commit_snapshot(repo_path, DEFAULT_COMMIT_MESSAGE)?;
         append_output(&mut combined_output, &commit);
         steps.push(format!("Committed {} changed file(s)", changed_files.len()));
     } else {
@@ -335,6 +344,26 @@ fn sync_in(repo_path: &Path, data: &AppData) -> Result<GitSyncRunResult, String>
             status: 0,
         },
     })
+}
+
+/// The pathspec keeps whatever else the user has staged out of the commit.
+fn commit_snapshot(repo_path: &Path, message: &str) -> Result<GitOutput, String> {
+    git(repo_path, &["commit", "-m", message, "--", EXPORT_DIR])
+}
+
+/// Puts the snapshot back as HEAD has it, so a pull is not refused over it. It
+/// is derived data that Sync exports again, and nothing outside it is touched.
+fn discard_snapshot(repo_path: &Path) -> Result<(), String> {
+    git(repo_path, &["reset", "-q", "--", EXPORT_DIR])?;
+    // `checkout` fails on a pathspec that matches nothing, as before a first commit.
+    if !git(repo_path, &["ls-files", "--", EXPORT_DIR])?
+        .stdout
+        .is_empty()
+    {
+        git(repo_path, &["checkout", "-q", "--", EXPORT_DIR])?;
+    }
+    git(repo_path, &["clean", "-fdq", "--", EXPORT_DIR])?;
+    Ok(())
 }
 
 fn configured_repo_path(settings: &AppSettings) -> Option<PathBuf> {
@@ -1031,5 +1060,154 @@ mod tests {
         let data = data_with("one", "origin", None);
         let status = status_in(&fx.repo, &data.settings).unwrap();
         assert_eq!(status.branch, None);
+    }
+
+    #[test]
+    fn a_remote_commit_and_a_changed_snapshot_sync_without_getting_stuck() {
+        let Some(fx) = Fixture::new(true) else { return };
+        sync_in(&fx.repo, &data_with("one", "origin", None)).unwrap();
+        // The other machine changes the very file this one has pending, the
+        // case where a pull over an exported snapshot is refused.
+        fx.remote_commit("main", ".ssix-sync/data.json", "from the other machine");
+        let data = data_with("two", "origin", None);
+        export_snapshot(&fx.repo, &data).unwrap();
+
+        sync_in(&fx.repo, &data).unwrap();
+
+        let subjects = fx.remote_subjects("main");
+        assert!(subjects.contains("from the other machine"), "{subjects}");
+        assert!(run(&fx.remote, &["show", "main:.ssix-sync/data.json"]).contains("two"));
+        assert_in_step(&fx, &data);
+    }
+
+    /// A second machine's first Sync: no commit yet, its own snapshot already
+    /// staged, and the remote has the same files.
+    #[test]
+    fn a_new_machine_with_a_pending_snapshot_takes_the_remote_history() {
+        let Some(fx) = Fixture::new(true) else { return };
+        fx.remote_commit("main", ".ssix-sync/data.json", "from the other machine");
+        let data = data_with("two", "origin", None);
+        export_snapshot(&fx.repo, &data).unwrap();
+        run(&fx.repo, &["add", "--", EXPORT_DIR]);
+
+        sync_in(&fx.repo, &data).unwrap();
+
+        let subjects = fx.remote_subjects("main");
+        assert!(subjects.contains("from the other machine"), "{subjects}");
+        assert!(run(&fx.remote, &["show", "main:.ssix-sync/data.json"]).contains("two"));
+    }
+
+    #[test]
+    fn sync_discards_only_the_snapshot_before_pulling() {
+        let Some(fx) = Fixture::new(true) else { return };
+        write(&fx.repo, "notes.txt", "committed\n");
+        run(&fx.repo, &["add", "--", "notes.txt"]);
+        run(&fx.repo, &["commit", "-q", "-m", "notes"]);
+        sync_in(&fx.repo, &data_with("one", "origin", None)).unwrap();
+        fx.remote_commit("main", "from-other.txt", "x");
+
+        write(&fx.repo, "notes.txt", "edited, not staged\n");
+        write(&fx.repo, "-rf", "untracked, named like an option\n");
+        write(
+            &fx.repo,
+            ".ssix-sync-keep/mine.txt",
+            "untracked, similar name\n",
+        );
+        let data = data_with("two", "origin", None);
+        export_snapshot(&fx.repo, &data).unwrap();
+        write(&fx.repo, ".ssix-sync/--stray", "regenerated data\n");
+
+        sync_in(&fx.repo, &data).unwrap();
+
+        let notes = fs::read_to_string(fx.repo.join("notes.txt")).unwrap();
+        assert_eq!(notes, "edited, not staged\n");
+        assert!(fx.repo.join("-rf").exists());
+        assert!(fx.repo.join(".ssix-sync-keep/mine.txt").exists());
+        assert!(!fx.remote_has("main", "-rf"));
+        assert!(!fx.remote_has("main", ".ssix-sync/--stray"));
+        assert!(run(&fx.remote, &["show", "main:.ssix-sync/data.json"]).contains("two"));
+    }
+
+    #[test]
+    fn a_refused_pull_loses_nothing_and_the_next_sync_exports_again() {
+        let Some(fx) = Fixture::new(true) else { return };
+        write(&fx.repo, "notes.txt", "committed\n");
+        run(&fx.repo, &["add", "--", "notes.txt"]);
+        run(&fx.repo, &["commit", "-q", "-m", "notes"]);
+        sync_in(&fx.repo, &data_with("one", "origin", None)).unwrap();
+        fx.remote_commit("main", "notes.txt", "from the other machine\n");
+        write(&fx.repo, "notes.txt", "my edit\n");
+        let data = data_with("two", "origin", None);
+
+        assert!(sync_in(&fx.repo, &data).is_err());
+        let notes = fs::read_to_string(fx.repo.join("notes.txt")).unwrap();
+        assert_eq!(notes, "my edit\n");
+
+        run(&fx.repo, &["checkout", "-q", "--", "notes.txt"]);
+        sync_in(&fx.repo, &data).unwrap();
+        assert!(run(&fx.remote, &["show", "main:.ssix-sync/data.json"]).contains("two"));
+    }
+
+    #[test]
+    fn a_diverged_commit_is_refused_with_what_to_do_and_kept() {
+        let Some(fx) = Fixture::new(true) else { return };
+        sync_in(&fx.repo, &data_with("one", "origin", None)).unwrap();
+        commit_in(&fx.repo, &data_with("two", "origin", None), "my commit").unwrap();
+        fx.remote_commit("main", "from-other.txt", "x");
+        let data = data_with("three", "origin", None);
+        export_snapshot(&fx.repo, &data).unwrap();
+
+        let err = sync_in(&fx.repo, &data).err().unwrap();
+
+        assert!(err.contains("rebase or merge"), "{err}");
+        assert!(run(&fx.repo, &["log", "--format=%s"]).contains("my commit"));
+        assert!(!fx.remote_subjects("main").contains("my commit"));
+        // Follow the advice: the snapshot syncs after that.
+        run(&fx.repo, &["checkout", "-q", "--", ".ssix-sync"]);
+        run(&fx.repo, &["pull", "-q", "--rebase", "origin", "main"]);
+        sync_in(&fx.repo, &data).unwrap();
+        assert!(fx.remote_subjects("main").contains("my commit"));
+    }
+
+    fn assert_only_env_stays_staged(fx: &Fixture) {
+        let staged = run(&fx.repo, &["diff", "--cached", "--name-only"]);
+        assert_eq!(staged.trim(), ".env");
+        let committed = run(&fx.repo, &["ls-tree", "-r", "--name-only", "HEAD"]);
+        assert!(!committed.contains(".env"), "{committed}");
+    }
+
+    #[test]
+    fn sync_leaves_another_staged_file_staged_and_unpushed() {
+        let Some(fx) = Fixture::new(true) else { return };
+        write(&fx.repo, ".env", "TOKEN=secret\n");
+        run(&fx.repo, &["add", "--", ".env"]);
+
+        sync_in(&fx.repo, &data_with("one", "origin", None)).unwrap();
+        assert_only_env_stays_staged(&fx);
+        assert!(!fx.remote_has("main", ".env"));
+
+        // Same again with a pull on top of a repo that now has history.
+        fx.remote_commit("main", "from-other.txt", "x");
+        sync_in(&fx.repo, &data_with("two", "origin", None)).unwrap();
+        assert_only_env_stays_staged(&fx);
+        assert!(!fx.remote_has("main", ".env"));
+    }
+
+    #[test]
+    fn the_commit_button_leaves_another_staged_file_staged() {
+        let Some(fx) = Fixture::new(true) else { return };
+        write(&fx.repo, ".env", "TOKEN=secret\n");
+        run(&fx.repo, &["add", "--", ".env"]);
+
+        let data = data_with("one", "origin", None);
+        commit_in(&fx.repo, &data, "-m looks like an option").unwrap();
+
+        assert_only_env_stays_staged(&fx);
+        let tree = run(&fx.repo, &["ls-tree", "-r", "--name-only", "HEAD"]);
+        assert!(tree.contains(".ssix-sync/data.json"), "{tree}");
+        assert_eq!(
+            run(&fx.repo, &["log", "-1", "--format=%s"]).trim(),
+            "-m looks like an option"
+        );
     }
 }
