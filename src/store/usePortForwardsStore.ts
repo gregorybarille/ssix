@@ -69,11 +69,17 @@ function trackAttempt(connectionId: string) {
 
 /** What a forward emits on `forwardStatusEvent`. Mirrors `ForwardStatus` in `src-tauri/src/forwards.rs`. */
 export interface ForwardStatus {
-  state: "listening" | "client_connected" | "client_closed" | "client_error" | "error";
+  state: "listening" | "client_connected" | "client_closed" | "client_error" | "traffic" | "error";
   listen_port: number;
   destination: string;
   message: string | null;
   active_clients: number;
+  /** Since the forward started: to the SSH server and from it. */
+  bytes_sent: number;
+  bytes_received: number;
+  /** As of the latest `traffic` status. */
+  sent_per_second: number;
+  received_per_second: number;
 }
 
 /**
@@ -183,6 +189,10 @@ export const usePortForwardsStore = create<PortForwardsState>((set, get) => ({
               ? {
                   ...s,
                   activeClients: status.active_clients,
+                  bytesSent: status.bytes_sent,
+                  bytesReceived: status.bytes_received,
+                  sentPerSecond: status.sent_per_second,
+                  receivedPerSecond: status.received_per_second,
                   clientError:
                     status.state === "client_error"
                       ? status.message ?? undefined

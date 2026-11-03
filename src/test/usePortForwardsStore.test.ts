@@ -52,6 +52,10 @@ function emitStatus(sessionId: string, status: Partial<ForwardStatus>) {
       destination: "SOCKS clients",
       message: null,
       active_clients: 0,
+      bytes_sent: 0,
+      bytes_received: 0,
+      sent_per_second: 0,
+      received_per_second: 0,
       ...status,
     },
   });
@@ -109,6 +113,33 @@ describe("usePortForwardsStore", () => {
       clientError: "to db:5432: refused",
     });
     expect(store().sessions[0].error).toBeUndefined();
+  });
+
+  it("keeps a running forward's traffic, totals and speeds, from its status events", async () => {
+    await store().startForward(conn);
+    emitStatus("session-1", {
+      state: "traffic",
+      active_clients: 1,
+      bytes_sent: 100,
+      bytes_received: 2000,
+      sent_per_second: 10,
+      received_per_second: 200,
+    });
+    expect(store().sessions[0]).toMatchObject({
+      activeClients: 1,
+      bytesSent: 100,
+      bytesReceived: 2000,
+      sentPerSecond: 10,
+      receivedPerSecond: 200,
+    });
+    // The last client left: the totals stay, the speed drops.
+    emitStatus("session-1", { state: "traffic", bytes_sent: 100, bytes_received: 2000 });
+    expect(store().sessions[0]).toMatchObject({
+      bytesSent: 100,
+      bytesReceived: 2000,
+      sentPerSecond: 0,
+      receivedPerSecond: 0,
+    });
   });
 
   it("marks a running forward lost when it ends with an error, and stops listening", async () => {

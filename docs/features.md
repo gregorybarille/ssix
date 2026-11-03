@@ -128,17 +128,21 @@ Saved commands with `{{variable}}` prompts, pasted into the active terminal and 
 
 ## Port Forwards
 
-- local forwards (`ssh -L`): SSIX listens on `127.0.0.1:<local port>` and
+- local forwards (`ssh -L`): SSIX listens on `<bind address>:<local port>` and
   forwards each connection through the SSH server to the remote host
 - remote forwards (`ssh -R`): the SSH server listens on its own loopback and
   each connection comes back to a target on this machine's side
-- dynamic forwards (`ssh -D`): a SOCKS5 proxy on `127.0.0.1:<SOCKS port>` whose
-  connections the SSH server dials, resolving names itself
+- dynamic forwards (`ssh -D`): a SOCKS5 proxy on `<bind address>:<SOCKS port>`
+  whose connections the SSH server dials, resolving names itself
+- local and dynamic forwards listen on `127.0.0.1` unless given another IP address,
+  and the form warns when other machines could reach it
 - one row per forward with status indicator: grey for not connected/connecting,
   green for connected, red for connection errors and for a forward whose
   connection was lost
-- expandable inline detail panes beneath each forward, with its client count and
-  last client error; multiple rows can stay expanded
+- a running forward's row shows its upload and download speed
+- expandable inline detail panes beneath each forward, with the total uploaded and
+  downloaded, its client count and last client error; multiple rows can stay
+  expanded
 - stopping a forward drops its clients, and a forward whose session dies closes
   its port and says so
 

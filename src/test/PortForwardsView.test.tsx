@@ -238,6 +238,44 @@ describe("PortForwardsView", () => {
     expect(screen.queryByTestId("forward-stop-pf-1")).not.toBeInTheDocument();
   });
 
+  it("shows the speed on a running forward's row, and the totals in its details", async () => {
+    const user = userEvent.setup();
+    const sessions: ForwardSession[] = [
+      {
+        sessionId: "s-busy",
+        connectionName: "api-tunnel",
+        connection: portForwardConn,
+        activeClients: 1,
+        bytesSent: 2048,
+        bytesReceived: 3 * 1024 * 1024,
+        sentPerSecond: 512,
+        receivedPerSecond: 1536,
+      },
+    ];
+    render(<PortForwardsView {...defaultProps} sessions={sessions} />);
+    const row = screen.getByTestId("forward-row-pf-1");
+    expect(row).toHaveAttribute("data-bytes-sent", "2048");
+    expect(row).toHaveAttribute("data-bytes-received", String(3 * 1024 * 1024));
+    expect(screen.getByTestId("forward-speed-pf-1")).toHaveTextContent(
+      "Up 512 B/s, down 1.5 KB/s",
+    );
+    await user.click(within(row).getAllByRole("button")[0]);
+    expect(screen.getByTestId("forward-uploaded-pf-1")).toHaveTextContent("2.0 KB");
+    expect(screen.getByTestId("forward-downloaded-pf-1")).toHaveTextContent("3.0 MB");
+  });
+
+  it("shows no speed on a forward that is not running, and zero before any traffic", () => {
+    const { rerender } = render(<PortForwardsView {...defaultProps} />);
+    expect(screen.queryByTestId("forward-speed-pf-1")).not.toBeInTheDocument();
+    rerender(
+      <PortForwardsView
+        {...defaultProps}
+        sessions={[{ sessionId: "s", connectionName: "api-tunnel", connection: portForwardConn }]}
+      />,
+    );
+    expect(screen.getByTestId("forward-speed-pf-1")).toHaveTextContent("Up 0 B/s, down 0 B/s");
+  });
+
   it("shows where a forward listens, on the row and in its details", async () => {
     const user = userEvent.setup();
     const onLan = { ...dynamicForwardConn, bind_address: "10.0.0.5" } as ForwardSession["connection"];

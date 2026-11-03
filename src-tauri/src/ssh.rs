@@ -22,7 +22,7 @@
 use std::io::{self, Read, Write};
 use std::net::{Shutdown, SocketAddr, TcpListener, TcpStream, ToSocketAddrs};
 use std::path::Path;
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender, TryRecvError};
 use std::sync::Arc;
 use std::thread;
@@ -1568,6 +1568,15 @@ fn open_hop_unless_cancelled(
         .map_err(|e| format!("{} {}: {}", role, hop.addr(), e))
 }
 
+/// What a tunnel has carried, counted once the other side has taken it.
+#[derive(Default)]
+pub(crate) struct Traffic {
+    /// From the local side, into the SSH channel.
+    pub(crate) sent: AtomicU64,
+    /// From the SSH channel, to the local side.
+    pub(crate) received: AtomicU64,
+}
+
 /// Forward bytes between a local TCP socket and an SSH `direct-tcpip`
 /// channel. Both ends are non-blocking; the thread sleeps in `poll(2)` on
 /// both sockets while idle, so neither direction can stall the other and an
@@ -1578,6 +1587,7 @@ pub(crate) fn forward_bidi(
     mut channel: ssh2::Channel,
     session: &Session,
     clients: &AtomicUsize,
+    traffic: &Traffic,
 ) {
     local.set_nonblocking(true).ok();
     local.set_nodelay(true).ok();
@@ -1601,6 +1611,7 @@ pub(crate) fn forward_bidi(
                     close_channel(&mut channel);
                     return;
                 }
+                traffic.sent.fetch_add(n as u64, Ordering::Relaxed);
                 idle = false;
             }
             Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => {}
@@ -1621,6 +1632,7 @@ pub(crate) fn forward_bidi(
                     close_channel(&mut channel);
                     return;
                 }
+                traffic.received.fetch_add(n as u64, Ordering::Relaxed);
                 idle = false;
             }
             Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => {}
@@ -1699,7 +1711,13 @@ fn bridge_unless_cancelled(
                     debug.at(2, || format!("direct-tcpip channel open for {}", peer));
                     session.set_blocking(false);
                     let _ = ready_tx.send(Ok(()));
-                    forward_bidi(local_stream, channel, &session, &AtomicUsize::new(1));
+                    forward_bidi(
+                        local_stream,
+                        channel,
+                        &session,
+                        &AtomicUsize::new(1),
+                        &Traffic::default(),
+                    );
                 }
                 Err(e) => {
                     let _ = ready_tx.send(Err(format!("channel_direct_tcpip failed: {}", e)));
