@@ -270,8 +270,8 @@ half-written backup in the list.
     key exchange and authentication took
   From -v the terminal also starts with a "Connected to …" line.
   Passwords and key contents are never logged.
-- screenshot capture from the **Window actions** context menu (right-click
-  any empty area of the window, outside an input or terminal selection)
+- screenshot capture with `Mod+Shift+P`, saved to the desktop, with a toast
+  naming the file
 
 ## SSH Key Utilities
 
@@ -539,11 +539,10 @@ Wired surfaces today:
   from the connection + selected credential via `buildSshCommand` in
   `src/lib/ssh-command.ts` and writes it to the clipboard. Agent forwarding
   adds `-A`.
-- **Terminal tabs** — Close tab, Close other tabs, Close tabs to the
-  right (the latter two are disabled when they would be no-ops).
-- **Window background** — Take screenshot (legacy behavior preserved
-  from the original screenshot-only menu, now powered by the same
-  primitive).
+- **Terminal tabs** — Browse files, which opens the tab's server in the
+  [Files view](sftp.md) (one item per server on a split between two), Close
+  tab, Close other tabs, Close tabs to the right (the latter two are disabled
+  when they would be no-ops).
 
 For new consumers, prefer the `useContextMenu()` hook:
 
@@ -616,6 +615,7 @@ macOS and `Ctrl` everywhere else.
 | `Mod+W`        | Close the active terminal tab (with confirm if live)     |
 | `Mod+1`…`Mod+9`| Switch to terminal tab N                                 |
 | `Mod+Shift+S`  | Paste a snippet into the active terminal ([Snippets](snippets.md)) |
+| `Mod+Shift+P`  | Save a screenshot of the window to the desktop           |
 | `Cmd+F` on macOS, `Ctrl+Shift+F` elsewhere | Find in the visible terminal: see [Terminal UX](terminal-ux.md#find) |
 
 On macOS the shortcuts work everywhere, including while a terminal
@@ -625,9 +625,10 @@ picker without clicking out of the terminal first. On Linux and
 Windows, `Ctrl` combos are suppressed when focus is in an input,
 textarea, `contenteditable` element, or anywhere inside an `xterm`
 instance, because `Ctrl+K`, `Ctrl+W` and friends are readline bindings
-inside the shell. `Mod+Shift+S` is the exception and works everywhere:
-its main use is from inside a terminal, and neither the shell nor a text
-field has a use for `Ctrl+Shift+S`. To avoid swallowing those bindings,
+inside the shell. `Mod+Shift+S` and `Mod+Shift+P` are the exceptions and
+work everywhere: they are useful from inside a terminal, and neither the
+shell nor a text field has a use for `Ctrl+Shift+S` or `Ctrl+Shift+P`. To
+avoid swallowing those bindings,
 combos that mix `Ctrl` and `Cmd` simultaneously are ignored on every
 platform.
 

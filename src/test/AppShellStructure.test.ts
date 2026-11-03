@@ -10,7 +10,7 @@ describe("App shell structure", () => {
 
   it("contains settings scrolling inside the settings view wrapper", () => {
     const start = app.indexOf('view === "settings"');
-    const end = app.indexOf("{dialogs.contextMenu &&", start);
+    const end = app.indexOf("<ScreenshotToast />", start);
     expect(start).toBeGreaterThan(-1);
     expect(end).toBeGreaterThan(start);
     const slice = app.slice(start, end);
@@ -27,14 +27,15 @@ describe("App shell structure", () => {
     expect(app.lastIndexOf('view === "settings"')).toBeGreaterThan(otherViews);
   });
 
-  it("renders the screenshot affordances without emoji or a menu icon", () => {
+  it("takes a screenshot from a shortcut, with no window menu and no emoji", () => {
     expect(app).not.toContain("📸");
     expect(toast).not.toContain("📸");
 
-    const itemStart = app.indexOf('label: "Take screenshot"');
-    expect(itemStart).toBeGreaterThan(-1);
-    const itemSlice = app.slice(itemStart, itemStart + 160);
-    expect(itemSlice).not.toMatch(/icon\s*:/);
+    expect(app).not.toContain("Take screenshot");
+    expect(app).not.toContain("ssix:contextmenu");
+    const binding = app.slice(app.indexOf('"mod+shift+p"'), app.indexOf('"mod+shift+p"') + 120);
+    expect(binding).toContain("captureScreenshot()");
+    expect(binding).toContain("allowInTypingSurface: true");
   });
 
   it("marks the screenshot toast as excluded from future captures", () => {

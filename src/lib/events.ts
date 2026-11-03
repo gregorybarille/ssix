@@ -10,8 +10,7 @@
  * The `ssix:` prefix namespaces our channels under our app so they
  * cannot collide with Tauri plugin events or with future frontend
  * `window.dispatchEvent` listeners (the frontend already uses an
- * `ssix:` prefix for its DOM events — see `ssix:contextmenu`,
- * `ssix:terminal-paste`).
+ * `ssix:` prefix for its DOM events — see `ssix:terminal-paste`).
  *
  * Any rename here MUST be reflected in `src-tauri/src/forwards.rs` in the
  * same commit. Both sides go through these helpers so the contract
