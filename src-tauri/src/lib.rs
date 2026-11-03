@@ -29,6 +29,8 @@ pub fn run() {
         .manage(SshState::new())
         .setup(|app| {
             logs::init(app.handle().clone());
+            #[cfg(unix)]
+            forwards::raise_open_file_limit();
             backup::spawn_scheduler();
             tauri::async_runtime::spawn_blocking(commands::sftp::edit::purge_stale_copies);
             // Write any load-time repair once, off the UI thread.

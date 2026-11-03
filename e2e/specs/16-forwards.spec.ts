@@ -42,6 +42,7 @@ const RELAYED_SOCKS_PORT = 23664;
 const DELETED_SOCKS_PORT = 23665;
 const BIND_PORT = 23666;
 const TRAFFIC_PORT = 23667;
+const CROWDED_PORT = 23668;
 
 const CMD_CONNECT = 1;
 const CMD_BIND = 2;
@@ -50,6 +51,9 @@ const REPLY_SUCCEEDED = 0;
 const REPLY_CONNECTION_REFUSED = 5;
 const REPLY_COMMAND_NOT_SUPPORTED = 7;
 const REPLY_ADDRESS_TYPE_NOT_SUPPORTED = 8;
+
+/** Past what 256 descriptors, and what 1024, can hold at two per client. */
+const CROWD = 600;
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -535,6 +539,46 @@ describe("Remote and dynamic forwards", () => {
 
     await stopForward("forward-16-remote");
     await stopForward("forward-16-socks");
+  });
+
+  it("serves hundreds of clients at once, and a new session beside them", async () => {
+    await createForward({
+      name: "forward-16-crowded",
+      kind: sel.connectionFormKindDynamicForward,
+      portField: sel.connectionFormSocksPort,
+      port: CROWDED_PORT,
+    });
+    await startForward("forward-16-crowded");
+
+    const crowd: Client[] = [];
+    // In batches, so that the listener's backlog does not delay anyone.
+    while (crowd.length < CROWD) {
+      crowd.push(
+        ...(await Promise.all(Array.from({ length: 50 }, () => openClient(CROWDED_PORT)))),
+      );
+    }
+    // Only a client with a thread of its own gets this answer.
+    await Promise.all(
+      crowd.map(async (client) => {
+        client.socket.write(Buffer.from([5, 1, 0]));
+        expect([...(await client.take(2))]).toEqual([5, 0]);
+      }),
+    );
+    expect(await socksReply(CROWDED_PORT, CMD_CONNECT, ipv4([127, 0, 0, 1], 1))).toBe(
+      REPLY_CONNECTION_REFUSED,
+    );
+
+    // This session's socket gets a descriptor number above 1024 while the crowd
+    // is there, which a library using select() could not take.
+    await startForward("forward-16-socks");
+    expect(await socksReply(SOCKS_PORT, CMD_CONNECT, ipv4([127, 0, 0, 1], 1))).toBe(
+      REPLY_CONNECTION_REFUSED,
+    );
+    await waitForStatus("forward-16-crowded", "connected");
+
+    for (const client of crowd) client.socket.destroy();
+    await stopForward("forward-16-socks");
+    await stopForward("forward-16-crowded");
   });
 
   it("stops a running forward that is deleted", async () => {

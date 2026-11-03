@@ -50,7 +50,7 @@ Older builds showed this as `TypeError: ... window.__TAURI_INTERNALS__ is undefi
 - Confirm the remote service is reachable from the SSH server.
 - Check the Port forwards view for status updates or errors; a row's details show its last client error.
 - A remote forward listens on the SSH server's loopback, so other machines cannot reach it unless the server has `GatewayPorts yes`.
-- See [Port Forwards](forwards.md#troubleshooting) for what SOCKS replies and "refused to listen" mean.
+- See [Port Forwards](forwards.md#troubleshooting) for what SOCKS replies, "refused to listen" and "Could not accept a new client" mean.
 
 ## SCP Transfer Fails
 
