@@ -1522,12 +1522,12 @@ fn run_io_loop<O: ShellOutput>(shell: OpenShell, io: &mut ShellIo<O>) -> ShellEn
     // loop has to go on reading, and the watchdog judges a server that stops.
     let mut input = Outgoing::default();
     let mut send_blocked = false;
-
     // A reconnected shell starts at the PTY's default size; the terminal only
     // reports a size when it changes.
-    if let Some((cols, rows)) = io.pty_size {
-        resize_pty(&mut channel, cols, rows, &io.out);
-    }
+    let mut resize = PtyResize {
+        wanted: io.pty_size,
+        ..PtyResize::default()
+    };
 
     loop {
         let mut active = false;
@@ -1576,7 +1576,7 @@ fn run_io_loop<O: ShellOutput>(shell: OpenShell, io: &mut ShellIo<O>) -> ShellEn
                 Ok(SessionMsg::Write(data)) => input.push(&data),
                 Ok(SessionMsg::Resize { cols, rows }) => {
                     io.pty_size = Some((cols, rows));
-                    resize_pty(&mut channel, cols, rows, &io.out);
+                    resize.wanted = io.pty_size;
                 }
                 Ok(SessionMsg::Disconnect) | Err(TryRecvError::Disconnected) => {
                     close_channel(&mut channel);
@@ -1587,6 +1587,9 @@ fn run_io_loop<O: ShellOutput>(shell: OpenShell, io: &mut ShellIo<O>) -> ShellEn
             }
         }
 
+        if let Err(e) = resize.send(|cols, rows| channel.request_pty_size(cols, rows, None, None)) {
+            io.out.warn(format!("resize failed: {}", e));
+        }
         match input.send(&mut channel) {
             Ok(0) => {}
             Ok(_) => {
@@ -1621,9 +1624,10 @@ fn run_io_loop<O: ShellOutput>(shell: OpenShell, io: &mut ShellIo<O>) -> ShellEn
             }
         }
 
-        send_blocked = !active && !input.is_empty() && send_blocked_on_socket(&session);
+        let sending = !input.is_empty() || resize.wanted.is_some();
+        send_blocked = !active && sending && send_blocked_on_socket(&session);
         if !active {
-            if !input.is_empty() {
+            if sending {
                 if let Err(e) = take_in(&mut channel) {
                     return after_io_error(&mut channel, format!("SSH read error: {}", e));
                 }
@@ -1669,9 +1673,39 @@ pub(crate) fn send_due_keepalive(session: &Session, fd: wake::Fd) -> Result<(), 
     session.keepalive_send().map(drop)
 }
 
-fn resize_pty<O: ShellOutput>(channel: &mut ssh2::Channel, cols: u32, rows: u32, out: &O) {
-    if let Err(e) = channel.request_pty_size(cols, rows, None, None) {
-        out.warn(format!("resize to {}x{} failed: {}", cols, rows, e));
+/// A PTY size on its way to the server. libssh2 keeps a window-change it could
+/// not finish sending and refuses every other packet until it is retried, so one
+/// left behind jams the session. It cannot be retried in a loop on the spot
+/// either: while input is half sent the refusal lasts until the input goes, and
+/// that needs the worker's loop. So it is offered once per pass, like input.
+#[derive(Default)]
+struct PtyResize {
+    wanted: Option<(u32, u32)>,
+    /// The size libssh2 has kept: a retry sends this, whatever it is asked for.
+    kept: Option<(u32, u32)>,
+}
+
+impl PtyResize {
+    fn send(
+        &mut self,
+        send: impl FnOnce(u32, u32) -> Result<(), ssh2::Error>,
+    ) -> Result<(), ssh2::Error> {
+        let Some(size) = self.wanted else {
+            return Ok(());
+        };
+        match send(size.0, size.1) {
+            Err(e) if is_eagain(&e) => {
+                self.kept.get_or_insert(size);
+                Ok(())
+            }
+            result => {
+                // A newer size that came in meanwhile has still to go.
+                if self.kept.take().is_none_or(|kept| kept == size) {
+                    self.wanted = None;
+                }
+                result
+            }
+        }
     }
 }
 
@@ -1729,7 +1763,6 @@ pub(crate) fn forward_bidi(
         // local → channel
         match local.read(&mut buf) {
             Ok(0) => {
-                let _ = channel.send_eof();
                 close_channel(&mut channel);
                 return;
             }
@@ -2246,6 +2279,66 @@ mod tests {
         assert_eq!(outgoing.send(&mut w).unwrap(), 0);
         assert!(outgoing.send(&mut w).is_err());
         assert!(!outgoing.is_empty());
+    }
+
+    fn eagain() -> ssh2::Error {
+        ssh2::Error::new(ssh2::ErrorCode::Session(LIBSSH2_ERROR_EAGAIN), "later")
+    }
+
+    #[test]
+    fn a_refused_resize_is_retried_until_it_goes() {
+        let mut resize = PtyResize {
+            wanted: Some((80, 24)),
+            ..PtyResize::default()
+        };
+        assert!(resize.send(|_, _| Err(eagain())).is_ok());
+        assert_eq!(resize.wanted, Some((80, 24)));
+        assert!(resize.send(|_, _| Err(eagain())).is_ok());
+
+        let mut sent = None;
+        let done = resize.send(|cols, rows| {
+            sent = Some((cols, rows));
+            Ok(())
+        });
+        assert!(done.is_ok());
+        assert_eq!(sent, Some((80, 24)));
+        assert_eq!(resize.wanted, None);
+
+        let mut asked = false;
+        resize
+            .send(|_, _| {
+                asked = true;
+                Ok(())
+            })
+            .unwrap();
+        assert!(!asked, "nothing left to send");
+    }
+
+    /// libssh2 finishes the packet it kept and ignores the new numbers, so the
+    /// newer size needs a send of its own.
+    #[test]
+    fn a_size_that_arrives_during_a_retry_goes_out_after_it() {
+        let mut resize = PtyResize {
+            wanted: Some((80, 24)),
+            ..PtyResize::default()
+        };
+        resize.send(|_, _| Err(eagain())).unwrap();
+        resize.wanted = Some((100, 30));
+        resize.send(|_, _| Ok(())).unwrap();
+        assert_eq!(resize.wanted, Some((100, 30)));
+        resize.send(|_, _| Ok(())).unwrap();
+        assert_eq!(resize.wanted, None);
+    }
+
+    #[test]
+    fn a_resize_that_really_failed_is_reported_and_forgotten() {
+        let mut resize = PtyResize {
+            wanted: Some((80, 24)),
+            ..PtyResize::default()
+        };
+        let failed = ssh2::Error::new(ssh2::ErrorCode::Session(-7), "gone");
+        assert!(resize.send(|_, _| Err(failed)).is_err());
+        assert_eq!(resize.wanted, None);
     }
 
     #[test]

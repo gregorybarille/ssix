@@ -38,10 +38,12 @@ struct LiveShell {
     handle: SessionHandle,
     printed: Arc<Printed>,
     ended: Receiver<ShellEnd>,
+    fd: wake::Fd,
 }
 
 impl LiveShell {
     fn start(shell: OpenShell) -> Self {
+        let fd = wake::fd_of(&shell.session);
         let (handle, control) = control_channel().unwrap();
         let printed = Arc::new(Printed::default());
         let (ended_tx, ended) = mpsc::channel();
@@ -58,6 +60,7 @@ impl LiveShell {
             handle,
             printed,
             ended,
+            fd,
         }
     }
 
@@ -96,8 +99,9 @@ impl LiveShell {
             }
             assert!(
                 start.elapsed() < within,
-                "never saw {needle:?}; {} bytes printed",
-                self.total()
+                "never saw {needle:?}; {} bytes printed, ending {:?}",
+                self.total(),
+                String::from_utf8_lossy(&self.printed.tail.lock().unwrap()),
             );
             thread::sleep(Duration::from_millis(20));
         }
@@ -365,5 +369,127 @@ fn live_closing_a_session_does_not_wait_for_a_stuck_paste() {
             shell.ended.recv_timeout(CLOSE_TIMEOUT * 2),
             Ok(ShellEnd::Closed)
         ));
+    });
+}
+
+/// Fill the session's socket behind libssh2's back, with bytes the relay is told
+/// to drop so that the encrypted stream it carries stays intact. Returns how many
+/// to give [`Relay::discard_up`].
+fn fill_session_socket(relay: &Relay, fd: wake::Fd) -> usize {
+    use std::mem::ManuallyDrop;
+    use std::os::fd::FromRawFd;
+
+    relay.set_mode(RELAY_HOLD_UP);
+    thread::sleep(Duration::from_millis(100));
+    // SAFETY: `fd` is the session's open socket. `ManuallyDrop` keeps this
+    // temporary view of it from closing the socket.
+    let socket = ManuallyDrop::new(unsafe { TcpStream::from_raw_fd(fd) });
+    let mut filled = fill_socket(&socket, fd);
+    assert!(!wake::is_writable(fd));
+    // A socket that reports no room can still take a small packet.
+    while (&*socket).write(&[0]).is_ok() {
+        filled += 1;
+    }
+    filled
+}
+
+/// A resize that does not fit on the socket has to go out later, or it jams the
+/// session: libssh2 refuses every other packet until it has been retried.
+#[test]
+#[ignore]
+fn live_a_resize_on_a_full_socket_goes_out_later_and_jams_nothing() {
+    let target = Target::from_env();
+    with_isolated_data_dir(|| {
+        let relay = Relay::start(&target.endpoint);
+        let shell = LiveShell::start(
+            open_shell_over_stream(relay.connect(), &target.endpoint, &ShellOptions::default())
+                .unwrap(),
+        );
+        shell.wait_for_prompt();
+
+        let filled = fill_session_socket(&relay, shell.fd);
+        shell
+            .handle
+            .send(SessionMsg::Resize {
+                cols: 123,
+                rows: 45,
+            })
+            .unwrap();
+        thread::sleep(Duration::from_millis(300));
+        relay.discard_up(filled);
+        relay.set_mode(RELAY_FLOW);
+
+        shell.send(b"stty size\n");
+        shell.wait_for("45 123", Duration::from_secs(10));
+        assert!(shell.printed.warnings.lock().unwrap().is_empty());
+    });
+}
+
+/// A client leaving while the socket is full: the channel's EOF has to be retried
+/// by the call that started it. libssh2 knows a half-sent packet by its address,
+/// and the EOF's is on the stack.
+#[test]
+#[ignore]
+fn live_a_tunnel_ending_on_a_full_socket_leaves_the_session_usable() {
+    let target = Target::from_env();
+    with_isolated_data_dir(|| {
+        let relay = Relay::start(&target.endpoint);
+        let OpenShell {
+            session,
+            mut channel,
+            ..
+        } = open_shell_over_stream(relay.connect(), &target.endpoint, &ShellOptions::default())
+            .unwrap();
+        session.set_blocking(true);
+        let tunnel = session.channel_direct_tcpip("127.0.0.1", 22, None).unwrap();
+        session.set_blocking(false);
+        let fd = wake::fd_of(&session);
+        wait_for_quiet(&mut channel, fd);
+
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let client = TcpStream::connect(listener.local_addr().unwrap()).unwrap();
+        let (far, _) = listener.accept().unwrap();
+        let forwarder = {
+            let session = session.clone();
+            thread::spawn(move || {
+                forward_bidi(
+                    far,
+                    tunnel,
+                    &session,
+                    &AtomicUsize::new(1),
+                    &Traffic::default(),
+                );
+            })
+        };
+
+        // All of sshd's banner read, or closing would be a reset, not an EOF.
+        let mut banner = [0u8; 64];
+        let mut got = (&client).read(&mut banner).unwrap();
+        while !banner[..got].contains(&b'\n') {
+            got += (&client).read(&mut banner[got..]).unwrap();
+        }
+
+        let filled = fill_session_socket(&relay, fd);
+        drop(client);
+        thread::sleep(Duration::from_millis(300));
+        relay.discard_up(filled);
+        relay.set_mode(RELAY_FLOW);
+        forwarder.join().unwrap();
+
+        write_all_nonblocking(&mut channel, b"echo alive$((6*7))\n", Some(fd))
+            .expect("the session is jammed");
+        let mut printed = Vec::new();
+        let mut buf = [0u8; 4096];
+        let start = Instant::now();
+        while !String::from_utf8_lossy(&printed).contains("alive42") {
+            assert!(start.elapsed() < Duration::from_secs(10), "no answer");
+            match channel.read(&mut buf) {
+                Ok(n) => printed.extend_from_slice(&buf[..n]),
+                Err(e) if e.kind() == io::ErrorKind::WouldBlock => {
+                    wake::wait_readable(&[fd], Duration::from_millis(50));
+                }
+                Err(e) => panic!("{e}"),
+            }
+        }
     });
 }
