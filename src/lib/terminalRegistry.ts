@@ -183,6 +183,7 @@ export interface TerminalState {
   focused: boolean;
   /** The buffer line at the top of the screen. */
   viewportY: number;
+  hasSelection: boolean;
 }
 
 /** One terminal's state, or null when the session is unknown. */
@@ -199,6 +200,7 @@ export function terminalState(sessionId: string): TerminalState | null {
     altScreen: term.buffer.active.type === "alternate",
     focused: document.activeElement === term.textarea,
     viewportY: term.buffer.active.viewportY,
+    hasSelection: term.hasSelection(),
   };
 }
 

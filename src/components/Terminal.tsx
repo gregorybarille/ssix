@@ -3,6 +3,7 @@ import { Terminal as XTerm } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { WebglAddon } from "@xterm/addon-webgl";
 import { keyboardIsInItsTab, isPanelOpen, nobodyTypingElsewhere } from "@/lib/focus";
+import { detectPlatform } from "@/lib/platform";
 import { invoke } from "@/lib/tauri";
 import { attachOutput } from "@/lib/terminalOutput";
 import {
@@ -14,6 +15,7 @@ import {
 import { terminalAppearance } from "@/lib/terminalTheme";
 import { useTerminalsStore } from "@/store/useTerminalsStore";
 import { AppSettings, Connection } from "@/types";
+import { clipboardKeyAction } from "./terminal/clipboardKeys";
 import {
   runTerminalCreate,
   runTerminalData,
@@ -171,14 +173,8 @@ export function Terminal({ sessionId, isVisible, onDisconnect, settings, connect
     fitToPane();
 
     /**
-     * Cmd/Ctrl+C copies the active xterm selection to the system clipboard
-     * only when the user explicitly invokes the shortcut. Returning `false`
-     * swallows the event so xterm doesn't also forward Ctrl+C as SIGINT
-     * when there is a selection to copy (iTerm/Terminal.app convention).
-     * With no selection the keystroke flows through to the remote shell.
-     *
-     * Cmd/Ctrl+V pastes so keyboard paste works on macOS (xterm's default
-     * Ctrl+V on macOS is captured by the WebView).
+     * `clipboardKeyAction` decides which keys copy and paste. Those send
+     * nothing to the program, with or without a selection to copy.
      *
      * In-app panels are non-modal, so xterm's hidden textarea can keep
      * focus while a panel is open. Never forward keystrokes in that state,
@@ -198,25 +194,25 @@ export function Terminal({ sessionId, isVisible, onDisconnect, settings, connect
       }
       if (e.type !== "keydown") return true;
       if (!runTerminalKey(extensionContext, e)) return false;
-      const mod = e.metaKey || e.ctrlKey;
-      if (!mod || e.altKey) return true;
-      const key = e.key.toLowerCase();
-      if (key === "c") {
-        const sel = term.getSelection();
-        if (sel.length > 0) {
-          navigator.clipboard.writeText(sel).catch(() => {});
-          return false; // swallow — don't also send SIGINT
+      const clipboardKey = clipboardKeyAction(e, detectPlatform());
+      if (!clipboardKey) return true;
+      // The webview would act on it too: paste a second time through xterm's
+      // textarea, empty the clipboard copying the cleared selection, or open
+      // its dev tools on Ctrl+Shift+C.
+      e.preventDefault();
+      if (clipboardKey === "copy") {
+        const selection = term.getSelection();
+        if (selection) {
+          navigator.clipboard.writeText(selection).catch(() => {});
+          term.clearSelection();
         }
-        return true; // no selection → forward Ctrl+C to remote as SIGINT
-      }
-      if (key === "v") {
+      } else {
         navigator.clipboard
           .readText()
           .then((text) => { if (text) term.paste(text); })
           .catch(() => {});
-        return false;
       }
-      return true;
+      return false;
     });
 
     /**

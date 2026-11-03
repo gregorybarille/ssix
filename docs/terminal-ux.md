@@ -1,6 +1,6 @@
 # Terminal UX
 
-Find in scrollback, paste, clickable links, broadcast input across a tab's panes, a
+Find in scrollback, copy and paste, clickable links, broadcast input across a tab's panes, a
 look per connection, and terminals that keep their state while another view is
 on screen. `Mod` is `Cmd` on macOS and `Ctrl` everywhere else.
 
@@ -60,7 +60,18 @@ character", and programs such as `less` and `vim` have their own use for it.
 While the bar is open, moving between matches does not trigger
 **auto-copy on selection**.
 
-## Paste
+## Copy and paste
+
+| | macOS | Linux and Windows |
+|---|---|---|
+| Copy the selection | `Cmd+C` | `Ctrl+Shift+C` |
+| Paste | `Cmd+V` | `Ctrl+Shift+V` |
+| Paste | Right-click | Right-click |
+
+Plain `Ctrl+C` and `Ctrl+V` always go to the program, with or without a selection:
+`Ctrl+C` interrupts it, and `Ctrl+V` is readline's quoted insert and vim's
+block-visual. Copying clears the selection. With nothing selected, the copy key does
+nothing and sends the program nothing.
 
 **A paste cannot run anything by ending its own brackets.** Control characters are
 removed from it, other than tabs and line breaks, under the same rule as
@@ -117,7 +128,7 @@ back receives only what is typed from then on: nothing is queued for it.
 stays off when a split adds one back, so you turn it on knowing what it reaches. A
 new tab starts off.
 
-**What is mirrored:** keys and pastes, a paste [cleaned](#paste) first.
+**What is mirrored:** keys and pastes, a paste [cleaned](#copy-and-paste) first.
 
 **What is not:**
 
@@ -172,5 +183,5 @@ if they differ.
 Extensions see a terminal once it exists, and cannot change how it is mounted.
 So `Terminal.tsx` itself holds what depends on visibility: fitting, focus, refusing
 keys off screen, the deferred question about an ended shell, and applying the
-look. It also calls the `onKey` hook, which is how `terminalSearch` keeps its shortcut
+look. It also acts on the clipboard keys, which `clipboardKeyAction` chooses, and calls the `onKey` hook, which is how `terminalSearch` keeps its shortcut
 from xterm: xterm handles a key before the window's shortcut listener sees it.

@@ -16,8 +16,8 @@ export function TerminalSection({ form, applySettings }: SettingsSectionProps) {
         opt-in (default off). Defaulting it ON would silently overwrite
         the user's clipboard the moment they highlight text in the
         terminal — a real privacy/UX foot-gun on macOS where the
-        convention is explicit Cmd+C. Cmd/Ctrl+C copies the active
-        selection regardless of this setting.
+        convention is explicit Cmd+C. Cmd+C, or Ctrl+Shift+C off macOS,
+        copies the active selection regardless of this setting.
       */}
       <div className="flex items-start justify-between gap-4">
         <div className="space-y-1">
@@ -26,7 +26,8 @@ export function TerminalSection({ form, applySettings }: SettingsSectionProps) {
           </Label>
           <p id="auto-copy-selection-description" className="text-xs text-muted-foreground-soft">
             When on, highlighting text in a terminal copies it immediately
-            (xterm-style). Off by default — Cmd/Ctrl+C still copies.
+            (xterm-style). Off by default — Cmd+C on macOS, or Ctrl+Shift+C
+            elsewhere, still copies.
           </p>
         </div>
         <Switch

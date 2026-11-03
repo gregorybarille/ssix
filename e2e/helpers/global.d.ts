@@ -11,5 +11,6 @@ interface Window {
     altScreen: boolean;
     focused: boolean;
     viewportY: number;
+    hasSelection: boolean;
   } | null;
 }
