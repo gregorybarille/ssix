@@ -172,8 +172,9 @@ End-to-end:
 
 - WebdriverIO + `tauri-driver` drives the real built Tauri app against
   the five Dockerized SSH servers in `docker/docker-compose.yml`.
-- **CI-only by default**: runs on every push to `main` via
-  `.github/workflows/e2e.yml` (advisory status — does not block merges).
+- **CI-only by default**: runs on pushes to `main`, version tags and pull
+  requests via `.github/workflows/e2e.yml` (advisory status — does not block
+  merges). A pull request that only changes docs or Markdown skips it.
   Trigger manually from the Actions tab via `workflow_dispatch`.
 - **Locally optional**: developers run `npm test` + `cargo test` only.
   E2E does NOT run locally as part of the standard workflow because
