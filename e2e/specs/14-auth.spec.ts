@@ -416,7 +416,7 @@ describe("Keyboard-interactive login", () => {
     await navigateTo("connections");
     await click(sel.addConnectionButton);
     await fill(sel.connectionFormName, "jump-14-e");
-    await click(sel.connectionFormKindJumpHost);
+    await pickOption(sel.connectionFormType, sel.connectionFormKindJumpHost);
     await fill(sel.connectionFormHopHost, TARGETS.a.host);
     await fill(sel.connectionFormHopPort, String(TARGETS.a.sshPort));
     await pickOption(sel.connectionFormHopCredential, "cred-14-jump");

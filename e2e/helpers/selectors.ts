@@ -70,9 +70,11 @@ export const sel = {
   connectionFormSaveCredentialName: '[data-testid="connection-form-save-credential-name"]',
   // Form-level error shown when a save is refused.
   connectionFormError: '[data-testid="connection-form-error"]',
-  connectionFormKindDirect: '[data-testid="connection-form-kind-direct"]',
-  connectionFormKindJumpHost: '[data-testid="connection-form-kind-jumphost"]',
-  connectionFormKindLocalForward: '[data-testid="connection-form-kind-localforward"]',
+  // The Type dropdown, and the names of its options for `pickOption`.
+  connectionFormType: '[data-testid="connection-form-type"]',
+  connectionFormKindDirect: 'Direct',
+  connectionFormKindJumpHost: 'Jump host (-J)',
+  connectionFormKindLocalForward: 'Local forward (-L)',
   connectionFormHopHost: '[data-testid="connection-form-hop-host"]',
   connectionFormHopPort: '[data-testid="connection-form-hop-port"]',
   connectionFormHopCredential: '[data-testid="connection-form-hop-credential"]',
@@ -313,8 +315,8 @@ export const sel = {
   confirmClosePaneConfirm: '[data-testid="confirm-close-pane-confirm"]',
   confirmClosePaneCancel: '[data-testid="confirm-close-pane-cancel"]',
   // roadmap:forwards
-  connectionFormKindRemoteForward: '[data-testid="connection-form-kind-remoteforward"]',
-  connectionFormKindDynamicForward: '[data-testid="connection-form-kind-dynamicforward"]',
+  connectionFormKindRemoteForward: 'Remote forward (-R)',
+  connectionFormKindDynamicForward: 'Dynamic forward (-D)',
   connectionFormRemotePort: '[data-testid="connection-form-remote-port"]',
   connectionFormSocksPort: '[data-testid="connection-form-socks-port"]',
   confirmStopForwardConfirm: '[data-testid="confirm-stop-forward-confirm"]',

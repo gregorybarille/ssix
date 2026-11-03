@@ -1,21 +1,17 @@
 import type { ConnectionType } from "@/types";
+import { KIND_FLAGS, KIND_LABELS } from "@/lib/sshTerms";
 import { DEFAULT_BIND_ADDRESS, bindAddressError, isLoopbackAddress } from "@/lib/bindAddress";
 import { FieldError, PortField } from "../ConnectionFormFields";
 import { Input } from "../ui/input";
 import { Label } from "../ui/label";
 
-/**
- * The kind tabs the connection form offers, in order. The labels and `ssh`
- * flags come from `KIND_LABELS` / `KIND_FLAGS` in `src/lib/sshTerms.ts`.
- * The `testId` is the tab's `data-testid` (see `e2e/helpers/selectors.ts`).
- */
-export const CONNECTION_KIND_TABS: ReadonlyArray<{ type: ConnectionType; testId: string }> = [
-  { type: "direct", testId: "connection-form-kind-direct" },
-  { type: "port_forward", testId: "connection-form-kind-localforward" },
-  { type: "jump_shell", testId: "connection-form-kind-jumphost" },
-  { type: "remote_forward", testId: "connection-form-kind-remoteforward" },
-  { type: "dynamic_forward", testId: "connection-form-kind-dynamicforward" },
-];
+/** The Type dropdown's options, terminals first, with each kind's `ssh` flag. */
+export const CONNECTION_KIND_CHOICES = (
+  ["direct", "jump_shell", "port_forward", "remote_forward", "dynamic_forward"] as const
+).map((type) => ({
+  value: type,
+  label: KIND_FLAGS[type] ? `${KIND_LABELS[type]} (${KIND_FLAGS[type]})` : KIND_LABELS[type],
+}));
 
 /** The port inputs a kind may add, as the form holds them: raw text plus any error. */
 export interface ForwardPortProps {

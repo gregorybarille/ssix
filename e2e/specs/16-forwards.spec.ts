@@ -182,7 +182,7 @@ function relayTo(host: string, port: number): { server: Server; dropAll: () => v
 
 interface ForwardInput {
   name: string;
-  kindTab: string;
+  kind: string;
   portField: string;
   port: number;
   /** The SSH server; server-a unless the test puts something in front of it. */
@@ -195,7 +195,7 @@ async function fillForwardForm(input: ForwardInput): Promise<void> {
   await navigateTo("connections");
   await click(sel.addConnectionButton);
   await fill(sel.connectionFormName, input.name);
-  await click(input.kindTab);
+  await pickOption(sel.connectionFormType, input.kind);
   await fill(sel.connectionFormHopHost, server.host);
   await fill(sel.connectionFormHopPort, String(server.port));
   await pickOption(sel.connectionFormHopCredential, CREDENTIAL);
@@ -246,39 +246,14 @@ describe("Remote and dynamic forwards", () => {
     echo.close();
   });
 
-  it("fits every kind tab in the form and reports a bad port beside its input", async () => {
+  it("reports a bad port beside its input", async () => {
     await fillForwardForm({
       name: "forward-16-remote",
-      kindTab: sel.connectionFormKindRemoteForward,
+      kind: sel.connectionFormKindRemoteForward,
       portField: sel.connectionFormRemotePort,
       port: 70000,
       target: { host: "127.0.0.1", port: echoPort },
     });
-
-    const outside = await browser.execute(
-      (selectors: string[]) =>
-        selectors.filter((selector) => {
-          const tab = document.querySelector(selector);
-          const list = tab?.closest('[role="tablist"]');
-          if (!tab || !list) return true;
-          const t = tab.getBoundingClientRect();
-          const l = list.getBoundingClientRect();
-          return (
-            t.left < l.left - 1 ||
-            t.right > l.right + 1 ||
-            t.top < l.top - 1 ||
-            t.bottom > l.bottom + 1
-          );
-        }),
-      [
-        sel.connectionFormKindDirect,
-        sel.connectionFormKindLocalForward,
-        sel.connectionFormKindJumpHost,
-        sel.connectionFormKindRemoteForward,
-        sel.connectionFormKindDynamicForward,
-      ],
-    );
-    expect(outside).toEqual([]);
 
     await clickDialogFooterButton(sel.connectionFormSubmit);
     const input = await browser.$(sel.connectionFormRemotePort);
@@ -295,7 +270,7 @@ describe("Remote and dynamic forwards", () => {
   it("carries SOCKS clients to what they ask for, resolved by the SSH server", async () => {
     await createForward({
       name: "forward-16-socks",
-      kindTab: sel.connectionFormKindDynamicForward,
+      kind: sel.connectionFormKindDynamicForward,
       portField: sel.connectionFormSocksPort,
       port: SOCKS_PORT,
     });
@@ -372,7 +347,7 @@ describe("Remote and dynamic forwards", () => {
   it("shows why the server refused a port that is taken, and keeps the running forward", async () => {
     await createForward({
       name: "forward-16-remote-taken",
-      kindTab: sel.connectionFormKindRemoteForward,
+      kind: sel.connectionFormKindRemoteForward,
       portField: sel.connectionFormRemotePort,
       port: REMOTE_PORT,
       target: { host: "127.0.0.1", port: echoPort },
@@ -422,7 +397,7 @@ describe("Remote and dynamic forwards", () => {
   it("drops a local forward's clients and closes its port when stopped", async () => {
     await createForward({
       name: "forward-16-local",
-      kindTab: sel.connectionFormKindLocalForward,
+      kind: sel.connectionFormKindLocalForward,
       portField: sel.connectionFormLocalPort,
       port: LOCAL_PORT,
       target: { host: "server-c", port: 22 },
@@ -441,7 +416,7 @@ describe("Remote and dynamic forwards", () => {
   it("counts what a forward carries each way, and shows the speed", async () => {
     await createForward({
       name: "forward-16-traffic",
-      kindTab: sel.connectionFormKindLocalForward,
+      kind: sel.connectionFormKindLocalForward,
       portField: sel.connectionFormLocalPort,
       port: TRAFFIC_PORT,
       target: { host: "server-c", port: 22 },
@@ -472,7 +447,7 @@ describe("Remote and dynamic forwards", () => {
   it("listens on the address it is told to, and warns about one others can reach", async () => {
     await fillForwardForm({
       name: "forward-16-bind",
-      kindTab: sel.connectionFormKindLocalForward,
+      kind: sel.connectionFormKindLocalForward,
       portField: sel.connectionFormLocalPort,
       port: BIND_PORT,
       target: { host: "server-c", port: 22 },
@@ -512,7 +487,7 @@ describe("Remote and dynamic forwards", () => {
   it("shows an idle forward as lost when its session dies, and starts again", async () => {
     await createForward({
       name: "forward-16-relayed",
-      kindTab: sel.connectionFormKindDynamicForward,
+      kind: sel.connectionFormKindDynamicForward,
       portField: sel.connectionFormSocksPort,
       port: RELAYED_SOCKS_PORT,
       server: { host: "127.0.0.1", port: relayPort },
@@ -565,7 +540,7 @@ describe("Remote and dynamic forwards", () => {
   it("stops a running forward that is deleted", async () => {
     await createForward({
       name: "forward-16-deleted",
-      kindTab: sel.connectionFormKindDynamicForward,
+      kind: sel.connectionFormKindDynamicForward,
       portField: sel.connectionFormSocksPort,
       port: DELETED_SOCKS_PORT,
     });
@@ -579,7 +554,11 @@ describe("Remote and dynamic forwards", () => {
     await remove.click();
     await clickDialogFooterButton(sel.confirmDeleteConnectionConfirm);
 
-    await (await rowOf("forward-16-deleted")).waitForExist({ timeout: 10_000, reverse: true });
+    // Looked up afresh on each try: a lookup that lands mid-removal throws a stale element error.
+    await browser.waitUntil(async () => !(await (await rowOf("forward-16-deleted")).isExisting()), {
+      timeout: 10_000,
+      timeoutMsg: "The deleted forward's row stayed in the list",
+    });
     await waitUntilRefused("127.0.0.1", DELETED_SOCKS_PORT, "The deleted forward's port");
   });
 });

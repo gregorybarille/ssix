@@ -40,9 +40,10 @@ import {
 import { useFieldErrors } from "@/hooks/useFieldErrors";
 import { bindAddressError } from "@/lib/bindAddress";
 import { credentialFieldErrors, type CredentialFieldKey } from "@/lib/credentialValidation";
-import { KIND_FLAGS, KIND_LABELS, hopTerms, isForwardType, titleCase } from "@/lib/sshTerms";
+import { hopTerms, isForwardType, titleCase } from "@/lib/sshTerms";
 import { mirroredEndpoint } from "./connection-form/endpoint";
-import { CONNECTION_KIND_TABS, ForwardKinds } from "./connection-form/ForwardKinds";
+import { ChoiceSelect } from "./connection-form/ChoiceSelect";
+import { CONNECTION_KIND_CHOICES, ForwardKinds } from "./connection-form/ForwardKinds";
 import { AuthOptions } from "./connection-form/AuthOptions";
 import { SessionOptions } from "./connection-form/SessionOptions";
 import { TerminalOptions } from "./connection-form/TerminalOptions";
@@ -874,34 +875,22 @@ export function ConnectionForm({
       : "Edit the host, authentication, and other settings for this connection."
     : "Configure a new SSH connection: host, port, authentication, and optional advanced settings.";
 
-  const kindTabs = (
-    <Tabs
-      value={connectionType}
-      onValueChange={(v) => setConnectionType(v as ConnectionType)}
-    >
-      <TabsList className="h-auto w-full flex-wrap gap-1 rounded-xl bg-muted/70 p-1 group-data-[orientation=horizontal]/tabs:h-auto">
-        {CONNECTION_KIND_TABS.map(({ type, testId }) => (
-          <TabsTrigger
-            key={type}
-            value={type}
-            className="flex-1 data-[state=inactive]:bg-transparent data-[state=inactive]:hover:bg-background/70 data-[state=inactive]:hover:text-foreground data-[state=active]:bg-background data-[state=active]:shadow-sm"
-            data-testid={testId}
-          >
-            {KIND_LABELS[type]}
-            {KIND_FLAGS[type] && (
-              <span aria-hidden="true" className="ml-1 font-mono text-xs text-muted-foreground-soft">
-                {KIND_FLAGS[type]}
-              </span>
-            )}
-          </TabsTrigger>
-        ))}
-      </TabsList>
-    </Tabs>
+  const kindSelect = (
+    <div className="[&_[data-slot=select-trigger]]:w-full">
+      <ChoiceSelect
+        id="connection_type"
+        label="Type"
+        testId="connection-form-type"
+        value={connectionType}
+        choices={CONNECTION_KIND_CHOICES}
+        onChange={(v) => setConnectionType(v as ConnectionType)}
+      />
+    </div>
   );
 
   const formFields = (
     <>
-      {kindTabs}
+      {kindSelect}
 
       <div className="space-y-2">
         <Label htmlFor="name">Connection Name *</Label>

@@ -186,7 +186,7 @@ async function fillThroughServerA(name: string, kind: string): Promise<void> {
   await navigateTo("connections");
   await click(sel.addConnectionButton);
   await fill(sel.connectionFormName, name);
-  await click(kind);
+  await pickOption(sel.connectionFormType, kind);
   await fill(sel.connectionFormHopHost, TARGETS.a.host);
   await fill(sel.connectionFormHopPort, String(TARGETS.a.sshPort));
   await pickOption(sel.connectionFormHopCredential, "cred-17-a");

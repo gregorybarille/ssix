@@ -49,7 +49,7 @@ describe("Jump host session (server-a → server-c)", () => {
     await navigateTo("connections");
     await click(sel.addConnectionButton);
     await fill(sel.connectionFormName, "jump-04-c");
-    await click(sel.connectionFormKindJumpHost);
+    await pickOption(sel.connectionFormType, sel.connectionFormKindJumpHost);
     // Jump host = server-a (with cred-04-a).
     await fill(sel.connectionFormHopHost, TARGETS.a.host);
     await fill(sel.connectionFormHopPort, String(TARGETS.a.sshPort));
