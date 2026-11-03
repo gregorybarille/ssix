@@ -1,6 +1,6 @@
 /**
- * Spec 16: remote (`ssh -R`) and dynamic (`ssh -D`) forwards, and forwards
- * ending when they should.
+ * Spec 16: remote (`ssh -R`) and dynamic (`ssh -D`) forwards, forwards ending
+ * when they should, and a tunnel staying open under a client that stops reading.
  *
  * The tests run in order and build on each other: the SOCKS proxy of the
  * dynamic forward is also how the test runner reaches the loopback of
@@ -23,12 +23,17 @@ import { TARGETS, waitForServers } from "../helpers/docker.js";
 import {
   click,
   clickDialogFooterButton,
+  closeAllTabs,
+  connectToConnection,
+  createDirectConnection,
   createPasswordCredential,
   fill,
   navigateTo,
   pickOption,
   saveConnectionForm,
   textContentOf,
+  typeIntoTerminal,
+  waitForTerminalContains,
 } from "../helpers/flows.js";
 import { clickStart, rowOf, startForward, stopForward, waitForRow, waitForStatus } from "../helpers/forwards.js";
 import { sel } from "../helpers/selectors.js";
@@ -42,6 +47,9 @@ const RELAYED_SOCKS_PORT = 23664;
 const DELETED_SOCKS_PORT = 23665;
 const BIND_PORT = 23666;
 const TRAFFIC_PORT = 23667;
+const SLOW_CLIENT_PORT = 23668;
+/** On server-a, not on this machine. */
+const FLOOD_PORT = 23669;
 
 const CMD_CONNECT = 1;
 const CMD_BIND = 2;
@@ -442,6 +450,56 @@ describe("Remote and dynamic forwards", () => {
 
     await stopForward("forward-16-traffic");
     await client.waitForClose(10_000);
+  });
+
+  it("keeps a client that stops reading, and gives it everything afterwards", async () => {
+    await createDirectConnection({
+      name: "conn-16-flood",
+      host: TARGETS.a.host,
+      port: TARGETS.a.sshPort,
+      credentialName: CREDENTIAL,
+    });
+    await connectToConnection("conn-16-flood");
+    await waitForTerminalContains("server-a:~$", 30_000);
+    const size = 64_000_000;
+    await typeIntoTerminal(`head -c ${size} /dev/zero | nc -l -p ${FLOOD_PORT}\n`);
+    await browser.pause(500);
+
+    await createForward({
+      name: "forward-16-slow",
+      kind: sel.connectionFormKindLocalForward,
+      portField: sel.connectionFormLocalPort,
+      port: SLOW_CLIENT_PORT,
+      target: { host: "127.0.0.1", port: FLOOD_PORT },
+    });
+    await startForward("forward-16-slow");
+
+    // No data listener yet: nothing is read, so the stall reaches the tunnel.
+    const client = connect({ host: "127.0.0.1", port: SLOW_CLIENT_PORT });
+    await once(client, "connect");
+    let closed = false;
+    client.on("close", () => {
+      closed = true;
+    });
+    client.on("error", () => {
+      closed = true;
+    });
+    await sleep(14_000);
+    expect(closed).toBe(false);
+
+    let received = 0;
+    client.on("data", (chunk: Buffer) => {
+      received += chunk.length;
+    });
+    await browser.waitUntil(() => received >= size || closed, {
+      timeout: 60_000,
+      timeoutMsg: `The client got ${received} of ${size} bytes`,
+    });
+    expect(received).toBe(size);
+
+    client.destroy();
+    await stopForward("forward-16-slow");
+    await closeAllTabs();
   });
 
   it("listens on the address it is told to, and warns about one others can reach", async () => {
