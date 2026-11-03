@@ -244,7 +244,7 @@ impl SessionHandle {
     pub fn ack_output(&self, bytes: u64) {
         let _ = self
             .unacked_output
-            .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |unacked| {
+            .try_update(Ordering::SeqCst, Ordering::SeqCst, |unacked| {
                 Some(unacked.saturating_sub(bytes))
             });
         self.waker.wake();

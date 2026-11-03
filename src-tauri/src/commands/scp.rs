@@ -299,8 +299,8 @@ fn download_file_scp(
         .scp_recv(Path::new(remote_path))
         .map_err(|e| fail(e.to_string()))?;
     let size = stat.size();
-    create_local_parent(local).map_err(&fail)?;
-    let target = local_target(local).map_err(&fail)?;
+    create_local_parent(local).map_err(fail)?;
+    let target = local_target(local).map_err(fail)?;
     write_partial(&target, Some(stat.mode() as u32), |file| {
         let mut received = 0;
         // ssh2 stops reading this channel at the size in the header.
