@@ -121,6 +121,15 @@ fn secrets_of(map: &HashMap<String, String>, credential_id: &str) -> CredentialS
     }
 }
 
+/// The file's entries for one credential.
+fn entries_of(credential_id: &str, secrets: &CredentialSecrets) -> [(String, Option<String>); 3] {
+    [
+        (password_key(credential_id), secrets.password.clone()),
+        (passphrase_key(credential_id), secrets.passphrase.clone()),
+        (private_key_key(credential_id), secrets.private_key.clone()),
+    ]
+}
+
 /// Read all secrets for a credential in one pass over the file.
 pub fn snapshot_for_credential(credential_id: &str) -> Result<CredentialSecrets, String> {
     with_secrets(|s| secrets_of(s, credential_id))
@@ -133,13 +142,8 @@ pub fn replace_for_credential(
     credential_id: &str,
     secrets: &CredentialSecrets,
 ) -> Result<(), String> {
-    let entries = [
-        (password_key(credential_id), secrets.password.clone()),
-        (passphrase_key(credential_id), secrets.passphrase.clone()),
-        (private_key_key(credential_id), secrets.private_key.clone()),
-    ];
     with_secrets_mut(|s| {
-        for (key, value) in entries {
+        for (key, value) in entries_of(credential_id, secrets) {
             match value {
                 Some(v) if !v.is_empty() => {
                     s.insert(key, v);
@@ -150,6 +154,60 @@ pub fn replace_for_credential(
             }
         }
     })
+}
+
+/// What a `data.json` row holds in place of its placeholders.
+fn inline_secrets(kind: &CredentialKind) -> CredentialSecrets {
+    match kind {
+        CredentialKind::Password { password } => CredentialSecrets {
+            password: Some(password.clone()).filter(|p| !p.is_empty()),
+            ..CredentialSecrets::default()
+        },
+        CredentialKind::SshKey {
+            private_key,
+            passphrase,
+            ..
+        } => CredentialSecrets {
+            password: None,
+            passphrase: passphrase.clone(),
+            private_key: private_key.clone(),
+        },
+        CredentialKind::Agent {} => CredentialSecrets::default(),
+    }
+}
+
+/// Copy the secrets legacy rows hold inline into the secrets file, in one
+/// write, and blank those rows in `credentials` for the caller to save.
+/// Returns whether any row changed. On an error the file is as it was and the
+/// caller must drop `credentials`.
+///
+/// An entry already in the file wins: it is the same value when an earlier run
+/// crashed before saving the rows, and otherwise it is the newer one.
+pub(crate) fn move_inline_secrets(credentials: &mut [Credential]) -> Result<bool, String> {
+    let mut found = Vec::new();
+    for cred in credentials.iter_mut() {
+        let inline = inline_secrets(&cred.kind);
+        if inline != CredentialSecrets::default() {
+            found.push((cred.id.clone(), inline));
+            crate::commands::credentials::redact_secrets(cred);
+        }
+    }
+    if found.is_empty() {
+        return Ok(false);
+    }
+    with_secrets_mut(|s| {
+        for (id, inline) in &found {
+            for (key, value) in entries_of(id, inline) {
+                if let Some(secret) = value.filter(|v| !v.is_empty()) {
+                    let stored = s.entry(key).or_default();
+                    if stored.is_empty() {
+                        *stored = secret;
+                    }
+                }
+            }
+        }
+    })?;
+    Ok(true)
 }
 
 /// Delete all secret entries associated with a credential ID.

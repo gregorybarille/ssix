@@ -410,7 +410,7 @@ pub fn restore(name: &str) -> Result<Option<BackupInfo>, String> {
     let dir = backups_dir();
     let files = read_verified(&dir.join(name))?;
     let data_dir = crate::storage::data_dir();
-    with_files_locked(|| {
+    let safety = with_files_locked(|| {
         let live = read_live_files()?;
         let safety = if has_data(&live) {
             Some(write_archive(
@@ -440,7 +440,17 @@ pub fn restore(name: &str) -> Result<Option<BackupInfo>, String> {
             }
         }
         Ok(safety)
-    })
+    })?;
+    // An old archive can bring back rows holding secrets inline, which the
+    // next edit would wipe if they stayed that way until the next launch.
+    if let Err(e) = crate::storage::persist_migrations() {
+        crate::logs::log_local(
+            "warn",
+            "backup",
+            format!("Could not repair the restored data: {}", e),
+        );
+    }
+    Ok(safety)
 }
 
 pub fn delete(name: &str) -> Result<(), String> {
@@ -592,6 +602,35 @@ mod tests {
             let folder = |index: usize| restored.connections[index].folder.as_deref();
             assert_eq!(folder(0), Some("prod/eu"));
             assert_eq!(folder(1), Some("prod/eu"));
+        });
+    }
+
+    #[test]
+    fn a_restore_moves_secrets_an_old_archive_holds_inline() {
+        with_isolated_data_dir(|| {
+            let mut data = crate::models::AppData::default();
+            data.credentials.push(crate::models::Credential {
+                id: "old".into(),
+                name: "old".into(),
+                username: "u".into(),
+                kind: crate::models::CredentialKind::Password {
+                    password: "plain-password".into(),
+                },
+                is_private: false,
+            });
+            write_live("data.json", &serde_json::to_string(&data).unwrap());
+            let backup = create(BackupReason::Manual).unwrap();
+
+            restore(&backup.name).unwrap();
+
+            assert!(!live("data.json").unwrap().contains("plain-password"));
+            assert_eq!(
+                crate::keychain::snapshot_for_credential("old")
+                    .unwrap()
+                    .password
+                    .as_deref(),
+                Some("plain-password")
+            );
         });
     }
 

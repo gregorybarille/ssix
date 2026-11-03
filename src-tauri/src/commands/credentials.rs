@@ -663,6 +663,68 @@ mod tests {
         });
     }
 
+    /// The bug this guards: an old row has its secret in `data.json` only,
+    /// so a save from the edit form, which keeps what `secrets.json` holds,
+    /// wiped the password and refused the inline key with "requires either".
+    #[test]
+    fn editing_a_migrated_legacy_row_keeps_its_secrets() {
+        with_isolated_data_dir(|| {
+            crate::storage::with_data_mut(|data| {
+                data.credentials.push(Credential {
+                    id: "legacy-pw".into(),
+                    name: "legacy-pw".into(),
+                    username: "u".into(),
+                    kind: password_kind(),
+                    is_private: false,
+                });
+                data.credentials.push(Credential {
+                    id: "legacy-key".into(),
+                    name: "legacy-key".into(),
+                    username: "u".into(),
+                    kind: inline_key_kind("INLINE", Some("pp")),
+                    is_private: false,
+                });
+                Ok(())
+            })
+            .unwrap();
+            assert!(crate::storage::persist_migrations().unwrap());
+
+            super::update_credential_sync(UpdateCredentialInput {
+                id: "legacy-pw".into(),
+                name: "legacy-pw".into(),
+                username: "renamed".into(),
+                kind: CredentialKind::Password {
+                    password: String::new(),
+                },
+                keep_secrets: true,
+            })
+            .unwrap();
+            super::update_credential_sync(UpdateCredentialInput {
+                id: "legacy-key".into(),
+                name: "legacy-key".into(),
+                username: "renamed".into(),
+                kind: CredentialKind::SshKey {
+                    private_key_path: None,
+                    private_key: None,
+                    passphrase: None,
+                },
+                keep_secrets: true,
+            })
+            .unwrap();
+
+            assert_eq!(
+                super::get_credential_secrets_sync("legacy-pw")
+                    .unwrap()
+                    .password
+                    .as_deref(),
+                Some("pw")
+            );
+            let key = super::get_credential_secrets_sync("legacy-key").unwrap();
+            assert_eq!(key.private_key.as_deref(), Some("INLINE"));
+            assert_eq!(key.passphrase.as_deref(), Some("pp"));
+        });
+    }
+
     #[test]
     fn test_credential_new() {
         let kind = CredentialKind::Password {

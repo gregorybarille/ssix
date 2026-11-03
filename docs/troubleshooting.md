@@ -78,3 +78,4 @@ Older builds showed this as `TypeError: ... window.__TAURI_INTERNALS__ is undefi
 
 - Remember that secrets are stored separately from `data.json`.
 - If testing manually, inspect `~/.ssix/secrets.json` rather than expecting password material in `~/.ssix/data.json`.
+- A secret from an old `data.json` moves to `secrets.json` the next time SSIX starts. If `secrets.json` is corrupt, the move waits and the Logs view has a `migration` warning: fix or restore the file, then restart.
