@@ -66,6 +66,7 @@ jobs:
       - name: Build portable executable
         run: npm run tauri build -- --no-bundle
         env:
+          VITE_RELEASE_TAG: ${{ env.RELEASE_TAG }}
           CARGO_PROFILE_RELEASE_LTO: "false"
           CARGO_PROFILE_RELEASE_CODEGEN_UNITS: "16"
 
@@ -124,6 +125,7 @@ jobs:
       - name: Build macOS DMG
         run: npm run tauri build
         env:
+          VITE_RELEASE_TAG: ${{ env.RELEASE_TAG }}
           CARGO_PROFILE_RELEASE_LTO: "false"
           CARGO_PROFILE_RELEASE_CODEGEN_UNITS: "16"
 
@@ -173,6 +175,7 @@ jobs:
       - name: Build .deb, .rpm and AppImage
         run: npm run tauri build -- --bundles deb,rpm,appimage
         env:
+          VITE_RELEASE_TAG: ${{ env.RELEASE_TAG }}
           CARGO_PROFILE_RELEASE_LTO: "false"
           CARGO_PROFILE_RELEASE_CODEGEN_UNITS: "16"
 

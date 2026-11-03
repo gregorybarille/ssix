@@ -56,6 +56,8 @@ jobs:
         working-directory: src-tauri
       - name: Generated TS bindings are committed
         run: git diff --exit-code src/types/generated/
+      - name: The third-party licence list is up to date
+        run: node scripts/third-party-licenses.mjs --check
       - name: Script tests on a Linux SSH server
         run: |
           docker compose -f ../docker/docker-compose.yml up -d --wait server-a

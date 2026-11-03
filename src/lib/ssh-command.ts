@@ -1,4 +1,5 @@
 import type { Connection, Credential } from "@/types";
+import { listenAddress } from "@/lib/bindAddress";
 import { isForwardConnection } from "@/lib/sshTerms";
 
 /**
@@ -8,11 +9,11 @@ import { isForwardConnection } from "@/lib/sshTerms";
  *
  * - `direct`: `ssh [-i KEY] [-p PORT] user@host`
  * - `jump_shell` (jump host): `ssh -J jumpUser@jumphost[:port] [-i KEY] [-p PORT] user@target`
- * - `port_forward` (local forward): `ssh -L LOCAL:REMOTE:REMOTE_PORT [-i KEY] user@server[:port]`
+ * - `port_forward` (local forward): `ssh -L [BIND:]LOCAL:REMOTE:REMOTE_PORT [-i KEY] user@server[:port]`
  *   (the SSH server is the host you actually connect to; it reaches the
  *   remote host on your behalf.)
  * - `remote_forward`: `ssh -R REMOTE:DEST:DEST_PORT [-i KEY] user@server[:port]`
- * - `dynamic_forward`: `ssh -D LOCAL [-i KEY] user@server[:port]`
+ * - `dynamic_forward`: `ssh -D [BIND:]LOCAL [-i KEY] user@server[:port]`
  *
  * The username is resolved from the target credential when present, and
  * falls back to the SSH server's credential for the forwards. If no credential
@@ -64,12 +65,12 @@ export function buildSshCommand(
     const gwCred = find(connection.gateway_credential_id);
     if (connection.type === "port_forward") {
       const dest = `${connection.destination_host}:${connection.destination_port}`;
-      push("-L", q(`${connection.local_port}:${dest}`));
+      push("-L", q(`${localListen(connection)}:${dest}`));
     } else if (connection.type === "remote_forward") {
       const dest = `${connection.destination_host}:${connection.destination_port}`;
       push("-R", q(`${connection.remote_port}:${dest}`));
     } else {
-      push("-D", String(connection.local_port));
+      push("-D", q(localListen(connection)));
     }
     const idFile = identity(gwCred);
     if (idFile) push("-i", q(idFile));
@@ -118,6 +119,11 @@ export function buildSshCommand(
  * contains only safe characters; otherwise wraps it in single quotes and
  * escapes embedded single quotes via the standard `'\''` dance.
  */
+/** A forward's listening end for `-L` and `-D`: the address only when it has one. */
+function localListen(conn: { bind_address?: string; local_port: number }): string {
+  return conn.bind_address ? listenAddress(conn) : String(conn.local_port);
+}
+
 function q(token: string): string {
   if (token === "") return "''";
   if (/^[A-Za-z0-9_./:@%+\-]+$/.test(token)) return token;

@@ -3,7 +3,7 @@
 //! Three kinds share one engine:
 //!
 //! - **Local** (`ssh -L`, [`start_port_forward`]): a listener on
-//!   `127.0.0.1:<local_port>` whose every accepted connection goes through
+//!   `<bind_address>:<local_port>` whose every accepted connection goes through
 //!   the SSH server over a `direct-tcpip` channel to a fixed destination.
 //! - **Dynamic** (`ssh -D`, [`start_dynamic_forward`]): the same listener, but
 //!   a SOCKS5 proxy: each client names its own destination (see [`socks5`]).
@@ -26,7 +26,7 @@
 //! port, shuts down every client's socket, and closes the session.
 
 use std::io;
-use std::net::{Shutdown, SocketAddr, TcpListener, TcpStream};
+use std::net::{IpAddr, Ipv4Addr, Shutdown, SocketAddr, TcpListener, TcpStream};
 use std::os::raw::{c_long, c_void};
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::mpsc::TryRecvError;
@@ -42,7 +42,7 @@ use tauri::Emitter;
 use crate::ssh::{
     close_channel, connect_endpoint, connect_tcp, control_channel, forward_bidi, is_eagain,
     open_authenticated_session_over_stream, wake, ControlRx, Endpoint, SessionContext,
-    SessionHandle, SessionMsg, SESSION_TIMEOUT_MS,
+    SessionHandle, SessionMsg, Traffic, SESSION_TIMEOUT_MS,
 };
 use crate::ssh_debug::SshDebug;
 
@@ -108,6 +108,9 @@ const CLIENTS_TICK: Duration = Duration::from_millis(250);
 /// next `forwarded-tcpip` connection without the socket ever waking anyone.
 const REMOTE_CLIENTS_TICK: Duration = Duration::from_millis(20);
 
+/// How often a forward with clients reports its traffic.
+const TRAFFIC_INTERVAL: Duration = Duration::from_secs(1);
+
 /// How often a forward checks on its session, and how much silence it takes.
 #[derive(Clone, Copy)]
 struct Timing {
@@ -131,13 +134,21 @@ const TIMING: Timing = Timing {
 #[derive(Serialize, Clone)]
 pub struct ForwardStatus {
     /// "listening" | "client_connected" | "client_closed" | "client_error"
-    /// (one client could not be served; the forward goes on) | "error" (the
-    /// forward ended; the same message follows on the output channel).
+    /// (one client could not be served; the forward goes on) | "traffic" (about
+    /// once a second while clients are connected, and once more when the last
+    /// has left) | "error" (the forward ended; the same message follows on the
+    /// output channel).
     pub state: &'static str,
     pub listen_port: u16,
     pub destination: String,
     pub message: Option<String>,
     pub active_clients: usize,
+    /// Since this forward started: to the SSH server and from it.
+    pub bytes_sent: u64,
+    pub bytes_received: u64,
+    /// Over the last sample, as of the latest "traffic" status.
+    pub sent_per_second: u64,
+    pub received_per_second: u64,
 }
 
 /// Event names are namespaced under `ssix:` and mirrored in
@@ -268,6 +279,9 @@ struct Hub {
     events: Box<dyn ForwardEvents>,
     listen_port: u16,
     destination: String,
+    traffic: Traffic,
+    sent_per_second: AtomicU64,
+    received_per_second: AtomicU64,
 }
 
 impl Hub {
@@ -285,6 +299,9 @@ impl Hub {
             events,
             listen_port,
             destination,
+            traffic: Traffic::default(),
+            sent_per_second: AtomicU64::new(0),
+            received_per_second: AtomicU64::new(0),
         }
     }
 
@@ -295,7 +312,26 @@ impl Hub {
             destination: self.destination.clone(),
             message,
             active_clients: self.active.load(Ordering::SeqCst),
+            bytes_sent: self.traffic.sent.load(Ordering::Relaxed),
+            bytes_received: self.traffic.received.load(Ordering::Relaxed),
+            sent_per_second: self.sent_per_second.load(Ordering::Relaxed),
+            received_per_second: self.received_per_second.load(Ordering::Relaxed),
         });
+    }
+
+    /// Say how much has gone through, when `meter` says it is time.
+    fn report_traffic(&self, meter: &mut TrafficMeter) {
+        let totals = (
+            self.traffic.sent.load(Ordering::Relaxed),
+            self.traffic.received.load(Ordering::Relaxed),
+        );
+        let clients = self.in_flight.load(Ordering::SeqCst) > 0;
+        let Some((sent, received)) = meter.sample(totals, clients, Instant::now()) else {
+            return;
+        };
+        self.sent_per_second.store(sent, Ordering::Relaxed);
+        self.received_per_second.store(received, Ordering::Relaxed);
+        self.status("traffic", None);
     }
 
     fn reading_session(&self) -> SessionReader<'_> {
@@ -320,11 +356,60 @@ impl Hub {
         // `forward_bidi` takes the channel; this handle makes the free below
         // the one that counts.
         let last_handle = channel.clone();
-        forward_bidi(local, channel, session, &self.session_readers);
+        forward_bidi(
+            local,
+            channel,
+            session,
+            &self.session_readers,
+            &self.traffic,
+        );
         free_channel(session, last_handle);
         drop(reading);
         self.active.fetch_sub(1, Ordering::SeqCst);
         self.status("client_closed", Some(label));
+    }
+}
+
+/// Turns running totals into speeds, for the supervisor to report.
+struct TrafficMeter {
+    since: Instant,
+    totals: (u64, u64),
+    speeds: (u64, u64),
+}
+
+impl TrafficMeter {
+    fn new(now: Instant) -> Self {
+        Self {
+            since: now,
+            totals: (0, 0),
+            speeds: (0, 0),
+        }
+    }
+
+    /// The speeds to report now, if any: every interval while clients are
+    /// connected, even at zero, then zero once when they are gone. With no
+    /// clients the sample restarts, so that idle time does not dilute the next
+    /// one more than the wait to wake up for a new client does.
+    fn sample(&mut self, totals: (u64, u64), clients: bool, now: Instant) -> Option<(u64, u64)> {
+        let elapsed = now.saturating_duration_since(self.since);
+        if clients && elapsed < TRAFFIC_INTERVAL {
+            return None;
+        }
+        let was_moving = self.speeds != (0, 0);
+        let per_second = |total: u64, before: u64| {
+            (total.saturating_sub(before) as f64 / elapsed.as_secs_f64().max(0.001)) as u64
+        };
+        self.speeds = if clients {
+            (
+                per_second(totals.0, self.totals.0),
+                per_second(totals.1, self.totals.1),
+            )
+        } else {
+            (0, 0)
+        };
+        self.since = now;
+        self.totals = totals;
+        (clients || was_moving).then_some(self.speeds)
     }
 }
 
@@ -656,6 +741,7 @@ fn supervise<U: Uplink>(
     let lost = || format!("Lost the connection to the SSH server {}", uplink.server());
     let mut next_probe = Instant::now() + timing.probe_interval;
     let mut missed_probes = 0;
+    let mut traffic = TrafficMeter::new(Instant::now());
     let failure = loop {
         if stop_requested(&control) {
             break None;
@@ -703,6 +789,8 @@ fn supervise<U: Uplink>(
                 break Some(e);
             }
         }
+
+        hub.report_traffic(&mut traffic);
 
         // Looked at again: that can have started a client. Only a look with no
         // client around can have seen all there is, so one that had some is
@@ -761,34 +849,42 @@ fn launch<E: ForwardEvents>(
     Ok(handle)
 }
 
-/// Bind the local end of a local or dynamic forward: loopback only.
-fn bind_loopback(port: u16) -> Result<TcpListener, String> {
-    let fail = |e: io::Error| format!("Failed to bind 127.0.0.1:{}: {}", port, e);
-    let listener = TcpListener::bind(SocketAddr::from(([127, 0, 0, 1], port))).map_err(fail)?;
+/// Where a local or dynamic forward listens: `bind_address`, an IP, or
+/// loopback when it has none. Names are refused, because one that resolves to
+/// a public address would open the forward to the network unseen.
+pub(crate) fn listen_addr(bind_address: Option<&str>, port: u16) -> Result<SocketAddr, String> {
+    let ip = match bind_address {
+        None => IpAddr::V4(Ipv4Addr::LOCALHOST),
+        Some(text) => text.parse().map_err(|_| {
+            format!("The bind address '{text}' is not an IP address, such as 127.0.0.1")
+        })?,
+    };
+    Ok(SocketAddr::new(ip, port))
+}
+
+/// Bind the local end of a local or dynamic forward.
+fn bind_listener(addr: SocketAddr) -> Result<TcpListener, String> {
+    let fail = |e: io::Error| format!("Failed to bind {}: {}", addr, e);
+    let listener = TcpListener::bind(addr).map_err(fail)?;
     listener.set_nonblocking(true).map_err(fail)?;
     Ok(listener)
 }
 
-/// Listen on `127.0.0.1:local_port` and forward every accepted connection
+/// Listen on `listen` and forward every accepted connection
 /// through the SSH server `gateway` to `destination_host:destination_port`
 /// (`ssh -L`). Bind and SSH server errors are returned synchronously.
 pub(crate) fn start_port_forward<E: ForwardEvents>(
     gateway: Endpoint,
-    local_port: u16,
+    listen: SocketAddr,
     destination_host: String,
     destination_port: u16,
     verbosity: u8,
     events: E,
 ) -> Result<SessionHandle, String> {
-    let listener = bind_loopback(local_port)?;
+    let listener = bind_listener(listen)?;
     let uplink = Arc::new(SshUplink::connect(&gateway, verbosity)?);
     let debug = SshDebug::new(verbosity, gateway.addr());
-    debug.at(1, || {
-        format!(
-            "Local forwarding listening on 127.0.0.1 port {}.",
-            local_port
-        )
-    });
+    debug.at(1, || format!("Local forwarding listening on {listen}."));
     let destination = format!("{}:{}", destination_host, destination_port);
     let serve: ServeTcp = {
         let uplink = Arc::clone(&uplink);
@@ -799,7 +895,9 @@ pub(crate) fn start_port_forward<E: ForwardEvents>(
             debug.at(1, || {
                 format!(
                     "Connection to port {} forwarding to {} port {} requested.",
-                    local_port, destination_host, destination_port
+                    listen.port(),
+                    destination_host,
+                    destination_port
                 )
             });
             match uplink.open_direct(hub, &destination_host, destination_port, peer) {
@@ -819,33 +917,37 @@ pub(crate) fn start_port_forward<E: ForwardEvents>(
         })
     };
     let incoming = Incoming::Tcp { listener, serve };
-    launch(uplink, incoming, local_port, destination, 0, events)
+    launch(uplink, incoming, listen.port(), destination, 0, events)
 }
 
-/// Run a SOCKS5 proxy on `127.0.0.1:local_port` (`ssh -D`): each client names
+/// Run a SOCKS5 proxy on `listen` (`ssh -D`): each client names
 /// a destination, which the SSH server `gateway` connects to and resolves if
 /// it is a name. Bind and SSH server errors are returned synchronously.
 pub(crate) fn start_dynamic_forward<E: ForwardEvents>(
     gateway: Endpoint,
-    local_port: u16,
+    listen: SocketAddr,
     verbosity: u8,
     events: E,
 ) -> Result<SessionHandle, String> {
-    let listener = bind_loopback(local_port)?;
+    let listener = bind_listener(listen)?;
     let uplink = Arc::new(SshUplink::connect(&gateway, verbosity)?);
     let debug = SshDebug::new(verbosity, gateway.addr());
     debug.at(1, || {
-        format!(
-            "Dynamic forwarding (SOCKS5) listening on 127.0.0.1 port {}.",
-            local_port
-        )
+        format!("Dynamic forwarding (SOCKS5) listening on {listen}.")
     });
     let serve: ServeTcp = {
         let uplink = Arc::clone(&uplink);
         Arc::new(move |hub, stream, peer| serve_socks_client(hub, &uplink, stream, peer, &debug))
     };
     let incoming = Incoming::Tcp { listener, serve };
-    launch(uplink, incoming, local_port, "SOCKS".to_string(), 0, events)
+    launch(
+        uplink,
+        incoming,
+        listen.port(),
+        "SOCKS".to_string(),
+        0,
+        events,
+    )
 }
 
 fn serve_socks_client(
@@ -969,6 +1071,11 @@ pub(crate) fn start_remote_forward<E: ForwardEvents>(
 /// A recorder in place of the app, for the tests here.
 #[cfg(test)]
 mod test_support {
+    /// `127.0.0.1:port`, where a forward listens unless told otherwise.
+    pub(super) fn loopback(port: u16) -> std::net::SocketAddr {
+        std::net::SocketAddr::from(([127, 0, 0, 1], port))
+    }
+
     use super::*;
 
     #[derive(Default)]
@@ -1124,6 +1231,7 @@ mod tests {
     /// A forward over a [`FakeUplink`]. Its clients behave like tunnels:
     /// they stay on their thread until their socket closes.
     struct Fixture {
+        hub: Arc<Hub>,
         events: Arc<Recorder>,
         uplink: Arc<FakeUplink>,
         server_end: Option<TcpStream>,
@@ -1134,7 +1242,7 @@ mod tests {
 
     impl Fixture {
         fn start(timing: Timing, script: &[Probe]) -> Self {
-            let listener = bind_loopback(0).unwrap();
+            let listener = bind_listener(loopback(0)).unwrap();
             let port = listener.local_addr().unwrap().port();
             let (socket, server_end) = socket_pair();
             let uplink = Arc::new(FakeUplink::new(socket, script));
@@ -1160,11 +1268,13 @@ mod tests {
             ));
             let (handle, control) = control_channel().unwrap();
             {
+                let hub = Arc::clone(&hub);
                 let uplink = Arc::clone(&uplink);
                 let incoming = Incoming::Tcp { listener, serve };
                 thread::spawn(move || supervise(hub, uplink, incoming, control, timing));
             }
             Self {
+                hub,
                 events,
                 uplink,
                 server_end: Some(server_end),
@@ -1401,7 +1511,7 @@ mod tests {
         let (socket, _server_end) = socket_pair();
         let uplink = Arc::new(FakeUplink::new(socket, &[]));
         let incoming = Incoming::Tcp {
-            listener: bind_loopback(0).unwrap(),
+            listener: bind_listener(loopback(0)).unwrap(),
             serve: Arc::new(|_: &Hub, _: TcpStream, _: SocketAddr| {}),
         };
         let (hub, events, handle) = supervised(&uplink, incoming, timing(Duration::from_millis(1)));
@@ -1483,8 +1593,104 @@ mod tests {
     fn a_taken_port_is_reported() {
         let taken = TcpListener::bind("127.0.0.1:0").unwrap();
         let port = taken.local_addr().unwrap().port();
-        let error = bind_loopback(port).unwrap_err();
+        let error = bind_listener(loopback(port)).unwrap_err();
         assert!(error.contains(&format!("127.0.0.1:{}", port)), "{}", error);
+    }
+
+    #[test]
+    fn the_traffic_meter_reports_speeds_each_interval_while_clients_are_connected() {
+        let start = Instant::now();
+        let mut meter = TrafficMeter::new(start);
+        let at = |ms: u64| start + Duration::from_millis(ms);
+
+        assert_eq!(meter.sample((0, 0), false, at(100)), None);
+        // Too soon after the sample above.
+        assert_eq!(meter.sample((500, 0), true, at(600)), None);
+        // 2000 and 1000 bytes in the two seconds since the sample at 100 ms.
+        assert_eq!(
+            meter.sample((2000, 1000), true, at(2100)),
+            Some((1000, 500))
+        );
+        // Stalled, with the clients still there, is a speed of zero.
+        assert_eq!(meter.sample((2000, 1000), true, at(3100)), Some((0, 0)));
+        assert_eq!(meter.sample((3000, 1000), true, at(4100)), Some((1000, 0)));
+        // The last client left: zero once, then quiet.
+        assert_eq!(meter.sample((3000, 1000), false, at(4200)), Some((0, 0)));
+        assert_eq!(meter.sample((3000, 1000), false, at(9000)), None);
+    }
+
+    #[test]
+    fn a_forward_with_clients_reports_its_traffic_and_stops_when_they_leave() {
+        let fixture = Fixture::start(timing(NEVER), &[]);
+        let events = Arc::clone(&fixture.events);
+        let client = fixture.connected_client();
+        fixture.hub.traffic.sent.fetch_add(4096, Ordering::Relaxed);
+        fixture
+            .hub
+            .traffic
+            .received
+            .fetch_add(8192, Ordering::Relaxed);
+        let traffic = |events: &Recorder| -> Vec<(u64, u64, u64, u64)> {
+            events
+                .statuses
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|s| s.state == "traffic")
+                .map(|s| {
+                    (
+                        s.bytes_sent,
+                        s.bytes_received,
+                        s.sent_per_second,
+                        s.received_per_second,
+                    )
+                })
+                .collect()
+        };
+        wait_for("a traffic report", SOON, || {
+            traffic(&events)
+                .iter()
+                .any(|t| t.0 == 4096 && t.1 == 8192 && t.2 > 0 && t.3 > 0)
+        });
+        drop(client);
+        wait_for("the speed to return to zero", SOON, || {
+            traffic(&events).last() == Some(&(4096, 8192, 0, 0))
+        });
+    }
+
+    #[test]
+    fn a_forward_listens_on_loopback_unless_given_an_ip() {
+        assert_eq!(listen_addr(None, 80).unwrap().to_string(), "127.0.0.1:80");
+        assert_eq!(
+            listen_addr(Some("192.168.1.5"), 80).unwrap().to_string(),
+            "192.168.1.5:80"
+        );
+        assert_eq!(
+            listen_addr(Some("::1"), 80).unwrap().to_string(),
+            "[::1]:80"
+        );
+        for refused in [
+            "",
+            "localhost",
+            "example.com",
+            "1.2.3",
+            "127.0.0.1:80",
+            "[::1]",
+        ] {
+            let error = listen_addr(Some(refused), 80).unwrap_err();
+            assert!(error.contains("not an IP address"), "{refused}: {error}");
+        }
+    }
+
+    #[test]
+    fn a_listener_binds_the_address_it_is_given() {
+        let any = SocketAddr::from(([0, 0, 0, 0], 0));
+        let listener = bind_listener(any).unwrap();
+        assert!(listener.local_addr().unwrap().ip().is_unspecified());
+        // TEST-NET-1: assigned to nothing here, so the error names it.
+        let absent = SocketAddr::from(([192, 0, 2, 1], 0));
+        let error = bind_listener(absent).unwrap_err();
+        assert!(error.contains("192.0.2.1:0"), "{error}");
     }
 
     #[test]
@@ -1532,7 +1738,7 @@ mod live {
         let local_port = free_port();
         let handle = start_port_forward(
             server(),
-            local_port,
+            loopback(local_port),
             "127.0.0.1".to_string(),
             port,
             0,
@@ -1663,7 +1869,7 @@ mod live {
             let port = free_port();
             let handle = start_port_forward(
                 server(),
-                port,
+                loopback(port),
                 SSHD.0.to_string(),
                 SSHD.1,
                 0,
@@ -1740,7 +1946,7 @@ mod live {
             let port = free_port();
             let _handle = start_port_forward(
                 relay.endpoint(&server),
-                port,
+                loopback(port),
                 SSHD.0.to_string(),
                 SSHD.1,
                 0,
@@ -1863,7 +2069,8 @@ mod live {
         with_isolated_data_dir(|| {
             let events = Arc::new(Recorder::default());
             let port = free_port();
-            let handle = start_dynamic_forward(server(), port, 0, Arc::clone(&events)).unwrap();
+            let handle =
+                start_dynamic_forward(server(), loopback(port), 0, Arc::clone(&events)).unwrap();
 
             // CONNECT to an IPv4 address.
             let (reply, mut stream) = socks_request(port, 1, &ipv4_address([127, 0, 0, 1], 22));
@@ -1915,6 +2122,40 @@ mod live {
         });
     }
 
+    /// Through a real tunnel to sshd, which speaks first: what it says arrives
+    /// as received, and what the client answers goes out as sent.
+    #[test]
+    #[ignore]
+    fn live_a_local_forward_counts_what_it_carries() {
+        with_isolated_data_dir(|| {
+            let events = Arc::new(Recorder::default());
+            let port = free_port();
+            let handle = start_port_forward(
+                server(),
+                loopback(port),
+                SSHD.0.to_string(),
+                SSHD.1,
+                0,
+                Arc::clone(&events),
+            )
+            .unwrap();
+            let mut client = connect(port);
+            read_ssh_banner(&mut client);
+            let hello = b"SSH-2.0-counting\r\n";
+            client.write_all(hello).unwrap();
+
+            wait_for("the counts", SOON, || {
+                events
+                    .statuses
+                    .lock()
+                    .unwrap()
+                    .iter()
+                    .any(|s| s.bytes_received > 0 && s.bytes_sent >= hello.len() as u64)
+            });
+            stop(&handle, &events);
+        });
+    }
+
     /// libssh2 keeps a channel open's state in the session: without the lock
     /// in `open_direct`, clients opening at the same time get each other's
     /// channels and end up talking to the wrong host. The destinations are an
@@ -1938,7 +2179,8 @@ mod live {
 
             let events = Arc::new(Recorder::default());
             let port = free_port();
-            let handle = start_dynamic_forward(server(), port, 0, Arc::clone(&events)).unwrap();
+            let handle =
+                start_dynamic_forward(server(), loopback(port), 0, Arc::clone(&events)).unwrap();
 
             let clients: Vec<_> = (0..16)
                 .map(|i| {

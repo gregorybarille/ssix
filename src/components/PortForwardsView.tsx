@@ -1,5 +1,7 @@
 import { useMemo, useState } from "react";
 import { Connection, Credential, ForwardConnection } from "@/types";
+import { DEFAULT_BIND_ADDRESS } from "@/lib/bindAddress";
+import { formatSize } from "@/lib/sftp";
 import { forwardEndpoint, hopTerms, isForwardConnection } from "@/lib/sshTerms";
 import { Button } from "./ui/button";
 import { ConfirmDialog } from "./ConfirmDialog";
@@ -19,8 +21,17 @@ export interface ForwardSession {
   lost?: boolean;
   /** Clients connected right now, from the forward's status events. */
   activeClients?: number;
+  /** Carried since the forward started: to the SSH server and from it. */
+  bytesSent?: number;
+  bytesReceived?: number;
+  sentPerSecond?: number;
+  receivedPerSecond?: number;
   /** Why the last client that could not be served failed; the forward goes on. */
   clientError?: string;
+}
+
+function formatSpeed(bytesPerSecond = 0): string {
+  return `${formatSize(bytesPerSecond)}/s`;
 }
 
 /** What stopping `conn` closes, for the confirmation. */
@@ -153,6 +164,8 @@ export function PortForwardsView({
                   data-status={status}
                   data-session-id={session?.sessionId}
                   data-clients={session?.activeClients ?? 0}
+                  data-bytes-sent={session?.bytesSent ?? 0}
+                  data-bytes-received={session?.bytesReceived ?? 0}
                   className="rounded-lg border bg-card overflow-hidden"
                 >
                   <div className="flex items-center gap-3 px-3 py-2">
@@ -185,6 +198,15 @@ export function PortForwardsView({
                         <span className="block truncate text-xs text-muted-foreground">
                           {forwardEndpoint(conn)}
                         </span>
+                        {status === "connected" && (
+                          <span
+                            className="block truncate text-xs text-muted-foreground-soft"
+                            data-testid={`forward-speed-${conn.id}`}
+                          >
+                            Up {formatSpeed(session?.sentPerSecond)}, down{" "}
+                            {formatSpeed(session?.receivedPerSecond)}
+                          </span>
+                        )}
                       </span>
                     </button>
                     {status === "connected" || status === "connecting" ? (
@@ -229,12 +251,28 @@ export function PortForwardsView({
                             <dd>{conn.destination_host}:{conn.destination_port}</dd>
                           </>
                         )}
+                        {conn.type !== "remote_forward" && (
+                          <>
+                            <dt className="text-muted-foreground">Listens on</dt>
+                            <dd data-testid={`forward-listen-address-${conn.id}`}>
+                              {conn.bind_address || DEFAULT_BIND_ADDRESS}
+                            </dd>
+                          </>
+                        )}
                         <dt className="text-muted-foreground">{listenPortLabel(conn)}</dt>
                         <dd>{conn.type === "remote_forward" ? conn.remote_port : conn.local_port}</dd>
                         {status === "connected" && (
                           <>
                             <dt className="text-muted-foreground">Clients</dt>
                             <dd>{session?.activeClients ?? 0}</dd>
+                            <dt className="text-muted-foreground">Uploaded</dt>
+                            <dd data-testid={`forward-uploaded-${conn.id}`}>
+                              {formatSize(session?.bytesSent ?? 0)}
+                            </dd>
+                            <dt className="text-muted-foreground">Downloaded</dt>
+                            <dd data-testid={`forward-downloaded-${conn.id}`}>
+                              {formatSize(session?.bytesReceived ?? 0)}
+                            </dd>
                           </>
                         )}
                         {session?.clientError && (

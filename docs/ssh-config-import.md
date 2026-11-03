@@ -141,9 +141,14 @@ name clashes, rename the connection or the `Host`.
 
 A forward becomes its own connection, named after its host and flag:
 `web (-L 8080)`, `web (-R 9000)`, `web (-D 1080)`. It signs in with the host's
-credential and uses the host's `ProxyCommand`. SSIX has no field for a bind
-address: a local or SOCKS forward listens on `127.0.0.1` only, and a remote one
-wherever the server chooses. A row whose config named another address says so.
+credential and uses the host's `ProxyCommand`.
+
+A local or SOCKS forward keeps the IP address its config binds to, and `*` becomes
+`0.0.0.0` as it means for `ssh`. A row says so when other machines could reach the
+result. SSIX takes IP addresses only, so a name other than `localhost` is dropped
+with a note and the forward listens on `127.0.0.1`. So does an empty address
+(`:8080`), which `ssh` would open to every network. A remote forward listens
+wherever the server chooses, and a row whose config named an address says so.
 
 A jump host connection copies the jump host's address and credential, so it does
 not depend on the jump host's own connection being imported. The parts written in

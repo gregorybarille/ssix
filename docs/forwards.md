@@ -5,9 +5,9 @@ server with the connection's SSH server credential, and open no shell.
 
 | Kind (`data.json` value) | `ssh` equivalent | Listens on | Each connection goes to |
 |---|---|---|---|
-| Local forward (`port_forward`) | `ssh -L` | `127.0.0.1:<local port>` here | the remote host, dialled by the SSH server |
+| Local forward (`port_forward`) | `ssh -L` | `<bind address>:<local port>` here | the remote host, dialled by the SSH server |
 | Remote forward (`remote_forward`) | `ssh -R` | the SSH server's loopback, `<remote port>` | the local target, dialled by this machine |
-| Dynamic forward (`dynamic_forward`) | `ssh -D` | `127.0.0.1:<SOCKS port>` here | whatever the SOCKS client asks for, dialled by the SSH server |
+| Dynamic forward (`dynamic_forward`) | `ssh -D` | `<bind address>:<SOCKS port>` here | whatever the SOCKS client asks for, dialled by the SSH server |
 
 Forwards are started and stopped from the Port forwards view, or with Connect
 on the connection. Starting one that is already running or starting only
@@ -17,8 +17,16 @@ Deleting a connection stops its forward first.
 
 ## Where A Forward Listens
 
-- Local and dynamic forwards bind to `127.0.0.1` only; other machines cannot
-  reach them.
+- Local and dynamic forwards listen on their **Bind Address**. Empty means
+  `127.0.0.1`, which other machines cannot reach. It takes an IP address, IPv4 or
+  IPv6, and the form and the backend both refuse a name, because a name that
+  resolves to a public address would open the forward to the network unseen.
+  `0.0.0.0` means every network, and an address this computer does not have fails
+  the start with the system's error.
+- A forward has no password of its own, so anyone who can reach its address can
+  use it, and a SOCKS forward becomes an open proxy to whatever the SSH server can
+  reach. The form warns about any address that is not loopback. There is no list
+  of this computer's addresses to choose from: type the one you want.
 - A remote forward asks the server for `localhost`, which is what `ssh -R`
   sends when it is given no address. The port is on the server's loopback
   unless the server's `GatewayPorts yes` overrides that. There is no field to
@@ -60,16 +68,24 @@ refused port, an unknown name and an unreachable host all reply `0x05`.
 | Error connecting (red) | It never started; the details say why |
 | Connection lost (red) | It ran and then ended on its own; the details say why |
 
-The details also show how many clients are connected and why the last client
-could not be served. One client failing, for example a destination that
-refuses, does not end the forward.
+A running forward's row also shows its speed each way, measured over about a
+second. Up is what goes to the SSH server and down is what comes from it, for
+every kind: on a remote forward, what your local target answers counts as up.
+
+The details also show how much has gone up and down since the forward started,
+how many clients are connected and why the last client could not be served. One
+client failing, for example a destination that refuses, does not end the forward.
+
+These count the bytes a tunnel carries, not SSH's own overhead, and not a SOCKS
+client's handshake with SSIX. There is no view of individual packets.
 
 Both red states offer the start button again. Forwards do not reconnect on
 their own.
 
 The frontend hears about a forward in two ways:
 
-- `ssix:forward:status:{id}` events carry the client count and client errors
+- `ssix:forward:status:{id}` events carry the client count, client errors and
+  traffic, with a `traffic` event about once a second while clients are connected
   (`ForwardStatus` in `src-tauri/src/forwards.rs`, mirrored in
   `src/store/usePortForwardsStore.ts`). Events are not buffered, so one sent
   before the store subscribes is missed; the next one corrects the count.

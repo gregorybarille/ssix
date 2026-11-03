@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { Settings, Minus, Square, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { detectPlatform, type Platform } from "@/lib/platform";
+import logoUrl from "../../src-tauri/icons/source/ssix-small.svg";
 
 interface TitleBarProps {
   onSettings: () => void;
@@ -101,13 +102,15 @@ export function TitleBar({ onSettings, settingsActive }: TitleBarProps) {
         platform-specific affordances flank it (macOS traffic lights
         on the left, Windows/Linux window controls on the right).
         `pointer-events-none` keeps the entire bar draggable through
-        the wordmark — Tauri's drag-region only listens for primary
+        the logo and wordmark — Tauri's drag-region only listens for primary
         clicks on elements that don't intercept them.
       */}
       <span
         aria-hidden="true"
-        className="pointer-events-none absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 font-mono text-xs text-muted-foreground tracking-tight"
+        className="pointer-events-none absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 font-mono text-xs text-muted-foreground tracking-tight inline-flex items-center gap-1.5"
+        data-testid="title-bar-brand"
       >
+        <img src={logoUrl} alt="" width={16} height={16} draggable={false} />
         ssix
       </span>
 

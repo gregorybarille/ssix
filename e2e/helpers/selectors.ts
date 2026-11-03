@@ -83,6 +83,8 @@ export const sel = {
   // jump host has its own picker, see HopCredential).
   connectionFormTargetCredential: '[data-testid="connection-form-credential"]',
   connectionFormLocalPort: '[data-testid="connection-form-local-port"]',
+  connectionFormBindAddress: '[data-testid="connection-form-bind-address"]',
+  connectionFormBindWarning: '[data-testid="connection-form-bind-warning"]',
   connectionFormVerbosity: '[data-testid="connection-form-verbosity"]',
   connectionFormProxyCommand: '[data-testid="connection-form-proxy-command"]',
   // Only rendered on Windows.
@@ -167,6 +169,21 @@ export const sel = {
   // Settings panel
   settingsGitSyncRepoPath: '[data-testid="settings-git-sync-repo-path"]',
   settingsSavedStatus: '[data-testid="settings-saved-status"]',
+
+  // The logo and name in the title bar.
+  titleBarBrand: '[data-testid="title-bar-brand"]',
+
+  // Settings → About. License rows carry `data-name`.
+  settingsAbout: '[data-testid="settings-about"]',
+  aboutVersion: '[data-testid="about-version"]',
+  aboutAuthor: '[data-testid="about-author"]',
+  aboutRepositoryLink: '[data-testid="about-repository-link"]',
+  aboutLicenseLink: '[data-testid="about-license-link"]',
+  aboutLicensesToggle: '[data-testid="about-licenses-toggle"]',
+  aboutLicensesFilter: '[data-testid="about-licenses-filter"]',
+  aboutLicenseRow: '[data-testid="about-license-row"]',
+  aboutLicenseRowByName: (name: string) =>
+    `[data-testid="about-license-row"][data-name=${JSON.stringify(name)}]`,
 
   // Settings → Backups. Rows carry `data-name` (archive file name) and
   // `data-reason` (manual, automatic, before_restore), newest first.

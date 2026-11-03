@@ -1,3 +1,4 @@
+import { listenAddress } from "@/lib/bindAddress";
 import { FORWARD_TYPES, type Connection, type ConnectionType, type ForwardConnection, type ForwardType } from "@/types";
 
 /**
@@ -100,11 +101,11 @@ export function hopTerms(type: TwoHopType): HopTerms {
 export function forwardEndpoint(conn: ForwardConnection): string {
   switch (conn.type) {
     case "port_forward":
-      return `127.0.0.1:${conn.local_port} → ${conn.destination_host}:${conn.destination_port}`;
+      return `${listenAddress(conn)} → ${conn.destination_host}:${conn.destination_port}`;
     case "remote_forward":
       return `remote port ${conn.remote_port} → ${conn.destination_host}:${conn.destination_port}`;
     case "dynamic_forward":
-      return `127.0.0.1:${conn.local_port} (SOCKS)`;
+      return `${listenAddress(conn)} (SOCKS)`;
   }
 }
 

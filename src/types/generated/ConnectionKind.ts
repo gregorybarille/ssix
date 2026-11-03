@@ -3,7 +3,7 @@
 /**
  * Tunnel connection kinds.
  *
- * `PortForward` opens a local TCP listener on `127.0.0.1:local_port` and forwards
+ * `PortForward` opens a local TCP listener on `bind_address:local_port` and forwards
  * every accepted connection through the gateway to `destination_host:destination_port`.
  * The destination need not run sshd — it can be any TCP service (HTTP API, DB, etc.).
  * Equivalent to `ssh -L local_port:destination_host:destination_port gateway`.
@@ -15,8 +15,16 @@
  * `RemoteForward` (`ssh -R`) asks the gateway to listen on `remote_port` and
  * forwards every connection it accepts back to `destination_host:destination_port`
  * on this machine's side. `DynamicForward` (`ssh -D`) runs a local SOCKS5 proxy on
- * `local_port` whose connections are dialled by the gateway.
+ * `bind_address:local_port` whose connections are dialled by the gateway.
  *
  * Legacy data with `type: "tunnel"` is migrated to `JumpShell` on load.
  */
-export type ConnectionKind = { "type": "direct" } | { "type": "port_forward", gateway_host: string, gateway_port: number, gateway_credential_id: string, local_port: number, destination_host: string, destination_port: number, } | { "type": "jump_shell", gateway_host: string, gateway_port: number, gateway_credential_id: string, destination_host: string, destination_port: number, } | { "type": "remote_forward", gateway_host: string, gateway_port: number, gateway_credential_id: string, remote_port: number, destination_host: string, destination_port: number, } | { "type": "dynamic_forward", gateway_host: string, gateway_port: number, gateway_credential_id: string, local_port: number, } | { "type": "tunnel", gateway_host: string, gateway_port: number, gateway_credential_id: string | null, destination_host: string, destination_port: number, };
+export type ConnectionKind = { "type": "direct" } | { "type": "port_forward", gateway_host: string, gateway_port: number, gateway_credential_id: string, 
+/**
+ * The local address to listen on, an IP. Absent means `127.0.0.1`.
+ */
+bind_address?: string, local_port: number, destination_host: string, destination_port: number, } | { "type": "jump_shell", gateway_host: string, gateway_port: number, gateway_credential_id: string, destination_host: string, destination_port: number, } | { "type": "remote_forward", gateway_host: string, gateway_port: number, gateway_credential_id: string, remote_port: number, destination_host: string, destination_port: number, } | { "type": "dynamic_forward", gateway_host: string, gateway_port: number, gateway_credential_id: string, 
+/**
+ * The local address to listen on, an IP. Absent means `127.0.0.1`.
+ */
+bind_address?: string, local_port: number, } | { "type": "tunnel", gateway_host: string, gateway_port: number, gateway_credential_id: string | null, destination_host: string, destination_port: number, };

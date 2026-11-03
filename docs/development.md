@@ -109,6 +109,20 @@ Every file in `src-tauri/icons` is generated from the SVGs in
 
 Edit the SVGs, run `npm run icons`, and commit the regenerated files.
 
+## Third-Party Licences
+
+Settings → About lists what ships inside SSIX from
+`src/lib/thirdPartyLicenses.json`, which `npm run licenses`
+(`scripts/third-party-licenses.mjs`) generates from `package-lock.json` and
+`cargo metadata`. It takes production npm packages and the Rust crates reached
+through normal dependencies, for every platform, and leaves out dev and build
+tools. The C libraries the crates build in have no lock file entry, so the script
+names them itself: add to `NATIVE` when a new one appears.
+
+After changing dependencies, run `npm run licenses` and commit the file. CI runs
+`node scripts/third-party-licenses.mjs --check` in the backend job and fails when
+it is out of date.
+
 ## Repo Structure
 
 - `src/` frontend app (React 19 + Vite 8 + TypeScript 7). `tsc` is the native TypeScript 7 compiler (per-platform binary, no JS compiler API); `npm run build` runs `tsc && vite build`
