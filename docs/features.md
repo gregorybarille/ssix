@@ -661,6 +661,8 @@ macOS and `Ctrl` everywhere else.
 | `Mod+Shift+S`  | Paste a snippet into the active terminal ([Snippets](snippets.md)) |
 | `Mod+Shift+P`  | Save a screenshot of the window to the desktop           |
 | `Cmd+F` on macOS, `Ctrl+Shift+F` elsewhere | Find in the visible terminal: see [Terminal UX](terminal-ux.md#find) |
+| `Cmd+C` on macOS, `Ctrl+Shift+C` elsewhere | Copy the terminal's selection: see [Terminal UX](terminal-ux.md#copy-and-paste) |
+| `Cmd+V` on macOS, `Ctrl+Shift+V` elsewhere | Paste into the terminal. Plain `Ctrl+C` and `Ctrl+V` always go to the program |
 
 On macOS the shortcuts work everywhere, including while a terminal
 has focus: `Cmd+K`, `Cmd+W` or `Cmd+1` are never consumed by the shell

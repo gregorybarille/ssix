@@ -7,26 +7,12 @@ import type { AppSettings } from "@/types";
 /**
  * Audit-3 P1#1: Terminal clipboard interactions.
  *
- * The Terminal component uses xterm.js which cannot run in jsdom. Auto-copy
- * is a terminal extension and is tested directly against a stand-in for
- * xterm; the keyboard and ssh_write behaviour still live in Terminal.tsx, so
- * those tests exercise a copy of its callbacks. This file pins three behaviors:
- *
- *   1. Auto-copy on selection is OPT-IN (gated on
- *      `settings.auto_copy_selection`). The default (false) MUST NOT
- *      silently overwrite the user's clipboard when text is highlighted.
- *
- *   2. Cmd/Ctrl+C with a non-empty selection copies it AND swallows the
- *      keystroke so xterm doesn't also forward Ctrl+C to the remote shell
- *      as SIGINT (matching iTerm/Terminal.app convention).
- *
- *   3. Cmd/Ctrl+C with an EMPTY selection does NOT swallow — the
- *      keystroke flows through to xterm's data handler so SIGINT still
- *      reaches the remote shell.
- *
- * If any of these regress, users either lose clipboard data on highlight
- * (the original P1#1 finding) or lose the ability to interrupt remote
- * commands.
+ * Auto-copy is a terminal extension and is tested directly against a stand-in
+ * for xterm. It is OPT-IN (gated on `settings.auto_copy_selection`): the default
+ * (false) MUST NOT silently overwrite the user's clipboard when text is
+ * highlighted (the original P1#1 finding). The ssh_write behaviour still lives
+ * in Terminal.tsx, so that test exercises a copy of its callback. The clipboard
+ * keys are tested on the real handler, in `TerminalExtensionHooks.test.tsx`.
  */
 
 describe("Terminal — auto-copy on selection (opt-in)", () => {
@@ -148,111 +134,6 @@ describe("Terminal — auto-copy on selection (opt-in)", () => {
     });
     if (cleanup) cleanup();
     expect(dispose).toHaveBeenCalledTimes(1);
-  });
-});
-
-describe("Terminal — explicit Cmd/Ctrl+C copy (always available)", () => {
-  beforeEach(() => {
-    Object.defineProperty(navigator, "clipboard", {
-      configurable: true,
-      writable: true,
-      value: { writeText: vi.fn().mockResolvedValue(undefined) },
-    });
-  });
-
-  /**
-   * Mirrors `attachCustomKeyEventHandler` in Terminal.tsx — the function
-   * returns `false` to swallow the keystroke (xterm will not forward it
-   * to the data handler) or `true` to let it through.
-   */
-  function makeKeyHandler(opts: { getSelection: () => string }) {
-    return (e: { type: string; metaKey: boolean; ctrlKey: boolean; altKey: boolean; key: string }) => {
-      if (e.type === "keyup") return true;
-      if (document.querySelector('[data-slot="app-panel-content"]')) {
-        return false;
-      }
-      if (e.type !== "keydown") return true;
-      const mod = e.metaKey || e.ctrlKey;
-      if (!mod || e.altKey) return true;
-      const key = e.key.toLowerCase();
-      if (key === "c") {
-        const sel = opts.getSelection();
-        if (sel.length > 0) {
-          navigator.clipboard.writeText(sel).catch(() => {});
-          return false;
-        }
-        return true;
-      }
-      return true;
-    };
-  }
-
-  it("Cmd+C with selection copies AND swallows keystroke", () => {
-    const handler = makeKeyHandler({ getSelection: () => "abc" });
-    const result = handler({
-      type: "keydown",
-      metaKey: true,
-      ctrlKey: false,
-      altKey: false,
-      key: "c",
-    });
-    expect(navigator.clipboard.writeText).toHaveBeenCalledWith("abc");
-    expect(result).toBe(false); // xterm must NOT forward as SIGINT
-  });
-
-  it("Ctrl+C with selection copies AND swallows keystroke", () => {
-    const handler = makeKeyHandler({ getSelection: () => "abc" });
-    const result = handler({
-      type: "keydown",
-      metaKey: false,
-      ctrlKey: true,
-      altKey: false,
-      key: "c",
-    });
-    expect(navigator.clipboard.writeText).toHaveBeenCalledWith("abc");
-    expect(result).toBe(false);
-  });
-
-  it("Ctrl+C with EMPTY selection does NOT swallow (SIGINT must reach remote)", () => {
-    const handler = makeKeyHandler({ getSelection: () => "" });
-    const result = handler({
-      type: "keydown",
-      metaKey: false,
-      ctrlKey: true,
-      altKey: false,
-      key: "c",
-    });
-    expect(navigator.clipboard.writeText).not.toHaveBeenCalled();
-    expect(result).toBe(true); // pass-through so xterm sends Ctrl+C
-  });
-
-  it("swallows terminal keystrokes while an app panel is open", () => {
-    const panel = document.createElement("div");
-    panel.dataset.slot = "app-panel-content";
-    document.body.appendChild(panel);
-    const handler = makeKeyHandler({ getSelection: () => "" });
-    const result = handler({
-      type: "keydown",
-      metaKey: false,
-      ctrlKey: false,
-      altKey: false,
-      key: "a",
-    });
-    expect(result).toBe(false);
-    panel.remove();
-  });
-
-  it("Ctrl+Alt+C is NOT treated as copy (modifier collision avoidance)", () => {
-    const handler = makeKeyHandler({ getSelection: () => "abc" });
-    const result = handler({
-      type: "keydown",
-      metaKey: false,
-      ctrlKey: true,
-      altKey: true,
-      key: "c",
-    });
-    expect(navigator.clipboard.writeText).not.toHaveBeenCalled();
-    expect(result).toBe(true);
   });
 });
 

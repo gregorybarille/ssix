@@ -6,8 +6,10 @@ FROM alpine:3.21
 # libssh2's `scp_send` execs as `scp -t <path>` on the remote side.
 # Without scp/sftp the SCP/SFTP IPC commands fail in confusing ways
 # (libssh2 reports the channel write as success even though the file
-# is silently discarded; sftp.stat returns "no such file").
-RUN apk add --no-cache openssh-server openssh-sftp-server openssh && \
+# is silently discarded; sftp.stat returns "no such file"). bash is not
+# the login shell: it is there for tests needing a shell that honours
+# bracketed paste, which BusyBox ash does not.
+RUN apk add --no-cache openssh-server openssh-sftp-server openssh bash && \
     ssh-keygen -A && \
     echo "PermitRootLogin no" >> /etc/ssh/sshd_config && \
     echo "PasswordAuthentication yes" >> /etc/ssh/sshd_config && \

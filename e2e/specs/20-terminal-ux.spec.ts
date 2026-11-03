@@ -4,6 +4,7 @@
  *   • it keeps its scrollback and session across views, off screen;
  *   • the terminal that stays is the same one when its tab splits or a split closes;
  *   • find in the scrollback (Ctrl+Shift+F);
+ *   • copy and paste, and what a paste cannot do;
  *   • links, which come from output and so are not to be trusted;
  *   • broadcast input across the panes of a tab;
  *   • a connection's own font and colours.
@@ -252,6 +253,18 @@ async function waitForSearchStatus(expected: RegExp): Promise<string> {
   );
   return last;
 }
+
+/** A paste as a right-click makes one, with this text on the clipboard. */
+const pasteInto = (id: string, text: string) =>
+  browser.execute(
+    (sessionId: string, pasted: string) => {
+      window.dispatchEvent(
+        new CustomEvent("ssix:terminal-paste", { detail: { text: pasted, sessionId } }),
+      );
+    },
+    id,
+    text,
+  );
 
 const toggleLabel = async () => textContentOf(await browser.$(sel.broadcastToggle));
 
@@ -759,6 +772,78 @@ describe("Terminal UX", () => {
     });
   });
 
+  describe("copy and paste", () => {
+    /** Run `sleep`, with text selected and the keyboard in the terminal. */
+    async function sleepWithSelection(id: string): Promise<void> {
+      await typeIn(id, "echo SELECT-ME\n");
+      await waitForText(id, "\nSELECT-ME\n");
+      await typeIn(id, "sleep 300\n");
+      await mouseOnLine(id, "SELECT-ME", CLICK, { detail: 2 });
+      await browser.waitUntil(async () => (await stateOf(id)).hasSelection, {
+        timeout: 10_000,
+        timeoutMsg: "No text was selected",
+      });
+    }
+
+    it("runs nothing of a paste holding the marker that ends it", async () => {
+      await createConnectionA("conn-20-paste-end");
+      const id = await openShell("conn-20-paste-end");
+      // Unlike the server's ash, bash honours the markers, so it can be broken out of.
+      await typeIn(id, "exec bash --norc --noprofile\n");
+      await browser.waitUntil(async () => (await stateOf(id)).bracketedPaste, {
+        timeout: 10_000,
+        timeoutMsg: "bash never asked for bracketed paste",
+      });
+
+      await pasteInto(id, "echo FIRST-$((40+2))\x1b[201~\necho SECOND-$((40+2))\n");
+      await waitForText(id, "echo SECOND-$((40+2))");
+      await browser.pause(SETTLE_MS);
+      const pasted = await textOf(id);
+      expect(pasted).not.toContain("FIRST-42");
+      expect(pasted).not.toContain("SECOND-42");
+
+      // The text waited at the prompt: several lines still paste, and Enter runs them.
+      await press("\n");
+      await waitForText(id, "SECOND-42");
+    });
+
+    it("interrupts a program on Ctrl+C with text selected", async () => {
+      await createConnectionA("conn-20-interrupt");
+      const id = await openShell("conn-20-interrupt");
+      await sleepWithSelection(id);
+
+      await browser.keys(["Control", "c"]);
+      await press("echo AFTER-$((40+2))\n");
+      await waitForText(id, "AFTER-42", 10_000);
+    });
+
+    it("copies on Ctrl+Shift+C, which clears the selection and leaves the program running", async () => {
+      await createConnectionA("conn-20-copy");
+      const id = await openShell("conn-20-copy");
+      await sleepWithSelection(id);
+
+      await browser.keys(["Control", "Shift", "c"]);
+      await browser.waitUntil(async () => !(await stateOf(id)).hasSelection, {
+        timeout: 10_000,
+        timeoutMsg: "The selection stayed after the copy",
+      });
+      await press("echo AFTER-$((40+2))\n");
+      await browser.pause(SETTLE_MS);
+      expect(await textOf(id)).not.toContain("AFTER-42");
+    });
+
+    it("leaves Ctrl+V to the program", async () => {
+      await createConnectionA("conn-20-ctrl-v");
+      const id = await openShell("conn-20-ctrl-v");
+      // Out of canonical mode, or the terminal driver takes it as "next literal".
+      await typeIn(id, "stty -icanon; cat -v\n");
+      await browser.pause(SETTLE_MS);
+
+      await browser.keys(["Control", "v"]);
+      await waitForText(id, "^V", 10_000);
+    });
+  });
+
   describe("links", () => {
     it("shows the real target of a hyperlink and asks before opening it", async () => {
       await createConnectionA("conn-20-osc8");
@@ -896,16 +981,7 @@ describe("Terminal UX", () => {
       });
       await typeIn(a, "cat\n");
       await toggle();
-      const pasteInA = (text: string) =>
-        browser.execute(
-          (sessionId: string, pasted: string) => {
-            window.dispatchEvent(
-              new CustomEvent("ssix:terminal-paste", { detail: { text: pasted, sessionId } }),
-            );
-          },
-          a,
-          text,
-        );
+      const pasteInA = (text: string) => pasteInto(a, text);
 
       await pasteInA("echo FIRST-$((40+2))\necho SECOND-$((40+2))");
       await waitForText(a, "SECOND");
