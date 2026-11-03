@@ -113,7 +113,6 @@ describe("a terminal off screen", () => {
   const element = (props: Partial<Parameters<typeof Terminal>[0]> = {}) => (
     <Terminal
       sessionId="s1"
-      connectionName="prod"
       isVisible
       onDisconnect={onDisconnect}
       settings={settings}

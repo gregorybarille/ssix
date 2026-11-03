@@ -140,7 +140,6 @@ describe("Terminal extension hooks", () => {
     render(
       <Terminal
         sessionId="s1"
-        connectionName="prod"
         isVisible
         onDisconnect={vi.fn()}
         settings={settings}
@@ -363,7 +362,6 @@ describe("Terminal extension hooks", () => {
     view.rerender(
       <Terminal
         sessionId="s1"
-        connectionName="prod"
         isVisible
         onDisconnect={vi.fn()}
         settings={newer}

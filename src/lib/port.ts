@@ -45,8 +45,3 @@ export function parsePort(input: string | number | undefined | null): ParsedPort
   }
   return { value: n, error: null };
 }
-
-/** True if the parsed value is an in-range integer port. */
-export function isValidPort(input: string | number | undefined | null): boolean {
-  return parsePort(input).value !== null;
-}

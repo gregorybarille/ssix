@@ -31,7 +31,6 @@ const SCROLLBACK_LINES = 10_000;
 
 interface TerminalProps {
   sessionId: string;
-  connectionName: string;
   /**
    * Whether this pane is on screen: its tab is active and the Terminals view is
    * showing. A hidden terminal stays mounted, so it keeps its scrollback and
