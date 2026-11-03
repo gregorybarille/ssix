@@ -82,7 +82,7 @@ describe("Port forward (server-a → server-c:22)", () => {
     await navigateTo("connections");
     await click(sel.addConnectionButton);
     await fill(sel.connectionFormName, "forward-05-c");
-    await click(sel.connectionFormKindLocalForward);
+    await pickOption(sel.connectionFormType, sel.connectionFormKindLocalForward);
     // port_forward = local forward: uses SSH server/remote fields, not the
     // top-level direct host/port. Auth section is hidden (port_forward
     // has no remote shell, so only the SSH server needs creds).

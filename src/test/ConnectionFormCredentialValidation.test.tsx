@@ -68,9 +68,8 @@ describe("ConnectionForm credential validation", () => {
   });
 
   it("asks for the target credential on a jump host connection", async () => {
-    const user = userEvent.setup();
     const { onSubmit } = renderForm();
-    await user.click(screen.getByRole("tab", { name: "Jump host" }));
+    chooseSelectValue(screen.getByTestId("connection-form-type"), "jump_shell");
     fireEvent.change(screen.getByLabelText(/connection name/i), { target: { value: "jump" } });
     fireEvent.change(screen.getByLabelText(/^jump host \*/i), { target: { value: "gw" } });
     fireEvent.change(screen.getByLabelText(/target host/i), { target: { value: "db" } });
@@ -85,9 +84,8 @@ describe("ConnectionForm credential validation", () => {
   });
 
   it("does not ask a local forward for a target credential", async () => {
-    const user = userEvent.setup();
     const { onSubmit } = renderForm();
-    await user.click(screen.getByRole("tab", { name: "Local forward" }));
+    chooseSelectValue(screen.getByTestId("connection-form-type"), "port_forward");
     fireEvent.change(screen.getByLabelText(/connection name/i), { target: { value: "pf" } });
     fireEvent.change(screen.getByLabelText(/ssh server host/i), { target: { value: "gw" } });
     fireEvent.change(screen.getByLabelText(/remote host/i), { target: { value: "db" } });

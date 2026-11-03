@@ -7,7 +7,8 @@ import {
   advancedPayload,
   serializeAdvanced,
 } from "@/components/connection-form/advanced";
-import { CONNECTION_KIND_TABS } from "@/components/connection-form/ForwardKinds";
+import { CONNECTION_KIND_CHOICES } from "@/components/connection-form/ForwardKinds";
+import { chooseSelectValue } from "./radixSelect";
 import { CREDENTIAL_KIND_TABS } from "@/components/credential-form/kinds";
 import { credentialFieldErrors } from "@/lib/credentialValidation";
 import type { Connection, Credential } from "@/types";
@@ -139,20 +140,20 @@ describe("ConnectionForm with remote and dynamic forwards", () => {
     local_port: 1080,
   };
 
-  it("offers every kind, existing tabs first", () => {
-    expect(CONNECTION_KIND_TABS.map((tab) => tab.type)).toEqual([
-      "direct",
-      "port_forward",
-      "jump_shell",
-      "remote_forward",
-      "dynamic_forward",
+  it("offers every kind, terminals first, naming the ssh flags", () => {
+    expect(CONNECTION_KIND_CHOICES.map((choice) => choice.label)).toEqual([
+      "Direct",
+      "Jump host (-J)",
+      "Local forward (-L)",
+      "Remote forward (-R)",
+      "Dynamic forward (-D)",
     ]);
   });
 
-  it("asks for the remote port when the remote forward tab is chosen", () => {
+  it("asks for the remote port when remote forward is chosen", () => {
     renderForm(null);
     expect(screen.queryByTestId("connection-form-remote-port")).not.toBeInTheDocument();
-    fireEvent.mouseDown(screen.getByTestId("connection-form-kind-remoteforward"), { button: 0 });
+    chooseSelectValue(screen.getByTestId("connection-form-type"), "remote_forward");
     expect(screen.getByTestId("connection-form-remote-port")).toBeInTheDocument();
     expect(screen.queryByTestId("connection-form-local-port")).not.toBeInTheDocument();
     // Its target is on this machine's side, not somewhere behind the server.
@@ -162,9 +163,9 @@ describe("ConnectionForm with remote and dynamic forwards", () => {
     );
   });
 
-  it("asks for the SOCKS port and no target when the dynamic forward tab is chosen", () => {
+  it("asks for the SOCKS port and no target when dynamic forward is chosen", () => {
     renderForm(null);
-    fireEvent.mouseDown(screen.getByTestId("connection-form-kind-dynamicforward"), { button: 0 });
+    chooseSelectValue(screen.getByTestId("connection-form-type"), "dynamic_forward");
     expect(screen.getByTestId("connection-form-socks-port")).toBeInTheDocument();
     expect(screen.queryByTestId("connection-form-target-host")).not.toBeInTheDocument();
   });
@@ -277,9 +278,9 @@ describe("ConnectionForm bind address", () => {
   it("is offered on local and dynamic forwards only", () => {
     renderForm(null);
     expect(screen.queryByTestId("connection-form-bind-address")).not.toBeInTheDocument();
-    fireEvent.mouseDown(screen.getByTestId("connection-form-kind-localforward"), { button: 0 });
+    chooseSelectValue(screen.getByTestId("connection-form-type"), "port_forward");
     expect(field()).toBeInTheDocument();
-    fireEvent.mouseDown(screen.getByTestId("connection-form-kind-remoteforward"), { button: 0 });
+    chooseSelectValue(screen.getByTestId("connection-form-type"), "remote_forward");
     expect(screen.queryByTestId("connection-form-bind-address")).not.toBeInTheDocument();
   });
 });

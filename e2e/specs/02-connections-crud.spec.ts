@@ -103,6 +103,11 @@ describe("Connections CRUD", () => {
     await (await panel.$(sel.connectionForm)).waitForExist({ timeout: 10_000 });
     const row = await browser.$(sel.connectionRowByName("conn-a"));
     expect(await row.isDisplayed()).toBe(true);
+    // The form scrolls inside the panel, so the page has nothing of its own to scroll (#69).
+    const pageOverflow = await browser.execute(
+      () => document.documentElement.scrollHeight - window.innerHeight,
+    );
+    expect(pageOverflow).toBeLessThanOrEqual(0);
     // Working in the view beside it leaves the panel open. Not on a row: clicking one connects.
     await click(sel.connectionSearchInput);
     expect(await (await browser.$(sel.connectionForm)).isExisting()).toBe(true);
@@ -145,7 +150,7 @@ describe("Connections CRUD", () => {
     await navigateTo("connections");
     await click(sel.addConnectionButton);
     await fill(sel.connectionFormName, "conn-a-checked");
-    await click(sel.connectionFormKindDirect);
+    await pickOption(sel.connectionFormType, sel.connectionFormKindDirect);
     await fill(sel.connectionFormHost, TARGETS.a.host);
     await fill(sel.connectionFormPort, String(TARGETS.a.sshPort));
 
@@ -184,7 +189,7 @@ describe("Connections CRUD", () => {
     // "conn-a" is taken, so the backend refuses this connection after the
     // form has already created its inline credential.
     await fill(sel.connectionFormName, "conn-a");
-    await click(sel.connectionFormKindDirect);
+    await pickOption(sel.connectionFormType, sel.connectionFormKindDirect);
     await fill(sel.connectionFormHost, TARGETS.a.host);
     await fill(sel.connectionFormPort, String(TARGETS.a.sshPort));
     await fillInlineCredentialToSave("cred-02-inline");

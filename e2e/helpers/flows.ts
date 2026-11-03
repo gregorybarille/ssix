@@ -183,7 +183,7 @@ export async function createDirectConnection(input: DirectConnectionInput): Prom
   await navigateTo("connections");
   await click(sel.addConnectionButton);
   await fill(sel.connectionFormName, input.name);
-  await click(sel.connectionFormKindDirect);
+  await pickOption(sel.connectionFormType, sel.connectionFormKindDirect);
   await fill(sel.connectionFormHost, input.host);
   await fill(sel.connectionFormPort, String(input.port));
   await pickOption(sel.connectionFormCredential, input.credentialName);

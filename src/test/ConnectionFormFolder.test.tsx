@@ -1,3 +1,4 @@
+import { chooseSelectValue } from "./radixSelect";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -146,11 +147,11 @@ describe("ConnectionForm's folder", () => {
 
   /** Leave text the field refuses, then go to a kind that hides the field. */
   const hideRefusedFolder = async (user: ReturnType<typeof userEvent.setup>) => {
-    await user.click(screen.getByTestId("connection-form-kind-direct"));
+    chooseSelectValue(screen.getByTestId("connection-form-type"), "direct");
     await user.clear(folderField());
     await user.type(folderField(), "a/..");
     expect(await screen.findByTestId("connection-form-folder-error")).toBeInTheDocument();
-    await user.click(screen.getByTestId("connection-form-kind-dynamicforward"));
+    chooseSelectValue(screen.getByTestId("connection-form-type"), "dynamic_forward");
     expect(screen.queryByTestId("connection-form-folder")).not.toBeInTheDocument();
   };
 

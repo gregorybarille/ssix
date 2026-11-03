@@ -238,10 +238,10 @@ describe("Folders", () => {
       await navigateTo("connections");
       await click(sel.addConnectionButton);
       await fill(sel.connectionFormName, TUNNEL);
-      await click(sel.connectionFormKindDirect);
+      await pickOption(sel.connectionFormType, sel.connectionFormKindDirect);
       await fillFolderField(EU);
 
-      await click(sel.connectionFormKindLocalForward);
+      await pickOption(sel.connectionFormType, sel.connectionFormKindLocalForward);
       await waitForGone(sel.connectionFormFolder);
       await fill(sel.connectionFormHopHost, TARGETS.a.host);
       await fill(sel.connectionFormHopPort, String(TARGETS.a.sshPort));
