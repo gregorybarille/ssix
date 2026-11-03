@@ -780,7 +780,7 @@ describe("Files view (SFTP)", () => {
     await browser.waitUntil(
       async () =>
         (await status.getAttribute("data-state")) === "connected" &&
-        (await textContentOf(status)).includes("server-a"),
+        (await textContentOf(status)).includes(TARGETS.a.host),
       { timeout: 60_000, timeoutMsg: "Browse files on the tab never connected" },
     );
     expect(await panePath("remote")).toBe(remoteHome);
