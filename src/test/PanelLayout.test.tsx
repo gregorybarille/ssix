@@ -51,7 +51,10 @@ describe("Side panel layout", () => {
     expect(slot()).not.toContainElement(card);
     expect(card.className).toMatch(/top-\[50%\]/);
     expect(card.className).toMatch(/left-\[50%\]/);
-    expect(document.querySelector('[data-slot="dialog-overlay"]')).toBeInTheDocument();
+    const overlay = document.querySelector('[data-slot="dialog-overlay"]');
+    expect(overlay).toBeInTheDocument();
+    // Fading out, it would take the click meant for what is behind it.
+    expect(overlay?.className).not.toMatch(/data-\[state=closed\]/);
   });
 
   it("keeps the app out of reach until a confirmation is answered", async () => {

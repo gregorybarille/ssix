@@ -51,6 +51,10 @@ function DialogClose({
   return <DialogPrimitive.Close data-slot="dialog-close" {...props} />;
 }
 
+/**
+ * Fades in but not out: it stays clickable until it is removed, so fading out
+ * it would take the click meant for what is behind it.
+ */
 function DialogOverlay({
   className,
   ...props
@@ -59,7 +63,7 @@ function DialogOverlay({
     <DialogPrimitive.Overlay
       data-slot="dialog-overlay"
       className={cn(
-        "fixed inset-0 z-50 bg-black/50 data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:animate-in data-[state=open]:fade-in-0",
+        "fixed inset-0 z-50 bg-black/50 data-[state=open]:animate-in data-[state=open]:fade-in-0",
         className,
       )}
       {...props}
@@ -140,11 +144,7 @@ function DialogContent({
 
   return (
     <DialogPortal data-slot="dialog-portal" container={kind === "panel" ? slot : undefined}>
-      {/*
-        Gone the moment the answer is in: fading out, it would take the click
-        meant for what is behind it.
-      */}
-      {kind === "confirm" && <DialogOverlay className="data-[state=closed]:animate-none" />}
+      {kind === "confirm" && <DialogOverlay />}
       <DialogPrimitive.Content
         data-slot="app-panel-content"
         data-kind={kind}
