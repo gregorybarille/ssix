@@ -296,9 +296,6 @@ fn live_a_slow_paste_outlasts_the_old_limit_and_the_watchdog() {
 #[test]
 #[ignore]
 fn live_take_in_reads_what_a_read_held_up_by_a_half_sent_packet_cannot() {
-    use std::mem::ManuallyDrop;
-    use std::os::fd::FromRawFd;
-
     let target = Target::from_env();
     with_isolated_data_dir(|| {
         let relay = Relay::start(&target.endpoint);
@@ -330,12 +327,7 @@ fn live_take_in_reads_what_a_read_held_up_by_a_half_sent_packet_cannot() {
         }
 
         // Half send a packet on a full socket. The relay takes nothing up.
-        relay.set_mode(RELAY_HOLD_UP);
-        thread::sleep(Duration::from_millis(100));
-        // SAFETY: `fd` is the session's open socket. `ManuallyDrop` keeps this
-        // temporary view of it from closing the socket.
-        let socket = ManuallyDrop::new(unsafe { TcpStream::from_raw_fd(fd) });
-        let filled = fill_socket(&socket, fd);
+        let filled = fill_session_socket(&relay, fd);
         assert_eq!(
             channel.write(b"\x03").unwrap_err().kind(),
             io::ErrorKind::WouldBlock
@@ -416,9 +408,16 @@ fn fill_session_socket(relay: &Relay, fd: wake::Fd) -> usize {
     let socket = ManuallyDrop::new(unsafe { TcpStream::from_raw_fd(fd) });
     let mut filled = fill_socket(&socket, fd);
     assert!(!wake::is_writable(fd));
-    // A socket that reports no room can still take a small packet.
-    while (&*socket).write(&[0]).is_ok() {
-        filled += 1;
+    // A socket that reports no room can still take a small packet, and an
+    // acknowledgement on its way makes room after a write was refused.
+    let mut refused_since = Instant::now();
+    while refused_since.elapsed() < Duration::from_millis(200) {
+        if (&*socket).write(&[0]).is_ok() {
+            filled += 1;
+            refused_since = Instant::now();
+        } else {
+            thread::sleep(Duration::from_millis(5));
+        }
     }
     filled
 }
