@@ -477,6 +477,9 @@ describe("Snippets", () => {
     await click(sel.terminalSplitRight);
     await click(sel.connectPickerOption("conn-18-c"));
     await waitForPane(2, "server-a:~$");
+    // A fast shell can show its prompt before the closing picker has left the
+    // screen, and the picker sits right over the middle of this pane.
+    await waitForGone(sel.connectPickerOption("conn-18-c"));
 
     // The second pane takes the keyboard, then another view takes the screen.
     await (await browser.$$(sel.terminalContainer))[2].click();
