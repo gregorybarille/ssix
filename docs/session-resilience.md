@@ -51,6 +51,36 @@ so it also notices a dead jump host.
 The interval in use is read when a session connects, and again at each
 reconnect.
 
+## Big pastes
+
+A paste can be far larger than a program takes at once: the server holds about
+2 MB for a program that is not reading, and the rest waits in SSIX. Waiting costs
+no CPU and has no time limit, so a paste into a program that sleeps for a minute
+simply arrives afterwards, and output and keepalives go on meanwhile. As with
+`ssh`, what you type next queues behind the paste, Ctrl+C too.
+
+Only the keepalive decides that a server is gone. With keepalive off, a paste into
+a dead connection waits until the operating system gives up on it. What was still
+unsent when a session drops is discarded, like
+anything else typed then: it is not sent to the new shell.
+
+## Fast output
+
+A program can print faster than the terminal can show it, and the terminal throws
+away what it is given above 50 MB. So SSIX stops reading once about 8 MB has been
+sent to a terminal and not processed yet, and carries on as it catches up. The
+server feels this as a slow connection and the program slows down, as under any
+terminal, and no output is lost.
+
+Everything else goes on during the pause: keepalives, typing, resizing. Ctrl+C
+reaches the program at once. What the program had already printed still has to
+scroll past, about 10 MB at most.
+
+A terminal off screen goes on processing what it is sent, so a program printing in
+a hidden tab is not held up by that. If the whole window is hidden and the system
+slows it down, the program slows with it, and a session whose terminal has not
+appeared yet keeps only the last 4 MB of output instead of waiting.
+
 ## Auto-reconnect
 
 A session counts as dropped when its connection fails under a live shell: a

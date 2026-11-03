@@ -257,8 +257,8 @@ export function Terminal({ sessionId, isVisible, onDisconnect, settings, connect
     // over the IPC channel created at connect time, buffered by the sink
     // until this terminal attaches, so nothing is lost on a late mount.
     const detachOutput = attachOutput(sessionId, {
-      write: (bytes) => {
-        term.write(bytes);
+      write: (bytes, done) => {
+        term.write(bytes, done);
         runTerminalOutput(extensionContext, bytes);
       },
       onEvent: (event) => {

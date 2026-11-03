@@ -74,6 +74,7 @@ pub fn run() {
             commands::git_sync::git_sync_run,
             commands::ssh::ssh_connect,
             commands::ssh::ssh_write,
+            commands::ssh::ssh_output_ack,
             commands::ssh::ssh_resize,
             commands::ssh::ssh_disconnect,
             commands::ssh::ssh_forget_host_key,
