@@ -450,7 +450,7 @@ describe("Remote and dynamic forwards", () => {
     const row = await rowOf("forward-16-traffic");
     expect(await row.getAttribute("data-bytes-sent")).toBe("0");
     expect(await row.getAttribute("data-bytes-received")).toBe("0");
-    expect(await row.getText()).toContain("Up 0 B/s, down 0 B/s");
+    expect(await textContentOf(row)).toContain("Up 0 B/s, down 0 B/s");
 
     // sshd speaks first, so this much came back through the forward.
     const client = await openClient(TRAFFIC_PORT);
@@ -496,7 +496,9 @@ describe("Remote and dynamic forwards", () => {
     expect(await warning.isExisting()).toBe(false);
     await saveConnectionForm();
     await startForward("forward-16-bind");
-    expect(await (await rowOf("forward-16-bind")).getText()).toContain(`127.0.0.2:${BIND_PORT}`);
+    expect(await textContentOf(await rowOf("forward-16-bind"))).toContain(
+      `127.0.0.2:${BIND_PORT}`,
+    );
 
     const client = await openClient(BIND_PORT, "127.0.0.2");
     expect((await client.take(7)).toString()).toBe("SSH-2.0");
