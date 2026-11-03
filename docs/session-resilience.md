@@ -51,6 +51,19 @@ so it also notices a dead jump host.
 The interval in use is read when a session connects, and again at each
 reconnect.
 
+## Big pastes
+
+A paste can be far larger than a program takes at once: the server holds about
+2 MB for a program that is not reading, and the rest waits in SSIX. Waiting costs
+no CPU and has no time limit, so a paste into a program that sleeps for a minute
+simply arrives afterwards, and output and keepalives go on meanwhile. As with
+`ssh`, what you type next queues behind the paste, Ctrl+C too.
+
+Only the keepalive decides that a server is gone. With keepalive off, a paste into
+a dead connection waits until the operating system gives up on it. What was still
+unsent when a session drops is discarded, like
+anything else typed then: it is not sent to the new shell.
+
 ## Auto-reconnect
 
 A session counts as dropped when its connection fails under a live shell: a

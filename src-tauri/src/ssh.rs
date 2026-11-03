@@ -299,15 +299,20 @@ pub(crate) mod wake {
         t.as_raw_fd()
     }
 
-    fn poll(fds: &[Fd], events: libc::c_short, timeout: Duration) {
-        let mut polls: Vec<libc::pollfd> = fds
-            .iter()
-            .map(|&fd| libc::pollfd {
-                fd,
-                events,
-                revents: 0,
-            })
-            .collect();
+    /// Block until one of `readable` can be read, one of `writable` can be
+    /// written, or `timeout` elapses.
+    pub fn wait_ready(readable: &[Fd], writable: &[Fd], timeout: Duration) {
+        let polls_of = |fds: &[Fd], events| {
+            fds.iter()
+                .map(|&fd| libc::pollfd {
+                    fd,
+                    events,
+                    revents: 0,
+                })
+                .collect::<Vec<_>>()
+        };
+        let mut polls = polls_of(readable, libc::POLLIN);
+        polls.extend(polls_of(writable, libc::POLLOUT));
         let ms = timeout.as_millis().min(i32::MAX as u128) as libc::c_int;
         // SAFETY: `polls` is a valid, initialised array of `pollfd` that
         // outlives the call, and `len` matches its length.
@@ -318,12 +323,12 @@ pub(crate) mod wake {
 
     /// Block until one of `fds` is readable or `timeout` elapses.
     pub fn wait_readable(fds: &[Fd], timeout: Duration) {
-        poll(fds, libc::POLLIN, timeout);
+        wait_ready(fds, &[], timeout);
     }
 
     /// Block until `fd` is writable or `timeout` elapses.
     pub fn wait_writable(fd: Fd, timeout: Duration) {
-        poll(&[fd], libc::POLLOUT, timeout);
+        wait_ready(&[], &[fd], timeout);
     }
 
     fn ready_now(fd: Fd, events: libc::c_short) -> bool {
@@ -390,12 +395,16 @@ pub(crate) mod wake {
     }
 
     /// No readiness notification on Windows yet: poll at a short interval.
-    pub fn wait_readable(_fds: &[Fd], timeout: Duration) {
+    pub fn wait_ready(_readable: &[Fd], _writable: &[Fd], timeout: Duration) {
         std::thread::sleep(timeout.min(Duration::from_millis(5)));
     }
 
-    pub fn wait_writable(_fd: Fd, timeout: Duration) {
-        std::thread::sleep(timeout.min(Duration::from_millis(5)));
+    pub fn wait_readable(fds: &[Fd], timeout: Duration) {
+        wait_ready(fds, &[], timeout);
+    }
+
+    pub fn wait_writable(fd: Fd, timeout: Duration) {
+        wait_ready(&[], &[fd], timeout);
     }
 
     /// Whether `fd` has something to read (or was closed), without waiting
@@ -1110,11 +1119,13 @@ fn spawn_shell_worker(
     thread::spawn(move || {
         ctx.send_output(banner.as_bytes());
         let mut io = ShellIo {
-            log: resilience
-                .log
-                .as_ref()
-                .and_then(|plan| open_log(&ctx, plan)),
-            ctx,
+            out: AppOutput {
+                log: resilience
+                    .log
+                    .as_ref()
+                    .and_then(|plan| open_log(&ctx, plan)),
+                ctx,
+            },
             control,
             pty_size: None,
         };
@@ -1127,8 +1138,8 @@ fn spawn_shell_worker(
                 ShellEnd::Dropped(reason) => reason,
             };
             attempts.shell_ended(opened.elapsed());
-            io.report_lost(source, &reason);
-            let ctx = &io.ctx;
+            io.out.report_lost(source, &reason);
+            let ctx = &io.out.ctx;
             let emit = |event: OutputEvent| {
                 log_recovery(ctx, source, &event);
                 ctx.send_event(event);
@@ -1145,13 +1156,13 @@ fn spawn_shell_worker(
             .run(reason);
             match reopened {
                 Some(next) => {
-                    io.report_reconnected(source);
+                    io.out.report_reconnected(source);
                     shell = next;
                 }
                 None => break,
             }
         }
-        io.ctx.finish();
+        io.out.ctx.finish();
     });
 }
 
@@ -1218,17 +1229,28 @@ fn warn_log_stopped(ctx: &SessionContext, reason: &str) {
     );
 }
 
+/// Where a shell's output and troubles go. A trait so that tests can run
+/// [`run_io_loop`] against a real server without a Tauri app.
+trait ShellOutput {
+    fn output(&mut self, bytes: &[u8]);
+    fn warn(&self, message: String);
+}
+
 /// A shell worker's state that survives a reconnect.
-struct ShellIo {
-    ctx: SessionContext,
+struct ShellIo<O> {
+    out: O,
     control: ControlRx,
-    log: Option<SessionLog>,
     /// The terminal's last known size, for the next shell.
     pty_size: Option<(u32, u32)>,
 }
 
-impl ShellIo {
-    /// Send shell output to the terminal and the log.
+/// The terminal and the session log.
+struct AppOutput {
+    ctx: SessionContext,
+    log: Option<SessionLog>,
+}
+
+impl ShellOutput for AppOutput {
     fn output(&mut self, bytes: &[u8]) {
         if bytes.is_empty() {
             return;
@@ -1237,6 +1259,16 @@ impl ShellIo {
         self.write_log(|log| log.append(bytes));
     }
 
+    fn warn(&self, message: String) {
+        self.ctx.log(
+            "warn",
+            "ssh",
+            format!("session {}: {}", self.ctx.session_id, message),
+        );
+    }
+}
+
+impl AppOutput {
     fn write_log(&mut self, write: impl FnOnce(&mut SessionLog) -> io::Result<()>) {
         let Some(log) = self.log.as_mut() else { return };
         if let Err(e) = write(log) {
@@ -1332,6 +1364,80 @@ fn write_all_nonblocking<W: Write>(w: &mut W, data: &[u8], fd: Option<wake::Fd>)
     Ok(())
 }
 
+/// Bytes read from one side that the other has not taken yet. Offered once per
+/// pass of a loop, so that whatever is slow here holds up nothing else.
+#[derive(Default)]
+struct Outgoing {
+    data: Vec<u8>,
+    sent: usize,
+}
+
+impl Outgoing {
+    fn is_empty(&self) -> bool {
+        self.sent == self.data.len()
+    }
+
+    fn push(&mut self, bytes: &[u8]) {
+        self.data.extend_from_slice(bytes);
+    }
+
+    /// Offer what is left to `w`, once, and return how much it took. libssh2
+    /// must be offered the same bytes again after a refusal, which this does.
+    /// A channel with no window left may answer 0 instead of refusing.
+    ///
+    /// Never `flush`: nothing is buffered on the way out, and an ssh2 channel's
+    /// flush throws away what libssh2 has queued to read. For a queued packet
+    /// under four bytes, such as the echo of a keystroke, it also sends a window
+    /// adjust of about 2^32 and OpenSSH drops the connection over it.
+    fn send<W: Write>(&mut self, w: &mut W) -> io::Result<usize> {
+        if self.is_empty() {
+            return Ok(0);
+        }
+        match w.write(&self.data[self.sent..]) {
+            Ok(n) => {
+                self.sent += n;
+                if self.is_empty() {
+                    self.data.clear();
+                    self.sent = 0;
+                }
+                Ok(n)
+            }
+            Err(ref e)
+                if matches!(
+                    e.kind(),
+                    io::ErrorKind::WouldBlock | io::ErrorKind::Interrupted
+                ) =>
+            {
+                Ok(0)
+            }
+            Err(e) => Err(e),
+        }
+    }
+}
+
+/// Whether a packet is waiting for room on the socket, rather than for the
+/// server to open the channel's window.
+fn send_blocked_on_socket(session: &Session) -> bool {
+    matches!(
+        session.block_directions(),
+        ssh2::BlockDirections::Outbound | ssh2::BlockDirections::Both
+    )
+}
+
+/// Move what the server has sent from the socket into libssh2's queue, without
+/// sending anything. `channel.read` cannot be relied on for it: when the channel
+/// needs a bigger window it asks for that first, and libssh2 refuses a new packet
+/// while another is half sent, so the read returns without reading. A server with
+/// its own output backed up stops reading us, the half-sent packet stays, and
+/// neither side moves again. `wait_eof` only reads. The server cannot send more
+/// than the window, so the queue is bounded by that.
+fn take_in(channel: &mut ssh2::Channel) -> Result<(), ssh2::Error> {
+    match channel.wait_eof() {
+        Err(e) if !is_eagain(&e) => Err(e),
+        _ => Ok(()),
+    }
+}
+
 /// Notices a connection that has gone silent. libssh2 sends keepalives but
 /// never checks that they are answered, and a network that drops packets
 /// gives TCP nothing to report for many minutes. With `want_reply` set a
@@ -1400,7 +1506,7 @@ fn server_sent_eof(channel: &mut ssh2::Channel) -> bool {
 
 /// Pump shell output to the frontend and frontend input to the shell until
 /// the channel closes, the frontend disconnects or the connection dies.
-fn run_io_loop(shell: OpenShell, io: &mut ShellIo) -> ShellEnd {
+fn run_io_loop<O: ShellOutput>(shell: OpenShell, io: &mut ShellIo<O>) -> ShellEnd {
     let OpenShell {
         session,
         mut channel,
@@ -1412,11 +1518,15 @@ fn run_io_loop(shell: OpenShell, io: &mut ShellIo) -> ShellEnd {
     let mut pending: Vec<u8> = Vec::with_capacity(OUTPUT_COALESCE_MAX);
     let fds = [wake::fd_of(&session), io.control.wake.fd()];
     let mut watchdog = KeepaliveWatchdog::new(keepalive_interval, Instant::now());
+    // Input the server's side has not taken yet. Never waited for here: the
+    // loop has to go on reading, and the watchdog judges a server that stops.
+    let mut input = Outgoing::default();
+    let mut send_blocked = false;
 
     // A reconnected shell starts at the PTY's default size; the terminal only
     // reports a size when it changes.
     if let Some((cols, rows)) = io.pty_size {
-        resize_pty(&mut channel, cols, rows, &io.ctx);
+        resize_pty(&mut channel, cols, rows, &io.out);
     }
 
     loop {
@@ -1453,25 +1563,20 @@ fn run_io_loop(shell: OpenShell, io: &mut ShellIo) -> ShellEnd {
                 }
                 Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => break,
                 Err(e) => {
-                    io.output(&pending);
+                    io.out.output(&pending);
                     return after_io_error(&mut channel, format!("SSH read error: {}", e));
                 }
             }
         }
-        io.output(&pending);
+        io.out.output(&pending);
 
         // Apply everything the frontend queued.
         loop {
             match io.control.rx.try_recv() {
-                Ok(SessionMsg::Write(data)) => {
-                    active = true;
-                    if let Err(e) = write_all_nonblocking(&mut channel, &data, Some(fds[0])) {
-                        return after_io_error(&mut channel, format!("SSH write error: {}", e));
-                    }
-                }
+                Ok(SessionMsg::Write(data)) => input.push(&data),
                 Ok(SessionMsg::Resize { cols, rows }) => {
                     io.pty_size = Some((cols, rows));
-                    resize_pty(&mut channel, cols, rows, &io.ctx);
+                    resize_pty(&mut channel, cols, rows, &io.out);
                 }
                 Ok(SessionMsg::Disconnect) | Err(TryRecvError::Disconnected) => {
                     close_channel(&mut channel);
@@ -1480,6 +1585,20 @@ fn run_io_loop(shell: OpenShell, io: &mut ShellIo) -> ShellEnd {
                 Ok(SessionMsg::Reconnect | SessionMsg::CancelReconnect) => {}
                 Err(TryRecvError::Empty) => break,
             }
+        }
+
+        match input.send(&mut channel) {
+            Ok(0) => {}
+            Ok(_) => {
+                active = true;
+                // A full socket that has room again was emptied by the server's
+                // TCP acknowledging it. Keepalives can starve while input fills
+                // every gap, so this is what says the server is there.
+                if send_blocked {
+                    watchdog.heard(Instant::now());
+                }
+            }
+            Err(e) => return after_io_error(&mut channel, format!("SSH write error: {}", e)),
         }
 
         // libssh2 reports a lost connection as a failed read, so a read of 0
@@ -1502,11 +1621,26 @@ fn run_io_loop(shell: OpenShell, io: &mut ShellIo) -> ShellEnd {
             }
         }
 
+        send_blocked = !active && !input.is_empty() && send_blocked_on_socket(&session);
         if !active {
+            if !input.is_empty() {
+                if let Err(e) = take_in(&mut channel) {
+                    return after_io_error(&mut channel, format!("SSH read error: {}", e));
+                }
+                // A write reads the socket too, so output may wait in libssh2
+                // with nothing left on the socket to wake this thread.
+                if !send_blocked && channel.read_window().available > 0 {
+                    continue;
+                }
+            }
             let shared = agent_pump
                 .as_ref()
                 .is_some_and(crate::agent::ForwardPump::serving);
-            wake::wait_readable(&fds, idle_wait(shared));
+            // A shut window has to wait for the server: the socket is writable
+            // all along, and waiting on that would spin.
+            let socket = [fds[0]];
+            let writable: &[wake::Fd] = if send_blocked { &socket } else { &[] };
+            wake::wait_ready(&fds, writable, idle_wait(shared));
             io.control.wake.drain();
         }
     }
@@ -1535,16 +1669,9 @@ pub(crate) fn send_due_keepalive(session: &Session, fd: wake::Fd) -> Result<(), 
     session.keepalive_send().map(drop)
 }
 
-fn resize_pty(channel: &mut ssh2::Channel, cols: u32, rows: u32, ctx: &SessionContext) {
+fn resize_pty<O: ShellOutput>(channel: &mut ssh2::Channel, cols: u32, rows: u32, out: &O) {
     if let Err(e) = channel.request_pty_size(cols, rows, None, None) {
-        ctx.log(
-            "warn",
-            "ssh",
-            format!(
-                "session {} resize to {}x{} failed: {}",
-                ctx.session_id, cols, rows, e
-            ),
-        );
+        out.warn(format!("resize to {}x{} failed: {}", cols, rows, e));
     }
 }
 
@@ -1922,6 +2049,9 @@ mod tests {
     use super::*;
     use std::sync::atomic::AtomicU8;
 
+    #[cfg(unix)]
+    mod live_io;
+
     #[test]
     fn test_ssh_state_new() {
         let state = SshState::new();
@@ -2046,6 +2176,76 @@ mod tests {
         };
         write_all_nonblocking(&mut w, b"hello world", None).unwrap();
         assert_eq!(w.out, b"hello world");
+    }
+
+    /// A writer that takes `step` bytes every other call and refuses the rest.
+    struct Trickle {
+        out: Vec<u8>,
+        step: usize,
+        calls: usize,
+    }
+
+    impl Write for Trickle {
+        fn write(&mut self, data: &[u8]) -> io::Result<usize> {
+            self.calls += 1;
+            if self.calls.is_multiple_of(2) {
+                return Err(io::Error::new(io::ErrorKind::WouldBlock, "later"));
+            }
+            let n = data.len().min(self.step);
+            self.out.extend_from_slice(&data[..n]);
+            Ok(n)
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            panic!("a channel's flush discards what it has queued to read");
+        }
+    }
+
+    #[test]
+    fn outgoing_offers_once_per_call_and_keeps_its_place_and_order() {
+        let mut w = Trickle {
+            out: Vec::new(),
+            step: 2,
+            calls: 0,
+        };
+        let mut outgoing = Outgoing::default();
+        outgoing.push(b"hello");
+        assert_eq!(outgoing.send(&mut w).unwrap(), 2);
+        assert_eq!(w.calls, 1);
+        // Refused: nothing moves, and the same bytes are offered next time.
+        assert_eq!(outgoing.send(&mut w).unwrap(), 0);
+        assert!(!outgoing.is_empty());
+        // What arrives meanwhile goes behind it.
+        outgoing.push(b" world");
+        while !outgoing.is_empty() {
+            outgoing.send(&mut w).unwrap();
+        }
+        assert_eq!(w.out, b"hello world");
+        assert_eq!(outgoing.send(&mut w).unwrap(), 0, "nothing left to offer");
+    }
+
+    #[test]
+    fn outgoing_takes_a_write_of_nothing_as_no_room_and_passes_on_real_errors() {
+        struct Answers(Vec<io::Result<usize>>);
+        impl Write for Answers {
+            fn write(&mut self, _data: &[u8]) -> io::Result<usize> {
+                self.0.remove(0)
+            }
+            fn flush(&mut self) -> io::Result<()> {
+                Ok(())
+            }
+        }
+        let mut w = Answers(vec![
+            Ok(0),
+            Err(io::Error::from(io::ErrorKind::Interrupted)),
+            Err(io::Error::from(io::ErrorKind::BrokenPipe)),
+        ]);
+        let mut outgoing = Outgoing::default();
+        outgoing.push(b"x");
+        assert_eq!(outgoing.send(&mut w).unwrap(), 0);
+        assert_eq!(outgoing.send(&mut w).unwrap(), 0);
+        assert!(outgoing.send(&mut w).is_err());
+        assert!(!outgoing.is_empty());
     }
 
     #[test]
@@ -2670,6 +2870,10 @@ mod tests {
     const RELAY_DONE: u8 = 4;
     /// End the connection at once on both sides.
     const RELAY_CUT: u8 = 5;
+    /// Leave what either side sends unread.
+    const RELAY_FROZEN: u8 = 6;
+    /// Pass on what the client sends at about 128 KB/s at most.
+    const RELAY_TRICKLE_UP: u8 = 7;
 
     /// A loopback relay to a real server, so that a test can control what the
     /// client's socket sees.
@@ -2681,6 +2885,11 @@ mod tests {
 
     impl Relay {
         fn start(server: &Endpoint) -> Self {
+            Self::start_with(server, |_| {})
+        }
+
+        /// `prepare` gets the relay's socket towards the client.
+        fn start_with(server: &Endpoint, prepare: fn(&TcpStream)) -> Self {
             let listener = TcpListener::bind("127.0.0.1:0").unwrap();
             let port = listener.local_addr().unwrap().port();
             let mode = Arc::new(AtomicU8::new(RELAY_FLOW));
@@ -2689,6 +2898,7 @@ mod tests {
             let server = server.addr();
             thread::spawn(move || {
                 let (client, _) = listener.accept().unwrap();
+                prepare(&client);
                 let server = TcpStream::connect(server).unwrap();
                 client.set_nonblocking(true).unwrap();
                 server.set_nonblocking(true).unwrap();
@@ -2717,8 +2927,17 @@ mod tests {
                         }
                         _ => {}
                     }
+                    if mode == RELAY_FROZEN {
+                        thread::sleep(Duration::from_millis(10));
+                        continue;
+                    }
                     if mode != RELAY_HOLD_UP {
-                        let Some(n) = relay_read(&client, &mut buf) else {
+                        let room = if mode == RELAY_TRICKLE_UP {
+                            128
+                        } else {
+                            buf.len()
+                        };
+                        let Some(n) = relay_read(&client, &mut buf[..room]) else {
                             return;
                         };
                         let skip = relay_discard.load(Ordering::SeqCst).min(n);
