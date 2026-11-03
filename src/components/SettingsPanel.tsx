@@ -4,6 +4,7 @@ import { Separator } from "./ui/separator";
 import { Check } from "lucide-react";
 import { useDebouncedCallback } from "@/hooks/useDebouncedCallback";
 import { errorMessage } from "@/lib/errors";
+import { AboutSection } from "./settings/AboutSection";
 import { AppearanceSection } from "./settings/AppearanceSection";
 import { BackupsSection } from "./settings/BackupsSection";
 import { GitSyncSection } from "./settings/GitSyncSection";
@@ -171,6 +172,10 @@ export function SettingsPanel({ settings, onSave, onPreview }: SettingsPanelProp
       <Separator />
 
       <BackupsSection {...section} />
+
+      <Separator />
+
+      <AboutSection />
 
       {/*
         P2-A11: announce save success to screen readers. role=status

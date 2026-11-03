@@ -38,6 +38,7 @@ import {
   SaveCredentialFields,
 } from "./ConnectionFormFields";
 import { useFieldErrors } from "@/hooks/useFieldErrors";
+import { bindAddressError } from "@/lib/bindAddress";
 import { credentialFieldErrors, type CredentialFieldKey } from "@/lib/credentialValidation";
 import { KIND_FLAGS, KIND_LABELS, hopTerms, isForwardType, titleCase } from "@/lib/sshTerms";
 import { mirroredEndpoint } from "./connection-form/endpoint";
@@ -178,6 +179,7 @@ function initialFormState(
           destination_port: connection.destination_port,
         }
       : {}),
+    ...("bind_address" in connection ? { bind_address: connection.bind_address } : {}),
     ...("local_port" in connection ? { local_port: connection.local_port } : {}),
     ...("remote_port" in connection ? { remote_port: connection.remote_port } : {}),
   };
@@ -231,6 +233,7 @@ function serializeFormState(s: {
     s.form.gateway_host ?? null,
     s.form.gateway_credential_id ?? null,
     s.form.destination_host ?? null,
+    s.form.bind_address ?? "",
     s.form.local_port ?? null,
     s.form.remote_port ?? null,
     s.portInputs,
@@ -301,6 +304,7 @@ export function ConnectionForm({
     | "gateway_credential_id"
     | "credential_id"
     | "folder"
+    | "bind_address"
     | `inline_${CredentialFieldKey}`;
   const { fieldErrors, setFieldErrors, clearFieldError } = useFieldErrors<FieldKey>();
 
@@ -535,6 +539,10 @@ export function ConnectionForm({
         if (needsTargetAuth) {
           Object.assign(newFieldErrors, authFieldErrors(formWithPorts.credential_id));
         }
+        const listensLocally =
+          connectionType === "port_forward" || connectionType === "dynamic_forward";
+        const bindError = listensLocally ? bindAddressError(form.bind_address ?? "") : null;
+        if (bindError) newFieldErrors.bind_address = bindError;
         const parsedFolder = parseFolderPath(advanced.folder ?? "");
         if (showsFolder && parsedFolder.error) {
           newFieldErrors.folder = parsedFolder.error;
@@ -609,6 +617,7 @@ export function ConnectionForm({
                   ...baseFields,
                   type: "port_forward",
                   ...gateway,
+                  bind_address: formWithPorts.bind_address?.trim() || undefined,
                   local_port: formWithPorts.local_port ?? 0,
                   ...destination,
                 }
@@ -625,6 +634,7 @@ export function ConnectionForm({
                       ...baseFields,
                       type: "dynamic_forward",
                       ...gateway,
+                      bind_address: formWithPorts.bind_address?.trim() || undefined,
                       local_port: formWithPorts.local_port ?? 0,
                     }
                   : { ...baseFields, type: "jump_shell", ...gateway, ...destination };
@@ -947,6 +957,14 @@ export function ConnectionForm({
           <ForwardKinds
             connectionType={connectionType}
             ports={{ inputs: portInputs, errors: portErrors, onChange: updatePort }}
+            bind={{
+              value: form.bind_address ?? "",
+              error: fieldErrors.bind_address,
+              onChange: (raw) => {
+                setForm({ ...form, bind_address: raw });
+                clearFieldError("bind_address");
+              },
+            }}
           />
         </>
       )}

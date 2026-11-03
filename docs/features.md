@@ -128,17 +128,21 @@ Saved commands with `{{variable}}` prompts, pasted into the active terminal and 
 
 ## Port Forwards
 
-- local forwards (`ssh -L`): SSIX listens on `127.0.0.1:<local port>` and
+- local forwards (`ssh -L`): SSIX listens on `<bind address>:<local port>` and
   forwards each connection through the SSH server to the remote host
 - remote forwards (`ssh -R`): the SSH server listens on its own loopback and
   each connection comes back to a target on this machine's side
-- dynamic forwards (`ssh -D`): a SOCKS5 proxy on `127.0.0.1:<SOCKS port>` whose
-  connections the SSH server dials, resolving names itself
+- dynamic forwards (`ssh -D`): a SOCKS5 proxy on `<bind address>:<SOCKS port>`
+  whose connections the SSH server dials, resolving names itself
+- local and dynamic forwards listen on `127.0.0.1` unless given another IP address,
+  and the form warns when other machines could reach it
 - one row per forward with status indicator: grey for not connected/connecting,
   green for connected, red for connection errors and for a forward whose
   connection was lost
-- expandable inline detail panes beneath each forward, with its client count and
-  last client error; multiple rows can stay expanded
+- a running forward's row shows its upload and download speed
+- expandable inline detail panes beneath each forward, with the total uploaded and
+  downloaded, its client count and last client error; multiple rows can stay
+  expanded
 - stopping a forward drops its clients, and a forward whose session dies closes
   its port and says so
 
@@ -314,6 +318,19 @@ are shown inline for the final state of the burst.
 - default terminal open mode
 - Git Sync repository settings
 
+### About
+
+The last section of Settings says which version this is, who makes SSIX, where
+the source code is and its licence (MIT). The links open in the default browser.
+A release build shows its tag, such as `v1.0.0-beta.17`, because the version in
+the manifests stays the same across betas; other builds show the manifest's
+version.
+
+**Show third-party licences** lists what ships inside SSIX with the licence each
+part declares, and filters by name or licence. It gives names and licence
+identifiers, not the full licence texts. The list is the generated file
+`src/lib/thirdPartyLicenses.json`: see `docs/development.md`.
+
 ## Sidebar
 
 The left sidebar holds one icon button per view, in two groups. The top group
@@ -340,6 +357,9 @@ Each button's accessible name stays its `aria-label`, which also carries
 the terminal count and Git Sync's pending-changes state.
 
 ## Title Bar
+
+The SSIX logo and name sit in the middle of the bar. They are decorative and do
+not take clicks, so the bar can still be dragged from there.
 
 SSIX renders its own draggable title bar so it can host a Settings shortcut
 and (on Windows / Linux) the minimize / maximize / close window controls.

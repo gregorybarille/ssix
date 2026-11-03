@@ -9,3 +9,16 @@
  * also brings in import.meta.env / asset URL types we don't use).
  */
 declare module "*.css";
+/** An imported image is the URL Vite gives it. */
+declare module "*.svg" {
+  const url: string;
+  export default url;
+}
+
+/** Set by the release workflow: see `src/lib/appInfo.ts`. */
+interface ImportMetaEnv {
+  readonly VITE_RELEASE_TAG?: string;
+}
+interface ImportMeta {
+  readonly env: ImportMetaEnv;
+}

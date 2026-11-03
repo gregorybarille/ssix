@@ -71,4 +71,12 @@ color_scheme?: string | null,
  * Folder path the connection is filed under, `/`-separated
  * (`prod/eu`); `None` is the root (roadmap: folders).
  */
-folder?: string | null, } & ({ "type": "direct" } | { "type": "port_forward", gateway_host: string, gateway_port: number, gateway_credential_id: string, local_port: number, destination_host: string, destination_port: number, } | { "type": "jump_shell", gateway_host: string, gateway_port: number, gateway_credential_id: string, destination_host: string, destination_port: number, } | { "type": "remote_forward", gateway_host: string, gateway_port: number, gateway_credential_id: string, remote_port: number, destination_host: string, destination_port: number, } | { "type": "dynamic_forward", gateway_host: string, gateway_port: number, gateway_credential_id: string, local_port: number, } | { "type": "tunnel", gateway_host: string, gateway_port: number, gateway_credential_id: string | null, destination_host: string, destination_port: number, });
+folder?: string | null, } & ({ "type": "direct" } | { "type": "port_forward", gateway_host: string, gateway_port: number, gateway_credential_id: string, 
+/**
+ * The local address to listen on, an IP. Absent means `127.0.0.1`.
+ */
+bind_address?: string, local_port: number, destination_host: string, destination_port: number, } | { "type": "jump_shell", gateway_host: string, gateway_port: number, gateway_credential_id: string, destination_host: string, destination_port: number, } | { "type": "remote_forward", gateway_host: string, gateway_port: number, gateway_credential_id: string, remote_port: number, destination_host: string, destination_port: number, } | { "type": "dynamic_forward", gateway_host: string, gateway_port: number, gateway_credential_id: string, 
+/**
+ * The local address to listen on, an IP. Absent means `127.0.0.1`.
+ */
+bind_address?: string, local_port: number, } | { "type": "tunnel", gateway_host: string, gateway_port: number, gateway_credential_id: string | null, destination_host: string, destination_port: number, });

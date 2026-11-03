@@ -39,6 +39,15 @@ describe("forwardEndpoint", () => {
     expect(forwardEndpoint(remote)).toBe("remote port 9000 → 127.0.0.1:3000");
     expect(forwardEndpoint(dynamic)).toBe("127.0.0.1:1080 (SOCKS)");
   });
+
+  it("names the address a forward was told to listen on", () => {
+    expect(forwardEndpoint({ ...local, bind_address: "10.0.0.5" } as ForwardConnection)).toBe(
+      "10.0.0.5:15432 → db:5432",
+    );
+    expect(forwardEndpoint({ ...dynamic, bind_address: "::1" } as ForwardConnection)).toBe(
+      "[::1]:1080 (SOCKS)",
+    );
+  });
 });
 
 describe("hopTerms", () => {

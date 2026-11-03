@@ -99,3 +99,16 @@ describe("TitleBar maximize subscription (non-macOS)", () => {
     expect(unlisten).toHaveBeenCalled();
   });
 });
+
+describe("TitleBar brand", () => {
+  it("shows the logo next to the name, without taking clicks from the drag region", () => {
+    render(<TitleBar onSettings={() => {}} settingsActive={false} />);
+    const brand = screen.getByTestId("title-bar-brand");
+    expect(brand).toHaveTextContent("ssix");
+    expect(brand).toHaveClass("pointer-events-none");
+    expect(brand).toHaveAttribute("aria-hidden", "true");
+    const logo = brand.querySelector("img");
+    expect(logo).toHaveAttribute("src", expect.stringMatching(/svg/));
+    expect(logo).toHaveAttribute("alt", "");
+  });
+});

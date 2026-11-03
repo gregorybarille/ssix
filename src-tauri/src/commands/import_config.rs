@@ -26,6 +26,7 @@
 //!   row says so and starts unticked. The user decides, not the default.
 
 use std::collections::{HashMap, HashSet};
+use std::net::{IpAddr, Ipv4Addr};
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
@@ -37,6 +38,7 @@ use crate::commands::connections::{
     check_connection, insert_new_connection, ConnectionAdvanced, ConnectionFields,
 };
 use crate::commands::credentials::validate_credential_fields;
+use crate::forwards::listen_addr;
 use crate::models::{AppData, Connection, ConnectionKind, Credential, CredentialKind};
 use crate::ssh_config::{
     display_path, is_unix_socket, jump_value, parse_forward_end, parse_jump_hop, parse_port,
@@ -863,6 +865,29 @@ fn forward_refusal(args: &[String], why: String) -> Refusal {
     }
 }
 
+/// What a config's bind address means for a local or dynamic forward.
+enum LocalBind {
+    /// Loopback, which is where a forward listens with no address at all.
+    Default,
+    /// An IP to keep, and whether other machines may be able to reach it.
+    Address(String, bool),
+    /// A name, which SSIX does not take: see `forwards::listen_addr`.
+    NotAnAddress,
+}
+
+/// `*` means every interface, as it does for `ssh`.
+fn local_bind_address(bind: &str) -> LocalBind {
+    if bind == "localhost" {
+        return LocalBind::Default;
+    }
+    let text = if bind == "*" { "0.0.0.0" } else { bind };
+    match text.parse::<IpAddr>() {
+        Ok(ip) if ip == IpAddr::V4(Ipv4Addr::LOCALHOST) => LocalBind::Default,
+        Ok(ip) => LocalBind::Address(ip.to_string(), !ip.is_loopback()),
+        Err(_) => LocalBind::NotAnAddress,
+    }
+}
+
 /// One forward directive of a host, as its own connection. `behind_jump` is
 /// whether the host goes through a `ProxyJump`: a forward's SSH server is
 /// its first hop, so that cannot be expressed.
@@ -926,17 +951,28 @@ fn forward_connection(
         .transpose()?;
 
     let mut notes = server.notes.clone();
+    let mut bind_address = None;
     if let Some(bind) = &listen.host {
-        match flavor {
-            ForwardFlavor::Remote => notes.push(format!(
+        match (flavor, local_bind_address(bind)) {
+            (ForwardFlavor::Remote, _) => notes.push(format!(
                 "The bind address {bind} is dropped: the SSH server chooses where it listens"
             )),
-            _ if bind != "127.0.0.1" && bind != "localhost" => notes.push(format!(
-                "The bind address {bind} is dropped: SSIX listens on 127.0.0.1 only"
+            (_, LocalBind::Default) => {}
+            (_, LocalBind::Address(address, open)) => {
+                if open {
+                    notes.push(format!(
+                        "Listens on {address}, as the config says: anyone who can reach this computer there can use it with no password"
+                    ));
+                }
+                bind_address = Some(address);
+            }
+            (_, LocalBind::NotAnAddress) => notes.push(format!(
+                "The bind address {bind} is dropped: SSIX takes an IP address only, so this listens on 127.0.0.1"
             )),
-            _ => {}
         }
     }
+    let listen_text = listen_addr(bind_address.as_deref(), listen.port)
+        .map_err(|why| Refusal::invalid(located(why)))?;
 
     let gateway_host = server.host.clone();
     let gateway_port = server.port;
@@ -948,14 +984,12 @@ fn forward_connection(
                 gateway_host,
                 gateway_port,
                 gateway_credential_id,
+                bind_address,
                 local_port: listen.port,
                 destination_host: destination_host.clone(),
                 destination_port,
             },
-            format!(
-                "127.0.0.1:{} → {destination_host}:{destination_port}",
-                listen.port
-            ),
+            format!("{listen_text} → {destination_host}:{destination_port}"),
         ),
         (ForwardFlavor::Remote, Some((destination_host, destination_port))) => (
             "-R",
@@ -978,9 +1012,10 @@ fn forward_connection(
                 gateway_host,
                 gateway_port,
                 gateway_credential_id,
+                bind_address,
                 local_port: listen.port,
             },
-            format!("127.0.0.1:{} (SOCKS)", listen.port),
+            format!("{listen_text} (SOCKS)"),
         ),
     };
     // The same fields a form-made forward has: its far end when it has one,
@@ -2009,6 +2044,7 @@ mod tests {
                     gateway_host: "10.0.0.1".to_string(),
                     gateway_port: 2200,
                     gateway_credential_id: shared.clone(),
+                    bind_address: None,
                     local_port: 8080,
                     destination_host: "db".to_string(),
                     destination_port: 5432,
@@ -2035,6 +2071,7 @@ mod tests {
                     gateway_host: "10.0.0.1".to_string(),
                     gateway_port: 2200,
                     gateway_credential_id: shared,
+                    bind_address: None,
                     local_port: 1080,
                 }
             );
@@ -2104,7 +2141,41 @@ mod tests {
     }
 
     #[test]
-    fn a_bind_address_that_cannot_be_kept_is_noted() {
+    fn a_local_bind_address_is_kept_and_an_open_one_is_noted() {
+        in_data_dir(|f| {
+            let preview = f.preview(
+                "Host web\n  User u\n  IdentityFile ~/.ssh/id\n  LocalForward 127.0.0.1:1 db:1\n  LocalForward *:2 db:2\n  LocalForward [::1]:3 db:3\n  LocalForward 192.168.1.5:4 db:4\n  LocalForward gateway.lan:5 db:5\n  DynamicForward 0.0.0.0:6\n",
+            );
+            let summary = |name: &str| item(&preview, name).target.clone();
+            assert!(summary("web (-L 1)").starts_with("127.0.0.1:1 "));
+            assert!(summary("web (-L 2)").starts_with("0.0.0.0:2 "));
+            assert!(summary("web (-L 3)").starts_with("[::1]:3 "));
+            assert!(summary("web (-L 4)").starts_with("192.168.1.5:4 "));
+            assert!(summary("web (-L 5)").starts_with("127.0.0.1:5 "));
+            assert!(summary("web (-D 6)").starts_with("0.0.0.0:6 (SOCKS)"));
+            let no_password = |name: &str| {
+                item(&preview, name)
+                    .notes
+                    .iter()
+                    .any(|note| note.contains("no password"))
+            };
+            assert!(no_password("web (-L 2)"));
+            assert!(no_password("web (-L 4)"));
+            assert!(no_password("web (-D 6)"));
+            assert!(!no_password("web (-L 3)"));
+            assert!(!item(&preview, "web (-L 1)")
+                .notes
+                .iter()
+                .any(|n| n.contains("bind") || n.contains("Listens")));
+            assert!(item(&preview, "web (-L 5)")
+                .notes
+                .iter()
+                .any(|n| n.contains("gateway.lan is dropped")));
+        });
+    }
+
+    #[test]
+    fn only_a_bind_address_worth_knowing_about_is_noted() {
         in_data_dir(|f| {
             let preview = f.preview(
                 "Host web\n  User u\n  IdentityFile ~/.ssh/id\n  LocalForward 127.0.0.1:1 db:1\n  LocalForward localhost:2 db:2\n  LocalForward *:3 db:3\n  LocalForward [::1]:4 db:4\n  DynamicForward 0.0.0.0:5\n  RemoteForward 0.0.0.0:6 db:6\n",
@@ -2113,7 +2184,7 @@ mod tests {
             assert!(!noted("web (-L 1)"));
             assert!(!noted("web (-L 2)"));
             assert!(noted("web (-L 3)"));
-            assert!(noted("web (-L 4)"));
+            assert!(!noted("web (-L 4)"));
             assert!(noted("web (-D 5)"));
             assert!(noted("web (-R 6)"));
         });

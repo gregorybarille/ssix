@@ -122,6 +122,36 @@ describe("buildSshCommand", () => {
     expect(buildSshCommand(conn, [passCred])).toBe("ssh -D 1080 alice@bastion.example");
   });
 
+  it("puts a forward's bind address in front of its port", () => {
+    const socks: Connection = {
+      id: "c2d",
+      name: "socks",
+      host: "",
+      port: 22,
+      type: "dynamic_forward",
+      gateway_host: "bastion.example",
+      gateway_port: 22,
+      gateway_credential_id: passCred.id,
+      local_port: 1080,
+    };
+    expect(buildSshCommand({ ...socks, bind_address: "0.0.0.0" }, [passCred])).toBe(
+      "ssh -D 0.0.0.0:1080 alice@bastion.example",
+    );
+    expect(buildSshCommand({ ...socks, bind_address: "::1" }, [passCred])).toBe(
+      "ssh -D '[::1]:1080' alice@bastion.example",
+    );
+    const local: Connection = {
+      ...socks,
+      type: "port_forward",
+      destination_host: "db",
+      destination_port: 5432,
+      bind_address: "10.0.0.5",
+    };
+    expect(buildSshCommand(local, [passCred])).toBe(
+      "ssh -L 10.0.0.5:1080:db:5432 alice@bastion.example",
+    );
+  });
+
   it("builds a jump_shell command with -J", () => {
     const conn: Connection = {
       id: "c3",

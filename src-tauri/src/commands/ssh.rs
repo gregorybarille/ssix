@@ -1,6 +1,6 @@
 use crate::auth_prompt::PromptScope;
 use crate::commands::blocking;
-use crate::forwards::start_port_forward;
+use crate::forwards::{listen_addr, start_port_forward};
 use crate::keychain;
 use crate::models::{AppData, AppSettings, Connection, ConnectionKind, Credential, CredentialKind};
 use crate::reconnect::ReconnectPolicy;
@@ -297,6 +297,7 @@ pub async fn ssh_connect(
             gateway_host,
             gateway_port,
             gateway_credential_id,
+            bind_address,
             local_port,
             destination_host,
             destination_port,
@@ -310,7 +311,7 @@ pub async fn ssh_connect(
             .through(conn.proxy_command.as_deref());
             start_port_forward(
                 gateway,
-                *local_port,
+                listen_addr(bind_address.as_deref(), *local_port)?,
                 destination_host.clone(),
                 *destination_port,
                 conn.verbosity,
@@ -349,6 +350,7 @@ pub async fn ssh_connect(
             gateway_host,
             gateway_port,
             gateway_credential_id,
+            bind_address,
             local_port,
         } => {
             let gateway = resolve_endpoint(
@@ -358,7 +360,12 @@ pub async fn ssh_connect(
                 gateway_credential_id,
             )?
             .through(conn.proxy_command.as_deref());
-            crate::forwards::start_dynamic_forward(gateway, *local_port, conn.verbosity, ctx)
+            crate::forwards::start_dynamic_forward(
+                gateway,
+                listen_addr(bind_address.as_deref(), *local_port)?,
+                conn.verbosity,
+                ctx,
+            )
         }
         ConnectionKind::LegacyTunnel { .. } => Err(
             "Legacy tunnel connection encountered after migration. Please re-save this connection."
