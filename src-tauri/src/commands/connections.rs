@@ -202,6 +202,7 @@ fn validate_connection_kind(kind: &ConnectionKind) -> Result<(), String> {
         ConnectionKind::PortForward {
             gateway_host,
             gateway_port,
+            bind_address,
             local_port,
             destination_host,
             destination_port,
@@ -209,6 +210,7 @@ fn validate_connection_kind(kind: &ConnectionKind) -> Result<(), String> {
         } => {
             host("SSH server host", gateway_host)?;
             port("SSH server port", *gateway_port)?;
+            crate::forwards::listen_addr(bind_address.as_deref(), *local_port)?;
             port("Local port", *local_port)?;
             host("Remote host", destination_host)?;
             port("Remote port", *destination_port)
@@ -242,11 +244,13 @@ fn validate_connection_kind(kind: &ConnectionKind) -> Result<(), String> {
         ConnectionKind::DynamicForward {
             gateway_host,
             gateway_port,
+            bind_address,
             local_port,
             ..
         } => {
             host("SSH server host", gateway_host)?;
             port("SSH server port", *gateway_port)?;
+            crate::forwards::listen_addr(bind_address.as_deref(), *local_port)?;
             port("Local port", *local_port)
         }
     }
@@ -612,6 +616,7 @@ mod tests {
             gateway_host: "bastion".to_string(),
             gateway_port: 22,
             gateway_credential_id: gateway_credential_id.to_string(),
+            bind_address: None,
             local_port: 1080,
         }
     }
@@ -651,6 +656,20 @@ mod tests {
             validate_connection_kind(&no_local_port).unwrap_err(),
             "Local port must be between 1 and 65535"
         );
+
+        let mut named_bind = dynamic_forward("cred");
+        if let ConnectionKind::DynamicForward { bind_address, .. } = &mut named_bind {
+            *bind_address = Some("example.com".to_string());
+        }
+        assert!(validate_connection_kind(&named_bind)
+            .unwrap_err()
+            .contains("not an IP address"));
+
+        let mut ip_bind = dynamic_forward("cred");
+        if let ConnectionKind::DynamicForward { bind_address, .. } = &mut ip_bind {
+            *bind_address = Some("0.0.0.0".to_string());
+        }
+        assert_eq!(validate_connection_kind(&ip_bind), Ok(()));
     }
 
     #[test]
@@ -786,6 +805,7 @@ mod tests {
             gateway_host: "gw".to_string(),
             gateway_port: 22,
             gateway_credential_id: gateway_credential_id.to_string(),
+            bind_address: None,
             local_port: 15432,
             destination_host: "db".to_string(),
             destination_port: 5432,
@@ -1366,6 +1386,7 @@ mod tests {
             gateway_host: "gateway.example.com".to_string(),
             gateway_port: 22,
             gateway_credential_id: "gw-cred-1".to_string(),
+            bind_address: None,
             local_port: 8080,
             destination_host: "api.internal".to_string(),
             destination_port: 80,

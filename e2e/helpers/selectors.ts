@@ -83,6 +83,8 @@ export const sel = {
   // jump host has its own picker, see HopCredential).
   connectionFormTargetCredential: '[data-testid="connection-form-credential"]',
   connectionFormLocalPort: '[data-testid="connection-form-local-port"]',
+  connectionFormBindAddress: '[data-testid="connection-form-bind-address"]',
+  connectionFormBindWarning: '[data-testid="connection-form-bind-warning"]',
   connectionFormVerbosity: '[data-testid="connection-form-verbosity"]',
   connectionFormProxyCommand: '[data-testid="connection-form-proxy-command"]',
   // Only rendered on Windows.

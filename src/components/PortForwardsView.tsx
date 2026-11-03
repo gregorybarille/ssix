@@ -1,5 +1,6 @@
 import { useMemo, useState } from "react";
 import { Connection, Credential, ForwardConnection } from "@/types";
+import { DEFAULT_BIND_ADDRESS } from "@/lib/bindAddress";
 import { forwardEndpoint, hopTerms, isForwardConnection } from "@/lib/sshTerms";
 import { Button } from "./ui/button";
 import { ConfirmDialog } from "./ConfirmDialog";
@@ -227,6 +228,14 @@ export function PortForwardsView({
                           <>
                             <dt className="text-muted-foreground">{hopTerms(conn.type).target}</dt>
                             <dd>{conn.destination_host}:{conn.destination_port}</dd>
+                          </>
+                        )}
+                        {conn.type !== "remote_forward" && (
+                          <>
+                            <dt className="text-muted-foreground">Listens on</dt>
+                            <dd data-testid={`forward-listen-address-${conn.id}`}>
+                              {conn.bind_address || DEFAULT_BIND_ADDRESS}
+                            </dd>
                           </>
                         )}
                         <dt className="text-muted-foreground">{listenPortLabel(conn)}</dt>

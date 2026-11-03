@@ -137,6 +137,7 @@ mod tests {
                 gateway_host: "gw".into(),
                 gateway_port: 22,
                 gateway_credential_id: String::new(),
+                bind_address: None,
                 local_port: 1080,
             },
         )

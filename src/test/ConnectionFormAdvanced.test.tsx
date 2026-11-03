@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { ConnectionForm } from "@/components/ConnectionForm";
 import type { ConnectionFormSectionProps } from "@/components/connection-form/advanced";
 import {
@@ -212,6 +212,75 @@ describe("ConnectionForm with remote and dynamic forwards", () => {
     const payload = onSubmit.mock.calls[0][0];
     expect(payload).toMatchObject({ ...gateway, type: "dynamic_forward", local_port: 1080 });
     expect(payload).not.toHaveProperty("destination_host");
+  });
+});
+
+describe("ConnectionForm bind address", () => {
+  const dynamicForward: Connection = {
+    id: "c2",
+    name: "socks",
+    host: "bastion",
+    port: 22,
+    type: "dynamic_forward",
+    gateway_host: "bastion",
+    gateway_port: 22,
+    gateway_credential_id: "c1",
+    local_port: 1080,
+  };
+  const field = () => screen.getByTestId("connection-form-bind-address");
+  const warning = () => screen.queryByTestId("connection-form-bind-warning");
+  const type = (value: string) => fireEvent.change(field(), { target: { value } });
+  const clickSubmit = () =>
+    fireEvent.click(screen.getByRole("button", { name: /create|save|update/i }));
+
+  it("leaves the address out when empty, so the forward stays on loopback", async () => {
+    const { onSubmit } = renderForm(dynamicForward);
+    expect(field()).toHaveValue("");
+    clickSubmit();
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
+    expect(onSubmit.mock.calls[0][0].bind_address).toBeUndefined();
+  });
+
+  it("saves what was typed, without the spaces, and shows it when editing again", async () => {
+    const { onSubmit } = renderForm(dynamicForward);
+    type(" 10.0.0.5 ");
+    clickSubmit();
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
+    expect(onSubmit.mock.calls[0][0].bind_address).toBe("10.0.0.5");
+    cleanup();
+    renderForm({ ...dynamicForward, bind_address: "10.0.0.5" });
+    expect(field()).toHaveValue("10.0.0.5");
+  });
+
+  it("refuses a name beside the field, until it is changed", async () => {
+    const { onSubmit } = renderForm(dynamicForward);
+    type("example.com");
+    clickSubmit();
+    await waitFor(() => expect(field()).toHaveAttribute("aria-invalid", "true"));
+    expect(onSubmit).not.toHaveBeenCalled();
+    expect(screen.getByText(/enter an ip address/i)).toHaveAttribute("role", "alert");
+    type("10.0.0.5");
+    expect(field()).not.toHaveAttribute("aria-invalid");
+  });
+
+  it("warns only when other machines could reach the forward", () => {
+    renderForm(dynamicForward);
+    expect(warning()).not.toBeInTheDocument();
+    type("127.0.0.2");
+    expect(warning()).not.toBeInTheDocument();
+    type("example.com");
+    expect(warning()).not.toBeInTheDocument();
+    type("0.0.0.0");
+    expect(warning()).toHaveTextContent(/no password/);
+  });
+
+  it("is offered on local and dynamic forwards only", () => {
+    renderForm(null);
+    expect(screen.queryByTestId("connection-form-bind-address")).not.toBeInTheDocument();
+    fireEvent.mouseDown(screen.getByTestId("connection-form-kind-localforward"), { button: 0 });
+    expect(field()).toBeInTheDocument();
+    fireEvent.mouseDown(screen.getByTestId("connection-form-kind-remoteforward"), { button: 0 });
+    expect(screen.queryByTestId("connection-form-bind-address")).not.toBeInTheDocument();
   });
 });
 

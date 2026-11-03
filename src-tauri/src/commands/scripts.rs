@@ -358,6 +358,7 @@ mod tests {
                     gateway_host: "gw".into(),
                     gateway_port: 22,
                     gateway_credential_id: "c".into(),
+                    bind_address: None,
                     local_port: 8080,
                     destination_host: "db".into(),
                     destination_port: 5432,

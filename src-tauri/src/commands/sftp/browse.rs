@@ -1137,6 +1137,7 @@ mod tests {
                 gateway_host: "gw".into(),
                 gateway_port: 22,
                 gateway_credential_id: "c".into(),
+                bind_address: None,
                 local_port: 1080,
             });
             let err = sftp_connect_sync(&id).unwrap_err();

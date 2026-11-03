@@ -91,7 +91,7 @@ pub struct CredentialSecrets {
 
 /// Tunnel connection kinds.
 ///
-/// `PortForward` opens a local TCP listener on `127.0.0.1:local_port` and forwards
+/// `PortForward` opens a local TCP listener on `bind_address:local_port` and forwards
 /// every accepted connection through the gateway to `destination_host:destination_port`.
 /// The destination need not run sshd — it can be any TCP service (HTTP API, DB, etc.).
 /// Equivalent to `ssh -L local_port:destination_host:destination_port gateway`.
@@ -103,7 +103,7 @@ pub struct CredentialSecrets {
 /// `RemoteForward` (`ssh -R`) asks the gateway to listen on `remote_port` and
 /// forwards every connection it accepts back to `destination_host:destination_port`
 /// on this machine's side. `DynamicForward` (`ssh -D`) runs a local SOCKS5 proxy on
-/// `local_port` whose connections are dialled by the gateway.
+/// `bind_address:local_port` whose connections are dialled by the gateway.
 ///
 /// Legacy data with `type: "tunnel"` is migrated to `JumpShell` on load.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -116,6 +116,10 @@ pub enum ConnectionKind {
         gateway_host: String,
         gateway_port: u16,
         gateway_credential_id: String,
+        /// The local address to listen on, an IP. Absent means `127.0.0.1`.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[cfg_attr(test, ts(optional))]
+        bind_address: Option<String>,
         local_port: u16,
         destination_host: String,
         destination_port: u16,
@@ -139,6 +143,10 @@ pub enum ConnectionKind {
         gateway_host: String,
         gateway_port: u16,
         gateway_credential_id: String,
+        /// The local address to listen on, an IP. Absent means `127.0.0.1`.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[cfg_attr(test, ts(optional))]
+        bind_address: Option<String>,
         local_port: u16,
     },
     /// Legacy variant retained for backwards compatibility with older `data.json`
@@ -851,6 +859,7 @@ mod tests {
             gateway_host: "gw.example".into(),
             gateway_port: 22,
             gateway_credential_id: "gw-cred".into(),
+            bind_address: None,
             local_port: 9000,
             destination_host: "api.internal".into(),
             destination_port: 80,
@@ -858,6 +867,8 @@ mod tests {
         let json = serde_json::to_string(&kind).unwrap();
         assert!(json.contains(r#""type":"port_forward""#));
         assert!(json.contains(r#""local_port":9000"#));
+        // Absent unless set, so data.json stays as it was for existing forwards.
+        assert!(!json.contains("bind_address"));
         let back: ConnectionKind = serde_json::from_str(&json).unwrap();
         assert_eq!(back, kind);
     }
@@ -1006,6 +1017,7 @@ mod tests {
             gateway_host: "gw".into(),
             gateway_port: 22,
             gateway_credential_id: "gw-cred".into(),
+            bind_address: None,
             local_port: 9000,
             destination_host: "api".into(),
             destination_port: 80,
@@ -1470,6 +1482,7 @@ mod tests {
             gateway_host: "gw".into(),
             gateway_port: 22,
             gateway_credential_id: "gw-cred".into(),
+            bind_address: None,
             local_port: 1080,
         };
         let json = serde_json::to_string(&dynamic).unwrap();
@@ -1498,6 +1511,7 @@ mod tests {
                 gateway_host: "gw".into(),
                 gateway_port: 22,
                 gateway_credential_id: "deleted".into(),
+                bind_address: None,
                 local_port: 1080,
             },
         ));

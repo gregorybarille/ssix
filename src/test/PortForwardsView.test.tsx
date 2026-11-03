@@ -238,6 +238,24 @@ describe("PortForwardsView", () => {
     expect(screen.queryByTestId("forward-stop-pf-1")).not.toBeInTheDocument();
   });
 
+  it("shows where a forward listens, on the row and in its details", async () => {
+    const user = userEvent.setup();
+    const onLan = { ...dynamicForwardConn, bind_address: "10.0.0.5" } as ForwardSession["connection"];
+    render(
+      <PortForwardsView
+        {...defaultProps}
+        connections={[onLan, portForwardConn, remoteForwardConn]}
+      />,
+    );
+    expect(screen.getByTestId("forward-row-df-1")).toHaveTextContent("10.0.0.5:1080 (SOCKS)");
+    await user.click(within(screen.getByTestId("forward-row-df-1")).getAllByRole("button")[0]);
+    expect(screen.getByTestId("forward-listen-address-df-1")).toHaveTextContent("10.0.0.5");
+    await user.click(within(screen.getByTestId("forward-row-pf-1")).getAllByRole("button")[0]);
+    expect(screen.getByTestId("forward-listen-address-pf-1")).toHaveTextContent("127.0.0.1");
+    await user.click(within(screen.getByTestId("forward-row-rf-1")).getAllByRole("button")[0]);
+    expect(screen.queryByTestId("forward-listen-address-rf-1")).not.toBeInTheDocument();
+  });
+
   it("shows the client count and the last client error of a running forward", async () => {
     const user = userEvent.setup();
     const sessions: ForwardSession[] = [

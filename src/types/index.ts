@@ -170,6 +170,8 @@ export interface PortForwardConnection extends ConnectionBase {
   gateway_host: string;
   gateway_port: number;
   gateway_credential_id: string;
+  /** The local IP to listen on. Absent means 127.0.0.1. */
+  bind_address?: string;
   local_port: number;
   destination_host: string;
   destination_port: number;
@@ -201,6 +203,8 @@ export interface DynamicForwardConnection extends ConnectionBase {
   gateway_host: string;
   gateway_port: number;
   gateway_credential_id: string;
+  /** The local IP to listen on. Absent means 127.0.0.1. */
+  bind_address?: string;
   local_port: number;
 }
 
@@ -266,6 +270,7 @@ export type ConnectionDraft = {
   gateway_host?: string;
   gateway_port?: number;
   gateway_credential_id?: string;
+  bind_address?: string;
   local_port?: number;
   remote_port?: number;
   destination_host?: string;

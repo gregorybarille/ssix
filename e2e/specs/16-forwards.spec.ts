@@ -40,6 +40,7 @@ const REMOTE_PORT = 23662;
 const LOCAL_PORT = 23663;
 const RELAYED_SOCKS_PORT = 23664;
 const DELETED_SOCKS_PORT = 23665;
+const BIND_PORT = 23666;
 
 const CMD_CONNECT = 1;
 const CMD_BIND = 2;
@@ -434,6 +435,44 @@ describe("Remote and dynamic forwards", () => {
     await stopForward("forward-16-local");
     await client.waitForClose(10_000);
     await waitUntilRefused("127.0.0.1", LOCAL_PORT, "The local port");
+  });
+
+  it("listens on the address it is told to, and warns about one others can reach", async () => {
+    await fillForwardForm({
+      name: "forward-16-bind",
+      kindTab: sel.connectionFormKindLocalForward,
+      portField: sel.connectionFormLocalPort,
+      port: BIND_PORT,
+      target: { host: "server-c", port: 22 },
+    });
+    const warning = await browser.$(sel.connectionFormBindWarning);
+    expect(await warning.isExisting()).toBe(false);
+    await fill(sel.connectionFormBindAddress, "0.0.0.0");
+    await warning.waitForDisplayed({ timeoutMsg: "No warning for an address others can reach" });
+
+    await fill(sel.connectionFormBindAddress, "not-an-address");
+    await clickDialogFooterButton(sel.connectionFormSubmit);
+    const input = await browser.$(sel.connectionFormBindAddress);
+    await browser.waitUntil(async () => (await input.getAttribute("aria-invalid")) === "true", {
+      timeout: 5_000,
+      timeoutMsg: "The bind address input never reported the bad address",
+    });
+
+    // All of 127/8 is loopback on Linux, so this is another address on this
+    // machine that the default would not answer on.
+    await fill(sel.connectionFormBindAddress, "127.0.0.2");
+    expect(await warning.isExisting()).toBe(false);
+    await saveConnectionForm();
+    await startForward("forward-16-bind");
+    expect(await (await rowOf("forward-16-bind")).getText()).toContain(`127.0.0.2:${BIND_PORT}`);
+
+    const client = await openClient(BIND_PORT, "127.0.0.2");
+    expect((await client.take(7)).toString()).toBe("SSH-2.0");
+    expect(await canConnect("127.0.0.1", BIND_PORT)).toBe(false);
+
+    await stopForward("forward-16-bind");
+    await client.waitForClose(10_000);
+    await waitUntilRefused("127.0.0.2", BIND_PORT, "The bound port");
   });
 
   it("shows an idle forward as lost when its session dies, and starts again", async () => {
