@@ -316,9 +316,22 @@ are shown inline for the final state of the burst.
 
 ## Sidebar
 
-The left sidebar holds one icon button per view: Connections, Port
-forwards, Credentials, Scripts, Logs, Terminals (while any are open) and
-Git Sync. Hovering a button, or focusing it from the keyboard, shows a
+The left sidebar holds one icon button per view, in two groups. The top group
+is for what you use every day: Connections, Files, Snippets, Port forwards and
+Scripts. The bottom group is for what you use now and then: Credentials, Logs
+and Git Sync. Between them, Terminals shows while any are open. Settings is in
+the title bar.
+
+To reorder the groups, press and hold a button until it is outlined, then drag
+it: within a group, or to the other one. A line shows where it will land, Escape
+cancels, and letting go outside the sidebar leaves it where it was. A move before
+the outline appears does nothing, and a hold released without moving is a click.
+Right-clicking a button, or pressing `Shift+F10` on it, offers **Move up**,
+**Move down** and **Reset order**; moving down from the end of the top group
+enters the bottom one. The order is saved in settings. A view added by a later
+version goes at the end of its group. Terminals does not move.
+
+Hovering a button, or focusing it from the keyboard, shows a
 tooltip on its right with the view's name and one line on what it is for,
 so the icons can be learned without trying each one. The tooltips share
 one provider (`<TooltipProvider>` from `src/components/ui/tooltip.tsx`):
@@ -539,6 +552,8 @@ Wired surfaces today:
   from the connection + selected credential via `buildSshCommand` in
   `src/lib/ssh-command.ts` and writes it to the clipboard. Agent forwarding
   adds `-A`.
+- **Sidebar buttons** — Move up, Move down, Reset order (see
+  [Sidebar](#sidebar)).
 - **Terminal tabs** — Browse files, which opens the tab's server in the
   [Files view](sftp.md) (one item per server on a split between two), Close
   tab, Close other tabs, Close tabs to the right (the latter two are disabled

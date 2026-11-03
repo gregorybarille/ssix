@@ -330,6 +330,10 @@ export interface AppSettings {
   session_log_enabled: boolean;
   /** Session log directory; absent means `<data_dir>/session-logs`. */
   session_log_dir?: string;
+  /** View ids of the sidebar's top group, in order. Both empty means the default order. */
+  sidebar_top: string[];
+  /** View ids of the sidebar's bottom group, in order. */
+  sidebar_bottom: string[];
 }
 
 export type BackupReason = "manual" | "automatic" | "before_restore";

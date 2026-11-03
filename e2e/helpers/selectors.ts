@@ -28,6 +28,12 @@ export const sel = {
   navGitSync: '[data-testid="nav-git-sync"]',
   navLogs: '[data-testid="nav-logs"]',
   navScripts: '[data-testid="nav-scripts"]',
+  // The sidebar's two reorderable groups, and what a drag of one of their buttons shows.
+  sidebarGroup: (group: "top" | "bottom") => `[data-testid="sidebar-${group}"]`,
+  sidebarDragChip: '[data-testid="sidebar-drag-chip"]',
+  sidebarMenuItem: (name: string) => `//*[@role="menuitem"][normalize-space()="${name}"]`,
+  contextMenu: '[role="menu"]',
+  screenshotToast: '[data-testid="screenshot-toast"]',
   // Each sidebar button's tooltip is `${its testid}-tooltip`.
   navTooltip: (navTestId: string) => `[data-testid="${navTestId}-tooltip"]`,
 

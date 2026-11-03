@@ -67,4 +67,13 @@ session_log_enabled: boolean,
 /**
  * Where session logs go; `None` is `<data_dir>/session-logs`.
  */
-session_log_dir?: string | null, };
+session_log_dir?: string | null, 
+/**
+ * View ids of the sidebar's top group, in order. Both empty is the default
+ * order, which then follows the app as views are added.
+ */
+sidebar_top: Array<string>, 
+/**
+ * View ids of the sidebar's bottom group, in order.
+ */
+sidebar_bottom: Array<string>, };
