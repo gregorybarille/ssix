@@ -151,8 +151,8 @@ A forward becomes its own connection, named after its host and flag:
 credential and uses the host's `ProxyCommand`.
 
 A local or SOCKS forward keeps the IP address its config binds to, and `*` becomes
-`0.0.0.0` as it means for `ssh`. A row says so when other machines could reach the
-result. SSIX takes IP addresses only, so a name other than `localhost` is dropped
+`0.0.0.0` as it means for `ssh`. When other machines could reach the result, the
+row says so and starts unticked. SSIX takes IP addresses only, so a name other than `localhost` is dropped
 with a note and the forward listens on `127.0.0.1`. So does an empty address
 (`:8080`), which `ssh` would open to every network. A remote forward listens
 wherever the server chooses, and a row whose config named an address says so.
@@ -162,7 +162,9 @@ not depend on the jump host's own connection being imported. The parts written i
 `ProxyJump user@host:port` win over the jump host's own `Host` block.
 
 A `ProxyCommand` runs on your machine every time you connect. The preview shows
-each one in full; read them before importing a config you did not write.
+each one in full, and its row and its forwards' rows say so and start unticked: a
+config you did not write should not run anything until you have read it. Select
+every host still ticks them.
 
 ## How it is built
 

