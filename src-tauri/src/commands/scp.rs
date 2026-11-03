@@ -2,23 +2,34 @@
 //!
 //! Audit-4 Phase 5a: extracted from `commands/ssh.rs` (which had grown to
 //! ~700 lines mixing PTY shell sessions, port-forward bookkeeping, and
-//! file-transfer plumbing). The split is purely organisational — the wire
-//! commands (`scp_upload`, `scp_download`) and their input/output shapes
-//! are unchanged, so the frontend `invoke()` calls in
-//! `src/store/useFileTransferStore.ts` continue to work unmodified.
+//! file-transfer plumbing). The wire commands (`scp_upload`, `scp_download`)
+//! are what `ScpDialog` and the bulk action call.
 //!
 //! The shared helpers `find_connection` and `connect_session` live in
 //! `commands/ssh.rs`; a jump host connection is bridged by
 //! `crate::ssh::bridge_via_jump_host`, the same code path the jump host
 //! terminal uses.
+//!
+//! The copying itself is the Files view's (`commands/sftp/transfer.rs`).
+//! Only servers with no SFTP subsystem take the legacy `scp` path here.
 
 use crate::commands::blocking;
+use crate::commands::sftp::transfer::{
+    copy_stream, download_unattended, file_mode, local_target, upload_unattended, write_partial,
+    Stop, CALL_TIMEOUT_MS,
+};
+use crate::commands::sftp::{join_remote, remote_parent, temp_name, SESSION_LOST};
 use crate::commands::ssh::{connect_session, find_connection, ConnectedSession};
+use crate::commands::ssh_keygen::shell_single_quote;
 use crate::models::Connection;
 use serde::{Deserialize, Serialize};
+use ssh2::{Channel, Sftp};
 use std::fs;
 use std::io::{Read, Write};
 use std::path::Path;
+
+#[cfg(all(test, unix))]
+mod live_tests;
 
 #[derive(Debug, Deserialize)]
 pub struct ScpUploadInput {
@@ -46,6 +57,8 @@ pub struct ScpResult {
     pub entries: Option<u64>,
 }
 
+const TEARDOWN_TIMEOUT_MS: u32 = 1_000;
+
 /// Forwards (`ssh -L`, `-R`, `-D`) open no shell on a host, so there is
 /// nothing to copy files to or from.
 fn refuse_forward(conn: &Connection) -> Result<(), String> {
@@ -55,16 +68,40 @@ fn refuse_forward(conn: &Connection) -> Result<(), String> {
     Ok(())
 }
 
+/// A session for one copy. Copies go chunk by chunk, so this limit is on one
+/// chunk over a stalled link and not on how long a whole copy may take.
+fn connect_for_copy(connection_id: &str) -> Result<(ConnectedSession, Connection), String> {
+    let (data, conn) = find_connection(connection_id)?;
+    refuse_forward(&conn)?;
+    let ssh = connect_session(&data, &conn, "SCP")?;
+    ssh.session.set_timeout(CALL_TIMEOUT_MS);
+    Ok((ssh, conn))
+}
+
+/// The Files view reads `SESSION_LOST` to reconnect. This dialog only shows
+/// the message, so it goes without the marker.
+fn copy_error(stop: Stop, destination: &str) -> String {
+    let message = stop.into_message();
+    let message = message
+        .strip_prefix(SESSION_LOST)
+        .map_or(message.as_str(), str::trim_start);
+    format!("{} ({})", message, destination)
+}
+
+/// Closing a session on a dead link waits out its timeout at every step, and
+/// the copy has failed by now, so the error should not wait for that.
+fn copy_failed(stop: Stop, ssh: &ConnectedSession) -> String {
+    ssh.session.set_timeout(TEARDOWN_TIMEOUT_MS);
+    copy_error(stop, &ssh.destination_label)
+}
+
 #[tauri::command]
 pub async fn scp_upload(input: ScpUploadInput) -> Result<ScpResult, String> {
     blocking(move || scp_upload_sync(input)).await
 }
 
 fn scp_upload_sync(input: ScpUploadInput) -> Result<ScpResult, String> {
-    let (data, conn) = find_connection(&input.connection_id)?;
-    refuse_forward(&conn)?;
-
-    let mut ssh = connect_session(&data, &conn, "SCP")?;
+    let (ssh, conn) = connect_for_copy(&input.connection_id)?;
     let local = Path::new(&input.local_path);
     let (remote, bytes, entries) = if local.is_dir() {
         if !input.recursive {
@@ -78,8 +115,14 @@ fn scp_upload_sync(input: ScpUploadInput) -> Result<ScpResult, String> {
             input.remote_path.as_deref().or(conn.remote_path.as_deref()),
             base_name,
         );
-        let stats = upload_directory(&mut ssh, local, &target_path)?;
-        (target_path, stats.bytes, Some(stats.entries))
+        let sftp = ssh
+            .session
+            .sftp()
+            .map_err(|e| format!("Failed to open SFTP session: {}", e))?;
+        ensure_remote_parents(&sftp, &target_path)?;
+        let (bytes, files) = upload_unattended(&sftp, local, &target_path)
+            .map_err(|stop| copy_failed(stop, &ssh))?;
+        (target_path, bytes, Some(files))
     } else {
         let file_name = local
             .file_name()
@@ -89,9 +132,22 @@ fn scp_upload_sync(input: ScpUploadInput) -> Result<ScpResult, String> {
             input.remote_path.as_deref().or(conn.remote_path.as_deref()),
             file_name,
         );
-        let bytes = fs::read(&input.local_path).map_err(|e| e.to_string())?;
-        let remote = upload_bytes(&mut ssh, &target_path, &bytes)?;
-        (remote, bytes.len() as u64, Some(1))
+        // SFTP first: this is what OpenSSH's `scp` itself has done since 9.0.
+        let bytes = match ssh.session.sftp() {
+            Ok(sftp) => {
+                upload_unattended(&sftp, local, &target_path)
+                    .map_err(|stop| copy_failed(stop, &ssh))?
+                    .0
+            }
+            // No SFTP subsystem: some embedded sshd builds, or it is turned off.
+            Err(sftp_err) => upload_file_scp(&ssh, local, &target_path).map_err(|scp_err| {
+                format!(
+                    "Upload to {} failed via both transports ({}). SFTP: {}. SCP: {}",
+                    target_path, ssh.destination_label, sftp_err, scp_err
+                )
+            })?,
+        };
+        (target_path, bytes, Some(1))
     };
 
     Ok(ScpResult {
@@ -108,38 +164,32 @@ pub async fn scp_download(input: ScpDownloadInput) -> Result<ScpResult, String> 
 }
 
 fn scp_download_sync(input: ScpDownloadInput) -> Result<ScpResult, String> {
-    let (data, conn) = find_connection(&input.connection_id)?;
-    refuse_forward(&conn)?;
-
+    let (ssh, conn) = connect_for_copy(&input.connection_id)?;
     let remote_path = resolve_download_remote_path(&conn, &input.remote_path);
-    let mut ssh = connect_session(&data, &conn, "SCP")?;
-    let sftp = ssh
-        .session
-        .sftp()
-        .map_err(|e| format!("Failed to open SFTP session: {}", e))?;
-    let stat = sftp
-        .stat(Path::new(&remote_path))
-        .map_err(|e| format!("Failed to stat {}: {}", remote_path, e))?;
-    let (bytes, entries) = if stat.is_dir() {
-        if !input.recursive {
-            return Err("Downloading a directory requires the recursive option".to_string());
+    let local = Path::new(&input.local_path);
+    let (bytes, entries) = match ssh.session.sftp() {
+        Ok(sftp) => {
+            let stat = sftp
+                .stat(Path::new(&remote_path))
+                .map_err(|e| format!("Failed to stat {}: {}", remote_path, e))?;
+            if stat.is_dir() && !input.recursive {
+                return Err("Downloading a directory requires the recursive option".to_string());
+            }
+            create_local_parent(local)?;
+            let (bytes, files) = download_unattended(&sftp, &remote_path, local)
+                .map_err(|stop| copy_failed(stop, &ssh))?;
+            (bytes, Some(files))
         }
-        let stats = download_directory(&mut ssh, &remote_path, Path::new(&input.local_path))?;
-        (stats.bytes, Some(stats.entries))
-    } else {
-        let (bytes, size) = download_bytes(&mut ssh, &remote_path)?;
-        if let Some(parent) = Path::new(&input.local_path).parent() {
-            fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+        // Only SFTP can list a folder, so without it a single file is all that can come.
+        Err(sftp_err) => {
+            let bytes = download_file_scp(&ssh, &remote_path, local).map_err(|scp_err| {
+                format!(
+                    "Download from {} failed via both transports ({}). SFTP: {}. SCP: {}",
+                    remote_path, ssh.destination_label, sftp_err, scp_err
+                )
+            })?;
+            (bytes, Some(1))
         }
-        // Audit-3 P2#13: route SCP downloads through the atomic
-        // writer so a process crash mid-transfer cannot leave a
-        // half-written file at the destination path. Without this,
-        // a partial download would silently overwrite a previously
-        // good local file. No mode is forced — local file
-        // permissions follow the user's umask via the temp file.
-        crate::storage::atomic_write(Path::new(&input.local_path), &bytes, None)
-            .map_err(|e| e.to_string())?;
-        (size, Some(1))
     };
 
     Ok(ScpResult {
@@ -150,326 +200,169 @@ fn scp_download_sync(input: ScpDownloadInput) -> Result<ScpResult, String> {
     })
 }
 
-struct TransferStats {
-    bytes: u64,
-    entries: u64,
-}
-
-fn upload_bytes(
-    ssh: &mut ConnectedSession,
-    remote_path: &str,
-    bytes: &[u8],
-) -> Result<String, String> {
-    // Try SFTP first — this is what modern OpenSSH `scp` does internally
-    // since 9.0 and what most servers actually expect today. The legacy
-    // SCP wire protocol is deprecated upstream and broken on some
-    // distributions (alpine 3.21 / OpenSSH 9.9 returns scp-sink exit
-    // status 1 even when the channel write succeeds, leading to the
-    // "phantom transfer" class of bug we just hardened against).
-    match upload_bytes_sftp(ssh, remote_path, bytes) {
-        Ok(path) => Ok(path),
-        Err(sftp_err) if is_sftp_unavailable(&sftp_err) => {
-            // Fall back to legacy SCP for servers without an SFTP subsystem
-            // (some embedded sshd builds, or `Subsystem sftp` disabled).
-            upload_bytes_scp(ssh, remote_path, bytes).map_err(|scp_err| {
-                format!(
-                    "Upload to {} failed via both transports ({}). SFTP: {}. SCP: {}",
-                    remote_path, ssh.destination_label, sftp_err, scp_err
-                )
-            })
-        }
-        Err(e) => Err(e),
+fn create_local_parent(local: &Path) -> Result<(), String> {
+    match local.parent() {
+        Some(parent) => fs::create_dir_all(parent).map_err(|e| e.to_string()),
+        None => Ok(()),
     }
 }
 
-fn upload_bytes_sftp(
-    ssh: &mut ConnectedSession,
-    remote_path: &str,
-    bytes: &[u8],
-) -> Result<String, String> {
-    let sftp = ssh
+/// Legacy `scp` can write only under the name it is given and has no rename,
+/// so the new copy goes to a temporary name and the server's shell moves it
+/// into place.
+fn upload_file_scp(ssh: &ConnectedSession, local: &Path, target: &str) -> Result<u64, String> {
+    let file =
+        fs::File::open(local).map_err(|e| format!("Could not read {}: {}", local.display(), e))?;
+    let meta = file
+        .metadata()
+        .map_err(|e| format!("Could not read {}: {}", local.display(), e))?;
+    let size = meta.len();
+    let dir =
+        remote_parent(target).ok_or_else(|| format!("{} has no folder to write in", target))?;
+    let staged = join_remote(&dir, &temp_name());
+    // A replaced file keeps its mode, as on SFTP. An `scp -f` header says what
+    // it is with no shell involved; dropping the channel stops the rest coming.
+    let replaced_mode = ssh
         .session
-        .sftp()
-        .map_err(|e| format!("Failed to open SFTP session: {}", e))?;
-    let mut remote = sftp.create(Path::new(remote_path)).map_err(|e| {
-        format!(
-            "SFTP upload to {} failed ({}): {}",
-            remote_path, ssh.destination_label, e
-        )
-    })?;
-    remote.write_all(bytes).map_err(|e| {
-        format!(
-            "SFTP upload to {} failed while writing ({}): {}",
-            remote_path, ssh.destination_label, e
-        )
-    })?;
-    // ssh2's File closes on Drop, but explicit close surfaces protocol
-    // errors (full disk, permission denied on rename, etc).
-    drop(remote);
-    Ok(remote_path.to_string())
-}
+        .scp_recv(Path::new(target))
+        .ok()
+        .map(|(_, stat)| stat.mode() & 0o777);
+    let mode = replaced_mode.unwrap_or(file_mode(&meta).unwrap_or(0o644) as i32 & 0o777);
 
-fn upload_bytes_scp(
-    ssh: &mut ConnectedSession,
-    remote_path: &str,
-    bytes: &[u8],
-) -> Result<String, String> {
-    let mut remote = ssh
-        .session
-        .scp_send(Path::new(remote_path), 0o644, bytes.len() as u64, None)
-        .map_err(|e| {
-            format!(
-                "SCP upload to {} failed ({}): {}",
-                remote_path, ssh.destination_label, e
-            )
-        })?;
-    remote.write_all(bytes).map_err(|e| {
-        format!(
-            "SCP upload to {} failed while writing ({}): {}",
-            remote_path, ssh.destination_label, e
-        )
-    })?;
-    // Flush the SCP protocol exchange. If the remote `scp` helper is missing
-    // or exits non-zero, libssh2 surfaces it during the close/wait_close
-    // sequence below (or via a non-zero channel exit status). Swallowing
-    // these previously caused phantom "Transferred N bytes" successes when
-    // the file never landed on disk.
-    remote.send_eof().map_err(|e| {
-        format!(
-            "SCP upload to {} failed during send_eof ({}): {}",
-            remote_path, ssh.destination_label, e
-        )
-    })?;
-    remote.wait_eof().map_err(|e| {
-        format!(
-            "SCP upload to {} failed during wait_eof ({}): {}",
-            remote_path, ssh.destination_label, e
-        )
-    })?;
-    remote.close().map_err(|e| {
-        format!(
-            "SCP upload to {} failed during close ({}): {}",
-            remote_path, ssh.destination_label, e
-        )
-    })?;
-    remote.wait_close().map_err(|e| {
-        format!(
-            "SCP upload to {} failed during wait_close ({}): {}",
-            remote_path, ssh.destination_label, e
-        )
-    })?;
-    let exit = remote.exit_status().map_err(|e| {
-        format!(
-            "SCP upload to {} failed reading exit status ({}): {}",
-            remote_path, ssh.destination_label, e
-        )
-    })?;
-    if exit != 0 {
+    let result = send_staged(ssh, file, &staged, mode, size)
+        .and_then(|()| run_remote(ssh, &place_staged_command(&staged, target, replaced_mode)));
+    if let Err(error) = result {
+        let _ = run_remote(ssh, &format!("rm -f -- {}", shell_single_quote(&staged)));
         return Err(format!(
-            "SCP upload to {} failed ({}): remote scp exited with status {} (is the `scp` binary installed on the remote host?)",
-            remote_path, ssh.destination_label, exit
+            "SCP upload to {} failed ({}): {}",
+            target, ssh.destination_label, error
         ));
     }
-    Ok(remote_path.to_string())
+    Ok(size)
 }
 
-fn download_bytes(ssh: &mut ConnectedSession, remote_path: &str) -> Result<(Vec<u8>, u64), String> {
-    match download_bytes_sftp(ssh, remote_path) {
-        Ok(result) => Ok(result),
-        Err(sftp_err) if is_sftp_unavailable(&sftp_err) => download_bytes_scp(ssh, remote_path)
-            .map_err(|scp_err| {
-                format!(
-                    "Download from {} failed via both transports ({}). SFTP: {}. SCP: {}",
-                    remote_path, ssh.destination_label, sftp_err, scp_err
-                )
-            }),
-        Err(e) => Err(e),
-    }
+/// `mv` would put the file inside a folder, and replace a symlink instead of
+/// writing through it as SFTP does, so both are refused. `chmod` is for a
+/// replaced mode the server's umask took bits from while the copy arrived.
+fn place_staged_command(staged: &str, target: &str, replaced_mode: Option<i32>) -> String {
+    let (staged, target) = (shell_single_quote(staged), shell_single_quote(target));
+    let chmod = replaced_mode.map_or(String::new(), |mode| {
+        format!("chmod {:o} -- {} && ", mode, staged)
+    });
+    format!(
+        "test ! -d {target} && test ! -L {target} && {chmod}mv -f -- {staged} {target}",
+        target = target,
+        chmod = chmod,
+        staged = staged
+    )
 }
 
-fn download_bytes_sftp(
-    ssh: &mut ConnectedSession,
-    remote_path: &str,
-) -> Result<(Vec<u8>, u64), String> {
-    let sftp = ssh
+fn send_staged(
+    ssh: &ConnectedSession,
+    file: fs::File,
+    staged: &str,
+    mode: i32,
+    size: u64,
+) -> Result<(), String> {
+    let mut channel = ssh
         .session
-        .sftp()
-        .map_err(|e| format!("Failed to open SFTP session: {}", e))?;
-    let stat = sftp.stat(Path::new(remote_path)).map_err(|e| {
-        format!(
-            "SFTP download from {} failed to stat ({}): {}",
-            remote_path, ssh.destination_label, e
-        )
-    })?;
-    let mut remote = sftp.open(Path::new(remote_path)).map_err(|e| {
-        format!(
-            "SFTP download from {} failed to open ({}): {}",
-            remote_path, ssh.destination_label, e
-        )
-    })?;
-    let mut bytes = Vec::new();
-    remote.read_to_end(&mut bytes).map_err(|e| {
-        format!(
-            "SFTP download from {} failed while reading ({}): {}",
-            remote_path, ssh.destination_label, e
-        )
-    })?;
-    let size = stat.size.unwrap_or(bytes.len() as u64);
-    Ok((bytes, size))
+        .scp_send(Path::new(staged), mode, size, None)
+        .map_err(|e| e.to_string())?;
+    let mut sent = 0;
+    copy_stream(&mut file.take(size), &mut channel, &mut |n| {
+        sent += n as u64;
+        Ok(())
+    })
+    .map_err(Stop::into_message)?;
+    if sent != size {
+        return Err("The file shrank while it was being sent".to_string());
+    }
+    // The protocol's "file complete". Without it `scp -t` reports a lost
+    // connection and exits 1, though the bytes have landed.
+    channel.write_all(b"\0").map_err(|e| e.to_string())?;
+    check_scp_exit(&mut channel)
 }
 
-fn download_bytes_scp(
-    ssh: &mut ConnectedSession,
+fn download_file_scp(
+    ssh: &ConnectedSession,
     remote_path: &str,
-) -> Result<(Vec<u8>, u64), String> {
-    let (mut remote, stat) = ssh.session.scp_recv(Path::new(remote_path)).map_err(|e| {
+    local: &Path,
+) -> Result<u64, String> {
+    let fail = |error: String| {
         format!(
             "SCP download from {} failed ({}): {}",
-            remote_path, ssh.destination_label, e
+            remote_path, ssh.destination_label, error
         )
-    })?;
-    let mut bytes = Vec::new();
-    remote.read_to_end(&mut bytes).map_err(|e| {
-        format!(
-            "SCP download from {} failed while reading ({}): {}",
-            remote_path, ssh.destination_label, e
-        )
-    })?;
-    remote.send_eof().map_err(|e| {
-        format!(
-            "SCP download from {} failed during send_eof ({}): {}",
-            remote_path, ssh.destination_label, e
-        )
-    })?;
-    remote.wait_eof().map_err(|e| {
-        format!(
-            "SCP download from {} failed during wait_eof ({}): {}",
-            remote_path, ssh.destination_label, e
-        )
-    })?;
-    remote.close().map_err(|e| {
-        format!(
-            "SCP download from {} failed during close ({}): {}",
-            remote_path, ssh.destination_label, e
-        )
-    })?;
-    remote.wait_close().map_err(|e| {
-        format!(
-            "SCP download from {} failed during wait_close ({}): {}",
-            remote_path, ssh.destination_label, e
-        )
-    })?;
-    let exit = remote.exit_status().map_err(|e| {
-        format!(
-            "SCP download from {} failed reading exit status ({}): {}",
-            remote_path, ssh.destination_label, e
-        )
-    })?;
-    if exit != 0 {
-        return Err(format!(
-            "SCP download from {} failed ({}): remote scp exited with status {} (is the `scp` binary installed on the remote host?)",
-            remote_path, ssh.destination_label, exit
-        ));
-    }
-    Ok((bytes, stat.size()))
-}
-
-/// Detect "server has no SFTP subsystem" failures so we can fall back to
-/// legacy SCP. We deliberately match on the symptom (open-channel
-/// failure) rather than a specific error code because libssh2 reports
-/// it in slightly different ways depending on the server's behaviour
-/// (channel-request denied vs subsystem-request failed vs immediate EOF).
-fn is_sftp_unavailable(err: &str) -> bool {
-    let l = err.to_ascii_lowercase();
-    l.contains("subsystem")
-        || l.contains("channel-request")
-        || l.contains("channel request")
-        || l.contains("sftp session")
-        || l.contains("failed to open sftp")
-}
-
-fn upload_directory(
-    ssh: &mut ConnectedSession,
-    local_path: &Path,
-    remote_path: &str,
-) -> Result<TransferStats, String> {
-    ensure_remote_dir(ssh, remote_path)?;
-    let mut stats = TransferStats {
-        bytes: 0,
-        entries: 0,
     };
-    for entry in fs::read_dir(local_path).map_err(|e| e.to_string())? {
-        let entry = entry.map_err(|e| e.to_string())?;
-        let child_local = entry.path();
-        let child_name = entry.file_name();
-        let child_name = child_name.to_string_lossy();
-        let child_remote = format!("{}/{}", remote_path.trim_end_matches('/'), child_name);
-        if child_local.is_dir() {
-            let child_stats = upload_directory(ssh, &child_local, &child_remote)?;
-            stats.bytes += child_stats.bytes;
-            stats.entries += child_stats.entries;
-        } else {
-            let bytes = fs::read(&child_local).map_err(|e| e.to_string())?;
-            upload_bytes(ssh, &child_remote, &bytes)?;
-            stats.bytes += bytes.len() as u64;
-            stats.entries += 1;
+    let (mut channel, stat) = ssh
+        .session
+        .scp_recv(Path::new(remote_path))
+        .map_err(|e| fail(e.to_string()))?;
+    let size = stat.size();
+    create_local_parent(local).map_err(&fail)?;
+    let target = local_target(local).map_err(&fail)?;
+    write_partial(&target, Some(stat.mode() as u32), |file| {
+        let mut received = 0;
+        // ssh2 stops reading this channel at the size in the header.
+        copy_stream(&mut channel, file, &mut |n| {
+            received += n as u64;
+            Ok(())
+        })?;
+        if received != size {
+            return Err(Stop::Failed(format!(
+                "The connection ended after {} of {} bytes",
+                received, size
+            )));
         }
-    }
-    Ok(stats)
+        // Without this `scp -f` waits for the answer, then exits 1.
+        channel.write_all(b"\0").map_err(|e| e.to_string())?;
+        check_scp_exit(&mut channel).map_err(Stop::Failed)
+    })
+    .map_err(|stop| fail(stop.into_message()))?;
+    Ok(size)
 }
 
-fn download_directory(
-    ssh: &mut ConnectedSession,
-    remote_path: &str,
-    local_path: &Path,
-) -> Result<TransferStats, String> {
-    fs::create_dir_all(local_path).map_err(|e| e.to_string())?;
-    let sftp = ssh
-        .session
-        .sftp()
-        .map_err(|e| format!("Failed to open SFTP session: {}", e))?;
-    let mut stats = TransferStats {
-        bytes: 0,
-        entries: 0,
-    };
-    for (path, stat) in sftp
-        .readdir(Path::new(remote_path))
-        .map_err(|e| e.to_string())?
-    {
-        let name = match path.file_name().and_then(|name| name.to_str()) {
-            Some(".") | Some("..") | None => continue,
-            Some(name) => name,
-        };
-        let child_remote = format!("{}/{}", remote_path.trim_end_matches('/'), name);
-        let child_local = local_path.join(name);
-        if stat.is_dir() {
-            let child_stats = download_directory(ssh, &child_remote, &child_local)?;
-            stats.bytes += child_stats.bytes;
-            stats.entries += child_stats.entries;
-        } else {
-            let (bytes, size) = download_bytes(ssh, &child_remote)?;
-            if let Some(parent) = child_local.parent() {
-                fs::create_dir_all(parent).map_err(|e| e.to_string())?;
-            }
-            // Audit-3 P2#13: same crash-safety as the single-file
-            // SCP download path above. Recursive transfers are even
-            // more vulnerable because a crash partway through writes
-            // the partial child to disk while the parent counter
-            // continues incrementing — leaving a corrupt directory
-            // tree that's hard to detect.
-            crate::storage::atomic_write(&child_local, &bytes, None).map_err(|e| e.to_string())?;
-            stats.bytes += size;
-            stats.entries += 1;
-        }
-    }
-    Ok(stats)
+/// Close the channel and return how the remote command exited.
+fn finish_channel(channel: &mut Channel) -> Result<i32, String> {
+    channel
+        .send_eof()
+        .and_then(|()| channel.wait_eof())
+        .and_then(|()| channel.close())
+        .and_then(|()| channel.wait_close())
+        .and_then(|()| channel.exit_status())
+        .map_err(|e| e.to_string())
 }
 
-fn ensure_remote_dir(ssh: &ConnectedSession, remote_path: &str) -> Result<(), String> {
-    let sftp = ssh
-        .session
-        .sftp()
-        .map_err(|e| format!("Failed to open SFTP session: {}", e))?;
+/// A failing `scp` often shows only here. Ignoring this once gave phantom
+/// "Transferred N bytes" successes for files that never landed.
+fn check_scp_exit(channel: &mut Channel) -> Result<(), String> {
+    match finish_channel(channel)? {
+        0 => Ok(()),
+        exit => Err(format!(
+            "remote scp exited with status {} (is the `scp` binary installed on the remote host?)",
+            exit
+        )),
+    }
+}
+
+fn run_remote(ssh: &ConnectedSession, command: &str) -> Result<(), String> {
+    let mut channel = ssh.session.channel_session().map_err(|e| e.to_string())?;
+    channel.exec(command).map_err(|e| e.to_string())?;
+    let mut errors = String::new();
+    let _ = channel.stderr().read_to_string(&mut errors);
+    match finish_channel(&mut channel)? {
+        0 => Ok(()),
+        exit => Err(format!(
+            "Could not put the new copy in place, exit status {}: {}",
+            exit,
+            errors.trim()
+        )),
+    }
+}
+
+/// The folders above `remote_path`. The folder itself is left to the copy,
+/// which gives it the source's mode.
+fn ensure_remote_parents(sftp: &Sftp, remote_path: &str) -> Result<(), String> {
     let home_dir = sftp
         .realpath(Path::new("."))
         .map_err(|e| format!("Failed to resolve remote home directory: {}", e))?;
@@ -477,7 +370,9 @@ fn ensure_remote_dir(ssh: &ConnectedSession, remote_path: &str) -> Result<(), St
         .to_str()
         .ok_or_else(|| "Remote home directory contains invalid UTF-8".to_string())?;
 
-    for dir in directory_creation_sequence(remote_path, home_dir) {
+    let mut dirs = directory_creation_sequence(remote_path, home_dir);
+    dirs.pop();
+    for dir in dirs {
         if sftp.stat(Path::new(&dir)).is_err() {
             sftp.mkdir(Path::new(&dir), 0o755)
                 .map_err(|e| format!("Failed to create remote directory {}: {}", dir, e))?;
@@ -618,5 +513,31 @@ mod scp_tests {
     fn test_directory_creation_sequence_for_tilde_path_uses_home_dir() {
         let dirs = directory_creation_sequence("~/deploy/current", "/home/dev");
         assert_eq!(dirs, vec!["/home/dev/deploy", "/home/dev/deploy/current"]);
+    }
+
+    #[test]
+    fn a_copy_error_drops_the_files_views_marker_and_names_the_server() {
+        let lost = Stop::Failed(format!("{}\nThe connection was lost", SESSION_LOST));
+        assert_eq!(
+            copy_error(lost, "u@h:22"),
+            "The connection was lost (u@h:22)"
+        );
+        let refused = Stop::Failed("Could not read /x: denied".to_string());
+        assert_eq!(
+            copy_error(refused, "u@h:22"),
+            "Could not read /x: denied (u@h:22)"
+        );
+    }
+
+    #[test]
+    fn placing_a_staged_copy_quotes_its_paths_and_keeps_a_replaced_mode() {
+        assert_eq!(
+            place_staged_command("/d/.t", "/d/it's", None),
+            r"test ! -d '/d/it'\''s' && test ! -L '/d/it'\''s' && mv -f -- '/d/.t' '/d/it'\''s'"
+        );
+        assert_eq!(
+            place_staged_command("/d/.t", "/d/f", Some(0o640)),
+            "test ! -d '/d/f' && test ! -L '/d/f' && chmod 640 -- '/d/.t' && mv -f -- '/d/.t' '/d/f'"
+        );
     }
 }

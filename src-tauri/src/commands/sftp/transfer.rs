@@ -1,4 +1,5 @@
-//! Uploads and downloads for the Files view.
+//! Uploads and downloads for the Files view, and through `upload_unattended`
+//! and `download_unattended` for the SCP dialog.
 //!
 //! `sftp_start_transfer` returns the transfer's id at once and adds it to a
 //! queue, which costs it no thread. At most `MAX_ACTIVE` workers take from the
@@ -49,7 +50,7 @@ const CHUNK_BYTES: usize = 128 * 1024;
 const PROGRESS_INTERVAL: Duration = Duration::from_millis(100);
 /// How long one SFTP call may take during a transfer. A cancel waits for the
 /// call in progress, so a stalled link can hold it up this long.
-const CALL_TIMEOUT_MS: u32 = 60_000;
+pub(crate) const CALL_TIMEOUT_MS: u32 = 60_000;
 
 static TRANSFERS: LazyLock<DashMap<String, Arc<AtomicBool>>> = LazyLock::new(DashMap::new);
 static QUEUE: LazyLock<Mutex<WorkQueue<Queued>>> = LazyLock::new(|| Mutex::new(WorkQueue::new()));
@@ -128,7 +129,7 @@ pub type Emit = Arc<dyn Fn(TransferEvent) + Send + Sync>;
 
 /// Why a copy stopped before its end.
 #[derive(Debug, PartialEq)]
-pub(super) enum Stop {
+pub(crate) enum Stop {
     Cancelled,
     Conflict { target: String, target_is_dir: bool },
     Failed(String),
@@ -143,7 +144,7 @@ impl From<String> for Stop {
 impl Stop {
     /// For a caller with no use for the difference: its copies cannot be
     /// cancelled and never ask about a conflict.
-    pub(super) fn into_message(self) -> String {
+    pub(crate) fn into_message(self) -> String {
         match self {
             Stop::Failed(error) => error,
             Stop::Cancelled => "Cancelled".to_string(),
@@ -484,7 +485,7 @@ impl<'a> Run<'a> {
 
 /// Copy `source` to `target` in fixed-size chunks, calling `on_chunk` after
 /// each, which stops the copy by returning an error.
-pub(super) fn copy_stream(
+pub(crate) fn copy_stream(
     source: &mut dyn Read,
     target: &mut dyn Write,
     on_chunk: &mut dyn FnMut(usize) -> Result<(), Stop>,
@@ -558,7 +559,7 @@ fn remote_under(root: &str, rel: &str) -> String {
     }
 }
 
-fn file_mode(meta: &fs::Metadata) -> Option<u32> {
+pub(crate) fn file_mode(meta: &fs::Metadata) -> Option<u32> {
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
@@ -787,26 +788,78 @@ fn run_upload(sftp: &Sftp, input: &TransferInput, run: &mut Run<'_>) -> Result<S
         }
     }
 
+    upload_plan(sftp, source, &plan, &target, run)?;
+    Ok(target)
+}
+
+fn upload_plan(
+    sftp: &Sftp,
+    source: &Path,
+    plan: &Plan,
+    target: &str,
+    run: &mut Run<'_>,
+) -> Result<(), Stop> {
     carry_out(
         run,
-        &plan,
+        plan,
         |rel, mode| {
-            let path = remote_under(&target, rel);
+            let path = remote_under(target, rel);
             let created = ensure_remote_dir(sftp, &path, mode)?;
             Ok((path, created))
         },
         |run, rel, mode| {
             let mut file = fs::File::open(local_under(source, rel))
-                .map_err(|e| format!("Could not read {}: {}", input.source, e))?;
-            let destination = RemoteTarget::resolve(sftp, &remote_under(&target, rel))?;
+                .map_err(|e| format!("Could not read {}: {}", source.display(), e))?;
+            let destination = RemoteTarget::resolve(sftp, &remote_under(target, rel))?;
             let staged = stage_upload(sftp, &mut file, &destination, mode, &mut |n| {
                 run.on_chunk(n)
             })?;
             commit_upload(sftp, &staged, &destination)
         },
         |path, source| seal_remote_dir(sftp, path, source),
-    )?;
-    Ok(target)
+    )
+}
+
+/// A copy nobody watches or cancels. Returns its bytes and files.
+fn unattended(copy: impl FnOnce(&mut Run<'_>) -> Result<(), Stop>) -> Result<(u64, u64), Stop> {
+    let cancel = AtomicBool::new(false);
+    let mut run = Run::new("", &cancel, Arc::new(|_| {}));
+    copy(&mut run)?;
+    if run.skipped > 0 {
+        log_local(
+            "info",
+            "scp",
+            format!(
+                "Left {} symlink(s) or special entries out of a folder",
+                run.skipped
+            ),
+        );
+    }
+    Ok((run.bytes_done, run.files_done))
+}
+
+/// Upload `source` to exactly `target`, replacing what is there.
+pub(crate) fn upload_unattended(
+    sftp: &Sftp,
+    source: &Path,
+    target: &str,
+) -> Result<(u64, u64), Stop> {
+    unattended(|run| {
+        let plan = plan_local(source, run.cancel)?;
+        upload_plan(sftp, source, &plan, target, run)
+    })
+}
+
+/// Download `source` to exactly `target`, replacing what is there.
+pub(crate) fn download_unattended(
+    sftp: &Sftp,
+    source: &str,
+    target: &Path,
+) -> Result<(u64, u64), Stop> {
+    unattended(|run| {
+        let plan = plan_remote(sftp, source, run.cancel)?;
+        download_plan(sftp, source, &plan, target, run)
+    })
 }
 
 /// Make sure a folder is there, and say whether it had to be created. One
@@ -1081,27 +1134,37 @@ fn run_download(sftp: &Sftp, input: &TransferInput, run: &mut Run<'_>) -> Result
         });
     }
 
+    download_plan(sftp, &input.source, &plan, &target, run)?;
+    Ok(target_text)
+}
+
+fn download_plan(
+    sftp: &Sftp,
+    source: &str,
+    plan: &Plan,
+    target: &Path,
+    run: &mut Run<'_>,
+) -> Result<(), Stop> {
     carry_out(
         run,
-        &plan,
+        plan,
         |rel, mode| {
-            let path = local_under(&target, rel);
+            let path = local_under(target, rel);
             let created = ensure_local_dir(&path, mode)?;
             Ok((path, created))
         },
         |run, rel, mode| {
-            let remote_path = remote_under(&input.source, rel);
+            let remote_path = remote_under(source, rel);
             let mut remote = sftp
                 .open(Path::new(&remote_path))
                 .map_err(|e| call_error("Could not read", &remote_path, &e))?;
-            let destination = local_target(&local_under(&target, rel))?;
+            let destination = local_target(&local_under(target, rel))?;
             write_partial(&destination, mode, |file| {
                 copy_stream(&mut remote, file, &mut |n| run.on_chunk(n))
             })
         },
         |path, source| seal_local_dir(path, source),
-    )?;
-    Ok(target_text)
+    )
 }
 
 /// Make sure a folder is there, and say whether it had to be created. One
@@ -1148,7 +1211,7 @@ fn seal_local_dir(path: &Path, source: u32) -> Result<(), String> {
 
 /// Where a download's bytes finally go. A symlink is written through, as
 /// `scp` would; a folder in the way is an error, not something to replace.
-fn local_target(path: &Path) -> Result<PathBuf, String> {
+pub(crate) fn local_target(path: &Path) -> Result<PathBuf, String> {
     let Ok(meta) = fs::symlink_metadata(path) else {
         return Ok(path.to_path_buf());
     };
@@ -1180,7 +1243,7 @@ impl Drop for RemoveUnlessKept<'_> {
 /// place: `target` is either what it was or the whole new file, never part
 /// of one. `mode` applies to a new file; one being replaced keeps its own,
 /// so a private file stays private.
-pub(super) fn write_partial<F>(target: &Path, mode: Option<u32>, fill: F) -> Result<(), Stop>
+pub(crate) fn write_partial<F>(target: &Path, mode: Option<u32>, fill: F) -> Result<(), Stop>
 where
     F: FnOnce(&mut fs::File) -> Result<(), Stop>,
 {

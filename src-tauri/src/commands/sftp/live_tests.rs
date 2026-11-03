@@ -38,7 +38,7 @@ fn var(name: &str) -> String {
 
 /// Run `test` with a saved connection to the live server, or not at all on
 /// a platform these tests do not cover.
-fn with_connection(test: impl FnOnce(&str)) {
+pub(crate) fn with_connection(test: impl FnOnce(&str)) {
     if var("SSIX_LIVE_PLATFORM") != "posix" {
         return;
     }
@@ -71,7 +71,7 @@ fn with_connection(test: impl FnOnce(&str)) {
 }
 
 /// Run a command on the server, for what SFTP cannot set up itself.
-fn sh(connection_id: &str, command: &str) -> String {
+pub(crate) fn sh(connection_id: &str, command: &str) -> String {
     let (data, conn) = find_connection(connection_id).unwrap();
     let ssh = connect_session(&data, &conn, "the live test").unwrap();
     let mut channel = ssh.session.channel_session().unwrap();
@@ -84,13 +84,13 @@ fn sh(connection_id: &str, command: &str) -> String {
 }
 
 /// A fresh folder on the server, removed when the test ends.
-struct RemoteDir {
+pub(crate) struct RemoteDir {
     connection_id: String,
-    path: String,
+    pub(crate) path: String,
 }
 
 impl RemoteDir {
-    fn new(connection_id: &str) -> Self {
+    pub(crate) fn new(connection_id: &str) -> Self {
         let path = format!("/tmp/ssix-live-{}", uuid::Uuid::new_v4().simple());
         sh(connection_id, &format!("mkdir {}", path));
         Self {
@@ -99,7 +99,7 @@ impl RemoteDir {
         }
     }
 
-    fn child(&self, name: &str) -> String {
+    pub(crate) fn child(&self, name: &str) -> String {
         format!("{}/{}", self.path, name)
     }
 }

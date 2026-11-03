@@ -23,7 +23,7 @@ pub mod edit;
 pub mod transfer;
 
 #[cfg(test)]
-mod live_tests;
+pub(crate) mod live_tests;
 
 /// Starts the message of an error that ended the session, the way
 /// `HOST_KEY_MISMATCH` starts a refused host key. Mirrored in `src/lib/sftp.ts`.

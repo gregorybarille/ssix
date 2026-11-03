@@ -1,10 +1,11 @@
 /**
  * Spec 06: SCP upload + download round-trip against server-a.
  *
- * Writes a fixture file, uploads via SCP dialog, downloads back to
- * a separate local path, asserts byte-for-byte equality.
+ * Writes a private fixture larger than one transfer chunk, uploads via SCP
+ * dialog, downloads back to a separate local path, asserts byte-for-byte
+ * equality and that the mode survived both directions.
  */
-import { writeFileSync, readFileSync, mkdtempSync, rmSync } from "node:fs";
+import { writeFileSync, readFileSync, mkdtempSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { waitForAppReady } from "../helpers/app.js";
@@ -19,21 +20,24 @@ import { sel } from "../helpers/selectors.js";
 let workDir: string;
 let upload: string;
 let download: string;
-const PAYLOAD = "ssix-scp-roundtrip-payload\n";
+// 128 KiB is the chunk size, so this takes several.
+const PAYLOAD = Buffer.alloc(3 * 128 * 1024 + 5, "ssix-scp-roundtrip-payload\n");
+// Unique, since a file that is already on the server would keep its own mode.
+const REMOTE_NAME = `scp-06-${Date.now()}.bin`;
 
 describe("SCP upload + download", () => {
   before(async () => {
     await waitForServers(["a"]);
     workDir = mkdtempSync(join(tmpdir(), "ssix-scp-"));
-    upload = join(workDir, "upload.txt");
-    download = join(workDir, "download.txt");
-    writeFileSync(upload, PAYLOAD);
+    upload = join(workDir, REMOTE_NAME);
+    download = join(workDir, "download.bin");
+    writeFileSync(upload, PAYLOAD, { mode: 0o600 });
   });
   after(() => {
     rmSync(workDir, { recursive: true, force: true });
   });
 
-  it("uploads then downloads a file and gets identical bytes back", async () => {
+  it("uploads then downloads a file and gets identical bytes and mode back", async () => {
     await waitForAppReady();
     await createPasswordCredential({
       name: "cred-06-a",
@@ -63,25 +67,26 @@ describe("SCP upload + download", () => {
 
     // Upload phase. NOTE: SSIX's resolve_remote_target_path() always
     // appends the local file name to the remote_path argument
-    // (treating it as a directory). So if local is /tmp/ssix-scp-XYZ/upload.txt
-    // and remote_path is "/tmp/", the actual remote file is /tmp/upload.txt.
+    // (treating it as a directory). So if local is /tmp/ssix-scp-XYZ/<name>
+    // and remote_path is "/tmp/", the actual remote file is /tmp/<name>.
     await (await browser.$(sel.scpModeUpload)).click();
     await (await browser.$(sel.scpLocalPath)).setValue(upload);
     await (await browser.$(sel.scpRemotePath)).setValue("/tmp/");
     await (await browser.$(sel.scpUploadButton)).click();
     await waitForScpStatusOrFail("upload", upload);
 
-    // Download phase. The remote file is at /tmp/upload.txt (SSIX
+    // Download phase. The remote file is at /tmp/<name> (SSIX
     // appended the source file name during upload). For download,
     // remote_path is the source file directly — resolve_download_remote_path
     // does not append anything.
     await (await browser.$(sel.scpModeDownload)).click();
     await (await browser.$(sel.scpLocalPath)).setValue(download);
-    await (await browser.$(sel.scpRemotePath)).setValue("/tmp/upload.txt");
+    await (await browser.$(sel.scpRemotePath)).setValue(`/tmp/${REMOTE_NAME}`);
     await (await browser.$(sel.scpDownloadButton)).click();
     await waitForScpStatusOrFail("download", download);
 
-    expect(readFileSync(download, "utf8")).toBe(PAYLOAD);
+    expect(readFileSync(download).equals(PAYLOAD)).toBe(true);
+    expect(statSync(download).mode & 0o777).toBe(0o600);
   });
 });
 
