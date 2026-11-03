@@ -92,7 +92,8 @@ export function ConnectionsView({
 
   return (
     <>
-      <div className="flex items-center justify-between px-6 py-4 border-b border-border">
+      {/* Beside a panel in a small window the buttons go under the title, and show icons only. */}
+      <div className="@container flex flex-wrap items-center justify-between gap-x-2 gap-y-2 px-6 py-4 border-b border-border">
         <h1 className="text-lg font-semibold">Connections</h1>
         <div className="flex items-center gap-2">
           <LayoutToggle
@@ -105,10 +106,11 @@ export function ConnectionsView({
           <Button
             size="sm"
             onClick={() => dialogs.openNewConnection()}
+            title="New Connection"
             data-testid="add-connection-button"
           >
-            <Plus className="h-4 w-4 mr-1" aria-hidden="true" />
-            New Connection
+            <Plus className="h-4 w-4 @lg:mr-1" aria-hidden="true" />
+            <span className="@max-lg:sr-only">New Connection</span>
           </Button>
         </div>
       </div>

@@ -24,7 +24,11 @@ vi.mock("@/components/Terminal", () => ({
 // Replace Group/Panel/Separator with simple div wrappers so split-pane tests work.
 vi.mock("react-resizable-panels", () => ({
   Group: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
-  Panel: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
+  Panel: ({ children, minSize }: { children: React.ReactNode; minSize?: string | number }) => (
+    <div data-testid="split-panel" data-min-size={minSize}>
+      {children}
+    </div>
+  ),
   Separator: () => <div role="separator" />,
 }));
 
@@ -367,6 +371,24 @@ describe("TerminalTabs", () => {
     await waitFor(() => screen.getByText("Split right"));
     expect(screen.getByText("Split right")).toHaveAttribute("data-disabled");
     expect(screen.getByText("Split down")).toHaveAttribute("data-disabled");
+  });
+
+  it("holds a split pane to a share of the tab, not to a few pixels", () => {
+    render(
+      <TerminalTabs
+        {...defaultProps}
+        tabs={[
+          tab("t1", [
+            { sessionId: "sess-1", connectionName: "one" },
+            { sessionId: "sess-2", connectionName: "two" },
+          ]),
+        ]}
+        activeTabId="t1"
+      />,
+    );
+    const panels = screen.getAllByTestId("split-panel");
+    expect(panels).toHaveLength(2);
+    for (const panel of panels) expect(panel).toHaveAttribute("data-min-size", "15%");
   });
 
   it("disables Split items when the active tab already has 2 panes", async () => {

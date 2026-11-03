@@ -76,6 +76,28 @@ describe("SessionOptions", () => {
     expect(onChange).toHaveBeenLastCalledWith({ keepalive_interval: 3600 });
   });
 
+  it("leaves what is typed in the keepalive field alone until the field is left", () => {
+    render(<FormHarness initial={{ agent_forwarding: false }} onChange={vi.fn()} />);
+    const input = screen.getByTestId("connection-form-keepalive");
+
+    fireEvent.change(input, { target: { value: "70000" } });
+    expect(input).toHaveValue(70000);
+
+    fireEvent.blur(input);
+    expect(input).toHaveValue(3600);
+  });
+
+  it("empties the keepalive for good, back to the app setting", () => {
+    const onChange = vi.fn();
+    render(<FormHarness initial={{ agent_forwarding: false, keepalive_interval: 15 }} onChange={onChange} />);
+    const input = screen.getByTestId("connection-form-keepalive");
+
+    fireEvent.change(input, { target: { value: "" } });
+    fireEvent.blur(input);
+    expect(input).toHaveValue(null);
+    expect(onChange).toHaveBeenLastCalledWith({ keepalive_interval: undefined });
+  });
+
   it("maps the on/off choices to the stored override", () => {
     const onChange = vi.fn();
     render(<FormHarness initial={{ agent_forwarding: false }} onChange={onChange} />);

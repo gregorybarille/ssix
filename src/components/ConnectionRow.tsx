@@ -344,7 +344,7 @@ export function ConnectionRow({
       className={cn(
         "group rounded-lg cursor-pointer transition-colors hover:bg-accent",
         "focus:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background",
-        tile ? "border p-3 flex flex-col gap-2 h-full" : "flex items-center gap-3 p-3",
+        tile ? "border p-3 flex flex-col gap-2 h-full" : "flex flex-wrap items-center gap-3 p-3",
         selected && "bg-accent",
         className,
       )}
@@ -382,7 +382,8 @@ export function ConnectionRow({
           <div className="flex-shrink-0">
             <ConnIcon conn={conn} />
           </div>
-          <div className="flex-1 min-w-0">
+          {/* The name keeps its room: without it the actions go on a line of their own. */}
+          <div className="flex-1 min-w-40">
             <div className="flex items-center gap-2 flex-wrap">
               <span className="font-medium text-sm truncate">{conn.name}</span>
               <TypeBadge conn={conn} />
@@ -395,7 +396,9 @@ export function ConnectionRow({
               )}
             </p>
           </div>
-          <RowActions conn={conn} actions={actions} tabIndex={actionTabIndex} />
+          <div className="ml-auto">
+            <RowActions conn={conn} actions={actions} tabIndex={actionTabIndex} />
+          </div>
           <ChevronRight
             className="h-4 w-4 text-muted-foreground-soft shrink-0"
             aria-hidden="true"

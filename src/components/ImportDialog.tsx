@@ -440,10 +440,11 @@ export function ImportButton() {
         size="sm"
         variant="outline"
         onClick={() => setOpen(true)}
+        title="Import from an SSH config file"
         data-testid="import-config-button"
       >
-        <Import className="h-4 w-4 mr-1" aria-hidden="true" />
-        Import
+        <Import className="h-4 w-4 @lg:mr-1" aria-hidden="true" />
+        <span className="@max-lg:sr-only">Import</span>
       </Button>
       <ImportDialog open={open} onOpenChange={setOpen} />
     </>

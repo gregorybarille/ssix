@@ -124,5 +124,7 @@ jobs:
         with:
           name: e2e-artifacts-${{ github.run_id }}
           path: e2e/.artifacts
+          # The folder's name starts with a dot, which upload-artifact skips by default.
+          include-hidden-files: true
           if-no-files-found: warn
           retention-days: 14

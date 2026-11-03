@@ -136,7 +136,7 @@ export function LogsView() {
 
   return (
     <div className="flex flex-col h-full">
-      <div className="flex items-center justify-between px-6 py-4 border-b border-border">
+      <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 px-6 py-4 border-b border-border">
         <h1 className="text-lg font-semibold">Logs</h1>
         <Button
           size="sm"

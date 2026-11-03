@@ -55,6 +55,11 @@ Hosts in `~/.ssh/config` can be imported: see [Import from SSH config](ssh-confi
 
 Connections can be filed in nested folders and shown as a tree: see [Folders](folders.md).
 
+In a narrow column, such as a small window with the side panel open, a view's header
+buttons wrap under its title, the Connections header shows Import and New Connection
+as icons, and a connection row's actions go on a line of their own, so the name stays
+readable.
+
 ## Credentials
 
 Supported credential modes:
@@ -91,6 +96,8 @@ changes, because the unsaved-changes baseline follows the fetched values.
 - tabbed shell sessions
 - split right
 - split down
+- a split's divider keeps each pane at 15% of the tab or more
+- closing a split pane gives the keyboard to the pane that stays, once any question about it is answered
 - retry failed sessions
 - edit source connection from failure UI
 - GPU-accelerated rendering (xterm WebGL addon) when the WebView supports it, 10 000 lines of scrollback

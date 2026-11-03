@@ -20,6 +20,10 @@ the global switch off.
 | Session log | off | `log_session` |
 | Session log folder | `session-logs/` in the data folder | no |
 
+A connection's keepalive field keeps what you type until you leave it, then shows
+the number it was held to. Enter saves that number too. Emptied, the connection
+follows the app setting.
+
 ## Keepalive
 
 While a shell is open, SSIX sends an SSH keepalive every interval and asks the

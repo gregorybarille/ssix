@@ -103,8 +103,8 @@ describe("Connections CRUD", () => {
     await (await panel.$(sel.connectionForm)).waitForExist({ timeout: 10_000 });
     const row = await browser.$(sel.connectionRowByName("conn-a"));
     expect(await row.isDisplayed()).toBe(true);
-    // Clicking the list leaves the panel open.
-    await row.click();
+    // Working in the view beside it leaves the panel open. Not on a row: clicking one connects.
+    await click(sel.connectionSearchInput);
     expect(await (await browser.$(sel.connectionForm)).isExisting()).toBe(true);
     await clickDialogFooterButton(sel.connectionFormCancel);
     await (await browser.$(sel.connectionForm)).waitForExist({ reverse: true, timeout: 10_000 });
