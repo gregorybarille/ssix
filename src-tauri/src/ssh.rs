@@ -606,7 +606,14 @@ fn open_session_unless_cancelled(
         session.set_compress(true);
     }
 
+    let host_key_order =
+        crate::known_hosts::prefer_recorded_key_types(&session, &endpoint.host, endpoint.port)?;
     debug.proposal(&session);
+    if let Some(order) = host_key_order {
+        debug.at(3, || {
+            format!("host key algorithms, recorded types first: {}", order)
+        });
+    }
     session.set_tcp_stream(tcp);
     debug.at(1, || "Starting key exchange.".to_string());
     let started = Instant::now();
