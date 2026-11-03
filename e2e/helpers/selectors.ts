@@ -158,6 +158,7 @@ export const sel = {
   // Generate / install key dialogs
   generateKeyOpen: '[data-testid="generate-key-open"]',
   generateKeyDialog: '[data-testid="generate-key-dialog"]',
+  generateKeyPassphrase: '[data-testid="generate-key-passphrase"]',
   generateKeySubmit: '[data-testid="generate-key-submit"]',
   installKeyOpen: (credentialId: string) => `[data-testid="install-key-${credentialId}"]`,
   installKeyDialog: '[data-testid="install-key-dialog"]',
