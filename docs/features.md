@@ -314,6 +314,19 @@ are shown inline for the final state of the burst.
 - default terminal open mode
 - Git Sync repository settings
 
+### About
+
+The last section of Settings says which version this is, who makes SSIX, where
+the source code is and its licence (MIT). The links open in the default browser.
+A release build shows its tag, such as `v1.0.0-beta.17`, because the version in
+the manifests stays the same across betas; other builds show the manifest's
+version.
+
+**Show third-party licences** lists what ships inside SSIX with the licence each
+part declares, and filters by name or licence. It gives names and licence
+identifiers, not the full licence texts. The list is the generated file
+`src/lib/thirdPartyLicenses.json`: see `docs/development.md`.
+
 ## Sidebar
 
 The left sidebar holds one icon button per view, in two groups. The top group
@@ -340,6 +353,9 @@ Each button's accessible name stays its `aria-label`, which also carries
 the terminal count and Git Sync's pending-changes state.
 
 ## Title Bar
+
+The SSIX logo and name sit in the middle of the bar. They are decorative and do
+not take clicks, so the bar can still be dragged from there.
 
 SSIX renders its own draggable title bar so it can host a Settings shortcut
 and (on Windows / Linux) the minimize / maximize / close window controls.

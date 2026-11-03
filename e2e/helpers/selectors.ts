@@ -168,6 +168,21 @@ export const sel = {
   settingsGitSyncRepoPath: '[data-testid="settings-git-sync-repo-path"]',
   settingsSavedStatus: '[data-testid="settings-saved-status"]',
 
+  // The logo and name in the title bar.
+  titleBarBrand: '[data-testid="title-bar-brand"]',
+
+  // Settings → About. License rows carry `data-name`.
+  settingsAbout: '[data-testid="settings-about"]',
+  aboutVersion: '[data-testid="about-version"]',
+  aboutAuthor: '[data-testid="about-author"]',
+  aboutRepositoryLink: '[data-testid="about-repository-link"]',
+  aboutLicenseLink: '[data-testid="about-license-link"]',
+  aboutLicensesToggle: '[data-testid="about-licenses-toggle"]',
+  aboutLicensesFilter: '[data-testid="about-licenses-filter"]',
+  aboutLicenseRow: '[data-testid="about-license-row"]',
+  aboutLicenseRowByName: (name: string) =>
+    `[data-testid="about-license-row"][data-name=${JSON.stringify(name)}]`,
+
   // Settings → Backups. Rows carry `data-name` (archive file name) and
   // `data-reason` (manual, automatic, before_restore), newest first.
   backupCreate: '[data-testid="backup-create"]',
