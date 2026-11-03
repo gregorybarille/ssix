@@ -91,7 +91,7 @@ fn shell(command: &str) -> Command {
 /// A connected loopback pair whose far end is accepted from our own
 /// connect only: another local process racing to the ephemeral port is
 /// turned away.
-fn loopback_pair() -> Result<(TcpStream, TcpStream), String> {
+pub(crate) fn loopback_pair() -> Result<(TcpStream, TcpStream), String> {
     let listener = TcpListener::bind("127.0.0.1:0")
         .map_err(|e| format!("Failed to bind a loopback port for the proxy: {}", e))?;
     let addr = listener

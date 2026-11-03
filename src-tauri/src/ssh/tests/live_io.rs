@@ -493,3 +493,180 @@ fn live_a_tunnel_ending_on_a_full_socket_leaves_the_session_usable() {
         }
     });
 }
+
+/// A program on the server, for as long as this lives.
+struct Service {
+    _session: Session,
+    _channel: ssh2::Channel,
+}
+
+/// Run `command`, which should listen on a port of the server's loopback.
+fn run_service(target: &Target, command: &str) -> Service {
+    let session = open_authenticated_session(&target.endpoint, 0, None).unwrap();
+    let mut channel = session.channel_session().unwrap();
+    channel.exec(command).unwrap();
+    session.set_blocking(false);
+    thread::sleep(Duration::from_millis(500));
+    Service {
+        _session: session,
+        _channel: channel,
+    }
+}
+
+fn free_service_port() -> u16 {
+    static NEXT: AtomicUsize = AtomicUsize::new(0);
+    31_000 + (std::process::id() % 1_000) as u16 + NEXT.fetch_add(1, Ordering::SeqCst) as u16
+}
+
+/// A tunnel to `port` on the server's loopback: the client's end and the thread
+/// forwarding it.
+fn open_tunnel(target: &Target, port: u16) -> (TcpStream, thread::JoinHandle<()>) {
+    let session = open_authenticated_session(&target.endpoint, 0, None).unwrap();
+    let channel = session
+        .channel_direct_tcpip("127.0.0.1", port, None)
+        .unwrap();
+    session.set_blocking(false);
+    let (client, far) = crate::proxy::loopback_pair().unwrap();
+    let forwarder = thread::spawn(move || {
+        forward_bidi(
+            far,
+            channel,
+            &session,
+            &AtomicUsize::new(1),
+            &Traffic::default(),
+        );
+    });
+    (client, forwarder)
+}
+
+fn assert_ends(forwarder: thread::JoinHandle<()>) {
+    let start = Instant::now();
+    while !forwarder.is_finished() {
+        assert!(
+            start.elapsed() < Duration::from_secs(10),
+            "the forwarder is still running"
+        );
+        thread::sleep(Duration::from_millis(20));
+    }
+    forwarder.join().unwrap();
+}
+
+/// A paused download: the client reads nothing for longer than a write used to be
+/// given. Everything still has to arrive, and waiting has to cost nothing.
+#[test]
+#[ignore]
+fn live_a_client_that_stops_reading_keeps_its_tunnel() {
+    let target = Target::from_env();
+    with_isolated_data_dir(|| {
+        let port = free_service_port();
+        let size = 30_000_000;
+        let _service = run_service(
+            &target,
+            &format!("head -c {size} /dev/zero | nc -l -p {port}"),
+        );
+        let (mut client, forwarder) = open_tunnel(&target, port);
+        client
+            .set_read_timeout(Some(Duration::from_secs(10)))
+            .unwrap();
+        let mut buf = vec![0u8; 64 * 1024];
+        client.read_exact(&mut buf).unwrap();
+
+        thread::sleep(Duration::from_secs(3));
+        assert_idle("a tunnel its client left unread", Duration::from_secs(10));
+
+        let mut total = buf.len();
+        while total < size {
+            let n = client.read(&mut buf).unwrap();
+            assert!(n > 0, "the tunnel closed after {total} bytes");
+            total += n;
+        }
+        eprintln!("all {total} bytes arrived after the stall");
+
+        drop(client);
+        assert_ends(forwarder);
+    });
+}
+
+/// A client that reads nothing until it has written everything, to an echo: both
+/// directions stall at once, and neither may stop the other for good.
+#[test]
+#[ignore]
+fn live_a_full_duplex_peer_gets_everything_back_when_the_client_reads_late() {
+    let target = Target::from_env();
+    with_isolated_data_dir(|| {
+        let port = free_service_port();
+        let _service = run_service(&target, &format!("nc -l -p {port} -e /bin/cat"));
+        let (mut client, forwarder) = open_tunnel(&target, port);
+        let size = 8 * 1024 * 1024;
+        let sent: Vec<u8> = (0..size).map(|i| (i % 251) as u8).collect();
+
+        let writer = {
+            let mut client = client.try_clone().unwrap();
+            let sent = sent.clone();
+            thread::spawn(move || client.write_all(&sent))
+        };
+        thread::sleep(Duration::from_secs(12));
+        client
+            .set_read_timeout(Some(Duration::from_secs(20)))
+            .unwrap();
+        let mut got = vec![0u8; size];
+        client.read_exact(&mut got).unwrap();
+        writer.join().unwrap().unwrap();
+        assert!(got == sent, "the bytes came back changed");
+
+        drop(client);
+        assert_ends(forwarder);
+    });
+}
+
+/// Nothing on the server reads: the channel's window shuts under the client's
+/// bytes. That costs no CPU, and a client that aborts still ends the tunnel.
+#[test]
+#[ignore]
+fn live_a_shut_window_costs_nothing_and_a_client_that_aborts_ends_it() {
+    let target = Target::from_env();
+    with_isolated_data_dir(|| {
+        let port = free_service_port();
+        let _service = run_service(&target, &format!("nc -l -p {port} | sleep 600"));
+        let (client, forwarder) = open_tunnel(&target, port);
+        client.set_nonblocking(true).unwrap();
+        let chunk = vec![0u8; 64 * 1024];
+        let mut moved = Instant::now();
+        let mut written = 0;
+        // Until the far side has stopped taking anything at all.
+        while moved.elapsed() < Duration::from_secs(2) {
+            match (&client).write(&chunk) {
+                Ok(n) => {
+                    written += n;
+                    moved = Instant::now();
+                }
+                Err(e) if e.kind() == io::ErrorKind::WouldBlock => {
+                    thread::sleep(Duration::from_millis(20));
+                }
+                Err(e) => panic!("the tunnel failed after {written} bytes: {e}"),
+            }
+        }
+        eprintln!("the window shut after {written} bytes");
+
+        assert_idle("a tunnel on a shut window", Duration::from_secs(12));
+        assert!(!forwarder.is_finished(), "the tunnel gave up on its client");
+
+        let linger = libc::linger {
+            l_onoff: 1,
+            l_linger: 0,
+        };
+        // SAFETY: `linger` outlives the call, and the length given is its size.
+        let done = unsafe {
+            libc::setsockopt(
+                wake::fd_of(&client),
+                libc::SOL_SOCKET,
+                libc::SO_LINGER,
+                std::ptr::addr_of!(linger).cast(),
+                std::mem::size_of_val(&linger) as libc::socklen_t,
+            )
+        };
+        assert_eq!(done, 0, "{}", io::Error::last_os_error());
+        drop(client);
+        assert_ends(forwarder);
+    });
+}

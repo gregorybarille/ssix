@@ -1887,6 +1887,44 @@ mod live {
         });
     }
 
+    /// A client whose bytes nothing on the server takes is not reading its socket,
+    /// so the shutdown that stops a forward cannot reach it. Ending the session does.
+    #[test]
+    #[ignore]
+    fn live_stopping_a_forward_ends_a_client_stuck_on_a_shut_window() {
+        with_isolated_data_dir(|| {
+            let port = free_server_port();
+            let service = crate::ssh::open_authenticated_session(&server(), 0, None).unwrap();
+            let mut listener = service.channel_session().unwrap();
+            listener
+                .exec(&format!("nc -l -p {port} | sleep 600"))
+                .unwrap();
+            service.set_blocking(false);
+            thread::sleep(Duration::from_millis(500));
+
+            let (local_port, handle, events) = forward_to_server_port(port);
+            let mut client = connect(local_port);
+            client.set_nonblocking(true).unwrap();
+            let chunk = vec![0u8; 64 * 1024];
+            let mut moved = Instant::now();
+            while moved.elapsed() < Duration::from_secs(2) {
+                match client.write(&chunk) {
+                    Ok(_) => moved = Instant::now(),
+                    Err(e) if e.kind() == io::ErrorKind::WouldBlock => {
+                        thread::sleep(Duration::from_millis(20));
+                    }
+                    Err(e) => panic!("the tunnel failed: {e}"),
+                }
+            }
+            assert!(!events.saw("client_closed"));
+
+            stop(&handle, &events);
+            wait_for("the client's thread to end", SOON, || {
+                events.saw("client_closed")
+            });
+        });
+    }
+
     /// A TCP relay to the server, to cut the connection under a session.
     struct Relay {
         port: u16,

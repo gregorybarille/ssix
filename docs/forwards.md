@@ -128,6 +128,14 @@ it does not read the connection's keepalive setting.
 - **Closing is not half-closing.** When a client closes its side, the channel
   closes in both directions, so a protocol that keeps reading after sending EOF
   loses the rest. This is how `forward_bidi` has always worked.
+- **A stalled tunnel waits, as with `ssh -L`.** A client that stops reading, such
+  as a paused download or `curl --limit-rate`, slows the server down through the
+  SSH window for as long as it likes, at no CPU cost, and neither direction holds
+  up the other. Only the forward's probes judge the session. So a client that
+  closes normally while nothing on the server takes its last bytes keeps its
+  tunnel, and its count in the view, until the server takes them or the forward
+  stops. A client that aborts ends it at once. Stopping a forward can take up to
+  3 s for such a client.
 - **A remote forward polls while it has clients.** New connections arrive over
   the session itself, and reading one client's data can pull in the next one
   without the socket waking anyone, so the supervisor looks every 20 ms instead

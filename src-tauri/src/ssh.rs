@@ -43,13 +43,9 @@ pub(crate) const SESSION_TIMEOUT_MS: u32 = 15_000;
 /// Longest an idle worker waits for socket readiness before re-checking its queue.
 /// Idle wait for a thread that shares its session with another that reads it.
 const SHARED_WAIT_MAX: Duration = Duration::from_millis(10);
-/// Longest single park while waiting for a socket to become writable.
-const WRITE_WAIT_MAX: Duration = Duration::from_millis(50);
 const WAIT_MAX: Duration = Duration::from_millis(250);
 /// Cap on bytes coalesced into one output message.
 const OUTPUT_COALESCE_MAX: usize = 256 * 1024;
-/// How long a non-blocking write may wait on `WouldBlock` before giving up.
-const WRITE_STALL_TIMEOUT: Duration = Duration::from_secs(10);
 /// libssh2's "call again later" code, surfaced by ssh2 as `ErrorCode::Session`.
 const LIBSSH2_ERROR_EAGAIN: i32 = -37;
 /// libssh2's answer to waiting for a channel to close before the server's EOF.
@@ -57,6 +53,8 @@ const LIBSSH2_ERROR_INVAL: i32 = -34;
 /// Unanswered keepalive intervals before a session counts as dead, as with
 /// OpenSSH's default `ServerAliveCountMax`.
 const KEEPALIVE_MAX_MISSED: u32 = 3;
+/// How often a jump host bridge with bytes waiting sends a keepalive.
+const BRIDGE_KEEPALIVE_SECS: u32 = 30;
 /// libssh2 sends no more often than this, whatever the configured interval.
 const KEEPALIVE_MIN_INTERVAL_SECS: u32 = 2;
 /// Puts a terminal back to normal after a shell vanished mid-program: leaves
@@ -1331,39 +1329,6 @@ pub(crate) fn close_channel(channel: &mut ssh2::Channel) -> bool {
     retry(&mut || channel.wait_close())
 }
 
-/// Write all of `data` to a non-blocking writer so a large paste or burst
-/// is never truncated. On `WouldBlock` the thread parks until `fd` (the
-/// socket behind `w`) is writable, or briefly sleeps when no fd is known.
-fn write_all_nonblocking<W: Write>(w: &mut W, data: &[u8], fd: Option<wake::Fd>) -> io::Result<()> {
-    let mut written = 0;
-    let start = Instant::now();
-    while written < data.len() {
-        match w.write(&data[written..]) {
-            Ok(0) => return Err(io::Error::new(io::ErrorKind::WriteZero, "write returned 0")),
-            Ok(n) => written += n,
-            Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => {
-                if start.elapsed() > WRITE_STALL_TIMEOUT {
-                    return Err(io::Error::new(
-                        io::ErrorKind::TimedOut,
-                        "peer stopped reading",
-                    ));
-                }
-                match fd {
-                    Some(fd) => wake::wait_writable(fd, WRITE_WAIT_MAX),
-                    None => thread::sleep(Duration::from_millis(1)),
-                }
-            }
-            Err(ref e) if e.kind() == io::ErrorKind::Interrupted => {}
-            Err(e) => return Err(e),
-        }
-    }
-    // Never `flush`: nothing is buffered on the way out, and an ssh2 channel's
-    // flush throws away what libssh2 has queued to read. For a queued packet
-    // under four bytes, such as the echo of a keystroke, it also sends a window
-    // adjust of about 2^32 and OpenSSH drops the connection over it.
-    Ok(())
-}
-
 /// Bytes read from one side that the other has not taken yet. Offered once per
 /// pass of a loop, so that whatever is slow here holds up nothing else.
 #[derive(Default)]
@@ -1625,9 +1590,9 @@ fn run_io_loop<O: ShellOutput>(shell: OpenShell, io: &mut ShellIo<O>) -> ShellEn
         }
 
         let sending = !input.is_empty() || resize.wanted.is_some();
-        send_blocked = !active && sending && send_blocked_on_socket(&session);
+        send_blocked = !active && send_blocked_on_socket(&session);
         if !active {
-            if sending {
+            if sending || send_blocked {
                 if let Err(e) = take_in(&mut channel) {
                     return after_io_error(&mut channel, format!("SSH read error: {}", e));
                 }
@@ -1738,10 +1703,17 @@ pub(crate) struct Traffic {
     pub(crate) received: AtomicU64,
 }
 
-/// Forward bytes between a local TCP socket and an SSH `direct-tcpip`
-/// channel. Both ends are non-blocking; the thread sleeps in `poll(2)` on
-/// both sockets while idle, so neither direction can stall the other and an
-/// idle forward costs no CPU.
+/// Forward bytes between a local TCP socket and an SSH `direct-tcpip` channel,
+/// as `ssh -L` does. Each direction holds what its destination has not taken and
+/// reads no more from its source until it has, so a side that stops reading slows
+/// its sender down, however long for, and never holds up the other direction. The
+/// thread sleeps in `poll(2)` on what it is waiting for, so a stalled or idle
+/// forward costs no CPU.
+///
+/// There is no time limit. It ends when the local side closes or resets, the
+/// channel ends, or the session fails, and whoever owns the session is the one to
+/// notice a dead one: a forward's probes, or the keepalive of a jump host bridge,
+/// which turns into a failure here once the operating system gives up on it.
 /// `clients` counts the forwarders sharing `session`: see [`idle_wait`].
 pub(crate) fn forward_bidi(
     mut local: TcpStream,
@@ -1754,27 +1726,35 @@ pub(crate) fn forward_bidi(
     local.set_nodelay(true).ok();
     let local_fd = wake::fd_of(&local);
     let session_fd = wake::fd_of(session);
-    let fds = [local_fd, session_fd];
     let mut buf = vec![0u8; 64 * 1024];
+    let mut up = Outgoing::default();
+    let mut down = Outgoing::default();
 
     loop {
         let mut idle = true;
 
-        // local → channel
-        match local.read(&mut buf) {
-            Ok(0) => {
-                close_channel(&mut channel);
-                return;
-            }
-            Ok(n) => {
-                if write_all_nonblocking(&mut channel, &buf[..n], Some(session_fd)).is_err() {
+        // local → channel. Local data read before the client closed still goes
+        // out first, however long that takes.
+        if up.is_empty() {
+            match local.read(&mut buf) {
+                Ok(0) => {
                     close_channel(&mut channel);
                     return;
                 }
+                Ok(n) => up.push(&buf[..n]),
+                Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => {}
+                Err(_) => {
+                    close_channel(&mut channel);
+                    return;
+                }
+            }
+        }
+        match up.send(&mut channel) {
+            Ok(0) => {}
+            Ok(n) => {
                 traffic.sent.fetch_add(n as u64, Ordering::Relaxed);
                 idle = false;
             }
-            Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => {}
             Err(_) => {
                 close_channel(&mut channel);
                 return;
@@ -1782,35 +1762,92 @@ pub(crate) fn forward_bidi(
         }
 
         // channel → local
-        match channel.read(&mut buf) {
-            Ok(0) => {
-                let _ = local.shutdown(Shutdown::Both);
-                return;
-            }
-            Ok(n) => {
-                if write_all_nonblocking(&mut local, &buf[..n], Some(local_fd)).is_err() {
-                    close_channel(&mut channel);
+        if down.is_empty() {
+            match channel.read(&mut buf) {
+                Ok(0) => {
+                    let _ = local.shutdown(Shutdown::Both);
                     return;
                 }
+                Ok(n) => down.push(&buf[..n]),
+                Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => {}
+                Err(_) => {
+                    let _ = local.shutdown(Shutdown::Both);
+                    return;
+                }
+            }
+        }
+        match down.send(&mut local) {
+            Ok(0) => {}
+            Ok(n) => {
                 traffic.received.fetch_add(n as u64, Ordering::Relaxed);
                 idle = false;
             }
-            Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => {}
             Err(_) => {
-                let _ = local.shutdown(Shutdown::Both);
+                close_channel(&mut channel);
                 return;
             }
         }
 
-        if channel.eof() {
+        if down.is_empty() && channel.eof() {
             let _ = local.shutdown(Shutdown::Both);
             return;
         }
 
         if idle {
-            wake::wait_readable(&fds, idle_wait(clients.load(Ordering::Relaxed) > 1));
+            let send_blocked = send_blocked_on_socket(session);
+            if !up.is_empty() || send_blocked {
+                // A close with data still queued looks like more data, so only a
+                // reset shows here. Closing leaves libssh2 no half-sent packet
+                // that it would refuse the close for.
+                if !send_blocked && was_reset(&local) {
+                    close_channel(&mut channel);
+                    return;
+                }
+                if send_due_keepalive(session, session_fd).is_err()
+                    || take_in(&mut channel).is_err()
+                {
+                    let _ = local.shutdown(Shutdown::Both);
+                    close_channel(&mut channel);
+                    return;
+                }
+                // A write reads the socket too, so output may wait in libssh2
+                // with nothing left on the socket to wake this thread.
+                if !send_blocked && down.is_empty() && channel.read_window().available > 0 {
+                    continue;
+                }
+            }
+            let wanted = |fd: wake::Fd, yes: bool| yes.then_some(fd);
+            let readable: Vec<_> = [
+                wanted(local_fd, up.is_empty()),
+                wanted(session_fd, down.is_empty()),
+            ]
+            .into_iter()
+            .flatten()
+            .collect();
+            let writable: Vec<_> = [
+                wanted(local_fd, !down.is_empty()),
+                wanted(session_fd, send_blocked),
+            ]
+            .into_iter()
+            .flatten()
+            .collect();
+            wake::wait_ready(
+                &readable,
+                &writable,
+                idle_wait(clients.load(Ordering::Relaxed) > 1),
+            );
         }
     }
+}
+
+/// Whether the peer of a non-blocking socket has aborted the connection. macOS
+/// goes on returning bytes it already had, so a failed read alone would not say.
+fn was_reset(socket: &TcpStream) -> bool {
+    matches!(socket.take_error(), Ok(Some(_)))
+        || matches!(
+            socket.peek(&mut [0u8; 1]),
+            Err(e) if !matches!(e.kind(), io::ErrorKind::WouldBlock | io::ErrorKind::Interrupted)
+        )
 }
 
 /// Bridge a loopback TCP stream to `destination_host:destination_port`
@@ -1870,6 +1907,11 @@ fn bridge_unless_cancelled(
                 Ok(channel) => {
                     debug.at(2, || format!("direct-tcpip channel open for {}", peer));
                     session.set_blocking(false);
+                    // Nobody watches this session. Once the jump host dies under
+                    // bytes waiting for its window, something has to go out for
+                    // the operating system to give up on. No reply, so nothing
+                    // piles up in libssh2.
+                    session.set_keepalive(false, BRIDGE_KEEPALIVE_SECS);
                     let _ = ready_tx.send(Ok(()));
                     forward_bidi(
                         local_stream,
@@ -2181,34 +2223,33 @@ mod tests {
         assert!(start.elapsed() >= Duration::from_millis(25));
     }
 
-    #[test]
-    fn write_all_nonblocking_retries_until_everything_is_written() {
-        /// Writer that accepts at most two bytes per call and reports
-        /// WouldBlock on every other call.
-        struct Trickle {
-            out: Vec<u8>,
-            calls: usize,
-        }
-        impl Write for Trickle {
-            fn write(&mut self, data: &[u8]) -> io::Result<usize> {
-                self.calls += 1;
-                if self.calls.is_multiple_of(2) {
-                    return Err(io::Error::new(io::ErrorKind::WouldBlock, "later"));
-                }
-                let n = data.len().min(2);
-                self.out.extend_from_slice(&data[..n]);
-                Ok(n)
+    /// Write all of `data` to a non-blocking writer, giving up after 10 s
+    /// without progress.
+    fn write_all_nonblocking<W: Write>(
+        w: &mut W,
+        data: &[u8],
+        fd: Option<wake::Fd>,
+    ) -> io::Result<()> {
+        let mut outgoing = Outgoing::default();
+        outgoing.push(data);
+        let mut moved = Instant::now();
+        while !outgoing.is_empty() {
+            if outgoing.send(w)? > 0 {
+                moved = Instant::now();
+                continue;
             }
-            fn flush(&mut self) -> io::Result<()> {
-                panic!("a channel's flush discards what it has queued to read");
+            if moved.elapsed() > Duration::from_secs(10) {
+                return Err(io::Error::new(
+                    io::ErrorKind::TimedOut,
+                    "peer stopped reading",
+                ));
+            }
+            match fd {
+                Some(fd) => wake::wait_writable(fd, Duration::from_millis(50)),
+                None => thread::sleep(Duration::from_millis(1)),
             }
         }
-        let mut w = Trickle {
-            out: Vec::new(),
-            calls: 0,
-        };
-        write_all_nonblocking(&mut w, b"hello world", None).unwrap();
-        assert_eq!(w.out, b"hello world");
+        Ok(())
     }
 
     /// A writer that takes `step` bytes every other call and refuses the rest.
