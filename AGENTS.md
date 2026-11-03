@@ -95,7 +95,7 @@ Point at `http://localhost:1420` (run `npm run dev` first). Add to `~/.copilot/m
 ## End-to-End Tests
 
 - **Stack**: `tauri-driver` + WebdriverIO + Mocha (TypeScript). Specs in `e2e/specs/`, helpers in `e2e/helpers/`, selectors in `e2e/helpers/selectors.ts` (single source of truth).
-- **CI**: `.github/workflows/e2e.yml` runs on push to `main`, version tag pushes (`v*`), pull requests, and `workflow_dispatch`. Advisory status — not a required PR gate, but failures surface on the PR.
+- **CI**: `.github/workflows/e2e.yml` runs on push to `main`, version tag pushes (`v*`), pull requests that change more than docs, and `workflow_dispatch`. Advisory status — not a required PR gate, but failures surface on the PR.
 - **Local**: `npm run e2e` runs the suite inside a Linux container (tauri-driver doesn't run on macOS). Requires Docker.
 - **Several checkouts**: every worktree is the same Compose project by default, so `npm run e2e` in one recreates another's fixtures. Run side by side with `COMPOSE_PROJECT_NAME=ssix-<name> SSIX_PORT_PREFIX=<3 digits> npm run e2e` (see `docker/README.md`).
 - **Storage isolation**: `SSIX_DATA_DIR` env var (honored by `storage::data_dir()` and `keychain::secrets_path()`) points to a per-suite `mkdtemp`. The Tauri app is spawned once via `tauri-driver` and inherits the env, so all specs share one data dir — cross-spec isolation relies on every spec using unique credential / connection names.
