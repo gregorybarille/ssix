@@ -14,6 +14,7 @@ use std::process::{Child, Command, Stdio};
 use std::thread;
 
 use crate::ssh::Endpoint;
+use crate::ssh_config::expand_tokens;
 use crate::ssh_debug::SshDebug;
 
 /// Characters a host or user name may contain to be put in a command line
@@ -36,21 +37,11 @@ pub fn validate(template: &str) -> Result<(), String> {
 
 /// Expand OpenSSH's tokens: `%h` host, `%p` port, `%r` user, `%%` a `%`.
 pub fn expand(template: &str, host: &str, port: u16, user: &str) -> Result<String, String> {
-    let mut out = String::with_capacity(template.len());
-    let mut chars = template.chars();
-    while let Some(c) = chars.next() {
-        if c != '%' {
-            out.push(c);
-            continue;
-        }
-        let (name, value) = match chars.next() {
+    expand_tokens(template, |token| {
+        let (name, value) = match token {
             Some('h') => ("host", host.to_string()),
             Some('p') => ("port", port.to_string()),
             Some('r') => ("user", user.to_string()),
-            Some('%') => {
-                out.push('%');
-                continue;
-            }
             Some(other) => {
                 return Err(format!(
                     "Unknown token %{} in proxy command (use %h, %p, %r or %%)",
@@ -65,9 +56,8 @@ pub fn expand(template: &str, host: &str, port: u16, user: &str) -> Result<Strin
                 name, value
             ));
         }
-        out.push_str(&value);
-    }
-    Ok(out)
+        Ok(value)
+    })
 }
 
 #[cfg(unix)]

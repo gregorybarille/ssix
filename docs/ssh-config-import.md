@@ -22,7 +22,7 @@ you left unticked.
 | `ProxyJump` | A jump host connection, when it is one hop SSIX can resolve |
 | `ProxyCommand` | The connection's proxy command |
 | `LocalForward`, `RemoteForward`, `DynamicForward` | One forward connection each |
-| `Include` | Relative paths from `~/.ssh`, `~`, `*` and `?`, up to 16 levels deep |
+| `Include` | Relative paths from `~/.ssh`, `~`, `*` and `?`, up to 16 levels deep. A `%` token or `${VAR}` is not expanded, so the file is not read (see below) |
 
 Every other directive is ignored, including `ForwardAgent` and
 `ClearAllForwardings`.
@@ -31,7 +31,10 @@ OpenSSH's rules apply as written. The first value of an option wins, reading
 top to bottom, so `Host *` defaults fill in only what is still unset, and a
 `Host *` block at the top of the file beats the blocks below it. `IdentityFile`
 and the forward directives collect every value. `ProxyJump` and `ProxyCommand`
-share one slot, and `none` counts as the first value.
+share one slot, and the first value holds it. `none` counts as a value, with one
+exception that `ssh -G` confirms: a later `ProxyCommand` still replaces
+`ProxyJump none`, so `ProxyJump none` above a `Host *` block with a `ProxyCommand`
+does not make a host direct. `ProxyCommand none` does.
 
 ## What is skipped
 
@@ -55,9 +58,13 @@ share one slot, and `none` counts as the first value.
   place of the option it holds, so the host is skipped instead of quietly
   connecting on a default.
 - **A relative `IdentityFile`**, which depends on the directory `ssh` runs in,
-  and one using a token other than `%d %h %n %p %r %u %%`.
-- **A token in a username**, in `User` or in `ProxyJump %r@bastion`: a credential
-  stores a username as written, so it would sign in as `%r`.
+  one using a token other than `%d %h %n %p %r %u %%`, and one using `${VAR}`.
+- **A token or `${VAR}` in a username**, in `User` or in `ProxyJump %r@bastion`: a
+  credential stores a username as written, so it would sign in as `%r`. A bare `$`
+  is kept, because `ssh` keeps it and `HOST$` is a real account name.
+
+`${VAR}` in a `ProxyCommand` is left as written: `ssh` hands it to the shell, and
+so does SSIX.
 
 An import reads at most 1 MiB across 64 files. It plans at most 2000 hosts, or
 fewer when a very large file makes each one slow to work out, and offers at most
@@ -67,11 +74,11 @@ repeat. Each limit is reported once in the panel under **Passed over**.
 
 ## When part of a config is not applied
 
-A `Match` block, an `Include` that could not be read and an unreadable `Host` line
-can each change what any host does. A dropped `Match` may be the very line that
-sends a host through its bastion, and importing that host as a direct connection
-would connect straight to it. SSIX cannot tell which hosts they touch, so if a file
-has any of these:
+A `Match` block, an `Include` that could not be read or that uses a `%` token or
+`${VAR}`, and an unreadable `Host` line can each change what any host does. A
+dropped `Match` may be the very line that sends a host through its bastion, and
+importing that host as a direct connection would connect straight to it. SSIX
+cannot tell which hosts they touch, so if a file has any of these:
 
 - every row says so, and starts unticked;
 - **Passed over** lists what was left out, with its `file:line`;
@@ -144,8 +151,8 @@ A forward becomes its own connection, named after its host and flag:
 credential and uses the host's `ProxyCommand`.
 
 A local or SOCKS forward keeps the IP address its config binds to, and `*` becomes
-`0.0.0.0` as it means for `ssh`. A row says so when other machines could reach the
-result. SSIX takes IP addresses only, so a name other than `localhost` is dropped
+`0.0.0.0` as it means for `ssh`. When other machines could reach the result, the
+row says so and starts unticked. SSIX takes IP addresses only, so a name other than `localhost` is dropped
 with a note and the forward listens on `127.0.0.1`. So does an empty address
 (`:8080`), which `ssh` would open to every network. A remote forward listens
 wherever the server chooses, and a row whose config named an address says so.
@@ -155,7 +162,9 @@ not depend on the jump host's own connection being imported. The parts written i
 `ProxyJump user@host:port` win over the jump host's own `Host` block.
 
 A `ProxyCommand` runs on your machine every time you connect. The preview shows
-each one in full; read them before importing a config you did not write.
+each one in full, and its row and its forwards' rows say so and start unticked: a
+config you did not write should not run anything until you have read it. Select
+every host still ticks them.
 
 ## How it is built
 
