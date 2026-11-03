@@ -13,7 +13,7 @@ import { statSync } from "node:fs";
 import { join } from "node:path";
 import { waitForAppReady } from "../helpers/app.js";
 import { currentTestDataDir } from "../helpers/data-dir.js";
-import { click, createPasswordCredential, navigateTo, textContentOf } from "../helpers/flows.js";
+import { click, createPasswordCredential, navigateTo, textContentOf, waitForGone } from "../helpers/flows.js";
 import { sel } from "../helpers/selectors.js";
 
 async function openBackups(): Promise<void> {
@@ -44,7 +44,7 @@ describe("Backups", () => {
     await restore.scrollIntoView({ block: "center" });
     await restore.click();
     await click(sel.backupRestoreConfirm);
-    await (await browser.$(sel.backupRestoreDialog)).waitForExist({ reverse: true, timeout: 10_000 });
+    await waitForGone(sel.backupRestoreDialog);
     await (await browser.$(sel.backupRowByReason("before_restore"))).waitForExist({ timeout: 10_000 });
 
     await navigateTo("credentials");
