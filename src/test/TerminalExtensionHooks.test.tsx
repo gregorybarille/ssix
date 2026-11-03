@@ -83,8 +83,9 @@ vi.mock("@xterm/xterm", () => ({
       this.onSelectionListener = listener;
       return { dispose() {} };
     }
-    write(bytes: Uint8Array) {
+    write(bytes: Uint8Array, done?: () => void) {
       mocks.events.push(`write:${bytes.length}`);
+      done?.();
     }
     dispose() {
       mocks.events.push("term-dispose");
@@ -95,7 +96,7 @@ vi.mock("@xterm/xterm", () => ({
 const settings = { theme: "dark", font_family: "Fira Code", font_size: 14 } as AppSettings;
 const connection = { id: "c1", name: "prod" } as Connection;
 
-function outputHandler(): { write: (bytes: Uint8Array) => void } {
+function outputHandler(): { write: (bytes: Uint8Array, done?: () => void) => void } {
   return mocks.attachOutput.mock.calls[0][1];
 }
 
@@ -322,6 +323,13 @@ describe("Terminal extension hooks", () => {
     mount();
     outputHandler().write(bytes);
     expect(mocks.events.slice(-2)).toEqual(["write:3", "output"]);
+  });
+
+  it("lets the sink know when xterm has parsed a chunk", () => {
+    const done = vi.fn();
+    mount();
+    outputHandler().write(new Uint8Array([1]), done);
+    expect(done).toHaveBeenCalledTimes(1);
   });
 
   it("runs what onCreate returned on unmount, before xterm is disposed", () => {

@@ -46,6 +46,10 @@ const SHARED_WAIT_MAX: Duration = Duration::from_millis(10);
 const WAIT_MAX: Duration = Duration::from_millis(250);
 /// Cap on bytes coalesced into one output message.
 const OUTPUT_COALESCE_MAX: usize = 256 * 1024;
+/// Output the terminal has not caught up with, at which a shell stops reading
+/// more. The SSH window then pushes back on the server. xterm throws away what it
+/// is given above 50 MB; the frontend's own buffer adds up to 4 MB on top of this.
+const OUTPUT_PAUSE_BYTES: u64 = 8 * 1024 * 1024;
 /// libssh2's "call again later" code, surfaced by ssh2 as `ErrorCode::Session`.
 const LIBSSH2_ERROR_EAGAIN: i32 = -37;
 /// libssh2's answer to waiting for a channel to close before the server's EOF.
@@ -223,6 +227,7 @@ pub enum SessionMsg {
 pub struct SessionHandle {
     tx: Sender<SessionMsg>,
     waker: Arc<wake::Waker>,
+    unacked_output: Arc<AtomicU64>,
 }
 
 impl SessionHandle {
@@ -233,23 +238,42 @@ impl SessionHandle {
         self.waker.wake();
         Ok(())
     }
+
+    /// The terminal has taken `bytes` of output. More than was sent only clears
+    /// the count, at the cost of a pause that comes later.
+    pub fn ack_output(&self, bytes: u64) {
+        let _ = self
+            .unacked_output
+            .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |unacked| {
+                Some(unacked.saturating_sub(bytes))
+            });
+        self.waker.wake();
+    }
 }
 
 /// Worker side of the control channel.
 pub(crate) struct ControlRx {
     pub(crate) rx: Receiver<SessionMsg>,
     pub(crate) wake: wake::WakeReceiver,
+    /// Output sent to the terminal and not acknowledged yet.
+    unacked_output: Arc<AtomicU64>,
 }
 
 pub(crate) fn control_channel() -> Result<(SessionHandle, ControlRx), String> {
     let (tx, rx) = mpsc::channel();
     let (waker, wake) = wake::pair().map_err(|e| format!("Failed to create wake pipe: {}", e))?;
+    let unacked_output = Arc::new(AtomicU64::new(0));
     Ok((
         SessionHandle {
             tx,
             waker: Arc::new(waker),
+            unacked_output: Arc::clone(&unacked_output),
         },
-        ControlRx { rx, wake },
+        ControlRx {
+            rx,
+            wake,
+            unacked_output,
+        },
     ))
 }
 
@@ -1242,6 +1266,16 @@ struct ShellIo<O> {
     pty_size: Option<(u32, u32)>,
 }
 
+impl<O: ShellOutput> ShellIo<O> {
+    /// Hand over shell output, counted first so that an ack cannot beat it.
+    fn print(&mut self, bytes: &[u8]) {
+        self.control
+            .unacked_output
+            .fetch_add(bytes.len() as u64, Ordering::SeqCst);
+        self.out.output(bytes);
+    }
+}
+
 /// The terminal and the session log.
 struct AppOutput {
     ctx: SessionContext,
@@ -1510,9 +1544,14 @@ fn run_io_loop<O: ShellOutput>(shell: OpenShell, io: &mut ShellIo<O>) -> ShellEn
             watchdog.heard(Instant::now());
         }
 
+        // Above the limit, leave the output where it is: unread, it keeps the SSH
+        // window shut. Everything else in this loop goes on, so a Ctrl+C gets
+        // through to stop a flood.
+        let paused = io.control.unacked_output.load(Ordering::SeqCst) >= OUTPUT_PAUSE_BYTES;
+
         // Drain everything the remote has for us. Extended data arrives here
         // too: `open_shell_over_stream` merges it into this stream.
-        loop {
+        while !paused {
             match channel.read(&mut buf) {
                 Ok(0) => {
                     eof = true;
@@ -1528,12 +1567,12 @@ fn run_io_loop<O: ShellOutput>(shell: OpenShell, io: &mut ShellIo<O>) -> ShellEn
                 }
                 Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => break,
                 Err(e) => {
-                    io.out.output(&pending);
+                    io.print(&pending);
                     return after_io_error(&mut channel, format!("SSH read error: {}", e));
                 }
             }
         }
-        io.out.output(&pending);
+        io.print(&pending);
 
         // Apply everything the frontend queued.
         loop {
@@ -1592,13 +1631,16 @@ fn run_io_loop<O: ShellOutput>(shell: OpenShell, io: &mut ShellIo<O>) -> ShellEn
         let sending = !input.is_empty() || resize.wanted.is_some();
         send_blocked = !active && send_blocked_on_socket(&session);
         if !active {
-            if sending || send_blocked {
+            // While paused this also keeps the watchdog's view of the socket true
+            // and notices a lost connection, and sshd, its output moving, goes on
+            // reading what is sent to it.
+            if sending || send_blocked || paused {
                 if let Err(e) = take_in(&mut channel) {
                     return after_io_error(&mut channel, format!("SSH read error: {}", e));
                 }
                 // A write reads the socket too, so output may wait in libssh2
                 // with nothing left on the socket to wake this thread.
-                if !send_blocked && channel.read_window().available > 0 {
+                if !paused && !send_blocked && channel.read_window().available > 0 {
                     continue;
                 }
             }
@@ -2250,6 +2292,18 @@ mod tests {
             }
         }
         Ok(())
+    }
+
+    #[test]
+    fn an_ack_lowers_the_count_never_below_zero_and_wakes_the_worker() {
+        let (handle, control) = control_channel().unwrap();
+        control.unacked_output.store(100, Ordering::SeqCst);
+        handle.ack_output(30);
+        assert_eq!(control.unacked_output.load(Ordering::SeqCst), 70);
+        handle.ack_output(u64::MAX);
+        assert_eq!(control.unacked_output.load(Ordering::SeqCst), 0);
+        #[cfg(unix)]
+        assert!(wake::is_readable(control.wake.fd()));
     }
 
     /// A writer that takes `step` bytes every other call and refuses the rest.

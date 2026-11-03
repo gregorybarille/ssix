@@ -19,17 +19,32 @@ struct Printed {
 
 const TAIL_BYTES: usize = 256 * 1024;
 
-impl ShellOutput for Arc<Printed> {
+/// Stands in for the terminal.
+struct TestTerminal {
+    printed: Arc<Printed>,
+    handle: SessionHandle,
+    /// Whether it keeps up, acknowledging everything at once.
+    keeps_up: Arc<AtomicBool>,
+}
+
+impl ShellOutput for TestTerminal {
     fn output(&mut self, bytes: &[u8]) {
-        self.total.fetch_add(bytes.len(), Ordering::SeqCst);
-        let mut tail = self.tail.lock().unwrap();
+        // Every pass of the loop prints, mostly nothing, and an ack wakes it.
+        if bytes.is_empty() {
+            return;
+        }
+        self.printed.total.fetch_add(bytes.len(), Ordering::SeqCst);
+        let mut tail = self.printed.tail.lock().unwrap();
         tail.extend_from_slice(bytes);
         let excess = tail.len().saturating_sub(TAIL_BYTES);
         tail.drain(..excess);
+        if self.keeps_up.load(Ordering::SeqCst) {
+            self.handle.ack_output(bytes.len() as u64);
+        }
     }
 
     fn warn(&self, message: String) {
-        self.warnings.lock().unwrap().push(message);
+        self.printed.warnings.lock().unwrap().push(message);
     }
 }
 
@@ -37,8 +52,16 @@ impl ShellOutput for Arc<Printed> {
 struct LiveShell {
     handle: SessionHandle,
     printed: Arc<Printed>,
+    keeps_up: Arc<AtomicBool>,
     ended: Receiver<ShellEnd>,
     fd: wake::Fd,
+}
+
+/// The terminal holds a handle too, so that alone would not end the worker.
+impl Drop for LiveShell {
+    fn drop(&mut self) {
+        let _ = self.handle.send(SessionMsg::Disconnect);
+    }
 }
 
 impl LiveShell {
@@ -46,8 +69,13 @@ impl LiveShell {
         let fd = wake::fd_of(&shell.session);
         let (handle, control) = control_channel().unwrap();
         let printed = Arc::new(Printed::default());
+        let keeps_up = Arc::new(AtomicBool::new(true));
         let (ended_tx, ended) = mpsc::channel();
-        let out = Arc::clone(&printed);
+        let out = TestTerminal {
+            printed: Arc::clone(&printed),
+            handle: handle.clone(),
+            keeps_up: Arc::clone(&keeps_up),
+        };
         thread::spawn(move || {
             let mut io = ShellIo {
                 out,
@@ -59,6 +87,7 @@ impl LiveShell {
         Self {
             handle,
             printed,
+            keeps_up,
             ended,
             fd,
         }
@@ -668,5 +697,128 @@ fn live_a_shut_window_costs_nothing_and_a_client_that_aborts_ends_it() {
         assert_eq!(done, 0, "{}", io::Error::last_os_error());
         drop(client);
         assert_ends(forwarder);
+    });
+}
+
+/// What `command` prints on the server, in a session of its own.
+fn remote_output(target: &Target, command: &str) -> String {
+    let session = open_authenticated_session(&target.endpoint, 0, None).unwrap();
+    let mut channel = session.channel_session().unwrap();
+    channel.exec(command).unwrap();
+    let mut output = String::new();
+    channel.read_to_string(&mut output).unwrap();
+    output
+}
+
+/// A terminal that cannot keep up: reading stops at the limit and the server
+/// feels it, at no CPU cost. Keepalives, input and a resize all still work, a
+/// Ctrl+C stops the flood at once, and output resumes as the terminal catches up.
+#[test]
+#[ignore]
+fn live_a_flood_pauses_at_the_limit_stays_controllable_and_resumes() {
+    let target = Target::from_env();
+    with_isolated_data_dir(|| {
+        let shell = LiveShell::open(&target, 2);
+        shell.wait_for_prompt();
+        shell.keeps_up.store(false, Ordering::SeqCst);
+        shell.send(b"yes ssixflood\n");
+
+        let limit = OUTPUT_PAUSE_BYTES as usize;
+        let start = Instant::now();
+        while shell.total() < limit {
+            assert!(
+                start.elapsed() < Duration::from_secs(30),
+                "no flood: {} bytes",
+                shell.total()
+            );
+            thread::sleep(Duration::from_millis(20));
+        }
+        eprintln!("reached the limit in {:?}", start.elapsed());
+        thread::sleep(Duration::from_millis(500));
+        let held = shell.total();
+        assert!(held < limit + OUTPUT_COALESCE_MAX, "read on to {held}");
+
+        // Longer than the watchdog's 6 s: it must not take this for silence.
+        assert_idle("a paused flood", Duration::from_secs(8));
+        assert_eq!(shell.total(), held, "output went on while paused");
+        assert!(shell.ended.try_recv().is_err(), "the session ended");
+
+        // Part of the backlog taken: as much more comes through, and no more.
+        shell.handle.ack_output(1024 * 1024);
+        let start = Instant::now();
+        while shell.total() < held + 1024 * 1024 {
+            assert!(
+                start.elapsed() < Duration::from_secs(5),
+                "did not resume: {} bytes",
+                shell.total()
+            );
+            thread::sleep(Duration::from_millis(20));
+        }
+        thread::sleep(Duration::from_millis(500));
+        let held = shell.total();
+        thread::sleep(Duration::from_secs(1));
+        assert_eq!(shell.total(), held, "did not pause again");
+
+        // Still paused: input and a resize go out, and Ctrl+C reaches the program.
+        shell
+            .handle
+            .send(SessionMsg::Resize {
+                cols: 123,
+                rows: 45,
+            })
+            .unwrap();
+        shell.send(b"\x03");
+        let start = Instant::now();
+        while !remote_output(&target, "pgrep -f '[s]sixflood' || true")
+            .trim()
+            .is_empty()
+        {
+            assert!(
+                start.elapsed() < Duration::from_secs(10),
+                "Ctrl+C did not stop the flood"
+            );
+            thread::sleep(Duration::from_millis(100));
+        }
+        eprintln!("Ctrl+C stopped the flood in {:?}", start.elapsed());
+        assert_eq!(shell.total(), held, "output went on while paused");
+
+        shell.send(b"stty size; echo done$((6*7))\n");
+        shell.keeps_up.store(true, Ordering::SeqCst);
+        shell.handle.ack_output(u64::MAX);
+        shell.wait_for("done42", Duration::from_secs(20));
+        assert!(shell.contains("45 123"));
+    });
+}
+
+/// A connection that fails during a pause does not wait for the terminal.
+#[test]
+#[ignore]
+fn live_a_connection_lost_during_a_pause_is_noticed() {
+    let target = Target::from_env();
+    with_isolated_data_dir(|| {
+        let relay = Relay::start(&target.endpoint);
+        let shell = LiveShell::start(
+            open_shell_over_stream(relay.connect(), &target.endpoint, &ShellOptions::default())
+                .unwrap(),
+        );
+        shell.wait_for_prompt();
+        shell.keeps_up.store(false, Ordering::SeqCst);
+        shell.send(b"yes\n");
+        let start = Instant::now();
+        while shell.total() < OUTPUT_PAUSE_BYTES as usize {
+            assert!(start.elapsed() < Duration::from_secs(60), "no flood");
+            thread::sleep(Duration::from_millis(20));
+        }
+        thread::sleep(Duration::from_secs(1));
+
+        relay.set_mode(RELAY_CUT);
+        let cut = Instant::now();
+        match shell.ended.recv_timeout(Duration::from_secs(5)) {
+            Ok(ShellEnd::Dropped(reason)) => {
+                println!("dropped {:?} after the cut: {reason}", cut.elapsed())
+            }
+            Ok(ShellEnd::Closed) => panic!("a lost connection counted as a closed shell"),
+            Err(_) => panic!("not noticed within 5 s"),
+        }
     });
 }
