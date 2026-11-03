@@ -1227,10 +1227,22 @@ mod tests {
     #[test]
     fn a_token_in_a_url_remote_never_reaches_the_snapshot() {
         for (remote, kept) in [
-            ("https://me:s3cret@github.com/me/cfg.git", "https://github.com/me/cfg.git"),
-            ("https://s3cret@github.com/me/cfg.git", "https://github.com/me/cfg.git"),
-            ("ssh://me:s3cret@host:2222/cfg@v1.git", "ssh://host:2222/cfg@v1.git"),
-            ("https://github.com/me/cfg.git", "https://github.com/me/cfg.git"),
+            (
+                "https://me:s3cret@github.com/me/cfg.git",
+                "https://github.com/me/cfg.git",
+            ),
+            (
+                "https://s3cret@github.com/me/cfg.git",
+                "https://github.com/me/cfg.git",
+            ),
+            (
+                "ssh://me:s3cret@host:2222/cfg@v1.git",
+                "ssh://host:2222/cfg@v1.git",
+            ),
+            (
+                "https://github.com/me/cfg.git",
+                "https://github.com/me/cfg.git",
+            ),
             ("git@github.com:me/cfg.git", "git@github.com:me/cfg.git"),
             ("origin", "origin"),
         ] {
