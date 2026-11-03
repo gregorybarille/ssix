@@ -401,6 +401,13 @@ pub struct AppSettings {
     /// Where session logs go; `None` is `<data_dir>/session-logs`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub session_log_dir: Option<String>,
+    /// View ids of the sidebar's top group, in order. Both empty is the default
+    /// order, which then follows the app as views are added.
+    #[serde(default)]
+    pub sidebar_top: Vec<String>,
+    /// View ids of the sidebar's bottom group, in order.
+    #[serde(default)]
+    pub sidebar_bottom: Vec<String>,
 }
 
 fn default_font_size() -> u8 {
@@ -445,6 +452,10 @@ fn default_backup_keep() -> u32 {
     10
 }
 
+/// Far more views than the app has: these only keep the stored lists sane.
+const SIDEBAR_VIEWS_MAX: usize = 64;
+const SIDEBAR_VIEW_ID_MAX: usize = 64;
+
 impl AppSettings {
     /// A stored layout this build cannot show (a hand edit, a newer build, or
     /// the folder tree on a list that has none) falls back to the plain list
@@ -461,6 +472,34 @@ impl AppSettings {
         reset(&mut self.credential_layout, &LIST_LAYOUTS);
         reset(&mut self.tunnel_layout, &LIST_LAYOUTS);
         any
+    }
+
+    /// Refuse a sidebar order that cannot have come from the sidebar. Which ids
+    /// name a view is for the frontend, which ignores the ones it does not know.
+    pub fn check_sidebar_order(&self) -> Result<(), String> {
+        let is_view_id = |id: &String| {
+            !id.is_empty()
+                && id.len() <= SIDEBAR_VIEW_ID_MAX
+                && id.bytes().all(|b| b.is_ascii_lowercase() || b == b'_')
+        };
+        for list in [&self.sidebar_top, &self.sidebar_bottom] {
+            if list.len() > SIDEBAR_VIEWS_MAX || !list.iter().all(is_view_id) {
+                return Err("The sidebar order is not a list of views".to_string());
+            }
+        }
+        Ok(())
+    }
+
+    /// A stored sidebar order that fails that check (only a hand edit can do it)
+    /// goes back to the default, so it cannot block every later settings save.
+    /// Returns whether it did.
+    pub fn reset_bad_sidebar_order(&mut self) -> bool {
+        if self.check_sidebar_order().is_ok() {
+            return false;
+        }
+        self.sidebar_top.clear();
+        self.sidebar_bottom.clear();
+        true
     }
 
     /// Refuse a layout its list cannot show, so it can never be stored.
@@ -505,6 +544,8 @@ impl Default for AppSettings {
             reconnect_max_attempts: default_reconnect_max_attempts(),
             session_log_enabled: false,
             session_log_dir: None,
+            sidebar_top: Vec::new(),
+            sidebar_bottom: Vec::new(),
         }
     }
 }
@@ -650,6 +691,7 @@ impl AppData {
         let dropped = self.drop_dangling_credential_refs();
         let folders = self.clean_stored_folders();
         let layouts = self.settings.reset_unknown_layouts();
+        let sidebar = self.settings.reset_bad_sidebar_order();
 
         // Step 2: future-proofing scaffold. Add branches here as the
         // schema evolves:
@@ -660,7 +702,12 @@ impl AppData {
         //   if self.schema_version < 3 { … }
 
         self.schema_version = CURRENT_SCHEMA_VERSION;
-        migrated || dropped || folders || layouts || loaded_version != CURRENT_SCHEMA_VERSION
+        migrated
+            || dropped
+            || folders
+            || layouts
+            || sidebar
+            || loaded_version != CURRENT_SCHEMA_VERSION
     }
 
     /// Bring every stored folder path inside the rules. A path the rules
@@ -1327,6 +1374,34 @@ mod tests {
         assert!(!s.session_log_enabled);
         assert_eq!(s.session_log_dir, None);
         assert!(data.snippets.is_empty());
+    }
+
+    #[test]
+    fn a_file_from_before_the_sidebar_could_be_ordered_loads_with_the_default_order() {
+        let data: AppData = serde_json::from_str(PRE_FOUNDATION_DATA).unwrap();
+        assert!(data.settings.sidebar_top.is_empty());
+        assert!(data.settings.sidebar_bottom.is_empty());
+    }
+
+    #[test]
+    fn a_hand_edited_sidebar_order_goes_back_to_the_default_and_a_good_one_stays() {
+        let mut good = AppSettings {
+            sidebar_top: vec!["logs".to_string()],
+            sidebar_bottom: vec!["git_sync".to_string(), "from_a_newer_build".to_string()],
+            ..AppSettings::default()
+        };
+        assert!(!good.reset_bad_sidebar_order());
+        assert_eq!(good.sidebar_top, ["logs"]);
+        assert_eq!(good.sidebar_bottom, ["git_sync", "from_a_newer_build"]);
+
+        let mut bad = AppSettings {
+            sidebar_top: vec!["logs".to_string()],
+            sidebar_bottom: vec!["not a view".to_string()],
+            ..AppSettings::default()
+        };
+        assert!(bad.reset_bad_sidebar_order());
+        assert!(bad.sidebar_top.is_empty());
+        assert!(bad.sidebar_bottom.is_empty());
     }
 
     #[test]

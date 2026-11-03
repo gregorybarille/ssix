@@ -270,8 +270,8 @@ half-written backup in the list.
     key exchange and authentication took
   From -v the terminal also starts with a "Connected to …" line.
   Passwords and key contents are never logged.
-- screenshot capture from the **Window actions** context menu (right-click
-  any empty area of the window, outside an input or terminal selection)
+- screenshot capture with `Mod+Shift+P`, saved to the desktop, with a toast
+  naming the file
 
 ## SSH Key Utilities
 
@@ -316,9 +316,22 @@ are shown inline for the final state of the burst.
 
 ## Sidebar
 
-The left sidebar holds one icon button per view: Connections, Port
-forwards, Credentials, Scripts, Logs, Terminals (while any are open) and
-Git Sync. Hovering a button, or focusing it from the keyboard, shows a
+The left sidebar holds one icon button per view, in two groups. The top group
+is for what you use every day: Connections, Files, Snippets, Port forwards and
+Scripts. The bottom group is for what you use now and then: Credentials, Logs
+and Git Sync. Between them, Terminals shows while any are open. Settings is in
+the title bar.
+
+To reorder the groups, press and hold a button until it is outlined, then drag
+it: within a group, or to the other one. A line shows where it will land, Escape
+cancels, and letting go outside the sidebar leaves it where it was. A move before
+the outline appears does nothing, and a hold released without moving is a click.
+Right-clicking a button, or pressing `Shift+F10` on it, offers **Move up**,
+**Move down** and **Reset order**; moving down from the end of the top group
+enters the bottom one. The order is saved in settings. A view added by a later
+version goes at the end of its group. Terminals does not move.
+
+Hovering a button, or focusing it from the keyboard, shows a
 tooltip on its right with the view's name and one line on what it is for,
 so the icons can be learned without trying each one. The tooltips share
 one provider (`<TooltipProvider>` from `src/components/ui/tooltip.tsx`):
@@ -539,11 +552,12 @@ Wired surfaces today:
   from the connection + selected credential via `buildSshCommand` in
   `src/lib/ssh-command.ts` and writes it to the clipboard. Agent forwarding
   adds `-A`.
-- **Terminal tabs** — Close tab, Close other tabs, Close tabs to the
-  right (the latter two are disabled when they would be no-ops).
-- **Window background** — Take screenshot (legacy behavior preserved
-  from the original screenshot-only menu, now powered by the same
-  primitive).
+- **Sidebar buttons** — Move up, Move down, Reset order (see
+  [Sidebar](#sidebar)).
+- **Terminal tabs** — Browse files, which opens the tab's server in the
+  [Files view](sftp.md) (one item per server on a split between two), Close
+  tab, Close other tabs, Close tabs to the right (the latter two are disabled
+  when they would be no-ops).
 
 For new consumers, prefer the `useContextMenu()` hook:
 
@@ -616,6 +630,7 @@ macOS and `Ctrl` everywhere else.
 | `Mod+W`        | Close the active terminal tab (with confirm if live)     |
 | `Mod+1`…`Mod+9`| Switch to terminal tab N                                 |
 | `Mod+Shift+S`  | Paste a snippet into the active terminal ([Snippets](snippets.md)) |
+| `Mod+Shift+P`  | Save a screenshot of the window to the desktop           |
 | `Cmd+F` on macOS, `Ctrl+Shift+F` elsewhere | Find in the visible terminal: see [Terminal UX](terminal-ux.md#find) |
 
 On macOS the shortcuts work everywhere, including while a terminal
@@ -625,9 +640,10 @@ picker without clicking out of the terminal first. On Linux and
 Windows, `Ctrl` combos are suppressed when focus is in an input,
 textarea, `contenteditable` element, or anywhere inside an `xterm`
 instance, because `Ctrl+K`, `Ctrl+W` and friends are readline bindings
-inside the shell. `Mod+Shift+S` is the exception and works everywhere:
-its main use is from inside a terminal, and neither the shell nor a text
-field has a use for `Ctrl+Shift+S`. To avoid swallowing those bindings,
+inside the shell. `Mod+Shift+S` and `Mod+Shift+P` are the exceptions and
+work everywhere: they are useful from inside a terminal, and neither the
+shell nor a text field has a use for `Ctrl+Shift+S` or `Ctrl+Shift+P`. To
+avoid swallowing those bindings,
 combos that mix `Ctrl` and `Cmd` simultaneously are ignored on every
 platform.
 

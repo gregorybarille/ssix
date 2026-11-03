@@ -127,6 +127,8 @@ const genSettings: GenAppSettings = {
   auto_reconnect: true,
   reconnect_max_attempts: 5,
   session_log_enabled: false,
+  sidebar_top: [],
+  sidebar_bottom: [],
   session_log_dir: null,
 };
 
@@ -215,6 +217,8 @@ const handSettings: HandAppSettings = {
   auto_reconnect: true,
   reconnect_max_attempts: 5,
   session_log_enabled: false,
+  sidebar_top: [],
+  sidebar_bottom: [],
 };
 
 const handScript: HandScript = { id: "id", name: "n", body: "b", platform: "posix", interpreter: "sh -s" };

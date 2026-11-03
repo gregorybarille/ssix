@@ -33,14 +33,18 @@ import { currentTestDataDir } from "../helpers/data-dir.js";
 import { TARGETS, waitForServers } from "../helpers/docker.js";
 import {
   click,
+  closeAllTabs,
+  connectToConnection,
   createDirectConnection,
   createPasswordCredential,
   ensureConnectionRowsLayout,
   fill,
   navigateTo,
   pickOption,
+  rightClick,
   saveConnectionForm,
   textContentOf,
+  waitForTerminalContains,
 } from "../helpers/flows.js";
 import { sel } from "../helpers/selectors.js";
 
@@ -764,5 +768,24 @@ describe("Files view (SFTP)", () => {
       async () => (await status.getAttribute("data-state")) === "idle",
       { timeout: 10_000, timeoutMsg: "The Files view never disconnected" },
     );
+  });
+
+  it("opens the server of a terminal from its tab's menu", async () => {
+    await connectToConnection("conn-17-a");
+    await waitForTerminalContains("server-a:~$", 30_000);
+    await rightClick(sel.terminalTabByName("conn-17-a"));
+    await click(sel.sidebarMenuItem("Browse files"));
+
+    const status = await browser.$(sel.filesStatus);
+    await browser.waitUntil(
+      async () =>
+        (await status.getAttribute("data-state")) === "connected" &&
+        (await textContentOf(status)).includes(TARGETS.a.host),
+      { timeout: 60_000, timeoutMsg: "Browse files on the tab never connected" },
+    );
+    expect(await panePath("remote")).toBe(remoteHome);
+
+    await click(sel.filesDisconnect);
+    await closeAllTabs();
   });
 });

@@ -16,9 +16,11 @@ import { FolderOpen } from "lucide-react";
 import { Braces } from "lucide-react";
 
 /**
- * Where a view's button sits. `main` is the sidebar's list, `sessions` shows
- * below it only while terminals are open, `footer` is pinned to the bottom of
- * the sidebar, and `titlebar` has no sidebar button.
+ * Where a view's button starts. `main` is the sidebar's top group, for what is
+ * used every day, and `footer` its bottom group, for what is used now and then:
+ * the user can reorder these and move a button between them (see
+ * `sidebarOrder.ts`). `sessions` shows between them only while terminals are
+ * open and stays put, and `titlebar` has no sidebar button.
  */
 export type ViewPlacement = "main" | "sessions" | "footer" | "titlebar";
 
@@ -41,7 +43,8 @@ export interface ViewDefinition<Id extends string = string> {
 /**
  * Every view of the app. Add a view with one entry under your stream's
  * anchor: its sidebar button (test id `nav-<id>`, `_` becoming `-`), its route
- * and the `NavItem` type all follow. Within a placement, buttons keep this order.
+ * and the `NavItem` type all follow. Within a placement, this is the default
+ * order; a user with an order of their own gets a new view at the end of its group.
  */
 const VIEW_TABLE = [
   {
@@ -50,38 +53,6 @@ const VIEW_TABLE = [
     description: "Your saved hosts: open a terminal, transfer files",
     icon: Server,
     placement: "main",
-  },
-  {
-    id: "forwards",
-    label: "Port forwards",
-    description: "Port forwards (ssh -L, -R, -D) and whether they are running",
-    icon: Cable,
-    placement: "main",
-  },
-  {
-    id: "credentials",
-    label: "Credentials",
-    description: "Passwords and SSH keys used to log in",
-    icon: Key,
-    placement: "main",
-  },
-  {
-    id: "scripts",
-    label: "Scripts",
-    description: "Saved scripts to run on several hosts at once",
-    icon: FileCode,
-    placement: "main",
-    component: lazy(() =>
-      import("@/components/views/ScriptsView").then((m) => ({ default: m.ScriptsView })),
-    ),
-  },
-  {
-    id: "logs",
-    label: "Logs",
-    description: "What the app and your connections did",
-    icon: ScrollText,
-    placement: "main",
-    component: lazy(() => import("@/components/LogsView").then((m) => ({ default: m.LogsView }))),
   },
   // roadmap:sftp
   {
@@ -104,6 +75,38 @@ const VIEW_TABLE = [
     component: lazy(() =>
       import("@/components/views/SnippetsView").then((m) => ({ default: m.SnippetsView })),
     ),
+  },
+  {
+    id: "forwards",
+    label: "Port forwards",
+    description: "Port forwards (ssh -L, -R, -D) and whether they are running",
+    icon: Cable,
+    placement: "main",
+  },
+  {
+    id: "scripts",
+    label: "Scripts",
+    description: "Saved scripts to run on several hosts at once",
+    icon: FileCode,
+    placement: "main",
+    component: lazy(() =>
+      import("@/components/views/ScriptsView").then((m) => ({ default: m.ScriptsView })),
+    ),
+  },
+  {
+    id: "credentials",
+    label: "Credentials",
+    description: "Passwords and SSH keys used to log in",
+    icon: Key,
+    placement: "footer",
+  },
+  {
+    id: "logs",
+    label: "Logs",
+    description: "What the app and your connections did",
+    icon: ScrollText,
+    placement: "footer",
+    component: lazy(() => import("@/components/LogsView").then((m) => ({ default: m.LogsView }))),
   },
   {
     id: "terminals",

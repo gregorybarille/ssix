@@ -34,6 +34,7 @@ fn validate_session_log_dir(dir: Option<&str>) -> Result<(), String> {
 
 fn save_settings_sync(settings: AppSettings) -> Result<AppSettings, String> {
     settings.check_layouts()?;
+    settings.check_sidebar_order()?;
     validate_git_remote(&settings.git_sync_remote)?;
     validate_keepalive_interval(settings.keepalive_interval)?;
     if !(1..=20).contains(&settings.reconnect_max_attempts) {
@@ -107,6 +108,55 @@ mod tests {
                 "{relative}"
             );
         }
+    }
+
+    #[test]
+    fn saves_a_sidebar_order_and_refuses_one_that_is_not_a_list_of_views() {
+        with_isolated_data_dir(|| {
+            let order = AppSettings {
+                sidebar_top: vec!["logs".to_string(), "connections".to_string()],
+                sidebar_bottom: vec!["git_sync".to_string()],
+                ..AppSettings::default()
+            };
+            let saved = save_settings_sync(order).unwrap();
+            assert_eq!(saved.sidebar_top, ["logs", "connections"]);
+            assert_eq!(saved.sidebar_bottom, ["git_sync"]);
+            assert_eq!(
+                load_data().unwrap().settings.sidebar_top,
+                ["logs", "connections"]
+            );
+
+            let too_many = vec!["logs".to_string(); 65];
+            for bad in [
+                AppSettings {
+                    sidebar_top: too_many.clone(),
+                    ..AppSettings::default()
+                },
+                AppSettings {
+                    sidebar_bottom: too_many,
+                    ..AppSettings::default()
+                },
+                AppSettings {
+                    sidebar_top: vec![String::new()],
+                    ..AppSettings::default()
+                },
+                AppSettings {
+                    sidebar_bottom: vec!["../logs".to_string()],
+                    ..AppSettings::default()
+                },
+                AppSettings {
+                    sidebar_top: vec!["x".repeat(65)],
+                    ..AppSettings::default()
+                },
+            ] {
+                assert!(save_settings_sync(bad).is_err());
+            }
+            // Refused, so what was saved before is still there.
+            assert_eq!(
+                load_data().unwrap().settings.sidebar_top,
+                ["logs", "connections"]
+            );
+        });
     }
 
     #[test]

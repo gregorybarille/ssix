@@ -15,8 +15,8 @@ function nextFrame(): Promise<void> {
 }
 
 async function waitForSettledUi(): Promise<void> {
-  // The context-menu action closes the portal menu first. Waiting for the
-  // next paints keeps that menu (and any previous toast) out of the capture.
+  // Waiting for the next paints lets a menu or tooltip that was closing leave
+  // the screen first, so it stays out of the capture.
   await nextFrame();
   await nextFrame();
 }

@@ -11,6 +11,7 @@ export function ScreenshotToast() {
       aria-live={isError ? "assertive" : "polite"}
       aria-atomic="true"
       data-screenshot-exclude="true"
+      data-testid="screenshot-toast"
       className={`fixed bottom-4 right-4 z-[9999] rounded-md border shadow-lg px-4 py-2 text-sm max-w-md break-all ${
         isError
           ? "border-destructive/40 bg-destructive/10 text-destructive"

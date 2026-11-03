@@ -4,6 +4,7 @@ import { resolve } from "node:path";
 import { act, render, screen, within } from "@testing-library/react";
 import { Sidebar } from "@/components/Sidebar";
 import { VIEWS } from "@/lib/views";
+import { useSettingsStore } from "@/store/useSettingsStore";
 
 const { extraView } = vi.hoisted(() => ({
   extraView: {
@@ -49,16 +50,33 @@ describe("Sidebar from the view table", () => {
       .getAllByRole("button")
       .map((button) => button.dataset.testid);
 
+  it("adds a new view to the end of its group for someone with their own order", () => {
+    useSettingsStore.setState((state) => ({
+      settings: { ...state.settings, sidebar_top: ["scripts", "connections"], sidebar_bottom: ["logs"] },
+    }));
+    render(<Sidebar active="connections" onNavigate={vi.fn()} />);
+    const ids = buttonIds();
+    expect(ids.indexOf("nav-probe-view")).toBe(
+      within(screen.getByTestId("sidebar-top")).getAllByRole("button").length - 1,
+    );
+    expect(ids.slice(0, 2)).toEqual(["nav-scripts", "nav-connections"]);
+    useSettingsStore.setState((state) => ({
+      settings: { ...state.settings, sidebar_top: [], sidebar_bottom: [] },
+    }));
+  });
+
   // Checks relative order, so a stream adding a real view does not edit this list.
   it("keeps the buttons in place, with a new main view after the existing ones", () => {
     render(<Sidebar active="connections" onNavigate={vi.fn()} terminalCount={1} />);
     const fixed = [
       "nav-connections",
+      "nav-files",
+      "nav-snippets",
       "nav-forwards",
-      "nav-credentials",
       "nav-scripts",
-      "nav-logs",
       "nav-terminals",
+      "nav-credentials",
+      "nav-logs",
       "nav-git-sync",
     ];
     const ids = buttonIds();

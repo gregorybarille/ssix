@@ -69,9 +69,6 @@ interface DialogsState {
   pickerOpen: boolean;
   pickerMode: OpenMode;
 
-  // Right-click context menu
-  contextMenu: { x: number; y: number } | null;
-
   // Screenshot saved/failed toast
   screenshotToast: ScreenshotToast | null;
 
@@ -127,7 +124,6 @@ interface DialogsState {
   openPicker: (mode?: OpenMode) => void;
   setPickerOpen: (open: boolean) => void;
 
-  setContextMenu: (pos: { x: number; y: number } | null) => void;
   setScreenshotToast: (toast: ScreenshotToast | null) => void;
 
   openScp: (conn: Connection) => void;
@@ -170,7 +166,6 @@ export const useDialogsStore = create<DialogsState>((set, get) => ({
   editingCred: null,
   pickerOpen: false,
   pickerMode: "tab",
-  contextMenu: null,
   screenshotToast: null,
   scpConnection: null,
   scpOpen: false,
@@ -218,7 +213,6 @@ export const useDialogsStore = create<DialogsState>((set, get) => ({
   openPicker: (mode = "tab") => set({ pickerMode: mode, pickerOpen: true }),
   setPickerOpen: (open) => set({ pickerOpen: open }),
 
-  setContextMenu: (pos) => set({ contextMenu: pos }),
   setScreenshotToast: (toast) => set({ screenshotToast: toast }),
 
   openScp: (conn) => set({ scpConnection: conn, scpOpen: true }),

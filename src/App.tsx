@@ -9,7 +9,6 @@ import { ConnectionsView } from "./components/views/ConnectionsView";
 import { CredentialsView } from "./components/views/CredentialsView";
 import { PanelSlot, PanelSlotProvider } from "./components/ui/panel-slot";
 import { ConnectPicker } from "./components/ConnectPicker";
-import { ContextMenu } from "./components/ContextMenu";
 import { ConfirmDialog } from "./components/ConfirmDialog";
 import { ScreenshotToast } from "./components/ScreenshotToast";
 import { ViewFallback } from "./components/ViewFallback";
@@ -190,17 +189,8 @@ function App() {
     fetchGitSyncStatus,
   ]);
 
-  // Custom right-click menu wiring. The dispatcher lives in a global
-  // contextmenu listener so xterm.js panes can still own the paste flow.
-  useEffect(() => {
-    const handler = (e: Event) => {
-      const { x, y } = (e as CustomEvent<{ x: number; y: number }>).detail;
-      dialogs.setContextMenu({ x, y });
-    };
-    window.addEventListener("ssix:contextmenu", handler);
-    return () => window.removeEventListener("ssix:contextmenu", handler);
-  }, [dialogs]);
-
+  // Right click pastes in a terminal, and everywhere else that has no menu of
+  // its own does nothing rather than show the browser's.
   useEffect(() => {
     const handler = (e: MouseEvent) => {
       const target = e.target as Element;
@@ -218,13 +208,7 @@ function App() {
             }
           })
           .catch(() => {});
-        return;
       }
-      window.dispatchEvent(
-        new CustomEvent("ssix:contextmenu", {
-          detail: { x: e.clientX, y: e.clientY },
-        }),
-      );
     };
     document.addEventListener("contextmenu", handler);
     return () => document.removeEventListener("contextmenu", handler);
@@ -408,6 +392,12 @@ function App() {
       if (view !== "terminals" || !activeTabId) return;
       handleCloseTabRequest(activeTabId);
     },
+    // Here rather than in the table because the toast's timer lives in App.
+    // xterm sends nothing for Ctrl+Shift+P, so a shell has no use for it.
+    "mod+shift+p": {
+      handler: () => void captureScreenshot(),
+      allowInTypingSurface: true,
+    },
   });
 
   return (
@@ -560,21 +550,6 @@ function App() {
           <Suspense fallback={null}>
             <SnippetPalette />
           </Suspense>
-        )}
-
-        {/* Custom context menu */}
-        {dialogs.contextMenu && (
-          <ContextMenu
-            position={dialogs.contextMenu}
-            onClose={() => dialogs.setContextMenu(null)}
-            ariaLabel="Window actions"
-            items={[
-              {
-                label: "Take screenshot",
-                onClick: () => void captureScreenshot(),
-              },
-            ]}
-          />
         )}
 
         <ScreenshotToast />

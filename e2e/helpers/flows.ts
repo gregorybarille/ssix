@@ -344,6 +344,31 @@ export async function pressPaletteShortcut(): Promise<void> {
   await (await browser.$(sel.snippetPalette)).waitForExist({ timeout: 10_000 });
 }
 
+/**
+ * Open an element's menu as a right click does. WebKitWebDriver's own right click is
+ * not one: it reports the release as the left button, which clicks whatever is
+ * under the pointer, and the page goes on seeing the right button held, so no
+ * later press fires a pointerdown and every drag after it silently does nothing.
+ */
+export async function rightClick(selector: string): Promise<void> {
+  const found = await browser.execute((s: string) => {
+    const element = document.querySelector<HTMLElement>(s);
+    if (!element) return false;
+    const box = element.getBoundingClientRect();
+    element.dispatchEvent(
+      new MouseEvent("contextmenu", {
+        bubbles: true,
+        cancelable: true,
+        button: 2,
+        clientX: box.left + box.width / 2,
+        clientY: box.top + box.height / 2,
+      }),
+    );
+    return true;
+  }, selector);
+  expect(found).toBe(true);
+}
+
 export async function closeAllTabs(): Promise<void> {
   const openTabs = () => browser.$$(sel.terminalTabCloseAny).length;
   const confirmation = () => browser.$(sel.confirmClosePaneConfirm);
