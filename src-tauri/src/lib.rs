@@ -33,6 +33,7 @@ pub fn run() {
             tauri::async_runtime::spawn_blocking(commands::sftp::edit::purge_stale_copies);
             // Write any load-time repair once, off the UI thread.
             tauri::async_runtime::spawn_blocking(|| {
+                storage::restrict_data_dir();
                 if let Err(e) = storage::persist_migrations() {
                     logs::log_local(
                         "warn",

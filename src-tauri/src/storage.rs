@@ -73,13 +73,17 @@ pub(crate) mod test_support {
 /// without touching the user's real one. The override is checked at
 /// every call (not memoized) so tests can rotate it between specs.
 pub fn data_dir() -> PathBuf {
-    if let Ok(override_dir) = std::env::var("SSIX_DATA_DIR") {
-        if !override_dir.is_empty() {
-            return PathBuf::from(override_dir);
-        }
-    }
-    let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("."));
-    home.join(".ssix")
+    data_dir_override().unwrap_or_else(|| {
+        let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("."));
+        home.join(".ssix")
+    })
+}
+
+fn data_dir_override() -> Option<PathBuf> {
+    std::env::var("SSIX_DATA_DIR")
+        .ok()
+        .filter(|dir| !dir.is_empty())
+        .map(PathBuf::from)
 }
 
 pub fn get_data_path() -> PathBuf {
@@ -128,6 +132,53 @@ fn read_data_file(path: &Path) -> Result<AppData, String> {
         .map_err(|e| format!("{} could not be read: {}", path.display(), e))?;
     serde_json::from_str(&content)
         .map_err(|e| format!("{} is not valid SSIX data: {}", path.display(), e))
+}
+
+/// Close the data directory and the files in it to other local users, so a
+/// file an older build left 0644 is fixed now and not at its next save. Run at
+/// startup; a failure (a filesystem without modes, a folder of someone else's)
+/// is logged and never stops the app.
+///
+/// `SSIX_DATA_DIR` may name a folder that is not SSIX's alone, even `/tmp`, so
+/// only the default folder is closed. The files are SSIX's wherever they are.
+pub fn restrict_data_dir() {
+    let close_dir = data_dir_override().is_none();
+    for problem in restrict_dir_and_files(&data_dir(), close_dir) {
+        crate::logs::log_local("warn", "storage", problem);
+    }
+}
+
+/// Returns what could not be restricted. A symlink is not followed: it leads
+/// somewhere the user chose, and the next save replaces a linked file anyway.
+fn restrict_dir_and_files(dir: &Path, close_dir: bool) -> Vec<String> {
+    let mut problems = Vec::new();
+    if close_dir && !dir.is_symlink() {
+        problems.extend(crate::backup::ensure_private_dir(dir).err());
+    }
+    for name in crate::backup::FILES {
+        problems.extend(restrict_file(&dir.join(name)).err());
+    }
+    problems
+}
+
+#[cfg(unix)]
+fn restrict_file(path: &Path) -> Result<(), String> {
+    use std::os::unix::fs::PermissionsExt;
+    let fail = |e: std::io::Error| format!("Could not protect {}: {}", path.display(), e);
+    let meta = match fs::symlink_metadata(path) {
+        Ok(meta) => meta,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(e) => return Err(fail(e)),
+    };
+    if !meta.is_file() || meta.permissions().mode() & 0o077 == 0 {
+        return Ok(());
+    }
+    fs::set_permissions(path, fs::Permissions::from_mode(0o600)).map_err(fail)
+}
+
+#[cfg(not(unix))]
+fn restrict_file(_path: &Path) -> Result<(), String> {
+    Ok(())
 }
 
 /// Save the load-time migrations once, so a repaired file stops being
@@ -269,7 +320,7 @@ pub(crate) fn atomic_write(path: &Path, content: &[u8], mode: Option<u32>) -> Re
 fn save_data_unlocked(data: &AppData) -> Result<(), String> {
     let path = get_data_path();
     let content = serde_json::to_string_pretty(data).map_err(|e| e.to_string())?;
-    atomic_write(&path, content.as_bytes(), None)?;
+    atomic_write(&path, content.as_bytes(), Some(0o600))?;
     let mut cache = DATA_CACHE.lock().unwrap_or_else(|e| e.into_inner());
     *cache = Some(CachedData {
         stamp: file_stamp(&path),
@@ -590,6 +641,105 @@ mod tests {
             final_content
         );
         let _ = fs::remove_dir_all(&*dir);
+    }
+
+    #[cfg(unix)]
+    fn mode(path: &Path) -> u32 {
+        use std::os::unix::fs::PermissionsExt;
+        fs::metadata(path).unwrap().permissions().mode() & 0o777
+    }
+
+    #[cfg(unix)]
+    fn set_mode(path: &Path, mode: u32) {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(path, fs::Permissions::from_mode(mode)).unwrap();
+    }
+
+    /// A save replaces an old world-readable file with a private one.
+    #[cfg(unix)]
+    #[test]
+    fn saving_makes_data_json_private() {
+        test_support::with_isolated_data_dir(|| {
+            write_raw(&AppData::default());
+            set_mode(&get_data_path(), 0o644);
+            with_data_mut(|_| Ok(())).unwrap();
+            assert_eq!(mode(&get_data_path()), 0o600);
+        });
+    }
+
+    /// An old 0644 file is fixed at launch, with no save needed.
+    #[cfg(unix)]
+    #[test]
+    fn restricting_fixes_old_files_and_closes_the_folder() {
+        let dir = tmp_dir();
+        set_mode(&dir, 0o755);
+        for name in crate::backup::FILES {
+            fs::write(dir.join(name), "old").unwrap();
+            set_mode(&dir.join(name), 0o644);
+        }
+        assert!(restrict_dir_and_files(&dir, true).is_empty());
+        assert_eq!(mode(&dir), 0o700);
+        for name in crate::backup::FILES {
+            assert_eq!(mode(&dir.join(name)), 0o600, "{}", name);
+            assert_eq!(fs::read_to_string(dir.join(name)).unwrap(), "old");
+        }
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn restricting_creates_a_missing_folder_private() {
+        let parent = tmp_dir();
+        let dir = parent.join(".ssix");
+        assert!(restrict_dir_and_files(&dir, true).is_empty());
+        assert_eq!(mode(&dir), 0o700);
+        let _ = fs::remove_dir_all(&parent);
+    }
+
+    /// `SSIX_DATA_DIR` may be shared: its folder stays as it is, its files
+    /// are still fixed.
+    #[cfg(unix)]
+    #[test]
+    fn an_overridden_data_dir_keeps_its_mode_but_not_loose_files() {
+        test_support::with_isolated_data_dir(|| {
+            let dir = data_dir();
+            set_mode(&dir, 0o755);
+            write_raw(&AppData::default());
+            set_mode(&get_data_path(), 0o644);
+            restrict_data_dir();
+            assert_eq!(mode(&dir), 0o755);
+            assert_eq!(mode(&get_data_path()), 0o600);
+        });
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn restricting_does_not_follow_symlinks() {
+        let tmp = tmp_dir();
+        let shared = tmp.join("shared");
+        fs::create_dir(&shared).unwrap();
+        set_mode(&shared, 0o755);
+        let link = tmp.join("linked");
+        std::os::unix::fs::symlink(&shared, &link).unwrap();
+        let shared_file = tmp.join("shared-file");
+        fs::write(&shared_file, "x").unwrap();
+        set_mode(&shared_file, 0o644);
+        std::os::unix::fs::symlink(&shared_file, shared.join("data.json")).unwrap();
+
+        assert!(restrict_dir_and_files(&link, true).is_empty());
+        assert_eq!(mode(&shared), 0o755);
+        assert_eq!(mode(&shared_file), 0o644);
+        let _ = fs::remove_dir_all(&tmp);
+    }
+
+    /// A folder that cannot be restricted is reported, not fatal.
+    #[test]
+    fn a_failure_to_restrict_is_returned_not_raised() {
+        let tmp = tmp_dir();
+        let blocked = tmp.join("a-file");
+        fs::write(&blocked, "x").unwrap();
+        assert!(!restrict_dir_and_files(&blocked.join("sub"), true).is_empty());
+        let _ = fs::remove_dir_all(&tmp);
     }
 
     /// The cache must serve repeat loads without touching the file, and
