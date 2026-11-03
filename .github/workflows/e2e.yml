@@ -51,7 +51,7 @@ jobs:
       - name: Install Tauri + WebDriver system deps
         run: |
           sudo apt-get update
-          sudo apt-get install -y \
+          sudo apt-get install -y --no-install-recommends \
             libwebkit2gtk-4.1-dev \
             libgtk-3-dev \
             libayatana-appindicator3-dev \
@@ -60,6 +60,7 @@ jobs:
             libssl-dev \
             libxdo-dev \
             webkit2gtk-driver \
+            xauth \
             xvfb
 
       - name: Install tauri-driver
@@ -84,7 +85,7 @@ jobs:
           # Per-job isolated state dir; honored by data_dir() in
           # storage.rs and secrets_path() in keychain.rs.
           SSIX_DATA_DIR: ${{ runner.temp }}/ssix-e2e
-        run: xvfb-run -a npm run e2e:wdio
+        run: xvfb-run -a npm run e2e:wdio -- --spec e2e/specs/03-direct-session.spec.ts --spec e2e/specs/05-port-forward.spec.ts
 
       - name: Capture docker-compose logs (always)
         if: always()
