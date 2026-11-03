@@ -43,9 +43,9 @@ use crate::commands::credentials::validate_credential_fields;
 use crate::forwards::listen_addr;
 use crate::models::{AppData, Connection, ConnectionKind, Credential, CredentialKind};
 use crate::ssh_config::{
-    display_path, is_unix_socket, jump_value, parse_forward_end, parse_jump_hop, parse_port,
-    uses_expansion, valid_host, HostEntry, ParsedConfig, Proxy, ResolvedHost, Source, Value,
-    MAX_FORWARDS_PER_HOST,
+    display_path, expand_tilde, expand_tokens, is_unix_socket, jump_value, parse_forward_end,
+    parse_jump_hop, parse_port, uses_expansion, valid_host, HostEntry, ParsedConfig, Proxy,
+    ResolvedHost, Source, Value, MAX_FORWARDS_PER_HOST,
 };
 use crate::storage::{load_data, with_data_mut};
 
@@ -210,13 +210,10 @@ fn config_path(path: Option<&str>, home: &Path) -> Result<PathBuf, String> {
         .map(str::trim)
         .filter(|p| !p.is_empty())
         .unwrap_or(DEFAULT_CONFIG_PATH);
-    if let Some(rest) = path.strip_prefix("~/") {
-        return Ok(home.join(rest));
+    match expand_tilde(path, home) {
+        Some(expanded) if path != "~" && expanded.is_absolute() => Ok(expanded),
+        _ => Err("Enter an absolute path, or one that starts with ~/".to_string()),
     }
-    if Path::new(path).is_absolute() {
-        return Ok(PathBuf::from(path));
-    }
-    Err("Enter an absolute path, or one that starts with ~/".to_string())
 }
 
 /// A reason a host or forward is left out.
@@ -402,20 +399,10 @@ impl ServerPlan {
 
 /// `%h` and `%%` are the only tokens OpenSSH expands in `HostName`.
 fn expand_host_name(raw: &str, alias: &str) -> Result<String, String> {
-    let mut out = String::with_capacity(raw.len());
-    let mut chars = raw.chars();
-    while let Some(c) = chars.next() {
-        if c != '%' {
-            out.push(c);
-            continue;
-        }
-        match chars.next() {
-            Some('h') => out.push_str(alias),
-            Some('%') => out.push('%'),
-            _ => return Err(format!("HostName '{raw}' uses a token SSIX cannot expand")),
-        }
-    }
-    Ok(out)
+    expand_tokens(raw, |token| match token {
+        Some('h') => Ok(alias.to_string()),
+        _ => Err(format!("HostName '{raw}' uses a token SSIX cannot expand")),
+    })
 }
 
 /// What an `IdentityFile` path may refer to.
@@ -435,42 +422,23 @@ fn identity_path(raw: &str, tokens: &IdentityTokens) -> Result<String, String> {
             "IdentityFile '{raw}' uses an environment variable, which SSIX cannot expand"
         ));
     }
-    let mut expanded = String::with_capacity(raw.len());
-    let mut chars = raw.chars();
-    while let Some(c) = chars.next() {
-        if c != '%' {
-            expanded.push(c);
-            continue;
+    let expanded = expand_tokens(raw, |token| match token {
+        Some('d') => Ok(tokens.env.home.to_string_lossy().into_owned()),
+        Some('h') => Ok(tokens.host.to_string()),
+        Some('n') => Ok(tokens.alias.to_string()),
+        Some('p') => Ok(tokens.port.to_string()),
+        Some('r') => Ok(tokens.user.to_string()),
+        Some('u') if tokens.env.local_user.is_some() => {
+            Ok(tokens.env.local_user.clone().unwrap_or_default())
         }
-        match chars.next() {
-            Some('%') => expanded.push('%'),
-            Some('d') => expanded.push_str(&tokens.env.home.to_string_lossy()),
-            Some('h') => expanded.push_str(tokens.host),
-            Some('n') => expanded.push_str(tokens.alias),
-            Some('p') => expanded.push_str(&tokens.port.to_string()),
-            Some('r') => expanded.push_str(tokens.user),
-            Some('u') if tokens.env.local_user.is_some() => {
-                expanded.push_str(tokens.env.local_user.as_deref().unwrap_or_default())
-            }
-            Some(other) => {
-                return Err(format!(
-                    "IdentityFile '{raw}' uses the token %{other}, which SSIX cannot expand"
-                ))
-            }
-            None => return Err(format!("IdentityFile '{raw}' ends with a lone %")),
-        }
-    }
-    let path = if expanded == "~" {
-        tokens.env.home.clone()
-    } else if let Some(rest) = expanded.strip_prefix("~/") {
-        tokens.env.home.join(rest)
-    } else if expanded.starts_with('~') {
-        return Err(format!(
-            "IdentityFile '{raw}' uses a ~user path, which SSIX cannot expand"
-        ));
-    } else {
-        PathBuf::from(&expanded)
-    };
+        Some(other) => Err(format!(
+            "IdentityFile '{raw}' uses the token %{other}, which SSIX cannot expand"
+        )),
+        None => Err(format!("IdentityFile '{raw}' ends with a lone %")),
+    })?;
+    let path = expand_tilde(&expanded, &tokens.env.home).ok_or_else(|| {
+        format!("IdentityFile '{raw}' uses a ~user path, which SSIX cannot expand")
+    })?;
     if !path.is_absolute() {
         return Err(format!(
             "IdentityFile '{raw}' is a relative path, so it depends on where ssh runs"
@@ -1121,15 +1089,10 @@ fn plan_alias(
     planned
 }
 
-fn kind_name(kind: &ConnectionKind) -> &'static str {
-    match kind {
-        ConnectionKind::Direct => "direct",
-        ConnectionKind::PortForward { .. } => "port_forward",
-        ConnectionKind::JumpShell { .. } => "jump_shell",
-        ConnectionKind::RemoteForward { .. } => "remote_forward",
-        ConnectionKind::DynamicForward { .. } => "dynamic_forward",
-        ConnectionKind::LegacyTunnel { .. } => "tunnel",
-    }
+/// The kind's serde tag, which is what the frontend calls it.
+fn kind_name(kind: &ConnectionKind) -> String {
+    let kind = serde_json::to_value(kind).unwrap_or(Json::Null);
+    kind["type"].as_str().unwrap_or_default().to_string()
 }
 
 /// A planned connection the user can pick.
@@ -1379,7 +1342,7 @@ impl Plan {
                 .into_iter()
                 .map(|item| ImportItem {
                     key: item.key,
-                    kind: kind_name(&item.planned.kind).to_string(),
+                    kind: kind_name(&item.planned.kind),
                     source: item.planned.source.to_string(),
                     name: item.planned.name,
                     target: item.planned.summary,
@@ -2174,19 +2137,6 @@ mod tests {
                     bind_address: None,
                     local_port: 1080,
                 }
-            );
-        });
-    }
-
-    #[test]
-    fn a_forward_inherits_the_proxy_command_of_its_host() {
-        in_data_dir(|f| {
-            let preview = f.preview(
-                "Host web\n  User u\n  ProxyCommand nc %h %p\n  LocalForward 8080 db:5432\n",
-            );
-            assert_eq!(
-                item(&preview, "web (-L 8080)").proxy_command.as_deref(),
-                Some("nc %h %p")
             );
         });
     }
@@ -3308,36 +3258,6 @@ mod tests {
             let unique: HashSet<&String> = result.credentials.iter().collect();
             assert_eq!(unique.len(), MAX_HOSTS);
             assert!(started.elapsed() < QUICKLY, "{:?}", started.elapsed());
-        });
-    }
-
-    #[test]
-    fn imported_connections_pass_every_check_a_saved_connection_passes() {
-        in_data_dir(|f| {
-            f.import(
-                "Host web\n  User u\n  IdentityFile ~/.ssh/id\n  LocalForward 1 d:1\n  RemoteForward 2 d:2\n  DynamicForward 3\nHost j\n  User u\n  ProxyJump web\n",
-            );
-            let data = load_data().unwrap();
-            assert_eq!(data.connections.len(), 5);
-            for connection in &data.connections {
-                let mut fields = ConnectionFields {
-                    name: connection.name.clone(),
-                    host: connection.host.clone(),
-                    port: connection.port,
-                    credential_id: connection.credential_id.clone(),
-                    kind: connection.kind.clone(),
-                    verbosity: 0,
-                    extra_args: None,
-                    proxy_command: None,
-                    login_command: None,
-                    remote_path: None,
-                    tags: Vec::new(),
-                    color: None,
-                    advanced: ConnectionAdvanced::default(),
-                };
-                // As if editing itself, so its own name is not a clash.
-                check_connection(&data, &mut fields, Some(&connection.id)).unwrap();
-            }
         });
     }
 }

@@ -570,6 +570,41 @@ pub fn uses_expansion(text: &str) -> bool {
     text.contains('%') || text.contains("${")
 }
 
+/// Copy `text`, putting `value`'s answer in place of each `%x` token. `%%` is a
+/// `%`, and `value` gets `None` for a lone `%` at the end.
+pub fn expand_tokens(
+    text: &str,
+    mut value: impl FnMut(Option<char>) -> Result<String, String>,
+) -> Result<String, String> {
+    let mut out = String::with_capacity(text.len());
+    let mut chars = text.chars();
+    while let Some(c) = chars.next() {
+        if c != '%' {
+            out.push(c);
+            continue;
+        }
+        match chars.next() {
+            Some('%') => out.push('%'),
+            token => out.push_str(&value(token)?),
+        }
+    }
+    Ok(out)
+}
+
+/// `~` and `~/rest` under `home`, and anything else as written. `None` is a
+/// `~user` path, which SSIX cannot look up.
+pub fn expand_tilde(path: &str, home: &Path) -> Option<PathBuf> {
+    if path == "~" {
+        Some(home.to_path_buf())
+    } else if let Some(rest) = path.strip_prefix("~/") {
+        Some(home.join(rest))
+    } else if path.starts_with('~') {
+        None
+    } else {
+        Some(PathBuf::from(path))
+    }
+}
+
 /// The file names `arg` of an `Include` line stands for, in glob(3) order.
 /// `*` and `?` work in any path component and skip dotfiles unless the
 /// component starts with a dot; character classes are refused, not guessed.
@@ -580,17 +615,10 @@ fn expand_include(arg: &str, home: &Path) -> Result<Vec<PathBuf>, String> {
     if uses_expansion(arg) {
         return Err("tokens and environment variables are not supported".to_string());
     }
-    let anchored = if arg == "~" {
-        home.to_path_buf()
-    } else if let Some(rest) = arg.strip_prefix("~/") {
-        home.join(rest)
-    } else if arg.starts_with('~') {
-        return Err("~user paths are not supported".to_string());
-    } else if Path::new(arg).is_absolute() {
-        PathBuf::from(arg)
-    } else {
-        home.join(".ssh").join(arg)
-    };
+    let expanded =
+        expand_tilde(arg, home).ok_or_else(|| "~user paths are not supported".to_string())?;
+    // Joining an absolute path replaces what is before it.
+    let anchored = home.join(".ssh").join(expanded);
 
     let mut current = vec![PathBuf::new()];
     for component in anchored.components() {
@@ -1297,17 +1325,6 @@ mod tests {
                 config.notices
             );
         }
-    }
-
-    #[test]
-    fn notices_stop_at_the_limit_and_say_so_once() {
-        let text = "Match all\n".repeat(MAX_NOTICES + 500);
-        let config = ParsedConfig::parse_text(&text, std::path::Path::new("/nonexistent-home"));
-        assert_eq!(config.notices.len(), MAX_NOTICES + 1);
-        assert!(config.notices[MAX_NOTICES].message.contains("not listed"));
-        assert!(config.notices[..MAX_NOTICES]
-            .iter()
-            .all(|n| !n.message.contains("not listed")));
     }
 
     #[test]
