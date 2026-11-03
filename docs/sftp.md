@@ -2,9 +2,10 @@
 
 The **Files** view (sidebar) shows this computer on the left and a connection's
 files on the right, with what is being copied between them underneath. Open it
-from the sidebar and pick a connection, or use **Browse files** on a connection
-row. Local forwards have no shell or files of their own, so they are not
-offered.
+from the sidebar and pick a connection, use **Browse files** on a connection
+row, or right-click a terminal tab and choose **Browse files** to see the server
+you are logged in to. Local forwards have no shell or files of their own, so they
+are not offered.
 
 ## What you can do
 

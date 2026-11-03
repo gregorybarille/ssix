@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from "vitest";
+import { beforeEach, describe, it, expect, vi } from "vitest";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import {
@@ -7,6 +7,12 @@ import {
   TerminalTab,
 } from "@/components/TerminalTabs";
 import { Connection } from "@/types";
+
+const { browseFiles } = vi.hoisted(() => ({ browseFiles: vi.fn() }));
+vi.mock("@/store/useSftpStore", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/store/useSftpStore")>()),
+  browseFiles,
+}));
 
 vi.mock("@/components/Terminal", () => ({
   Terminal: ({ sessionId, connectionName, isVisible }: {
@@ -430,6 +436,47 @@ describe("TerminalTabs", () => {
       expect(
         screen.getByRole("menuitem", { name: /close tabs to the right/i }),
       ).toBeInTheDocument();
+    });
+
+    describe("Browse files", () => {
+      const pane = (sessionId: string, connection?: Connection): TerminalSession => ({
+        sessionId,
+        connectionName: connection?.name ?? "local",
+        connection,
+      });
+      const other: Connection = { ...mockConn, id: "conn-2", name: "db-server" };
+      const openMenu = (panes: TerminalSession[]) => {
+        render(<TerminalTabs {...defaultProps} tabs={[tab("t", panes)]} activeTabId="t" />);
+        fireEvent.contextMenu(screen.getByRole("tab"));
+      };
+      beforeEach(() => browseFiles.mockClear());
+
+      it("opens the tab's server in the Files view", async () => {
+        openMenu([pane("s1", mockConn)]);
+        await userEvent.click(screen.getByRole("menuitem", { name: "Browse files" }));
+        expect(browseFiles).toHaveBeenCalledExactlyOnceWith(mockConn);
+      });
+
+      it("names each server on a split between two", async () => {
+        openMenu([pane("s1", mockConn), pane("s2", other)]);
+        expect(screen.queryByRole("menuitem", { name: "Browse files" })).toBeNull();
+        await userEvent.click(screen.getByRole("menuitem", { name: "Browse files on db-server" }));
+        expect(browseFiles).toHaveBeenCalledExactlyOnceWith(other);
+        fireEvent.contextMenu(screen.getByRole("tab"));
+        expect(screen.getByRole("menuitem", { name: "Browse files on prod-server" })).toBeInTheDocument();
+      });
+
+      it("offers one item when both panes of a split are the same server", () => {
+        openMenu([pane("s1", mockConn), pane("s2", mockConn)]);
+        expect(screen.getAllByRole("menuitem", { name: /^Browse files/ })).toHaveLength(1);
+        expect(screen.getByRole("menuitem", { name: "Browse files" })).toBeInTheDocument();
+      });
+
+      it("is not offered, nor its separator, for a pane with no connection", () => {
+        openMenu([pane("s1")]);
+        expect(screen.queryByRole("menuitem", { name: /^Browse files/ })).toBeNull();
+        expect(screen.queryByRole("separator")).toBeNull();
+      });
     });
 
     it("Close tab invokes onCloseTab with the right id", async () => {

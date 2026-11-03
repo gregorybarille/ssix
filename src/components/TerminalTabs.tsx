@@ -12,6 +12,7 @@ import {
   SplitSquareHorizontal,
   SplitSquareVertical,
   ChevronDown,
+  FolderOpen,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { AppSettings, Connection, OpenMode } from "@/types";
@@ -25,6 +26,7 @@ import { useTerminalsStore } from "@/store/useTerminalsStore";
 import { BroadcastToggle } from "./terminal/BroadcastToggle";
 import { TerminalLinkConfirm } from "./terminal/TerminalLinkConfirm";
 import { TerminalPaneOverlays } from "./terminal/TerminalPaneOverlays";
+import { browseFiles } from "@/store/useSftpStore";
 import { Group, Panel, Separator as PanelSeparator } from "react-resizable-panels";
 import {
   DropdownMenu,
@@ -226,7 +228,19 @@ export function TerminalTabs({
     if (!tab) return [];
     const otherTabs = tabs.filter((t) => t.id !== tabId);
     const tabsToRight = tabs.slice(idx + 1);
+    // One item per server: a split can hold two, or the same one twice.
+    const servers = tab.panes.flatMap((pane) => (pane.connection ? [pane.connection] : []));
+    const distinct = servers.filter(
+      (connection, i) => servers.findIndex((c) => c.id === connection.id) === i,
+    );
+    const browseItems: ContextMenuItem[] = distinct.map((connection) => ({
+      label: distinct.length > 1 ? `Browse files on ${connection.name}` : "Browse files",
+      icon: <FolderOpen className="h-3.5 w-3.5" />,
+      onClick: () => browseFiles(connection),
+    }));
     return [
+      ...browseItems,
+      ...(browseItems.length > 0 ? [{ separator: true as const }] : []),
       {
         label: "Close tab",
         icon: <X className="h-3.5 w-3.5" />,
