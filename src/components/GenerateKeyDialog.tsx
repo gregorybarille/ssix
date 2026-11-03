@@ -28,7 +28,8 @@ interface GenerateKeyDialogProps {
   onOpenChange: (open: boolean) => void;
   /** Optional default name hint used when storage = "default". */
   nameHint?: string;
-  onGenerated: (key: GeneratedKey, mode: KeyStorageMode) => void;
+  /** `passphrase` is what the key was encrypted with; empty when it was not. */
+  onGenerated: (key: GeneratedKey, mode: KeyStorageMode, passphrase: string) => void;
 }
 
 export function GenerateKeyDialog({
@@ -64,7 +65,7 @@ export function GenerateKeyDialog({
           input.path = customPath.trim();
         }
         const result = await invoke<GeneratedKey>("generate_ssh_key", { input });
-        onGenerated(result, storage);
+        onGenerated(result, storage, passphrase);
         onOpenChange(false);
         return null;
       } catch (err) {
@@ -189,6 +190,7 @@ export function GenerateKeyDialog({
             <Label htmlFor="key-passphrase-gen">Passphrase (optional)</Label>
             <PasswordInput
               id="key-passphrase-gen"
+              data-testid="generate-key-passphrase"
               placeholder="••••••••"
               autoComplete="new-password"
               value={passphrase}

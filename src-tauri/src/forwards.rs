@@ -98,6 +98,18 @@ fn open_error_message(error: &ssh2::Error, host: &str, port: u16) -> String {
 /// A channel type no server implements, for [`Uplink::probe`].
 const PROBE_CHANNEL_TYPE: &str = "ssix-probe@ssix.invalid";
 
+/// Clients a forward serves at once, counted from when they are accepted. Each
+/// costs a thread and two descriptors.
+const MAX_CLIENTS: usize = 1024;
+
+/// How long a forward stops accepting when no descriptor is free. On Linux the
+/// connection stays queued and the listener readable, so the supervisor would spin.
+const OUT_OF_DESCRIPTORS_PAUSE: Duration = Duration::from_millis(100);
+
+/// The soft limit on open files the app asks for, room for several full forwards.
+#[cfg(unix)]
+const WANTED_OPEN_FILES: libc::rlim_t = 10_240;
+
 /// How long a SOCKS client gets for each step of its handshake.
 const SOCKS_HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
 
@@ -339,13 +351,46 @@ impl Hub {
         SessionReader(&self.session_readers)
     }
 
+    /// Run `work` on a thread of its own. With no room for the client or no
+    /// thread to give it, `work` is dropped with the client in it, and the forward
+    /// goes on. A caller whose `work` holds a channel must hold the session's lock
+    /// around this; see [`free_channel`].
     fn spawn_client(self: &Arc<Self>, work: impl FnOnce(&Hub) + Send + 'static) {
+        self.start_client(work, |thread| {
+            thread::Builder::new().spawn(thread).map(drop)
+        });
+    }
+
+    fn start_client(
+        self: &Arc<Self>,
+        work: impl FnOnce(&Hub) + Send + 'static,
+        spawn: impl FnOnce(Box<dyn FnOnce() + Send>) -> io::Result<()>,
+    ) {
+        if self.in_flight.load(Ordering::SeqCst) >= MAX_CLIENTS {
+            drop(work);
+            self.status(
+                "client_error",
+                Some(format!(
+                    "Closed a new client: this forward already serves {MAX_CLIENTS}, its limit"
+                )),
+            );
+            return;
+        }
         self.in_flight.fetch_add(1, Ordering::SeqCst);
         let hub = Arc::clone(self);
-        thread::spawn(move || {
+        let thread = Box::new(move || {
             work(&hub);
             hub.in_flight.fetch_sub(1, Ordering::SeqCst);
         });
+        if let Err(e) = spawn(thread) {
+            self.in_flight.fetch_sub(1, Ordering::SeqCst);
+            self.status(
+                "client_error",
+                Some(format!(
+                    "Closed a new client: could not start a thread: {e}"
+                )),
+            );
+        }
     }
 
     /// Carry a client's bytes until either side closes or the forward ends.
@@ -410,6 +455,57 @@ impl TrafficMeter {
         self.since = now;
         self.totals = totals;
         (clients || was_moving).then_some(self.speeds)
+    }
+}
+
+/// Whether an `accept` failed only because this process or the system has no
+/// descriptor free right now.
+fn out_of_descriptors(error: &io::Error) -> bool {
+    #[cfg(unix)]
+    let codes = [libc::EMFILE, libc::ENFILE];
+    // WSAEMFILE; Winsock has no separate system-wide code.
+    #[cfg(windows)]
+    let codes = [10024];
+    error
+        .raw_os_error()
+        .is_some_and(|code| codes.contains(&code))
+}
+
+/// The soft limit on open files to ask for, if it is more than the present one.
+/// `RLIM_INFINITY` compares as the largest value, so an unlimited hard limit, which
+/// macOS reports and refuses as a soft limit, is never what gets asked for.
+#[cfg(unix)]
+fn raised_open_file_limit(soft: libc::rlim_t, hard: libc::rlim_t) -> Option<libc::rlim_t> {
+    let wanted = hard.min(WANTED_OPEN_FILES);
+    (wanted > soft).then_some(wanted)
+}
+
+/// Make room for a forward's clients: an app started from Finder gets a soft
+/// limit of 256 descriptors, which about 120 clients use up. A refusal costs only
+/// that room, since a forward survives running out.
+#[cfg(unix)]
+pub(crate) fn raise_open_file_limit() {
+    let mut limit = libc::rlimit {
+        rlim_cur: 0,
+        rlim_max: 0,
+    };
+    // SAFETY: both calls only access the struct they are given, for its duration.
+    let failed = unsafe {
+        libc::getrlimit(libc::RLIMIT_NOFILE, &mut limit) != 0
+            || raised_open_file_limit(limit.rlim_cur, limit.rlim_max).is_some_and(|soft| {
+                limit.rlim_cur = soft;
+                libc::setrlimit(libc::RLIMIT_NOFILE, &limit) != 0
+            })
+    };
+    if failed {
+        crate::logs::log_local(
+            "warn",
+            "forward",
+            format!(
+                "Could not raise the limit on open files: {}",
+                io::Error::last_os_error()
+            ),
+        );
     }
 }
 
@@ -646,6 +742,7 @@ enum Incoming {
     /// A remote forward: the server's port, through the session.
     Ssh {
         listener: ssh2::Listener,
+        session: Session,
         serve: ServeChannel,
     },
     /// Clients found only by asking, like `Ssh`, which needs a real session.
@@ -673,13 +770,28 @@ impl Incoming {
                             e.kind(),
                             io::ErrorKind::Interrupted | io::ErrorKind::ConnectionAborted
                         ) => {}
+                    Err(e) if out_of_descriptors(&e) => {
+                        hub.status(
+                            "client_error",
+                            Some(format!("Could not accept a new client: {}", e)),
+                        );
+                        thread::sleep(OUT_OF_DESCRIPTORS_PAUSE);
+                        return Ok(());
+                    }
                     Err(e) => return Err(format!("accept failed: {}", e)),
                 }
             },
-            Incoming::Ssh { listener, serve } => loop {
+            Incoming::Ssh {
+                listener,
+                session,
+                serve,
+            } => loop {
                 match listener.accept() {
                     Ok(channel) => {
                         let serve = Arc::clone(serve);
+                        // A client turned away has its channel dropped in there,
+                        // which like any free has to happen under this lock.
+                        let _locked = session.raw();
                         hub.spawn_client(move |hub| serve(hub, channel));
                     }
                     // libssh2 only says "nothing queued", also when the read
@@ -1063,7 +1175,11 @@ pub(crate) fn start_remote_forward<E: ForwardEvents>(
             });
         })
     };
-    let incoming = Incoming::Ssh { listener, serve };
+    let incoming = Incoming::Ssh {
+        listener,
+        session: uplink.session.clone(),
+        serve,
+    };
     // The supervisor reads the session to accept, even with no client on it.
     launch(uplink, incoming, remote_port, destination, 1, events)
 }
@@ -1322,6 +1438,183 @@ mod tests {
             ),
             Ok(n) => panic!("unexpected {} bytes", n),
         }
+    }
+
+    /// Whether the caller is to run the rest of the test: it does, in a process
+    /// of its own, because what it does to this process's descriptors would fail
+    /// whatever else is running.
+    #[cfg(unix)]
+    fn in_own_process(test: &str) -> bool {
+        const ALONE: &str = "SSIX_TEST_IN_OWN_PROCESS";
+        if std::env::var_os(ALONE).is_some() {
+            return true;
+        }
+        let output = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                &format!("forwards::tests::{test}"),
+                "--nocapture",
+            ])
+            .env(ALONE, "1")
+            .output()
+            .unwrap();
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert!(
+            output.status.success() && stdout.contains("1 passed"),
+            "{stdout}{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        false
+    }
+
+    #[cfg(unix)]
+    fn open_file_limit() -> libc::rlimit {
+        let mut limit = libc::rlimit {
+            rlim_cur: 0,
+            rlim_max: 0,
+        };
+        assert_eq!(
+            unsafe { libc::getrlimit(libc::RLIMIT_NOFILE, &mut limit) },
+            0
+        );
+        limit
+    }
+
+    #[cfg(unix)]
+    fn lower_open_file_limit(soft: libc::rlim_t) {
+        let mut limit = open_file_limit();
+        limit.rlim_cur = soft.min(limit.rlim_max);
+        assert_eq!(unsafe { libc::setrlimit(libc::RLIMIT_NOFILE, &limit) }, 0);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn running_out_of_descriptors_does_not_end_the_forward() {
+        if !in_own_process("running_out_of_descriptors_does_not_end_the_forward") {
+            return;
+        }
+        lower_open_file_limit(64);
+        let f = Fixture::start(timing(NEVER), &[]);
+        let mut hoard = Vec::new();
+        while let Ok(file) = std::fs::File::open("/dev/null") {
+            hoard.push(file);
+        }
+        // One left, for this end of the client. The forward's end finds none.
+        hoard.pop();
+        let _client = TcpStream::connect(("127.0.0.1", f.port)).unwrap();
+
+        wait_for("the forward to report it", SOON, || {
+            f.events.saw("client_error")
+        });
+        // Long enough to have seen more than one look at the listener.
+        thread::sleep(OUT_OF_DESCRIPTORS_PAUSE * 3);
+        assert_eq!(f.events.ended_with(), None);
+        assert_eq!(f.clients_served.load(Ordering::SeqCst), 0);
+
+        // What became of that client is the system's choice: see docs/forwards.md.
+        drop(hoard);
+        let _still_accepting = f.connected_client();
+        assert_eq!(f.events.ended_with(), None);
+    }
+
+    #[test]
+    fn only_a_shortage_of_descriptors_counts_as_one() {
+        #[cfg(unix)]
+        let (short, other) = (
+            vec![libc::EMFILE, libc::ENFILE],
+            [libc::EBADF, libc::EINVAL, libc::ENOTSOCK],
+        );
+        #[cfg(windows)]
+        let (short, other) = (vec![10024], [10004, 10009, 10038]);
+        for code in short {
+            assert!(out_of_descriptors(&io::Error::from_raw_os_error(code)));
+        }
+        for code in other {
+            assert!(!out_of_descriptors(&io::Error::from_raw_os_error(code)));
+        }
+        assert!(!out_of_descriptors(&io::Error::other("no OS code")));
+    }
+
+    #[test]
+    fn a_client_above_the_cap_is_closed_and_the_forward_stays_up() {
+        let f = Fixture::start(timing(NEVER), &[]);
+        f.hub.in_flight.store(MAX_CLIENTS - 1, Ordering::SeqCst);
+        let last_with_room = f.connected_client();
+        assert_eq!(f.hub.in_flight.load(Ordering::SeqCst), MAX_CLIENTS);
+
+        let mut refused = TcpStream::connect(("127.0.0.1", f.port)).unwrap();
+        refused.set_read_timeout(Some(SOON)).unwrap();
+        assert_dropped(&mut refused);
+        wait_for("the forward to report it", SOON, || {
+            f.events.saw("client_error")
+        });
+        assert_eq!(f.hub.in_flight.load(Ordering::SeqCst), MAX_CLIENTS);
+        assert_eq!(f.clients_served.load(Ordering::SeqCst), 1);
+        let statuses = f.events.statuses.lock().unwrap();
+        let reported = statuses.iter().find(|s| s.state == "client_error");
+        assert!(reported.unwrap().message.as_ref().unwrap().contains("1024"));
+        drop(statuses);
+
+        drop(last_with_room);
+        wait_for("the client to leave", SOON, || {
+            f.hub.in_flight.load(Ordering::SeqCst) == MAX_CLIENTS - 1
+        });
+        let _room_again = f.connected_client();
+        assert_eq!(f.events.ended_with(), None);
+    }
+
+    #[test]
+    fn a_client_whose_thread_cannot_start_is_closed_and_not_counted() {
+        let events = Arc::new(Recorder::default());
+        let hub = Arc::new(Hub::new(
+            Box::new(Arc::clone(&events)),
+            0,
+            "test".to_string(),
+            0,
+        ));
+        let (stream, mut peer) = socket_pair();
+        peer.set_read_timeout(Some(SOON)).unwrap();
+
+        hub.start_client(
+            move |_| drop(stream),
+            |_thread| Err(io::Error::other("no threads")),
+        );
+
+        assert_eq!(hub.in_flight.load(Ordering::SeqCst), 0);
+        assert_dropped(&mut peer);
+        assert!(events.saw("client_error"));
+        assert_eq!(events.ended_with(), None);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn the_open_file_limit_goes_up_to_what_is_wanted_and_never_down() {
+        let wanted = WANTED_OPEN_FILES;
+        assert_eq!(
+            raised_open_file_limit(256, libc::RLIM_INFINITY),
+            Some(wanted)
+        );
+        assert_eq!(raised_open_file_limit(256, wanted * 2), Some(wanted));
+        assert_eq!(raised_open_file_limit(256, 4096), Some(4096));
+        assert_eq!(raised_open_file_limit(4096, 4096), None);
+        assert_eq!(raised_open_file_limit(wanted, libc::RLIM_INFINITY), None);
+        assert_eq!(raised_open_file_limit(wanted * 2, wanted * 4), None);
+        assert_eq!(
+            raised_open_file_limit(libc::RLIM_INFINITY, libc::RLIM_INFINITY),
+            None
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn the_system_accepts_the_raised_open_file_limit() {
+        if !in_own_process("the_system_accepts_the_raised_open_file_limit") {
+            return;
+        }
+        lower_open_file_limit(256);
+        raise_open_file_limit();
+        let limit = open_file_limit();
+        assert_eq!(limit.rlim_cur, limit.rlim_max.min(WANTED_OPEN_FILES));
     }
 
     #[test]
@@ -1884,6 +2177,44 @@ mod live {
 
             assert_closed(&mut client);
             assert!(port_is_closed(port));
+        });
+    }
+
+    /// A client whose bytes nothing on the server takes is not reading its socket,
+    /// so the shutdown that stops a forward cannot reach it. Ending the session does.
+    #[test]
+    #[ignore]
+    fn live_stopping_a_forward_ends_a_client_stuck_on_a_shut_window() {
+        with_isolated_data_dir(|| {
+            let port = free_server_port();
+            let service = crate::ssh::open_authenticated_session(&server(), 0, None).unwrap();
+            let mut listener = service.channel_session().unwrap();
+            listener
+                .exec(&format!("nc -l -p {port} | sleep 600"))
+                .unwrap();
+            service.set_blocking(false);
+            thread::sleep(Duration::from_millis(500));
+
+            let (local_port, handle, events) = forward_to_server_port(port);
+            let mut client = connect(local_port);
+            client.set_nonblocking(true).unwrap();
+            let chunk = vec![0u8; 64 * 1024];
+            let mut moved = Instant::now();
+            while moved.elapsed() < Duration::from_secs(2) {
+                match client.write(&chunk) {
+                    Ok(_) => moved = Instant::now(),
+                    Err(e) if e.kind() == io::ErrorKind::WouldBlock => {
+                        thread::sleep(Duration::from_millis(20));
+                    }
+                    Err(e) => panic!("the tunnel failed: {e}"),
+                }
+            }
+            assert!(!events.saw("client_closed"));
+
+            stop(&handle, &events);
+            wait_for("the client's thread to end", SOON, || {
+                events.saw("client_closed")
+            });
         });
     }
 

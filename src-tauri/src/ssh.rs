@@ -20,7 +20,7 @@
 //! the session log (`crate::session_log`).
 
 use std::io::{self, Read, Write};
-use std::net::{Shutdown, SocketAddr, TcpListener, TcpStream, ToSocketAddrs};
+use std::net::{Shutdown, SocketAddr, TcpStream, ToSocketAddrs};
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender, TryRecvError};
@@ -43,13 +43,13 @@ pub(crate) const SESSION_TIMEOUT_MS: u32 = 15_000;
 /// Longest an idle worker waits for socket readiness before re-checking its queue.
 /// Idle wait for a thread that shares its session with another that reads it.
 const SHARED_WAIT_MAX: Duration = Duration::from_millis(10);
-/// Longest single park while waiting for a socket to become writable.
-const WRITE_WAIT_MAX: Duration = Duration::from_millis(50);
 const WAIT_MAX: Duration = Duration::from_millis(250);
 /// Cap on bytes coalesced into one output message.
 const OUTPUT_COALESCE_MAX: usize = 256 * 1024;
-/// How long a non-blocking write may wait on `WouldBlock` before giving up.
-const WRITE_STALL_TIMEOUT: Duration = Duration::from_secs(10);
+/// Output the terminal has not caught up with, at which a shell stops reading
+/// more. The SSH window then pushes back on the server. xterm throws away what it
+/// is given above 50 MB; the frontend's own buffer adds up to 4 MB on top of this.
+const OUTPUT_PAUSE_BYTES: u64 = 8 * 1024 * 1024;
 /// libssh2's "call again later" code, surfaced by ssh2 as `ErrorCode::Session`.
 const LIBSSH2_ERROR_EAGAIN: i32 = -37;
 /// libssh2's answer to waiting for a channel to close before the server's EOF.
@@ -57,6 +57,8 @@ const LIBSSH2_ERROR_INVAL: i32 = -34;
 /// Unanswered keepalive intervals before a session counts as dead, as with
 /// OpenSSH's default `ServerAliveCountMax`.
 const KEEPALIVE_MAX_MISSED: u32 = 3;
+/// How often a jump host bridge with bytes waiting sends a keepalive.
+const BRIDGE_KEEPALIVE_SECS: u32 = 30;
 /// libssh2 sends no more often than this, whatever the configured interval.
 const KEEPALIVE_MIN_INTERVAL_SECS: u32 = 2;
 /// Puts a terminal back to normal after a shell vanished mid-program: leaves
@@ -225,6 +227,7 @@ pub enum SessionMsg {
 pub struct SessionHandle {
     tx: Sender<SessionMsg>,
     waker: Arc<wake::Waker>,
+    unacked_output: Arc<AtomicU64>,
 }
 
 impl SessionHandle {
@@ -235,23 +238,42 @@ impl SessionHandle {
         self.waker.wake();
         Ok(())
     }
+
+    /// The terminal has taken `bytes` of output. More than was sent only clears
+    /// the count, at the cost of a pause that comes later.
+    pub fn ack_output(&self, bytes: u64) {
+        let _ = self
+            .unacked_output
+            .try_update(Ordering::SeqCst, Ordering::SeqCst, |unacked| {
+                Some(unacked.saturating_sub(bytes))
+            });
+        self.waker.wake();
+    }
 }
 
 /// Worker side of the control channel.
 pub(crate) struct ControlRx {
     pub(crate) rx: Receiver<SessionMsg>,
     pub(crate) wake: wake::WakeReceiver,
+    /// Output sent to the terminal and not acknowledged yet.
+    unacked_output: Arc<AtomicU64>,
 }
 
 pub(crate) fn control_channel() -> Result<(SessionHandle, ControlRx), String> {
     let (tx, rx) = mpsc::channel();
     let (waker, wake) = wake::pair().map_err(|e| format!("Failed to create wake pipe: {}", e))?;
+    let unacked_output = Arc::new(AtomicU64::new(0));
     Ok((
         SessionHandle {
             tx,
             waker: Arc::new(waker),
+            unacked_output: Arc::clone(&unacked_output),
         },
-        ControlRx { rx, wake },
+        ControlRx {
+            rx,
+            wake,
+            unacked_output,
+        },
     ))
 }
 
@@ -299,15 +321,20 @@ pub(crate) mod wake {
         t.as_raw_fd()
     }
 
-    fn poll(fds: &[Fd], events: libc::c_short, timeout: Duration) {
-        let mut polls: Vec<libc::pollfd> = fds
-            .iter()
-            .map(|&fd| libc::pollfd {
-                fd,
-                events,
-                revents: 0,
-            })
-            .collect();
+    /// Block until one of `readable` can be read, one of `writable` can be
+    /// written, or `timeout` elapses.
+    pub fn wait_ready(readable: &[Fd], writable: &[Fd], timeout: Duration) {
+        let polls_of = |fds: &[Fd], events| {
+            fds.iter()
+                .map(|&fd| libc::pollfd {
+                    fd,
+                    events,
+                    revents: 0,
+                })
+                .collect::<Vec<_>>()
+        };
+        let mut polls = polls_of(readable, libc::POLLIN);
+        polls.extend(polls_of(writable, libc::POLLOUT));
         let ms = timeout.as_millis().min(i32::MAX as u128) as libc::c_int;
         // SAFETY: `polls` is a valid, initialised array of `pollfd` that
         // outlives the call, and `len` matches its length.
@@ -318,12 +345,12 @@ pub(crate) mod wake {
 
     /// Block until one of `fds` is readable or `timeout` elapses.
     pub fn wait_readable(fds: &[Fd], timeout: Duration) {
-        poll(fds, libc::POLLIN, timeout);
+        wait_ready(fds, &[], timeout);
     }
 
     /// Block until `fd` is writable or `timeout` elapses.
     pub fn wait_writable(fd: Fd, timeout: Duration) {
-        poll(&[fd], libc::POLLOUT, timeout);
+        wait_ready(&[], &[fd], timeout);
     }
 
     fn ready_now(fd: Fd, events: libc::c_short) -> bool {
@@ -390,12 +417,16 @@ pub(crate) mod wake {
     }
 
     /// No readiness notification on Windows yet: poll at a short interval.
-    pub fn wait_readable(_fds: &[Fd], timeout: Duration) {
+    pub fn wait_ready(_readable: &[Fd], _writable: &[Fd], timeout: Duration) {
         std::thread::sleep(timeout.min(Duration::from_millis(5)));
     }
 
-    pub fn wait_writable(_fd: Fd, timeout: Duration) {
-        std::thread::sleep(timeout.min(Duration::from_millis(5)));
+    pub fn wait_readable(fds: &[Fd], timeout: Duration) {
+        wait_ready(fds, &[], timeout);
+    }
+
+    pub fn wait_writable(fd: Fd, timeout: Duration) {
+        wait_ready(&[], &[fd], timeout);
     }
 
     /// Whether `fd` has something to read (or was closed), without waiting
@@ -606,7 +637,14 @@ fn open_session_unless_cancelled(
         session.set_compress(true);
     }
 
+    let host_key_order =
+        crate::known_hosts::prefer_recorded_key_types(&session, &endpoint.host, endpoint.port)?;
     debug.proposal(&session);
+    if let Some(order) = host_key_order {
+        debug.at(3, || {
+            format!("host key algorithms, recorded types first: {}", order)
+        });
+    }
     session.set_tcp_stream(tcp);
     debug.at(1, || "Starting key exchange.".to_string());
     let started = Instant::now();
@@ -1110,11 +1148,13 @@ fn spawn_shell_worker(
     thread::spawn(move || {
         ctx.send_output(banner.as_bytes());
         let mut io = ShellIo {
-            log: resilience
-                .log
-                .as_ref()
-                .and_then(|plan| open_log(&ctx, plan)),
-            ctx,
+            out: AppOutput {
+                log: resilience
+                    .log
+                    .as_ref()
+                    .and_then(|plan| open_log(&ctx, plan)),
+                ctx,
+            },
             control,
             pty_size: None,
         };
@@ -1127,8 +1167,8 @@ fn spawn_shell_worker(
                 ShellEnd::Dropped(reason) => reason,
             };
             attempts.shell_ended(opened.elapsed());
-            io.report_lost(source, &reason);
-            let ctx = &io.ctx;
+            io.out.report_lost(source, &reason);
+            let ctx = &io.out.ctx;
             let emit = |event: OutputEvent| {
                 log_recovery(ctx, source, &event);
                 ctx.send_event(event);
@@ -1145,13 +1185,13 @@ fn spawn_shell_worker(
             .run(reason);
             match reopened {
                 Some(next) => {
-                    io.report_reconnected(source);
+                    io.out.report_reconnected(source);
                     shell = next;
                 }
                 None => break,
             }
         }
-        io.ctx.finish();
+        io.out.ctx.finish();
     });
 }
 
@@ -1218,17 +1258,38 @@ fn warn_log_stopped(ctx: &SessionContext, reason: &str) {
     );
 }
 
+/// Where a shell's output and troubles go. A trait so that tests can run
+/// [`run_io_loop`] against a real server without a Tauri app.
+trait ShellOutput {
+    fn output(&mut self, bytes: &[u8]);
+    fn warn(&self, message: String);
+}
+
 /// A shell worker's state that survives a reconnect.
-struct ShellIo {
-    ctx: SessionContext,
+struct ShellIo<O> {
+    out: O,
     control: ControlRx,
-    log: Option<SessionLog>,
     /// The terminal's last known size, for the next shell.
     pty_size: Option<(u32, u32)>,
 }
 
-impl ShellIo {
-    /// Send shell output to the terminal and the log.
+impl<O: ShellOutput> ShellIo<O> {
+    /// Hand over shell output, counted first so that an ack cannot beat it.
+    fn print(&mut self, bytes: &[u8]) {
+        self.control
+            .unacked_output
+            .fetch_add(bytes.len() as u64, Ordering::SeqCst);
+        self.out.output(bytes);
+    }
+}
+
+/// The terminal and the session log.
+struct AppOutput {
+    ctx: SessionContext,
+    log: Option<SessionLog>,
+}
+
+impl ShellOutput for AppOutput {
     fn output(&mut self, bytes: &[u8]) {
         if bytes.is_empty() {
             return;
@@ -1237,6 +1298,16 @@ impl ShellIo {
         self.write_log(|log| log.append(bytes));
     }
 
+    fn warn(&self, message: String) {
+        self.ctx.log(
+            "warn",
+            "ssh",
+            format!("session {}: {}", self.ctx.session_id, message),
+        );
+    }
+}
+
+impl AppOutput {
     fn write_log(&mut self, write: impl FnOnce(&mut SessionLog) -> io::Result<()>) {
         let Some(log) = self.log.as_mut() else { return };
         if let Err(e) = write(log) {
@@ -1299,37 +1370,78 @@ pub(crate) fn close_channel(channel: &mut ssh2::Channel) -> bool {
     retry(&mut || channel.wait_close())
 }
 
-/// Write all of `data` to a non-blocking writer so a large paste or burst
-/// is never truncated. On `WouldBlock` the thread parks until `fd` (the
-/// socket behind `w`) is writable, or briefly sleeps when no fd is known.
-fn write_all_nonblocking<W: Write>(w: &mut W, data: &[u8], fd: Option<wake::Fd>) -> io::Result<()> {
-    let mut written = 0;
-    let start = Instant::now();
-    while written < data.len() {
-        match w.write(&data[written..]) {
-            Ok(0) => return Err(io::Error::new(io::ErrorKind::WriteZero, "write returned 0")),
-            Ok(n) => written += n,
-            Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => {
-                if start.elapsed() > WRITE_STALL_TIMEOUT {
-                    return Err(io::Error::new(
-                        io::ErrorKind::TimedOut,
-                        "peer stopped reading",
-                    ));
+/// Bytes read from one side that the other has not taken yet. Offered once per
+/// pass of a loop, so that whatever is slow here holds up nothing else.
+#[derive(Default)]
+struct Outgoing {
+    data: Vec<u8>,
+    sent: usize,
+}
+
+impl Outgoing {
+    fn is_empty(&self) -> bool {
+        self.sent == self.data.len()
+    }
+
+    fn push(&mut self, bytes: &[u8]) {
+        self.data.extend_from_slice(bytes);
+    }
+
+    /// Offer what is left to `w`, once, and return how much it took. libssh2
+    /// must be offered the same bytes again after a refusal, which this does.
+    /// A channel with no window left may answer 0 instead of refusing.
+    ///
+    /// Never `flush`: nothing is buffered on the way out, and an ssh2 channel's
+    /// flush throws away what libssh2 has queued to read. For a queued packet
+    /// under four bytes, such as the echo of a keystroke, it also sends a window
+    /// adjust of about 2^32 and OpenSSH drops the connection over it.
+    fn send<W: Write>(&mut self, w: &mut W) -> io::Result<usize> {
+        if self.is_empty() {
+            return Ok(0);
+        }
+        match w.write(&self.data[self.sent..]) {
+            Ok(n) => {
+                self.sent += n;
+                if self.is_empty() {
+                    self.data.clear();
+                    self.sent = 0;
                 }
-                match fd {
-                    Some(fd) => wake::wait_writable(fd, WRITE_WAIT_MAX),
-                    None => thread::sleep(Duration::from_millis(1)),
-                }
+                Ok(n)
             }
-            Err(ref e) if e.kind() == io::ErrorKind::Interrupted => {}
-            Err(e) => return Err(e),
+            Err(ref e)
+                if matches!(
+                    e.kind(),
+                    io::ErrorKind::WouldBlock | io::ErrorKind::Interrupted
+                ) =>
+            {
+                Ok(0)
+            }
+            Err(e) => Err(e),
         }
     }
-    // Never `flush`: nothing is buffered on the way out, and an ssh2 channel's
-    // flush throws away what libssh2 has queued to read. For a queued packet
-    // under four bytes, such as the echo of a keystroke, it also sends a window
-    // adjust of about 2^32 and OpenSSH drops the connection over it.
-    Ok(())
+}
+
+/// Whether a packet is waiting for room on the socket, rather than for the
+/// server to open the channel's window.
+fn send_blocked_on_socket(session: &Session) -> bool {
+    matches!(
+        session.block_directions(),
+        ssh2::BlockDirections::Outbound | ssh2::BlockDirections::Both
+    )
+}
+
+/// Move what the server has sent from the socket into libssh2's queue, without
+/// sending anything. `channel.read` cannot be relied on for it: when the channel
+/// needs a bigger window it asks for that first, and libssh2 refuses a new packet
+/// while another is half sent, so the read returns without reading. A server with
+/// its own output backed up stops reading us, the half-sent packet stays, and
+/// neither side moves again. `wait_eof` only reads. The server cannot send more
+/// than the window, so the queue is bounded by that.
+fn take_in(channel: &mut ssh2::Channel) -> Result<(), ssh2::Error> {
+    match channel.wait_eof() {
+        Err(e) if !is_eagain(&e) => Err(e),
+        _ => Ok(()),
+    }
 }
 
 /// Notices a connection that has gone silent. libssh2 sends keepalives but
@@ -1400,7 +1512,7 @@ fn server_sent_eof(channel: &mut ssh2::Channel) -> bool {
 
 /// Pump shell output to the frontend and frontend input to the shell until
 /// the channel closes, the frontend disconnects or the connection dies.
-fn run_io_loop(shell: OpenShell, io: &mut ShellIo) -> ShellEnd {
+fn run_io_loop<O: ShellOutput>(shell: OpenShell, io: &mut ShellIo<O>) -> ShellEnd {
     let OpenShell {
         session,
         mut channel,
@@ -1412,12 +1524,16 @@ fn run_io_loop(shell: OpenShell, io: &mut ShellIo) -> ShellEnd {
     let mut pending: Vec<u8> = Vec::with_capacity(OUTPUT_COALESCE_MAX);
     let fds = [wake::fd_of(&session), io.control.wake.fd()];
     let mut watchdog = KeepaliveWatchdog::new(keepalive_interval, Instant::now());
-
+    // Input the server's side has not taken yet. Never waited for here: the
+    // loop has to go on reading, and the watchdog judges a server that stops.
+    let mut input = Outgoing::default();
+    let mut send_blocked = false;
     // A reconnected shell starts at the PTY's default size; the terminal only
     // reports a size when it changes.
-    if let Some((cols, rows)) = io.pty_size {
-        resize_pty(&mut channel, cols, rows, &io.ctx);
-    }
+    let mut resize = PtyResize {
+        wanted: io.pty_size,
+        ..PtyResize::default()
+    };
 
     loop {
         let mut active = false;
@@ -1435,43 +1551,45 @@ fn run_io_loop(shell: OpenShell, io: &mut ShellIo) -> ShellEnd {
             watchdog.heard(Instant::now());
         }
 
+        // Above the limit, leave the output where it is: unread, it keeps the SSH
+        // window shut. Everything else in this loop goes on, so a Ctrl+C gets
+        // through to stop a flood.
+        let paused = io.control.unacked_output.load(Ordering::SeqCst) >= OUTPUT_PAUSE_BYTES;
+
         // Drain everything the remote has for us. Extended data arrives here
         // too: `open_shell_over_stream` merges it into this stream.
-        loop {
-            match channel.read(&mut buf) {
-                Ok(0) => {
-                    eof = true;
-                    break;
-                }
-                Ok(n) => {
-                    pending.extend_from_slice(&buf[..n]);
-                    active = true;
-                    watchdog.heard(Instant::now());
-                    if pending.len() >= OUTPUT_COALESCE_MAX {
+        if !paused {
+            loop {
+                match channel.read(&mut buf) {
+                    Ok(0) => {
+                        eof = true;
                         break;
                     }
-                }
-                Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => break,
-                Err(e) => {
-                    io.output(&pending);
-                    return after_io_error(&mut channel, format!("SSH read error: {}", e));
+                    Ok(n) => {
+                        pending.extend_from_slice(&buf[..n]);
+                        active = true;
+                        watchdog.heard(Instant::now());
+                        if pending.len() >= OUTPUT_COALESCE_MAX {
+                            break;
+                        }
+                    }
+                    Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => break,
+                    Err(e) => {
+                        io.print(&pending);
+                        return after_io_error(&mut channel, format!("SSH read error: {}", e));
+                    }
                 }
             }
         }
-        io.output(&pending);
+        io.print(&pending);
 
         // Apply everything the frontend queued.
         loop {
             match io.control.rx.try_recv() {
-                Ok(SessionMsg::Write(data)) => {
-                    active = true;
-                    if let Err(e) = write_all_nonblocking(&mut channel, &data, Some(fds[0])) {
-                        return after_io_error(&mut channel, format!("SSH write error: {}", e));
-                    }
-                }
+                Ok(SessionMsg::Write(data)) => input.push(&data),
                 Ok(SessionMsg::Resize { cols, rows }) => {
                     io.pty_size = Some((cols, rows));
-                    resize_pty(&mut channel, cols, rows, &io.ctx);
+                    resize.wanted = io.pty_size;
                 }
                 Ok(SessionMsg::Disconnect) | Err(TryRecvError::Disconnected) => {
                     close_channel(&mut channel);
@@ -1480,6 +1598,23 @@ fn run_io_loop(shell: OpenShell, io: &mut ShellIo) -> ShellEnd {
                 Ok(SessionMsg::Reconnect | SessionMsg::CancelReconnect) => {}
                 Err(TryRecvError::Empty) => break,
             }
+        }
+
+        if let Err(e) = resize.send(|cols, rows| channel.request_pty_size(cols, rows, None, None)) {
+            io.out.warn(format!("resize failed: {}", e));
+        }
+        match input.send(&mut channel) {
+            Ok(0) => {}
+            Ok(_) => {
+                active = true;
+                // A full socket that has room again was emptied by the server's
+                // TCP acknowledging it. Keepalives can starve while input fills
+                // every gap, so this is what says the server is there.
+                if send_blocked {
+                    watchdog.heard(Instant::now());
+                }
+            }
+            Err(e) => return after_io_error(&mut channel, format!("SSH write error: {}", e)),
         }
 
         // libssh2 reports a lost connection as a failed read, so a read of 0
@@ -1502,11 +1637,30 @@ fn run_io_loop(shell: OpenShell, io: &mut ShellIo) -> ShellEnd {
             }
         }
 
+        let sending = !input.is_empty() || resize.wanted.is_some();
+        send_blocked = !active && send_blocked_on_socket(&session);
         if !active {
+            // While paused this also keeps the watchdog's view of the socket true
+            // and notices a lost connection, and sshd, its output moving, goes on
+            // reading what is sent to it.
+            if sending || send_blocked || paused {
+                if let Err(e) = take_in(&mut channel) {
+                    return after_io_error(&mut channel, format!("SSH read error: {}", e));
+                }
+                // A write reads the socket too, so output may wait in libssh2
+                // with nothing left on the socket to wake this thread.
+                if !paused && !send_blocked && channel.read_window().available > 0 {
+                    continue;
+                }
+            }
             let shared = agent_pump
                 .as_ref()
                 .is_some_and(crate::agent::ForwardPump::serving);
-            wake::wait_readable(&fds, idle_wait(shared));
+            // A shut window has to wait for the server: the socket is writable
+            // all along, and waiting on that would spin.
+            let socket = [fds[0]];
+            let writable: &[wake::Fd] = if send_blocked { &socket } else { &[] };
+            wake::wait_ready(&fds, writable, idle_wait(shared));
             io.control.wake.drain();
         }
     }
@@ -1535,16 +1689,39 @@ pub(crate) fn send_due_keepalive(session: &Session, fd: wake::Fd) -> Result<(), 
     session.keepalive_send().map(drop)
 }
 
-fn resize_pty(channel: &mut ssh2::Channel, cols: u32, rows: u32, ctx: &SessionContext) {
-    if let Err(e) = channel.request_pty_size(cols, rows, None, None) {
-        ctx.log(
-            "warn",
-            "ssh",
-            format!(
-                "session {} resize to {}x{} failed: {}",
-                ctx.session_id, cols, rows, e
-            ),
-        );
+/// A PTY size on its way to the server. libssh2 keeps a window-change it could
+/// not finish sending and refuses every other packet until it is retried, so one
+/// left behind jams the session. It cannot be retried in a loop on the spot
+/// either: while input is half sent the refusal lasts until the input goes, and
+/// that needs the worker's loop. So it is offered once per pass, like input.
+#[derive(Default)]
+struct PtyResize {
+    wanted: Option<(u32, u32)>,
+    /// The size libssh2 has kept: a retry sends this, whatever it is asked for.
+    kept: Option<(u32, u32)>,
+}
+
+impl PtyResize {
+    fn send(
+        &mut self,
+        send: impl FnOnce(u32, u32) -> Result<(), ssh2::Error>,
+    ) -> Result<(), ssh2::Error> {
+        let Some(size) = self.wanted else {
+            return Ok(());
+        };
+        match send(size.0, size.1) {
+            Err(e) if is_eagain(&e) => {
+                self.kept.get_or_insert(size);
+                Ok(())
+            }
+            result => {
+                // A newer size that came in meanwhile has still to go.
+                if self.kept.take().is_none_or(|kept| kept == size) {
+                    self.wanted = None;
+                }
+                result
+            }
+        }
     }
 }
 
@@ -1577,10 +1754,17 @@ pub(crate) struct Traffic {
     pub(crate) received: AtomicU64,
 }
 
-/// Forward bytes between a local TCP socket and an SSH `direct-tcpip`
-/// channel. Both ends are non-blocking; the thread sleeps in `poll(2)` on
-/// both sockets while idle, so neither direction can stall the other and an
-/// idle forward costs no CPU.
+/// Forward bytes between a local TCP socket and an SSH `direct-tcpip` channel,
+/// as `ssh -L` does. Each direction holds what its destination has not taken and
+/// reads no more from its source until it has, so a side that stops reading slows
+/// its sender down, however long for, and never holds up the other direction. The
+/// thread sleeps in `poll(2)` on what it is waiting for, so a stalled or idle
+/// forward costs no CPU.
+///
+/// There is no time limit. It ends when the local side closes or resets, the
+/// channel ends, or the session fails, and whoever owns the session is the one to
+/// notice a dead one: a forward's probes, or the keepalive of a jump host bridge,
+/// which turns into a failure here once the operating system gives up on it.
 /// `clients` counts the forwarders sharing `session`: see [`idle_wait`].
 pub(crate) fn forward_bidi(
     mut local: TcpStream,
@@ -1593,28 +1777,35 @@ pub(crate) fn forward_bidi(
     local.set_nodelay(true).ok();
     let local_fd = wake::fd_of(&local);
     let session_fd = wake::fd_of(session);
-    let fds = [local_fd, session_fd];
     let mut buf = vec![0u8; 64 * 1024];
+    let mut up = Outgoing::default();
+    let mut down = Outgoing::default();
 
     loop {
         let mut idle = true;
 
-        // local → channel
-        match local.read(&mut buf) {
-            Ok(0) => {
-                let _ = channel.send_eof();
-                close_channel(&mut channel);
-                return;
-            }
-            Ok(n) => {
-                if write_all_nonblocking(&mut channel, &buf[..n], Some(session_fd)).is_err() {
+        // local → channel. Local data read before the client closed still goes
+        // out first, however long that takes.
+        if up.is_empty() {
+            match local.read(&mut buf) {
+                Ok(0) => {
                     close_channel(&mut channel);
                     return;
                 }
+                Ok(n) => up.push(&buf[..n]),
+                Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => {}
+                Err(_) => {
+                    close_channel(&mut channel);
+                    return;
+                }
+            }
+        }
+        match up.send(&mut channel) {
+            Ok(0) => {}
+            Ok(n) => {
                 traffic.sent.fetch_add(n as u64, Ordering::Relaxed);
                 idle = false;
             }
-            Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => {}
             Err(_) => {
                 close_channel(&mut channel);
                 return;
@@ -1622,35 +1813,92 @@ pub(crate) fn forward_bidi(
         }
 
         // channel → local
-        match channel.read(&mut buf) {
-            Ok(0) => {
-                let _ = local.shutdown(Shutdown::Both);
-                return;
-            }
-            Ok(n) => {
-                if write_all_nonblocking(&mut local, &buf[..n], Some(local_fd)).is_err() {
-                    close_channel(&mut channel);
+        if down.is_empty() {
+            match channel.read(&mut buf) {
+                Ok(0) => {
+                    let _ = local.shutdown(Shutdown::Both);
                     return;
                 }
+                Ok(n) => down.push(&buf[..n]),
+                Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => {}
+                Err(_) => {
+                    let _ = local.shutdown(Shutdown::Both);
+                    return;
+                }
+            }
+        }
+        match down.send(&mut local) {
+            Ok(0) => {}
+            Ok(n) => {
                 traffic.received.fetch_add(n as u64, Ordering::Relaxed);
                 idle = false;
             }
-            Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => {}
             Err(_) => {
-                let _ = local.shutdown(Shutdown::Both);
+                close_channel(&mut channel);
                 return;
             }
         }
 
-        if channel.eof() {
+        if down.is_empty() && channel.eof() {
             let _ = local.shutdown(Shutdown::Both);
             return;
         }
 
         if idle {
-            wake::wait_readable(&fds, idle_wait(clients.load(Ordering::Relaxed) > 1));
+            let send_blocked = send_blocked_on_socket(session);
+            if !up.is_empty() || send_blocked {
+                // A close with data still queued looks like more data, so only a
+                // reset shows here. Closing leaves libssh2 no half-sent packet
+                // that it would refuse the close for.
+                if !send_blocked && was_reset(&local) {
+                    close_channel(&mut channel);
+                    return;
+                }
+                if send_due_keepalive(session, session_fd).is_err()
+                    || take_in(&mut channel).is_err()
+                {
+                    let _ = local.shutdown(Shutdown::Both);
+                    close_channel(&mut channel);
+                    return;
+                }
+                // A write reads the socket too, so output may wait in libssh2
+                // with nothing left on the socket to wake this thread.
+                if !send_blocked && down.is_empty() && channel.read_window().available > 0 {
+                    continue;
+                }
+            }
+            let wanted = |fd: wake::Fd, yes: bool| yes.then_some(fd);
+            let readable: Vec<_> = [
+                wanted(local_fd, up.is_empty()),
+                wanted(session_fd, down.is_empty()),
+            ]
+            .into_iter()
+            .flatten()
+            .collect();
+            let writable: Vec<_> = [
+                wanted(local_fd, !down.is_empty()),
+                wanted(session_fd, send_blocked),
+            ]
+            .into_iter()
+            .flatten()
+            .collect();
+            wake::wait_ready(
+                &readable,
+                &writable,
+                idle_wait(clients.load(Ordering::Relaxed) > 1),
+            );
         }
     }
+}
+
+/// Whether the peer of a non-blocking socket has aborted the connection. macOS
+/// goes on returning bytes it already had, so a failed read alone would not say.
+fn was_reset(socket: &TcpStream) -> bool {
+    matches!(socket.take_error(), Ok(Some(_)))
+        || matches!(
+            socket.peek(&mut [0u8; 1]),
+            Err(e) if !matches!(e.kind(), io::ErrorKind::WouldBlock | io::ErrorKind::Interrupted)
+        )
 }
 
 /// Bridge a loopback TCP stream to `destination_host:destination_port`
@@ -1673,14 +1921,14 @@ fn bridge_unless_cancelled(
     verbosity: u8,
     cancelled: Option<&AtomicBool>,
 ) -> Result<TcpStream, String> {
-    let listener = TcpListener::bind("127.0.0.1:0")
-        .map_err(|e| format!("Failed to bind ephemeral loopback port: {}", e))?;
-    let local_port = listener
-        .local_addr()
-        .map_err(|e| format!("local_addr() failed: {}", e))?
-        .port();
     let gateway_session = open_hop_unless_cancelled(gateway, "Jump host", verbosity, cancelled)?;
     let debug = SshDebug::new(verbosity, gateway.addr());
+    // Past the jump host's login, so no port is open while that takes its time.
+    let (stream, local_stream) = crate::proxy::loopback_pair()
+        .map_err(|e| format!("Failed to connect inner SSH session: {}", e))?;
+    let peer = local_stream
+        .peer_addr()
+        .map_err(|e| format!("Failed to connect inner SSH session: {}", e))?;
 
     let (ready_tx, ready_rx) = mpsc::channel::<Result<(), String>>();
     {
@@ -1693,13 +1941,6 @@ fn bridge_unless_cancelled(
                     destination_host, destination_port
                 )
             });
-            let (local_stream, peer) = match listener.accept() {
-                Ok(accepted) => accepted,
-                Err(e) => {
-                    let _ = ready_tx.send(Err(format!("accept() failed: {}", e)));
-                    return;
-                }
-            };
             // Blocking open (single channel, nothing else to stall), then
             // non-blocking for the forwarding loop.
             match session.channel_direct_tcpip(
@@ -1710,6 +1951,11 @@ fn bridge_unless_cancelled(
                 Ok(channel) => {
                     debug.at(2, || format!("direct-tcpip channel open for {}", peer));
                     session.set_blocking(false);
+                    // Nobody watches this session. Once the jump host dies under
+                    // bytes waiting for its window, something has to go out for
+                    // the operating system to give up on. No reply, so nothing
+                    // piles up in libssh2.
+                    session.set_keepalive(false, BRIDGE_KEEPALIVE_SECS);
                     let _ = ready_tx.send(Ok(()));
                     forward_bidi(
                         local_stream,
@@ -1726,15 +1972,6 @@ fn bridge_unless_cancelled(
             }
         });
     }
-
-    let stream = match TcpStream::connect(("127.0.0.1", local_port)) {
-        Ok(stream) => stream,
-        Err(e) => {
-            // Unblock accept() so the forwarder thread can exit.
-            let _ = TcpStream::connect(("127.0.0.1", local_port));
-            return Err(format!("Failed to connect inner SSH session: {}", e));
-        }
-    };
 
     let budget = CONNECT_TIMEOUT + Duration::from_millis(SESSION_TIMEOUT_MS as u64);
     match ready_rx.recv_timeout(budget) {
@@ -1920,7 +2157,11 @@ mod credential_failure_tests {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::net::TcpListener;
     use std::sync::atomic::AtomicU8;
+
+    #[cfg(unix)]
+    mod live_io;
 
     #[test]
     fn test_ssh_state_new() {
@@ -2018,34 +2259,175 @@ mod tests {
         assert!(start.elapsed() >= Duration::from_millis(25));
     }
 
+    /// Write all of `data` to a non-blocking writer, giving up after 10 s
+    /// without progress.
+    fn write_all_nonblocking<W: Write>(
+        w: &mut W,
+        data: &[u8],
+        fd: Option<wake::Fd>,
+    ) -> io::Result<()> {
+        let mut outgoing = Outgoing::default();
+        outgoing.push(data);
+        let mut moved = Instant::now();
+        while !outgoing.is_empty() {
+            if outgoing.send(w)? > 0 {
+                moved = Instant::now();
+                continue;
+            }
+            if moved.elapsed() > Duration::from_secs(10) {
+                return Err(io::Error::new(
+                    io::ErrorKind::TimedOut,
+                    "peer stopped reading",
+                ));
+            }
+            match fd {
+                Some(fd) => wake::wait_writable(fd, Duration::from_millis(50)),
+                None => thread::sleep(Duration::from_millis(1)),
+            }
+        }
+        Ok(())
+    }
+
     #[test]
-    fn write_all_nonblocking_retries_until_everything_is_written() {
-        /// Writer that accepts at most two bytes per call and reports
-        /// WouldBlock on every other call.
-        struct Trickle {
-            out: Vec<u8>,
-            calls: usize,
-        }
-        impl Write for Trickle {
-            fn write(&mut self, data: &[u8]) -> io::Result<usize> {
-                self.calls += 1;
-                if self.calls.is_multiple_of(2) {
-                    return Err(io::Error::new(io::ErrorKind::WouldBlock, "later"));
-                }
-                let n = data.len().min(2);
-                self.out.extend_from_slice(&data[..n]);
-                Ok(n)
+    fn an_ack_lowers_the_count_never_below_zero_and_wakes_the_worker() {
+        let (handle, control) = control_channel().unwrap();
+        control.unacked_output.store(100, Ordering::SeqCst);
+        handle.ack_output(30);
+        assert_eq!(control.unacked_output.load(Ordering::SeqCst), 70);
+        handle.ack_output(u64::MAX);
+        assert_eq!(control.unacked_output.load(Ordering::SeqCst), 0);
+        #[cfg(unix)]
+        assert!(wake::is_readable(control.wake.fd()));
+    }
+
+    /// A writer that takes `step` bytes every other call and refuses the rest.
+    struct Trickle {
+        out: Vec<u8>,
+        step: usize,
+        calls: usize,
+    }
+
+    impl Write for Trickle {
+        fn write(&mut self, data: &[u8]) -> io::Result<usize> {
+            self.calls += 1;
+            if self.calls.is_multiple_of(2) {
+                return Err(io::Error::new(io::ErrorKind::WouldBlock, "later"));
             }
-            fn flush(&mut self) -> io::Result<()> {
-                panic!("a channel's flush discards what it has queued to read");
-            }
+            let n = data.len().min(self.step);
+            self.out.extend_from_slice(&data[..n]);
+            Ok(n)
         }
+
+        fn flush(&mut self) -> io::Result<()> {
+            panic!("a channel's flush discards what it has queued to read");
+        }
+    }
+
+    #[test]
+    fn outgoing_offers_once_per_call_and_keeps_its_place_and_order() {
         let mut w = Trickle {
             out: Vec::new(),
+            step: 2,
             calls: 0,
         };
-        write_all_nonblocking(&mut w, b"hello world", None).unwrap();
+        let mut outgoing = Outgoing::default();
+        outgoing.push(b"hello");
+        assert_eq!(outgoing.send(&mut w).unwrap(), 2);
+        assert_eq!(w.calls, 1);
+        // Refused: nothing moves, and the same bytes are offered next time.
+        assert_eq!(outgoing.send(&mut w).unwrap(), 0);
+        assert!(!outgoing.is_empty());
+        // What arrives meanwhile goes behind it.
+        outgoing.push(b" world");
+        while !outgoing.is_empty() {
+            outgoing.send(&mut w).unwrap();
+        }
         assert_eq!(w.out, b"hello world");
+        assert_eq!(outgoing.send(&mut w).unwrap(), 0, "nothing left to offer");
+    }
+
+    #[test]
+    fn outgoing_takes_a_write_of_nothing_as_no_room_and_passes_on_real_errors() {
+        struct Answers(Vec<io::Result<usize>>);
+        impl Write for Answers {
+            fn write(&mut self, _data: &[u8]) -> io::Result<usize> {
+                self.0.remove(0)
+            }
+            fn flush(&mut self) -> io::Result<()> {
+                Ok(())
+            }
+        }
+        let mut w = Answers(vec![
+            Ok(0),
+            Err(io::Error::from(io::ErrorKind::Interrupted)),
+            Err(io::Error::from(io::ErrorKind::BrokenPipe)),
+        ]);
+        let mut outgoing = Outgoing::default();
+        outgoing.push(b"x");
+        assert_eq!(outgoing.send(&mut w).unwrap(), 0);
+        assert_eq!(outgoing.send(&mut w).unwrap(), 0);
+        assert!(outgoing.send(&mut w).is_err());
+        assert!(!outgoing.is_empty());
+    }
+
+    fn eagain() -> ssh2::Error {
+        ssh2::Error::new(ssh2::ErrorCode::Session(LIBSSH2_ERROR_EAGAIN), "later")
+    }
+
+    #[test]
+    fn a_refused_resize_is_retried_until_it_goes() {
+        let mut resize = PtyResize {
+            wanted: Some((80, 24)),
+            ..PtyResize::default()
+        };
+        assert!(resize.send(|_, _| Err(eagain())).is_ok());
+        assert_eq!(resize.wanted, Some((80, 24)));
+        assert!(resize.send(|_, _| Err(eagain())).is_ok());
+
+        let mut sent = None;
+        let done = resize.send(|cols, rows| {
+            sent = Some((cols, rows));
+            Ok(())
+        });
+        assert!(done.is_ok());
+        assert_eq!(sent, Some((80, 24)));
+        assert_eq!(resize.wanted, None);
+
+        let mut asked = false;
+        resize
+            .send(|_, _| {
+                asked = true;
+                Ok(())
+            })
+            .unwrap();
+        assert!(!asked, "nothing left to send");
+    }
+
+    /// libssh2 finishes the packet it kept and ignores the new numbers, so the
+    /// newer size needs a send of its own.
+    #[test]
+    fn a_size_that_arrives_during_a_retry_goes_out_after_it() {
+        let mut resize = PtyResize {
+            wanted: Some((80, 24)),
+            ..PtyResize::default()
+        };
+        resize.send(|_, _| Err(eagain())).unwrap();
+        resize.wanted = Some((100, 30));
+        resize.send(|_, _| Ok(())).unwrap();
+        assert_eq!(resize.wanted, Some((100, 30)));
+        resize.send(|_, _| Ok(())).unwrap();
+        assert_eq!(resize.wanted, None);
+    }
+
+    #[test]
+    fn a_resize_that_really_failed_is_reported_and_forgotten() {
+        let mut resize = PtyResize {
+            wanted: Some((80, 24)),
+            ..PtyResize::default()
+        };
+        let failed = ssh2::Error::new(ssh2::ErrorCode::Session(-7), "gone");
+        assert!(resize.send(|_, _| Err(failed)).is_err());
+        assert_eq!(resize.wanted, None);
     }
 
     #[test]
@@ -2670,6 +3052,10 @@ mod tests {
     const RELAY_DONE: u8 = 4;
     /// End the connection at once on both sides.
     const RELAY_CUT: u8 = 5;
+    /// Leave what either side sends unread.
+    const RELAY_FROZEN: u8 = 6;
+    /// Pass on what the client sends at about 128 KB/s at most.
+    const RELAY_TRICKLE_UP: u8 = 7;
 
     /// A loopback relay to a real server, so that a test can control what the
     /// client's socket sees.
@@ -2681,6 +3067,11 @@ mod tests {
 
     impl Relay {
         fn start(server: &Endpoint) -> Self {
+            Self::start_with(server, |_| {})
+        }
+
+        /// `prepare` gets the relay's socket towards the client.
+        fn start_with(server: &Endpoint, prepare: fn(&TcpStream)) -> Self {
             let listener = TcpListener::bind("127.0.0.1:0").unwrap();
             let port = listener.local_addr().unwrap().port();
             let mode = Arc::new(AtomicU8::new(RELAY_FLOW));
@@ -2689,6 +3080,7 @@ mod tests {
             let server = server.addr();
             thread::spawn(move || {
                 let (client, _) = listener.accept().unwrap();
+                prepare(&client);
                 let server = TcpStream::connect(server).unwrap();
                 client.set_nonblocking(true).unwrap();
                 server.set_nonblocking(true).unwrap();
@@ -2717,8 +3109,17 @@ mod tests {
                         }
                         _ => {}
                     }
+                    if mode == RELAY_FROZEN {
+                        thread::sleep(Duration::from_millis(10));
+                        continue;
+                    }
                     if mode != RELAY_HOLD_UP {
-                        let Some(n) = relay_read(&client, &mut buf) else {
+                        let room = if mode == RELAY_TRICKLE_UP {
+                            128
+                        } else {
+                            buf.len()
+                        };
+                        let Some(n) = relay_read(&client, &mut buf[..room]) else {
                             return;
                         };
                         let skip = relay_discard.load(Ordering::SeqCst).min(n);

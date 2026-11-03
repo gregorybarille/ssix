@@ -17,13 +17,28 @@
  * A dropped shell's recovery also comes over the channel (`ReconnectEvent`).
  * Those events are for the pane, not the terminal, so the sink hands them to
  * whoever owns the pane (`useTerminalsStore`) instead of its output handler.
+ *
+ * Output is flow controlled, because xterm throws away what it is given above
+ * 50 MB. The backend stops reading at `OUTPUT_PAUSE_BYTES` unacknowledged, so
+ * every byte it sent must end up acknowledged here or the shell goes quiet for
+ * good: once xterm has parsed it, or at once when no terminal is attached. That
+ * buffer has its own cap, and a terminal that never attaches must not stall its
+ * session. A terminal off screen stays attached and goes on parsing.
  */
 
 import { parseAuthEvent, type AuthEvent } from "./authPrompt";
 import { assertTauriRuntime } from "./runtime";
+import { invoke } from "./tauri";
 
 /** Upper bound on bytes held for a terminal that has not attached yet. */
 const MAX_BUFFERED_BYTES = 4 * 1024 * 1024;
+
+/**
+ * Acknowledged in lumps of this much. Well under the backend's limit, so what is
+ * held back here can never be what keeps it paused, and a shell that prints a
+ * little at a time costs no extra IPC.
+ */
+const ACK_BATCH_BYTES = 256 * 1024;
 
 export type OutputEvent = { kind: "error"; message: string } | { kind: "closed" };
 
@@ -40,7 +55,8 @@ export type ReconnectEvent =
   | { kind: "reconnect_stopped"; message: string };
 
 export interface OutputHandler {
-  write: (chunk: Uint8Array) => void;
+  /** `done`, when given, must be called once the chunk has been dealt with. */
+  write: (chunk: Uint8Array, done?: () => void) => void;
   onEvent: (event: OutputEvent) => void;
 }
 
@@ -60,12 +76,38 @@ export class OutputSink {
   private bufferedBytes = 0;
   private reconnectListener: ((event: ReconnectEvent) => void) | null = null;
   private pendingReconnectEvents: ReconnectEvent[] = [];
+  private sendAck: ((bytes: number) => void) | null = null;
+  private ackable = 0;
+  private writing = 0;
+
+  /** Where acknowledgements go. The session id is only known after connecting. */
+  ackTo(send: (bytes: number) => void): void {
+    this.sendAck = send;
+    this.ack(0);
+  }
+
+  private ack(bytes: number): void {
+    this.ackable += bytes;
+    if (this.sendAck && this.ackable >= ACK_BATCH_BYTES) {
+      this.sendAck(this.ackable);
+      this.ackable = 0;
+    }
+  }
 
   push(chunk: Uint8Array): void {
-    if (this.handler) {
-      this.handler.write(chunk);
+    const handler = this.handler;
+    if (handler) {
+      const size = chunk.byteLength;
+      this.writing += size;
+      handler.write(chunk, () => {
+        // A detach has already acknowledged it.
+        if (this.handler !== handler) return;
+        this.writing -= size;
+        this.ack(size);
+      });
       return;
     }
+    this.ack(chunk.byteLength);
     this.buffered.push(chunk);
     this.bufferedBytes += chunk.byteLength;
     // Evict the oldest bytes only; control events are tiny and must survive.
@@ -115,6 +157,9 @@ export class OutputSink {
 
   detach(): void {
     this.handler = null;
+    // A disposed terminal never calls back for what it still had.
+    this.ack(this.writing);
+    this.writing = 0;
   }
 
   get pendingBytes(): number {
@@ -212,6 +257,8 @@ export async function createOutputChannel(
 
 export function registerOutputSink(sessionId: string, sink: OutputSink): void {
   sinks.set(sessionId, sink);
+  // Fails only for a session that has ended, which no longer needs it.
+  sink.ackTo((bytes) => void invoke("ssh_output_ack", { sessionId, bytes }).catch(() => {}));
 }
 
 /**

@@ -25,6 +25,7 @@ Host machine
 - All servers have `AllowTcpForwarding yes` in sshd, which local forwards and jump host connections need.
 - **server-a** also has `GatewayPorts clientspecified`, set by its `command:` in `docker-compose.yml`, so a remote forward can choose the address it binds on the server.
 - **server-e** offers keyboard-interactive and refuses the password method. It is built from `Dockerfile.kbdint`, which runs Alpine's PAM build of sshd (`sshd.pam`); the other servers share `Dockerfile`. It has `PerSourcePenalties` off: its tests fail logins on purpose, all from one address, and the penalty would turn the tests after them away before their handshake.
+- Servers built from `Dockerfile` have `bash` installed, for tests that need a shell honouring bracketed paste. Their login shell stays BusyBox `ash`.
 
 ## Usage
 

@@ -30,6 +30,7 @@ const mocks = vi.hoisted(() => ({
     selection: string;
     focused: number;
     keyHandler: (event: KeyboardEvent) => boolean;
+    pasted: string[];
   },
 }));
 
@@ -68,9 +69,15 @@ vi.mock("@xterm/xterm", () => ({
     focus() {
       this.focused += 1;
     }
-    paste() {}
+    pasted: string[] = [];
+    paste(text: string) {
+      this.pasted.push(text);
+    }
     getSelection() {
       return this.selection;
+    }
+    clearSelection() {
+      this.selection = "";
     }
     attachCustomKeyEventHandler(handler: (event: KeyboardEvent) => boolean) {
       this.keyHandler = handler;
@@ -83,8 +90,9 @@ vi.mock("@xterm/xterm", () => ({
       this.onSelectionListener = listener;
       return { dispose() {} };
     }
-    write(bytes: Uint8Array) {
+    write(bytes: Uint8Array, done?: () => void) {
       mocks.events.push(`write:${bytes.length}`);
+      done?.();
     }
     dispose() {
       mocks.events.push("term-dispose");
@@ -95,7 +103,7 @@ vi.mock("@xterm/xterm", () => ({
 const settings = { theme: "dark", font_family: "Fira Code", font_size: 14 } as AppSettings;
 const connection = { id: "c1", name: "prod" } as Connection;
 
-function outputHandler(): { write: (bytes: Uint8Array) => void } {
+function outputHandler(): { write: (bytes: Uint8Array, done?: () => void) => void } {
   return mocks.attachOutput.mock.calls[0][1];
 }
 
@@ -133,7 +141,6 @@ describe("Terminal extension hooks", () => {
     render(
       <Terminal
         sessionId="s1"
-        connectionName="prod"
         isVisible
         onDisconnect={vi.fn()}
         settings={settings}
@@ -223,6 +230,83 @@ describe("Terminal extension hooks", () => {
     });
   });
 
+  describe("the clipboard keys", () => {
+    const writeText = vi.fn(async () => undefined);
+    const readText = vi.fn(async () => "pasted");
+    const stubPlatform = (userAgent: string) =>
+      vi.stubGlobal("navigator", { userAgent, clipboard: { writeText, readText } });
+
+    beforeEach(() => {
+      writeText.mockClear();
+      readText.mockClear();
+      stubPlatform("X11; Linux");
+      mount();
+    });
+
+    const down = (init: KeyboardEventInit) => {
+      const event = new KeyboardEvent("keydown", { cancelable: true, ...init });
+      return { event, passed: mocks.term?.keyHandler(event) };
+    };
+    const select = (text: string) => {
+      if (mocks.term) mocks.term.selection = text;
+    };
+    const CTRL = { ctrlKey: true };
+    const CTRL_SHIFT = { ctrlKey: true, shiftKey: true };
+
+    it("copies on Ctrl+Shift+C, swallows the key and lets go of the selection", () => {
+      select("abc");
+      const { event, passed } = down({ key: "C", ...CTRL_SHIFT });
+      expect(writeText).toHaveBeenCalledWith("abc");
+      expect(passed).toBe(false);
+      expect(event.defaultPrevented).toBe(true);
+      expect(mocks.term?.selection).toBe("");
+    });
+
+    it("sends nothing and leaves the clipboard alone on Ctrl+Shift+C with no selection", () => {
+      const { event, passed } = down({ key: "C", ...CTRL_SHIFT });
+      expect(writeText).not.toHaveBeenCalled();
+      expect(passed).toBe(false);
+      expect(event.defaultPrevented).toBe(true);
+    });
+
+    it("leaves Ctrl+C to the program with text selected", () => {
+      select("abc");
+      const { event, passed } = down({ key: "c", ...CTRL });
+      expect(writeText).not.toHaveBeenCalled();
+      expect(passed).toBe(true);
+      expect(event.defaultPrevented).toBe(false);
+    });
+
+    it("pastes once on Ctrl+Shift+V: xterm's own listener must not get a native paste", async () => {
+      const { event, passed } = down({ key: "V", ...CTRL_SHIFT });
+      expect(passed).toBe(false);
+      expect(event.defaultPrevented).toBe(true);
+      await vi.waitFor(() => expect(mocks.term?.pasted).toEqual(["pasted"]));
+    });
+
+    it("leaves Ctrl+V to the program", () => {
+      const { event, passed } = down({ key: "v", ...CTRL });
+      expect(readText).not.toHaveBeenCalled();
+      expect(passed).toBe(true);
+      expect(event.defaultPrevented).toBe(false);
+    });
+
+    it("uses Cmd on macOS, and leaves Ctrl+C and Ctrl+V to the program there too", async () => {
+      stubPlatform("Macintosh");
+      select("abc");
+
+      expect(down({ key: "c", ...CTRL }).passed).toBe(true);
+      expect(down({ key: "v", ...CTRL }).passed).toBe(true);
+      expect(writeText).not.toHaveBeenCalled();
+      expect(readText).not.toHaveBeenCalled();
+
+      expect(down({ key: "c", metaKey: true }).passed).toBe(false);
+      expect(writeText).toHaveBeenCalledWith("abc");
+      expect(down({ key: "v", metaKey: true }).passed).toBe(false);
+      await vi.waitFor(() => expect(mocks.term?.pasted).toEqual(["pasted"]));
+    });
+  });
+
   describe("becoming visible", () => {
     const props = {
       sessionId: "s1",
@@ -279,7 +363,6 @@ describe("Terminal extension hooks", () => {
     view.rerender(
       <Terminal
         sessionId="s1"
-        connectionName="prod"
         isVisible
         onDisconnect={vi.fn()}
         settings={newer}
@@ -322,6 +405,13 @@ describe("Terminal extension hooks", () => {
     mount();
     outputHandler().write(bytes);
     expect(mocks.events.slice(-2)).toEqual(["write:3", "output"]);
+  });
+
+  it("lets the sink know when xterm has parsed a chunk", () => {
+    const done = vi.fn();
+    mount();
+    outputHandler().write(new Uint8Array([1]), done);
+    expect(done).toHaveBeenCalledTimes(1);
   });
 
   it("runs what onCreate returned on unmount, before xterm is disposed", () => {

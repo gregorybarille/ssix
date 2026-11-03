@@ -29,10 +29,13 @@ pub fn run() {
         .manage(SshState::new())
         .setup(|app| {
             logs::init(app.handle().clone());
+            #[cfg(unix)]
+            forwards::raise_open_file_limit();
             backup::spawn_scheduler();
             tauri::async_runtime::spawn_blocking(commands::sftp::edit::purge_stale_copies);
             // Write any load-time repair once, off the UI thread.
             tauri::async_runtime::spawn_blocking(|| {
+                storage::restrict_data_dir();
                 if let Err(e) = storage::persist_migrations() {
                     logs::log_local(
                         "warn",
@@ -71,6 +74,7 @@ pub fn run() {
             commands::git_sync::git_sync_run,
             commands::ssh::ssh_connect,
             commands::ssh::ssh_write,
+            commands::ssh::ssh_output_ack,
             commands::ssh::ssh_resize,
             commands::ssh::ssh_disconnect,
             commands::ssh::ssh_forget_host_key,

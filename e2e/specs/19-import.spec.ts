@@ -15,6 +15,7 @@
  *   - a host that names no key really connecting with the agent;
  *   - imported remote and dynamic forwards really starting;
  *   - an unticked row leaving its name and credential name to the others;
+ *   - a row that runs a command or opens a port starting unticked, saying why;
  *   - every row held back when part of the config was not applied;
  *   - unreadable files and hostile lines being reported.
  */
@@ -50,6 +51,7 @@ interface StoredConnection {
   gateway_host?: string;
   gateway_port?: number;
   gateway_credential_id?: string;
+  bind_address?: string;
   local_port?: number;
   remote_port?: number;
   destination_host?: string;
@@ -339,8 +341,11 @@ describe("Import from SSH config", () => {
       "Same destination as 'e2e19-direct'",
     );
 
+    // A command that would run on connect is read first, so it starts unticked.
     const proxied = await browser.$(sel.importItem("e2e19-proxied"));
     expect(await textContentOf(proxied)).toContain("nc -w 1 %h %p");
+    expect(await textContentOf(proxied)).toContain("starts unticked");
+    expect(await isTicked("e2e19-proxied")).toBe(false);
 
     await expectSkip("e2e19-two-hops", "unsupported", "2 hops");
     await expectSkip("e2e19-bad-port", "invalid", "99999");
@@ -360,6 +365,7 @@ describe("Import from SSH config", () => {
   it("imports only the rows left ticked, as the config describes them", async () => {
     await openImportOf(configPath);
     await toggle("e2e19-left-out");
+    await toggle("e2e19-proxied");
     await confirmImport();
 
     // The preview reloads: what was imported now shows as imported.
@@ -547,6 +553,47 @@ describe("Import from SSH config", () => {
     const key = await credentialOf((await connectionNamed("e2e19-key-b")).credential_id);
     expect(key.name).toBe("name19@id_e2e19name");
     expect(key.private_key_path).toBe("/keys/b/id_e2e19name");
+  });
+
+  it("leaves a row that opens a port unticked until select all ticks it", async () => {
+    const wide = join(dir, "wide");
+    writeFileSync(
+      wide,
+      [
+        "Host e2e19-wide",
+        "  HostName 10.19.0.13",
+        "  User wide19",
+        "  LocalForward *:23622 server-c:22",
+        "",
+        "Host e2e19-runs",
+        "  HostName 10.19.0.14",
+        "  User wide19",
+        "  ProxyCommand nc -w 1 %h %p",
+        "",
+      ].join("\n"),
+    );
+
+    await openImportOf(wide);
+    expect(await isTicked("e2e19-wide")).toBe(true);
+    for (const [name, why] of [
+      ["e2e19-wide (-L 23622)", "no password"],
+      ["e2e19-runs", "nc -w 1 %h %p"],
+    ]) {
+      expect(await isTicked(name)).toBe(false);
+      const row = await textContentOf(await waitForItem(name));
+      expect(row).toContain(why);
+      expect(row).toContain("starts unticked");
+    }
+
+    await click(sel.importSelectAll);
+    expect(await isTicked("e2e19-wide (-L 23622)")).toBe(true);
+    expect(await isTicked("e2e19-runs")).toBe(true);
+    await confirmImport();
+    await closeImport();
+
+    const forward = await connectionNamed("e2e19-wide (-L 23622)");
+    expect(forward.bind_address).toBe("0.0.0.0");
+    expect((await connectionNamed("e2e19-runs")).proxy_command).toBe("nc -w 1 %h %p");
   });
 
   it("holds back every row when part of the config was not applied", async () => {

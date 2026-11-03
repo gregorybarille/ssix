@@ -153,11 +153,13 @@ export const sel = {
   // Git sync
   gitSyncRepoPath: '[data-testid="git-sync-repo-path"]',
   gitSyncExportButton: '[data-testid="git-sync-export"]',
+  gitSyncRunButton: '[data-testid="git-sync-run"]',
   gitSyncStatus: '[data-testid="git-sync-status"]',
 
   // Generate / install key dialogs
   generateKeyOpen: '[data-testid="generate-key-open"]',
   generateKeyDialog: '[data-testid="generate-key-dialog"]',
+  generateKeyPassphrase: '[data-testid="generate-key-passphrase"]',
   generateKeySubmit: '[data-testid="generate-key-submit"]',
   installKeyOpen: (credentialId: string) => `[data-testid="install-key-${credentialId}"]`,
   installKeyDialog: '[data-testid="install-key-dialog"]',

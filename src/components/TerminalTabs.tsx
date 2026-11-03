@@ -147,7 +147,6 @@ function PaneRenderer({
         <div className="contents" inert={!!authPrompt}>
           <Terminal
             sessionId={session.sessionId}
-            connectionName={session.connectionName}
             isVisible={isVisible}
             onDisconnect={onClose}
             settings={settings}

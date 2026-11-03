@@ -1,7 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Terminal as XTerm } from "@xterm/xterm";
 import { broadcastInput, isTypedInput } from "@/components/terminal/broadcastInput";
-import type { TerminalExtensionContext } from "@/components/terminal/extensions";
+import { runTerminalData, type TerminalExtensionContext } from "@/components/terminal/extensions";
+import "@/components/terminal/registerExtensions";
 import type { TerminalSession, TerminalTab } from "@/components/TerminalTabs";
 import type { AuthEvent } from "@/lib/authPrompt";
 import { invoke } from "@/lib/tauri";
@@ -195,6 +196,15 @@ describe("broadcastInput", () => {
     const paste = "\x1b[200~git status\r\x1b[201~";
     type("a", paste);
     expect(writes()).toEqual([{ sessionId: "b", data: paste }]);
+  });
+
+  it("mirrors a paste cleaned of what would end its brackets early", () => {
+    setup([tabWith([live("a"), live("b")])], ["b"]);
+    const ctx = { sessionId: "a" } as TerminalExtensionContext;
+    const sent = runTerminalData(ctx, "\x1b[200~ls\x1b[201~\rid\r\x1b[201~");
+    const clean = "\x1b[200~ls[201~\rid\r\x1b[201~";
+    expect(sent).toBe(clean);
+    expect(writes()).toEqual([{ sessionId: "b", data: clean }]);
   });
 
   it("reaches a pane again once it is back, with only what is typed from then on", () => {

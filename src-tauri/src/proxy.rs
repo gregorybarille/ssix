@@ -14,6 +14,7 @@ use std::process::{Child, Command, Stdio};
 use std::thread;
 
 use crate::ssh::Endpoint;
+use crate::ssh_config::expand_tokens;
 use crate::ssh_debug::SshDebug;
 
 /// Characters a host or user name may contain to be put in a command line
@@ -36,21 +37,11 @@ pub fn validate(template: &str) -> Result<(), String> {
 
 /// Expand OpenSSH's tokens: `%h` host, `%p` port, `%r` user, `%%` a `%`.
 pub fn expand(template: &str, host: &str, port: u16, user: &str) -> Result<String, String> {
-    let mut out = String::with_capacity(template.len());
-    let mut chars = template.chars();
-    while let Some(c) = chars.next() {
-        if c != '%' {
-            out.push(c);
-            continue;
-        }
-        let (name, value) = match chars.next() {
+    expand_tokens(template, |token| {
+        let (name, value) = match token {
             Some('h') => ("host", host.to_string()),
             Some('p') => ("port", port.to_string()),
             Some('r') => ("user", user.to_string()),
-            Some('%') => {
-                out.push('%');
-                continue;
-            }
             Some(other) => {
                 return Err(format!(
                     "Unknown token %{} in proxy command (use %h, %p, %r or %%)",
@@ -65,9 +56,8 @@ pub fn expand(template: &str, host: &str, port: u16, user: &str) -> Result<Strin
                 name, value
             ));
         }
-        out.push_str(&value);
-    }
-    Ok(out)
+        Ok(value)
+    })
 }
 
 #[cfg(unix)]
@@ -91,21 +81,21 @@ fn shell(command: &str) -> Command {
 /// A connected loopback pair whose far end is accepted from our own
 /// connect only: another local process racing to the ephemeral port is
 /// turned away.
-fn loopback_pair() -> Result<(TcpStream, TcpStream), String> {
+pub(crate) fn loopback_pair() -> Result<(TcpStream, TcpStream), String> {
     let listener = TcpListener::bind("127.0.0.1:0")
-        .map_err(|e| format!("Failed to bind a loopback port for the proxy: {}", e))?;
+        .map_err(|e| format!("Failed to bind a loopback port: {}", e))?;
     let addr = listener
         .local_addr()
         .map_err(|e| format!("local_addr() failed: {}", e))?;
     let near = TcpStream::connect(addr)
-        .map_err(|e| format!("Failed to connect the proxy bridge: {}", e))?;
+        .map_err(|e| format!("Failed to connect a loopback pair: {}", e))?;
     let near_addr = near
         .local_addr()
         .map_err(|e| format!("local_addr() failed: {}", e))?;
     loop {
         let (far, peer) = listener
             .accept()
-            .map_err(|e| format!("Failed to accept the proxy bridge: {}", e))?;
+            .map_err(|e| format!("Failed to accept a loopback pair: {}", e))?;
         if peer == near_addr {
             return Ok((near, far));
         }
@@ -201,6 +191,16 @@ fn pump(mut child: Child, far: TcpStream, addr: String) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_loopback_pair_is_connected_and_leaves_no_port_open() {
+        let (mut near, mut far) = loopback_pair().unwrap();
+        near.write_all(b"x").unwrap();
+        let mut got = [0u8; 1];
+        far.read_exact(&mut got).unwrap();
+        assert_eq!(&got, b"x");
+        assert!(TcpStream::connect(near.peer_addr().unwrap()).is_err());
+    }
 
     #[test]
     fn expands_openssh_tokens() {

@@ -2,15 +2,9 @@ import { useActionState, useEffect, useState } from "react";
 import { Connection, ScpResult } from "@/types";
 import { invoke } from "@/lib/tauri";
 import { Button } from "./ui/button";
-import { Input } from "./ui/input";
-import { Label } from "./ui/label";
-import { Tabs, TabsList, TabsTrigger } from "./ui/tabs";
-import { Checkbox } from "./ui/checkbox";
+import { type ScpMode, ScpModeTabs, ScpPathField, ScpRecursiveCheckbox } from "./ScpFields";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "./ui/dialog";
-import { cn } from "@/lib/utils";
 import { submitWithoutReset } from "@/lib/formSubmit";
-
-type ScpMode = "upload" | "download";
 
 interface ScpDialogProps {
   open: boolean;
@@ -126,100 +120,30 @@ export function ScpDialog({ open, onOpenChange, connection }: ScpDialogProps) {
           </DialogDescription>
         </DialogHeader>
         <form onSubmit={submitWithoutReset(scpAction)} className="space-y-4" noValidate>
-          <Tabs value={mode} onValueChange={(v) => setMode(v as "upload" | "download")}>
-            <TabsList className="w-full">
-              <TabsTrigger value="upload" className="flex-1" data-testid="scp-mode-upload">Upload</TabsTrigger>
-              <TabsTrigger value="download" className="flex-1" data-testid="scp-mode-download">Download</TabsTrigger>
-            </TabsList>
-          </Tabs>
+          <ScpModeTabs mode={mode} onChange={setMode} testIdPrefix="scp-mode" />
 
-          <div className="space-y-2">
-            <Label htmlFor="scp-local-path">Local path *</Label>
-            <Input
-              id="scp-local-path"
-              placeholder={mode === "upload" ? "/Users/me/file.txt" : "/Users/me/downloads/file.txt"}
-              value={localPath}
-              onChange={(e) => setLocalPath(e.target.value)}
-              data-testid="scp-local-path"
-              aria-invalid={!!localPathError}
-              aria-describedby={
-                localPathError ? "scp-local-path-error" : undefined
-              }
-              className={cn(localPathError && "border-destructive")}
-            />
-            {localPathError && (
-              <p
-                id="scp-local-path-error"
-                role="alert"
-                className="text-xs text-destructive"
-              >
-                {localPathError}
-              </p>
-            )}
-          </div>
+          <ScpPathField
+            id="scp-local-path"
+            testId="scp-local-path"
+            label="Local path *"
+            placeholder={mode === "upload" ? "/Users/me/file.txt" : "/Users/me/downloads/file.txt"}
+            value={localPath}
+            onChange={setLocalPath}
+            error={localPathError}
+          />
 
-          <div className="space-y-2">
-            <Label htmlFor="scp-remote-path">Remote path {mode === "download" ? "*" : "(optional)"}</Label>
-            <Input
-              id="scp-remote-path"
-              placeholder={connection?.remote_path || "/tmp/ or relative/file.txt"}
-              value={remotePath}
-              onChange={(e) => setRemotePath(e.target.value)}
-              data-testid="scp-remote-path"
-              aria-invalid={!!remotePathError}
-              /*
-                Audit-3 follow-up P2#6 (helper-text association): the
-                instructional <p> below is part of the field's
-                semantics — AT users need both the error (when set)
-                AND the persistent hint. Concatenate both ids; the
-                hint is always present, the error is conditional.
-              */
-              aria-describedby={
-                [
-                  remotePathError ? "scp-remote-path-error" : null,
-                  "scp-remote-path-hint",
-                ]
-                  .filter(Boolean)
-                  .join(" ")
-              }
-              className={cn(remotePathError && "border-destructive")}
-            />
-            {remotePathError && (
-              <p
-                id="scp-remote-path-error"
-                role="alert"
-                className="text-xs text-destructive"
-              >
-                {remotePathError}
-              </p>
-            )}
-            <p
-              id="scp-remote-path-hint"
-              className="text-xs text-muted-foreground"
-            >
-              Uses the connection remote path as the base directory when possible. Directory transfers require recursive mode.
-            </p>
-          </div>
+          <ScpPathField
+            id="scp-remote-path"
+            testId="scp-remote-path"
+            label={`Remote path ${mode === "download" ? "*" : "(optional)"}`}
+            placeholder={connection?.remote_path || "/tmp/ or relative/file.txt"}
+            value={remotePath}
+            onChange={setRemotePath}
+            error={remotePathError}
+            hint="Uses the connection remote path as the base directory when possible. Directory transfers require recursive mode."
+          />
 
-          {/*
-            Audit-3 P2#7: was a hand-rolled <input type="checkbox">
-            with `accent-primary`. The native checkbox renders a
-            different glyph on every OS (small filled square on macOS,
-            tiny check on Windows, blue check on Linux), ignores our
-            theme tokens, and has no consistent focus ring. The shared
-            <Checkbox> primitive (Radix-backed) gives us the same
-            visual + focus-visible ring + theme tokens used everywhere
-            else, plus role=checkbox + aria-checked + Space activation
-            for free. The label still wraps so a click on the text
-            toggles the box.
-          */}
-          <label className="flex items-center gap-2 text-sm cursor-pointer">
-            <Checkbox
-              checked={recursive}
-              onCheckedChange={(v) => setRecursive(v === true)}
-            />
-            Transfer directories recursively
-          </label>
+          <ScpRecursiveCheckbox checked={recursive} onChange={setRecursive} />
 
           {/*
             Audit-3 P2#8: progress and success must be announced to

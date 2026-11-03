@@ -118,6 +118,19 @@ it does not read the connection's keepalive setting.
 
 ## Limits
 
+- **1024 clients per forward at once.** The count starts when a client is accepted,
+  so it includes clients still in their SOCKS handshake or waiting for a channel,
+  which the row's client count does not. A client above it is closed straight away
+  with no SOCKS reply, the forward stays up, and the row's details show "Closed a new
+  client: this forward already serves 1024, its limit" as the last client error. A
+  client the system will not give a thread to is treated the same way.
+- **Open files.** Each client uses two file descriptors. At startup on macOS and
+  Linux SSIX raises its soft limit to 10240, or the hard limit if that is lower, and
+  programs it starts inherit that. If the raise is refused, the Logs view says so.
+  If descriptors still run out, the forward keeps running and its current clients
+  are not touched: the row's details show "Could not accept a new client", and new
+  clients are served again once a descriptor is free. A client arriving meanwhile
+  waits on Linux and is closed by the system on macOS.
 - **One channel open at a time per session.** libssh2 keeps the state of an open
   on the session, so concurrent opens would get each other's replies. They are
   queued, which means a destination the server takes long to answer holds up
@@ -128,6 +141,14 @@ it does not read the connection's keepalive setting.
 - **Closing is not half-closing.** When a client closes its side, the channel
   closes in both directions, so a protocol that keeps reading after sending EOF
   loses the rest. This is how `forward_bidi` has always worked.
+- **A stalled tunnel waits, as with `ssh -L`.** A client that stops reading, such
+  as a paused download or `curl --limit-rate`, slows the server down through the
+  SSH window for as long as it likes, at no CPU cost, and neither direction holds
+  up the other. Only the forward's probes judge the session. So a client that
+  closes normally while nothing on the server takes its last bytes keeps its
+  tunnel, and its count in the view, until the server takes them or the forward
+  stops. A client that aborts ends it at once. Stopping a forward can take up to
+  3 s for such a client.
 - **A remote forward polls while it has clients.** New connections arrive over
   the session itself, and reading one client's data can pull in the next one
   without the socket waking anyone, so the supervisor looks every 20 ms instead
@@ -173,5 +194,9 @@ a destination counts towards this, so tests keep such connections few.
   server. Names are resolved there, not here.
 - **A remote forward cannot be reached from other machines**: it listens on the
   server's loopback; see Where A Forward Listens.
+- **"Could not accept a new client: Too many open files"**: SSIX or the system has no file
+  descriptor free. See Limits. Close clients or other forwards, and check
+  `ulimit -Hn` if it happens well below 10240 open files.
+- **"Closed a new client: this forward already serves 1024"**: see Limits.
 - **"Connection lost" or "stopped responding"**: the session died; the forward
   has already closed its port. Start it again once the server is back.

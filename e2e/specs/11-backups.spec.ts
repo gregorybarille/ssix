@@ -9,8 +9,11 @@
  * Restoring rewinds the shared data dir to this spec's own backup, so
  * only what this spec made in between is undone.
  */
+import { statSync } from "node:fs";
+import { join } from "node:path";
 import { waitForAppReady } from "../helpers/app.js";
-import { click, createPasswordCredential, navigateTo, textContentOf } from "../helpers/flows.js";
+import { currentTestDataDir } from "../helpers/data-dir.js";
+import { click, createPasswordCredential, navigateTo, textContentOf, waitForGone } from "../helpers/flows.js";
 import { sel } from "../helpers/selectors.js";
 
 async function openBackups(): Promise<void> {
@@ -41,7 +44,7 @@ describe("Backups", () => {
     await restore.scrollIntoView({ block: "center" });
     await restore.click();
     await click(sel.backupRestoreConfirm);
-    await (await browser.$(sel.backupRestoreDialog)).waitForExist({ reverse: true, timeout: 10_000 });
+    await waitForGone(sel.backupRestoreDialog);
     await (await browser.$(sel.backupRowByReason("before_restore"))).waitForExist({ timeout: 10_000 });
 
     await navigateTo("credentials");
@@ -50,5 +53,9 @@ describe("Backups", () => {
       reverse: true,
       timeout: 10_000,
     });
+
+    // The restored connection list is as private as the secrets beside it.
+    const dataFile = join(currentTestDataDir()!, "data.json");
+    expect(statSync(dataFile).mode & 0o777).toBe(0o600);
   });
 });

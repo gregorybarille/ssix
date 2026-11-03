@@ -40,7 +40,8 @@ Older builds showed this as `TypeError: ... window.__TAURI_INTERNALS__ is undefi
 ## Host Key Has Changed
 
 - SSIX refuses to connect when a server's host key differs from the one recorded on first use. The failure view shows the new SHA256 fingerprint.
-- Confirm out of band (hosting console, admin) that the server really was reinstalled or re-keyed, then click **Trust new host key**. If nobody changed the server, do not trust the key: the connection may be intercepted.
+- That includes a key of another type, for example an Ed25519 key when an ECDSA key is on record. The message names both types. SSIX asks for the recorded type first, so this means the server did not offer that type at all: it dropped the key, or it is not the same server.
+- Confirm out of band (hosting console, admin) that the server really was reinstalled or re-keyed, then click **Trust new host key**. It replaces every key recorded for that `host:port`. If nobody changed the server, do not trust the key: the connection may be intercepted.
 - Recorded keys live in `~/.ssix/known_hosts` (OpenSSH format). `ssh-keygen -R <host> -f ~/.ssix/known_hosts` removes an entry by hand; for a non-default port use `-R '[host]:port'`.
 
 ## A Port Forward Does Not Work
@@ -49,13 +50,15 @@ Older builds showed this as `TypeError: ... window.__TAURI_INTERNALS__ is undefi
 - Confirm the remote service is reachable from the SSH server.
 - Check the Port forwards view for status updates or errors; a row's details show its last client error.
 - A remote forward listens on the SSH server's loopback, so other machines cannot reach it unless the server has `GatewayPorts yes`.
-- See [Port Forwards](forwards.md#troubleshooting) for what SOCKS replies and "refused to listen" mean.
+- See [Port Forwards](forwards.md#troubleshooting) for what SOCKS replies, "refused to listen" and "Could not accept a new client" mean.
 
 ## SCP Transfer Fails
 
 - Make sure the connection is a Direct or Jump host connection.
 - Use recursive mode when the source or target is a directory.
-- Check whether the remote path exists or whether the remote user has permission to write there.
+- Check whether the remote path exists or whether the remote user has permission to write there. An upload writes a temporary file first, so it needs write permission on the folder and not only on the file.
+- An upload that was cut off can leave a hidden `.ssix-part-*` file on the server. It is safe to delete, and the file it was replacing is untouched.
+- "Could not put the new copy in place" on a server without SFTP means the shell refused the final `mv`: the target is a folder or a symlink, or the account has no shell. See [File Transfer](file-transfer.md#servers-without-sftp).
 
 ## A Script Fails On Some Hosts
 
@@ -70,11 +73,13 @@ Older builds showed this as `TypeError: ... window.__TAURI_INTERNALS__ is undefi
 ## Git Sync Fails
 
 - Confirm the configured repository path exists and contains `.git/`.
-- Confirm the configured remote name exists in that repository.
-- If one-click sync fails during pull, resolve the branch state manually and retry.
+- Confirm the configured remote is a remote name of that repository, or a URL or path. A name it does not know, such as a missing `origin`, is tried as a path and fails with "does not appear to be a git repository". An empty remote is fine: the first Sync creates the branch.
+- If one-click sync reports that the branch has diverged, rebase or merge onto the remote branch in the repository and retry. A conflict in `.ssix-sync/` can be resolved either way, because Sync exports over it.
+- If the pull is refused because of local changes, those are your own files outside `.ssix-sync/`: commit or restore them and retry. Sync discards only `.ssix-sync/`.
 - If push fails, inspect the returned git output in the Git Sync view.
 
 ## Credentials Seem Missing
 
 - Remember that secrets are stored separately from `data.json`.
 - If testing manually, inspect `~/.ssix/secrets.json` rather than expecting password material in `~/.ssix/data.json`.
+- A secret from an old `data.json` moves to `secrets.json` the next time SSIX starts. If `secrets.json` is corrupt, the move waits and the Logs view has a `migration` warning: fix or restore the file, then restart.

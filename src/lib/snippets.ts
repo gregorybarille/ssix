@@ -25,6 +25,11 @@ const PLACEHOLDER = /(\\*)\{\{[ \t]*([\p{L}_][\p{L}\p{N}_-]*)[ \t]*\}\}|\\+/gu;
 /** Control characters other than tab and line breaks. */
 const CONTROL_CHARS = /[^\P{Cc}\t\r\n]/gu;
 
+/** The text without what would act on a shell rather than land on its prompt. */
+export function stripControlChars(text: string): string {
+  return text.replace(CONTROL_CHARS, "");
+}
+
 /** The variables of a command, each once, in order of first appearance. */
 export function snippetVariables(command: string): string[] {
   const names = new Set<string>();
@@ -89,7 +94,7 @@ export function preparePaste(
   command: string,
   bracketed: boolean,
 ): { text: string } | { error: string } {
-  const lines = command.replace(CONTROL_CHARS, "").split(/\r\n|\r|\n/);
+  const lines = stripControlChars(command).split(/\r\n|\r|\n/);
   let start = 0;
   let end = lines.length;
   while (end - start > 1 && !lines[end - 1].trim()) end--;

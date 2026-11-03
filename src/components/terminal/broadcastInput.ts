@@ -14,7 +14,7 @@ const KEY_SEQUENCE =
   /^\x1b(?:[\s\S]?|\[[A-DFHZ]|O[A-DFHP-S]|\[\d+(?:;\d+)?~|\[1;\d+[A-DFHPQS])$/;
 
 // eslint-disable-next-line no-control-regex
-const BRACKETED_PASTE = /^\x1b\[200~([\s\S]*)\x1b\[201~$/;
+export const BRACKETED_PASTE = /^\x1b\[200~([\s\S]*)\x1b\[201~$/;
 
 /**
  * Whether what a terminal sent is something the user typed or pasted. xterm

@@ -386,6 +386,20 @@ pub fn ssh_write(
     handle.send(SessionMsg::Write(data.into_bytes()))
 }
 
+/// The terminal has taken `bytes` of a session's output. See `OUTPUT_PAUSE_BYTES`.
+/// A number that is not a count is refused before it gets here, and one too big
+/// only clears the count.
+#[tauri::command]
+pub fn ssh_output_ack(
+    state: tauri::State<'_, SshState>,
+    session_id: String,
+    bytes: u64,
+) -> Result<(), String> {
+    let handle = state.sessions.get(&session_id).ok_or("Session not found")?;
+    handle.ack_output(bytes);
+    Ok(())
+}
+
 #[tauri::command]
 pub fn ssh_resize(
     state: tauri::State<'_, SshState>,

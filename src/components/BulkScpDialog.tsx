@@ -1,10 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import type { Connection } from "@/types";
 import { Button } from "./ui/button";
-import { Input } from "./ui/input";
-import { Label } from "./ui/label";
-import { Tabs, TabsList, TabsTrigger } from "./ui/tabs";
-import { Checkbox } from "./ui/checkbox";
+import { type ScpMode, ScpModeTabs, ScpPathField, ScpRecursiveCheckbox } from "./ScpFields";
 import {
   Dialog,
   DialogContent,
@@ -14,7 +11,6 @@ import {
   DialogTitle,
 } from "./ui/dialog";
 import { Badge } from "./ui/badge";
-import { cn } from "@/lib/utils";
 import {
   isBulkActionable,
   planBulkDownload,
@@ -60,7 +56,7 @@ export function BulkScpDialog({
   connections,
   groupLabel,
 }: BulkScpDialogProps) {
-  const [mode, setMode] = useState<"upload" | "download">("upload");
+  const [mode, setMode] = useState<ScpMode>("upload");
   const [localPath, setLocalPath] = useState("");
   const [remotePath, setRemotePath] = useState("");
   const [recursive, setRecursive] = useState(false);
@@ -153,120 +149,46 @@ export function BulkScpDialog({
         </DialogHeader>
 
         <div className="space-y-4">
-          <Tabs
-            value={mode}
-            onValueChange={(v) => {
-              if (running) return;
-              setMode(v as "upload" | "download");
+          <ScpModeTabs
+            mode={mode}
+            onChange={(next) => {
+              setMode(next);
               setSubmitted(false);
               setSteps([]);
             }}
-          >
-            <TabsList className="w-full">
-              <TabsTrigger
-                value="upload"
-                className="flex-1"
-                data-testid="bulk-scp-mode-upload"
-                disabled={running}
-              >
-                Upload
-              </TabsTrigger>
-              <TabsTrigger
-                value="download"
-                className="flex-1"
-                data-testid="bulk-scp-mode-download"
-                disabled={running}
-              >
-                Download
-              </TabsTrigger>
-            </TabsList>
-          </Tabs>
+            testIdPrefix="bulk-scp-mode"
+            disabled={running}
+          />
 
-          <div className="space-y-2">
-            <Label htmlFor="bulk-scp-local">
-              {mode === "upload"
-                ? "Local source path *"
-                : "Local destination directory *"}
-            </Label>
-            <Input
-              id="bulk-scp-local"
-              placeholder={
-                mode === "upload"
-                  ? "/Users/me/file.txt"
-                  : "/Users/me/downloads/"
-              }
-              value={localPath}
-              onChange={(e) => setLocalPath(e.target.value)}
-              disabled={running}
-              data-testid="bulk-scp-local-path"
-              aria-invalid={!!localPathError}
-              aria-describedby={
-                localPathError ? "bulk-scp-local-error" : "bulk-scp-local-hint"
-              }
-              className={cn(localPathError && "border-destructive")}
-            />
-            {localPathError ? (
-              <p
-                id="bulk-scp-local-error"
-                role="alert"
-                className="text-xs text-destructive"
-              >
-                {localPathError}
-              </p>
-            ) : (
-              <p
-                id="bulk-scp-local-hint"
-                className="text-xs text-muted-foreground"
-              >
-                {mode === "upload"
-                  ? "The same file or directory is sent to every host."
-                  : "Each download is saved as <basename>-<connection-name> inside this directory."}
-              </p>
-            )}
-          </div>
+          <ScpPathField
+            id="bulk-scp-local"
+            testId="bulk-scp-local-path"
+            label={mode === "upload" ? "Local source path *" : "Local destination directory *"}
+            placeholder={mode === "upload" ? "/Users/me/file.txt" : "/Users/me/downloads/"}
+            value={localPath}
+            onChange={setLocalPath}
+            error={localPathError}
+            hint={
+              mode === "upload"
+                ? "The same file or directory is sent to every host."
+                : "Each download is saved as <basename>-<connection-name> inside this directory."
+            }
+            disabled={running}
+          />
 
-          <div className="space-y-2">
-            <Label htmlFor="bulk-scp-remote">Remote path *</Label>
-            <Input
-              id="bulk-scp-remote"
-              placeholder="/var/log/app.log"
-              value={remotePath}
-              onChange={(e) => setRemotePath(e.target.value)}
-              disabled={running}
-              data-testid="bulk-scp-remote-path"
-              aria-invalid={!!remotePathError}
-              aria-describedby={
-                remotePathError ? "bulk-scp-remote-error" : "bulk-scp-remote-hint"
-              }
-              className={cn(remotePathError && "border-destructive")}
-            />
-            {remotePathError ? (
-              <p
-                id="bulk-scp-remote-error"
-                role="alert"
-                className="text-xs text-destructive"
-              >
-                {remotePathError}
-              </p>
-            ) : (
-              <p
-                id="bulk-scp-remote-hint"
-                className="text-xs text-muted-foreground"
-              >
-                Used as-is on every host. Prefer absolute paths so per-host
-                base directories don't shift the target.
-              </p>
-            )}
-          </div>
+          <ScpPathField
+            id="bulk-scp-remote"
+            testId="bulk-scp-remote-path"
+            label="Remote path *"
+            placeholder="/var/log/app.log"
+            value={remotePath}
+            onChange={setRemotePath}
+            error={remotePathError}
+            hint="Used as-is on every host. Prefer absolute paths so per-host base directories don't shift the target."
+            disabled={running}
+          />
 
-          <label className="flex items-center gap-2 text-sm cursor-pointer">
-            <Checkbox
-              checked={recursive}
-              onCheckedChange={(v) => setRecursive(v === true)}
-              disabled={running}
-            />
-            Transfer directories recursively
-          </label>
+          <ScpRecursiveCheckbox checked={recursive} onChange={setRecursive} disabled={running} />
 
           {steps.length > 0 && (
             <div

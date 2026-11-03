@@ -6,13 +6,13 @@ on:
       release_tag:
         description: "Git tag and release name suffix, for example v1.0.0-beta.1"
         required: true
-        default: "v1.0.0-beta.1"
   push:
     tags:
       - "v*"
 
+# Build and test jobs run third-party code, so only publishing can write.
 permissions:
-  contents: write
+  contents: read
 
 env:
   RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.release_tag || github.ref_name }}
@@ -24,15 +24,19 @@ jobs:
 
     steps:
       - uses: actions/checkout@v5
+        with:
+          ref: refs/tags/${{ env.RELEASE_TAG }}
 
       - uses: actions/setup-node@v5
         with:
           node-version: "24"
           cache: "npm"
 
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+        with:
+          toolchain: stable
 
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
           workspaces: "src-tauri -> target"
 
@@ -49,15 +53,19 @@ jobs:
 
     steps:
       - uses: actions/checkout@v5
+        with:
+          ref: refs/tags/${{ env.RELEASE_TAG }}
 
       - uses: actions/setup-node@v5
         with:
           node-version: "24"
           cache: "npm"
 
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+        with:
+          toolchain: stable
 
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
           workspaces: "src-tauri -> target"
 
@@ -83,15 +91,19 @@ jobs:
 
     steps:
       - uses: actions/checkout@v5
+        with:
+          ref: refs/tags/${{ env.RELEASE_TAG }}
 
       - uses: actions/setup-node@v5
         with:
           node-version: "24"
           cache: "npm"
 
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+        with:
+          toolchain: stable
 
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
           workspaces: "src-tauri -> target"
 
@@ -108,15 +120,19 @@ jobs:
 
     steps:
       - uses: actions/checkout@v5
+        with:
+          ref: refs/tags/${{ env.RELEASE_TAG }}
 
       - uses: actions/setup-node@v5
         with:
           node-version: "24"
           cache: "npm"
 
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+        with:
+          toolchain: stable
 
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
           workspaces: "src-tauri -> target"
 
@@ -144,6 +160,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@v5
+        with:
+          ref: refs/tags/${{ env.RELEASE_TAG }}
 
       - uses: actions/setup-node@v5
         with:
@@ -164,9 +182,11 @@ jobs:
             libayatana-appindicator3-dev \
             librsvg2-dev
 
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+        with:
+          toolchain: stable
 
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
           workspaces: "src-tauri -> target"
 
@@ -192,6 +212,8 @@ jobs:
   publish-release:
     name: Publish Release
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     needs:
       - windows-tests
       - windows-build
@@ -204,6 +226,7 @@ jobs:
       # previous tag.
       - uses: actions/checkout@v5
         with:
+          ref: refs/tags/${{ env.RELEASE_TAG }}
           fetch-depth: 0
 
       - name: Download Windows artifact

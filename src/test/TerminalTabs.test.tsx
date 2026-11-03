@@ -15,13 +15,11 @@ vi.mock("@/store/useSftpStore", async (importOriginal) => ({
 }));
 
 vi.mock("@/components/Terminal", () => ({
-  Terminal: ({ sessionId, connectionName, isVisible }: {
+  Terminal: ({ sessionId, isVisible }: {
     sessionId: string;
-    connectionName: string;
     isVisible: boolean;
   }) => (
     <div data-testid={`terminal-${sessionId}`} data-visible={isVisible}>
-      {connectionName}
     </div>
   ),
 }));
@@ -76,9 +74,9 @@ describe("TerminalTabs", () => {
         activeTabId="t1"
       />,
     );
-    expect(screen.getAllByText("prod-server")).toHaveLength(2);
-    expect(screen.getAllByText("staging-server")).toHaveLength(2);
-    expect(screen.getAllByText("dev-server")).toHaveLength(2);
+    expect(screen.getByText("prod-server")).toBeInTheDocument();
+    expect(screen.getByText("staging-server")).toBeInTheDocument();
+    expect(screen.getByText("dev-server")).toBeInTheDocument();
   });
 
   it("renders the + button for new tab", () => {

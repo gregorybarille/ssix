@@ -38,7 +38,7 @@
 //!   traffic going out, or data already queued, cannot make a dead connection look
 //!   alive.
 //!
-//! The pump never flushes a channel, for the reason `write_all_nonblocking` in
+//! The pump never flushes a channel, for the reason `Outgoing::send` in
 //! `crate::ssh` gives. Each shell has its own pump: a reconnect asks for forwarding
 //! again and starts a new one, because the old session's grant died with it.
 //!

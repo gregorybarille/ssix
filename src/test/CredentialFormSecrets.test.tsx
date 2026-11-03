@@ -235,6 +235,69 @@ describe("CredentialForm — fetch-on-edit secrets", () => {
     expect(screen.queryByRole("dialog", { name: /discard unsaved changes/i })).toBeNull();
   });
 
+  describe("generating a key", () => {
+    const generatedKey = {
+      private_key_path: "/home/u/.ssh/id_ed25519_new",
+      private_key: "PEM",
+      public_key: "ssh-ed25519 AAAA",
+    };
+
+    /** Mock the backend, open the form, generate a key with `passphrase` and save. */
+    async function generateAndSave(
+      credential: Credential | null,
+      secrets: Record<string, string>,
+      passphrase: string,
+    ) {
+      vi.mocked(invoke).mockImplementation(async (command: string) =>
+        command === "generate_ssh_key" ? generatedKey : secrets,
+      );
+      const user = userEvent.setup();
+      const onSubmit = vi.fn().mockResolvedValue(undefined);
+      render(
+        <CredentialForm open onOpenChange={vi.fn()} credential={credential} onSubmit={onSubmit} />,
+      );
+      if (credential) {
+        await waitFor(() => expect(secretsState()).toBe("loaded"));
+      } else {
+        await user.type(screen.getByLabelText(/credential name/i), "new-key");
+        await user.type(screen.getByLabelText(/^username/i), "deploy");
+        await user.click(screen.getByTestId("credential-form-kind-sshkey"));
+      }
+      await user.click(screen.getByTestId("generate-key-open"));
+      if (passphrase) await user.type(screen.getByTestId("generate-key-passphrase"), passphrase);
+      await user.click(screen.getByTestId("generate-key-submit"));
+      await waitFor(() =>
+        expect(screen.getByTestId("credential-form-private-key-path")).toHaveValue(
+          generatedKey.private_key_path,
+        ),
+      );
+      await user.click(screen.getByTestId("credential-form-submit"));
+      await waitFor(() => expect(onSubmit).toHaveBeenCalled());
+      return onSubmit.mock.calls[0][0];
+    }
+
+    it("saves a new credential with the passphrase the key was generated with", async () => {
+      expect(await generateAndSave(null, {}, "new-pp")).toMatchObject({
+        private_key_path: generatedKey.private_key_path,
+        passphrase: "new-pp",
+      });
+    });
+
+    it("replaces the old key's passphrase in edit mode", async () => {
+      expect(await generateAndSave(pathKeyCred, { passphrase: "old-pp" }, "new-pp")).toMatchObject({
+        private_key_path: generatedKey.private_key_path,
+        keep_secrets: false,
+        passphrase: "new-pp",
+      });
+    });
+
+    it("clears the old key's passphrase when the new key has none", async () => {
+      const saved = await generateAndSave(pathKeyCred, { passphrase: "old-pp" }, "");
+      expect(saved).toMatchObject({ keep_secrets: false });
+      expect(saved.passphrase).toBeUndefined();
+    });
+  });
+
   it("ignores a fetch that settles after the form closed", async () => {
     const pending = deferred<{ password: string }>();
     vi.mocked(invoke).mockReturnValueOnce(pending.promise);

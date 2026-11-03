@@ -110,7 +110,8 @@ changes, because the unsaved-changes baseline follows the fetched values.
 Every SSH connection — direct, the jump host, the target behind it, a port forward's SSH server, SCP and the public-key installer — verifies the server's host key before a password or key is sent.
 
 - The first time a `host:port` is seen its key is recorded in `~/.ssix/known_hosts` (OpenSSH format, so `ssh-keygen -F`/`-R` work on it).
-- If the key later differs the connection is refused. The failure view names the host, shows the new SHA256 fingerprint and offers **Trust new host key**, which forgets the stale entry and reconnects. Use it only when you know the server was reinstalled or re-keyed.
+- SSIX asks the server for the key types it has on record first, as OpenSSH does, so a server holding several keys presents the one that can be checked.
+- If the key later differs the connection is refused, also when it is a key of a type not on record for that `host:port`: a fresh key of another type is what an attacker would present. The failure view names the host, shows the new SHA256 fingerprint and offers **Trust new host key**, which forgets every key recorded for that `host:port` and reconnects, so the new key replaces them. Use it only when you know the server was reinstalled or re-keyed.
 - Connections time out after 10 s (TCP) / 15 s (SSH setup) instead of hanging on a dead host.
 
 ### Terminal tab keyboard shortcuts
@@ -281,6 +282,9 @@ half-written backup in the list.
 
 - generate keypairs
 - choose storage mode for generated keys
+- a passphrase set while generating fills in the credential's Passphrase field,
+  so saving the credential is enough to log in with the encrypted key;
+  generating a key with none clears the field
 - install public key on remote hosts
 - **Browse for an existing private key** via the native file picker:
   the SSH Key tab in the credential form has a folder icon next to the
@@ -657,6 +661,8 @@ macOS and `Ctrl` everywhere else.
 | `Mod+Shift+S`  | Paste a snippet into the active terminal ([Snippets](snippets.md)) |
 | `Mod+Shift+P`  | Save a screenshot of the window to the desktop           |
 | `Cmd+F` on macOS, `Ctrl+Shift+F` elsewhere | Find in the visible terminal: see [Terminal UX](terminal-ux.md#find) |
+| `Cmd+C` on macOS, `Ctrl+Shift+C` elsewhere | Copy the terminal's selection: see [Terminal UX](terminal-ux.md#copy-and-paste) |
+| `Cmd+V` on macOS, `Ctrl+Shift+V` elsewhere | Paste into the terminal. Plain `Ctrl+C` and `Ctrl+V` always go to the program |
 
 On macOS the shortcuts work everywhere, including while a terminal
 has focus: `Cmd+K`, `Cmd+W` or `Cmd+1` are never consumed by the shell

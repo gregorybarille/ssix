@@ -73,13 +73,17 @@ pub(crate) mod test_support {
 /// without touching the user's real one. The override is checked at
 /// every call (not memoized) so tests can rotate it between specs.
 pub fn data_dir() -> PathBuf {
-    if let Ok(override_dir) = std::env::var("SSIX_DATA_DIR") {
-        if !override_dir.is_empty() {
-            return PathBuf::from(override_dir);
-        }
-    }
-    let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("."));
-    home.join(".ssix")
+    data_dir_override().unwrap_or_else(|| {
+        let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("."));
+        home.join(".ssix")
+    })
+}
+
+fn data_dir_override() -> Option<PathBuf> {
+    std::env::var("SSIX_DATA_DIR")
+        .ok()
+        .filter(|dir| !dir.is_empty())
+        .map(PathBuf::from)
 }
 
 pub fn get_data_path() -> PathBuf {
@@ -130,12 +134,64 @@ fn read_data_file(path: &Path) -> Result<AppData, String> {
         .map_err(|e| format!("{} is not valid SSIX data: {}", path.display(), e))
 }
 
+/// Close the data directory and the files in it to other local users, so a
+/// file an older build left 0644 is fixed now and not at its next save. Run at
+/// startup; a failure (a filesystem without modes, a folder of someone else's)
+/// is logged and never stops the app.
+///
+/// `SSIX_DATA_DIR` may name a folder that is not SSIX's alone, even `/tmp`, so
+/// only the default folder is closed. The files are SSIX's wherever they are.
+pub fn restrict_data_dir() {
+    let close_dir = data_dir_override().is_none();
+    for problem in restrict_dir_and_files(&data_dir(), close_dir) {
+        crate::logs::log_local("warn", "storage", problem);
+    }
+}
+
+/// Returns what could not be restricted. A symlink is not followed: it leads
+/// somewhere the user chose, and the next save replaces a linked file anyway.
+fn restrict_dir_and_files(dir: &Path, close_dir: bool) -> Vec<String> {
+    let mut problems = Vec::new();
+    if close_dir && !dir.is_symlink() {
+        problems.extend(crate::backup::ensure_private_dir(dir).err());
+    }
+    for name in crate::backup::FILES {
+        problems.extend(restrict_file(&dir.join(name)).err());
+    }
+    problems
+}
+
+#[cfg(unix)]
+fn restrict_file(path: &Path) -> Result<(), String> {
+    use std::os::unix::fs::PermissionsExt;
+    let fail = |e: std::io::Error| format!("Could not protect {}: {}", path.display(), e);
+    let meta = match fs::symlink_metadata(path) {
+        Ok(meta) => meta,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(e) => return Err(fail(e)),
+    };
+    if !meta.is_file() || meta.permissions().mode() & 0o077 == 0 {
+        return Ok(());
+    }
+    fs::set_permissions(path, fs::Permissions::from_mode(0o600)).map_err(fail)
+}
+
+#[cfg(not(unix))]
+fn restrict_file(_path: &Path) -> Result<(), String> {
+    Ok(())
+}
+
 /// Save the load-time migrations once, so a repaired file stops being
 /// repaired (and logged) on every launch. Run at startup on the blocking
 /// pool: plain reads never write. Returns whether the file was rewritten.
 ///
 /// A file written by a newer build is left alone, so merely opening this
 /// build never rewrites it at an older schema and drops its newer fields.
+///
+/// Rows still holding a secret inline are emptied here, not in
+/// `migrate_to_current`: a load must not drop a secret it has not stored. There
+/// is no schema bump for it, as the shape does not change and the check is
+/// cheap, so a restored old backup or a hand edit is caught too.
 pub fn persist_migrations() -> Result<bool, String> {
     let _guard = DATA_LOCK.lock().map_err(|e| e.to_string())?;
     let path = get_data_path();
@@ -143,7 +199,13 @@ pub fn persist_migrations() -> Result<bool, String> {
         return Ok(false);
     }
     let mut data = read_data_file(&path)?;
-    if data.schema_version > crate::models::CURRENT_SCHEMA_VERSION || !data.migrate_to_current() {
+    if data.schema_version > crate::models::CURRENT_SCHEMA_VERSION {
+        return Ok(false);
+    }
+    // Secrets first: a crash before the save below leaves them in both files
+    // and the next launch finishes the job; the other order would lose them.
+    let moved = crate::keychain::move_inline_secrets(&mut data.credentials)?;
+    if !data.migrate_to_current() && !moved {
         return Ok(false);
     }
     save_data_unlocked(&data)?;
@@ -269,7 +331,7 @@ pub(crate) fn atomic_write(path: &Path, content: &[u8], mode: Option<u32>) -> Re
 fn save_data_unlocked(data: &AppData) -> Result<(), String> {
     let path = get_data_path();
     let content = serde_json::to_string_pretty(data).map_err(|e| e.to_string())?;
-    atomic_write(&path, content.as_bytes(), None)?;
+    atomic_write(&path, content.as_bytes(), Some(0o600))?;
     let mut cache = DATA_CACHE.lock().unwrap_or_else(|e| e.into_inner());
     *cache = Some(CachedData {
         stamp: file_stamp(&path),
@@ -402,6 +464,214 @@ mod tests {
             let before = fs::read_to_string(get_data_path()).unwrap();
             assert!(!persist_migrations().unwrap());
             assert_eq!(fs::read_to_string(get_data_path()).unwrap(), before);
+        });
+    }
+
+    fn legacy_row(id: &str, kind: crate::models::CredentialKind) -> crate::models::Credential {
+        crate::models::Credential {
+            id: id.into(),
+            name: id.into(),
+            username: "u".into(),
+            kind,
+            is_private: false,
+        }
+    }
+
+    /// One row for each kind of inline secret, as builds from before
+    /// `secrets.json` wrote them.
+    fn with_inline_secrets(schema_version: u32) -> AppData {
+        use crate::models::CredentialKind;
+        let mut data = AppData {
+            schema_version,
+            ..AppData::default()
+        };
+        data.credentials.extend([
+            legacy_row(
+                "pw",
+                CredentialKind::Password {
+                    password: "plain-password".into(),
+                },
+            ),
+            legacy_row(
+                "path",
+                CredentialKind::SshKey {
+                    private_key_path: Some("/k".into()),
+                    private_key: None,
+                    passphrase: Some("plain-passphrase".into()),
+                },
+            ),
+            legacy_row(
+                "inline",
+                CredentialKind::SshKey {
+                    private_key_path: None,
+                    private_key: Some("PLAIN-KEY".into()),
+                    passphrase: Some("plain-key-passphrase".into()),
+                },
+            ),
+        ]);
+        data
+    }
+
+    /// The secrets a connection would authenticate with right now.
+    fn enriched(id: &str) -> crate::models::CredentialKind {
+        let mut cred = load_data()
+            .unwrap()
+            .credentials
+            .into_iter()
+            .find(|c| c.id == id)
+            .unwrap();
+        crate::keychain::enrich_credential(&mut cred).unwrap();
+        cred.kind
+    }
+
+    fn assert_inline_rows_still_authenticate() {
+        use crate::models::CredentialKind;
+        assert!(matches!(
+            enriched("pw"),
+            CredentialKind::Password { password } if password == "plain-password"
+        ));
+        assert!(matches!(
+            enriched("path"),
+            CredentialKind::SshKey { private_key_path: Some(path), private_key: None, passphrase: Some(pp) }
+                if path == "/k" && pp == "plain-passphrase"
+        ));
+        assert!(matches!(
+            enriched("inline"),
+            CredentialKind::SshKey { private_key_path: None, private_key: Some(key), passphrase: Some(pp) }
+                if key == "PLAIN-KEY" && pp == "plain-key-passphrase"
+        ));
+    }
+
+    fn assert_no_secret_in_data_json() {
+        let stored = fs::read_to_string(get_data_path()).unwrap();
+        assert!(!stored.to_lowercase().contains("plain"), "{}", stored);
+    }
+
+    #[test]
+    fn inline_secrets_move_to_the_secrets_file_and_keep_authenticating() {
+        test_support::with_isolated_data_dir(|| {
+            write_raw(&with_inline_secrets(crate::models::CURRENT_SCHEMA_VERSION));
+            assert_inline_rows_still_authenticate();
+
+            assert!(persist_migrations().unwrap());
+
+            assert_no_secret_in_data_json();
+            let secrets = crate::keychain::snapshot_for_credential("inline").unwrap();
+            assert_eq!(secrets.private_key.as_deref(), Some("PLAIN-KEY"));
+            assert_eq!(secrets.passphrase.as_deref(), Some("plain-key-passphrase"));
+            assert_inline_rows_still_authenticate();
+
+            // Nothing is left to do, so the rerun writes neither file.
+            let secrets_file = fs::read(crate::keychain::secrets_path()).unwrap();
+            assert!(!persist_migrations().unwrap());
+            assert_eq!(
+                fs::read(crate::keychain::secrets_path()).unwrap(),
+                secrets_file
+            );
+            assert_inline_rows_still_authenticate();
+        });
+    }
+
+    /// A crash between the two writes: the secrets are stored, the rows are
+    /// not yet blank. Nothing is lost then, or when the next launch finishes.
+    #[test]
+    fn a_crash_after_storing_the_secrets_loses_nothing() {
+        test_support::with_isolated_data_dir(|| {
+            write_raw(&with_inline_secrets(crate::models::CURRENT_SCHEMA_VERSION));
+            let mut unsaved = load_data().unwrap();
+            assert!(crate::keychain::move_inline_secrets(&mut unsaved.credentials).unwrap());
+            assert!(fs::read_to_string(get_data_path())
+                .unwrap()
+                .contains("plain-password"));
+            assert_inline_rows_still_authenticate();
+
+            assert!(persist_migrations().unwrap());
+            assert_no_secret_in_data_json();
+            assert_inline_rows_still_authenticate();
+        });
+    }
+
+    #[test]
+    fn a_secret_already_stored_is_not_overwritten_by_the_inline_one() {
+        test_support::with_isolated_data_dir(|| {
+            let newer = crate::models::CredentialSecrets {
+                password: Some("newer-password".into()),
+                ..Default::default()
+            };
+            crate::keychain::replace_for_credential("pw", &newer).unwrap();
+            write_raw(&with_inline_secrets(crate::models::CURRENT_SCHEMA_VERSION));
+
+            assert!(persist_migrations().unwrap());
+
+            assert_no_secret_in_data_json();
+            assert_eq!(
+                crate::keychain::snapshot_for_credential("pw").unwrap(),
+                newer
+            );
+        });
+    }
+
+    /// An empty inline passphrase would hide the stored one from
+    /// `enrich_credential`, so it is cleared even with nothing to move.
+    #[test]
+    fn an_empty_inline_value_is_cleared_without_storing_it() {
+        test_support::with_isolated_data_dir(|| {
+            let mut data = AppData::default();
+            data.credentials.push(legacy_row(
+                "empty",
+                crate::models::CredentialKind::SshKey {
+                    private_key_path: Some("/k".into()),
+                    private_key: None,
+                    passphrase: Some(String::new()),
+                },
+            ));
+            write_raw(&data);
+            assert!(persist_migrations().unwrap());
+            assert!(matches!(
+                &load_data().unwrap().credentials[0].kind,
+                crate::models::CredentialKind::SshKey {
+                    passphrase: None,
+                    ..
+                }
+            ));
+            assert_eq!(
+                crate::keychain::snapshot_for_credential("empty").unwrap(),
+                crate::models::CredentialSecrets::default()
+            );
+        });
+    }
+
+    #[test]
+    fn a_failure_to_store_the_secrets_leaves_data_json_alone() {
+        test_support::with_isolated_data_dir(|| {
+            write_raw(&with_inline_secrets(crate::models::CURRENT_SCHEMA_VERSION));
+            let before = fs::read_to_string(get_data_path()).unwrap();
+            fs::write(crate::keychain::secrets_path(), b"{ not json").unwrap();
+
+            assert!(persist_migrations().is_err());
+
+            assert_eq!(fs::read_to_string(get_data_path()).unwrap(), before);
+            assert_eq!(
+                fs::read(crate::keychain::secrets_path()).unwrap(),
+                b"{ not json"
+            );
+            assert!(matches!(
+                &load_data().unwrap().credentials[0].kind,
+                crate::models::CredentialKind::Password { password } if password == "plain-password"
+            ));
+        });
+    }
+
+    #[test]
+    fn inline_secrets_in_a_newer_file_are_left_alone() {
+        test_support::with_isolated_data_dir(|| {
+            write_raw(&with_inline_secrets(
+                crate::models::CURRENT_SCHEMA_VERSION + 1,
+            ));
+            let before = fs::read_to_string(get_data_path()).unwrap();
+            assert!(!persist_migrations().unwrap());
+            assert_eq!(fs::read_to_string(get_data_path()).unwrap(), before);
+            assert!(!crate::keychain::secrets_path().exists());
         });
     }
 
@@ -590,6 +860,105 @@ mod tests {
             final_content
         );
         let _ = fs::remove_dir_all(&*dir);
+    }
+
+    #[cfg(unix)]
+    fn mode(path: &Path) -> u32 {
+        use std::os::unix::fs::PermissionsExt;
+        fs::metadata(path).unwrap().permissions().mode() & 0o777
+    }
+
+    #[cfg(unix)]
+    fn set_mode(path: &Path, mode: u32) {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(path, fs::Permissions::from_mode(mode)).unwrap();
+    }
+
+    /// A save replaces an old world-readable file with a private one.
+    #[cfg(unix)]
+    #[test]
+    fn saving_makes_data_json_private() {
+        test_support::with_isolated_data_dir(|| {
+            write_raw(&AppData::default());
+            set_mode(&get_data_path(), 0o644);
+            with_data_mut(|_| Ok(())).unwrap();
+            assert_eq!(mode(&get_data_path()), 0o600);
+        });
+    }
+
+    /// An old 0644 file is fixed at launch, with no save needed.
+    #[cfg(unix)]
+    #[test]
+    fn restricting_fixes_old_files_and_closes_the_folder() {
+        let dir = tmp_dir();
+        set_mode(&dir, 0o755);
+        for name in crate::backup::FILES {
+            fs::write(dir.join(name), "old").unwrap();
+            set_mode(&dir.join(name), 0o644);
+        }
+        assert!(restrict_dir_and_files(&dir, true).is_empty());
+        assert_eq!(mode(&dir), 0o700);
+        for name in crate::backup::FILES {
+            assert_eq!(mode(&dir.join(name)), 0o600, "{}", name);
+            assert_eq!(fs::read_to_string(dir.join(name)).unwrap(), "old");
+        }
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn restricting_creates_a_missing_folder_private() {
+        let parent = tmp_dir();
+        let dir = parent.join(".ssix");
+        assert!(restrict_dir_and_files(&dir, true).is_empty());
+        assert_eq!(mode(&dir), 0o700);
+        let _ = fs::remove_dir_all(&parent);
+    }
+
+    /// `SSIX_DATA_DIR` may be shared: its folder stays as it is, its files
+    /// are still fixed.
+    #[cfg(unix)]
+    #[test]
+    fn an_overridden_data_dir_keeps_its_mode_but_not_loose_files() {
+        test_support::with_isolated_data_dir(|| {
+            let dir = data_dir();
+            set_mode(&dir, 0o755);
+            write_raw(&AppData::default());
+            set_mode(&get_data_path(), 0o644);
+            restrict_data_dir();
+            assert_eq!(mode(&dir), 0o755);
+            assert_eq!(mode(&get_data_path()), 0o600);
+        });
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn restricting_does_not_follow_symlinks() {
+        let tmp = tmp_dir();
+        let shared = tmp.join("shared");
+        fs::create_dir(&shared).unwrap();
+        set_mode(&shared, 0o755);
+        let link = tmp.join("linked");
+        std::os::unix::fs::symlink(&shared, &link).unwrap();
+        let shared_file = tmp.join("shared-file");
+        fs::write(&shared_file, "x").unwrap();
+        set_mode(&shared_file, 0o644);
+        std::os::unix::fs::symlink(&shared_file, shared.join("data.json")).unwrap();
+
+        assert!(restrict_dir_and_files(&link, true).is_empty());
+        assert_eq!(mode(&shared), 0o755);
+        assert_eq!(mode(&shared_file), 0o644);
+        let _ = fs::remove_dir_all(&tmp);
+    }
+
+    /// A folder that cannot be restricted is reported, not fatal.
+    #[test]
+    fn a_failure_to_restrict_is_returned_not_raised() {
+        let tmp = tmp_dir();
+        let blocked = tmp.join("a-file");
+        fs::write(&blocked, "x").unwrap();
+        assert!(!restrict_dir_and_files(&blocked.join("sub"), true).is_empty());
+        let _ = fs::remove_dir_all(&tmp);
     }
 
     /// The cache must serve repeat loads without touching the file, and

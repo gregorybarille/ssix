@@ -1,6 +1,6 @@
 /**
- * Spec 16: remote (`ssh -R`) and dynamic (`ssh -D`) forwards, and forwards
- * ending when they should.
+ * Spec 16: remote (`ssh -R`) and dynamic (`ssh -D`) forwards, forwards ending
+ * when they should, and a tunnel staying open under a client that stops reading.
  *
  * The tests run in order and build on each other: the SOCKS proxy of the
  * dynamic forward is also how the test runner reaches the loopback of
@@ -23,12 +23,17 @@ import { TARGETS, waitForServers } from "../helpers/docker.js";
 import {
   click,
   clickDialogFooterButton,
+  closeAllTabs,
+  connectToConnection,
+  createDirectConnection,
   createPasswordCredential,
   fill,
   navigateTo,
   pickOption,
   saveConnectionForm,
   textContentOf,
+  typeIntoTerminal,
+  waitForTerminalContains,
 } from "../helpers/flows.js";
 import { clickStart, rowOf, startForward, stopForward, waitForRow, waitForStatus } from "../helpers/forwards.js";
 import { sel } from "../helpers/selectors.js";
@@ -42,6 +47,10 @@ const RELAYED_SOCKS_PORT = 23664;
 const DELETED_SOCKS_PORT = 23665;
 const BIND_PORT = 23666;
 const TRAFFIC_PORT = 23667;
+const SLOW_CLIENT_PORT = 23668;
+/** On server-a, not on this machine. */
+const FLOOD_PORT = 23669;
+const CROWDED_PORT = 23670;
 
 const CMD_CONNECT = 1;
 const CMD_BIND = 2;
@@ -50,6 +59,9 @@ const REPLY_SUCCEEDED = 0;
 const REPLY_CONNECTION_REFUSED = 5;
 const REPLY_COMMAND_NOT_SUPPORTED = 7;
 const REPLY_ADDRESS_TYPE_NOT_SUPPORTED = 8;
+
+/** Past what 256 descriptors, and what 1024, can hold at two per client. */
+const CROWD = 600;
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -444,6 +456,56 @@ describe("Remote and dynamic forwards", () => {
     await client.waitForClose(10_000);
   });
 
+  it("keeps a client that stops reading, and gives it everything afterwards", async () => {
+    await createDirectConnection({
+      name: "conn-16-flood",
+      host: TARGETS.a.host,
+      port: TARGETS.a.sshPort,
+      credentialName: CREDENTIAL,
+    });
+    await connectToConnection("conn-16-flood");
+    await waitForTerminalContains("server-a:~$", 30_000);
+    const size = 64_000_000;
+    await typeIntoTerminal(`head -c ${size} /dev/zero | nc -l -p ${FLOOD_PORT}\n`);
+    await browser.pause(500);
+
+    await createForward({
+      name: "forward-16-slow",
+      kind: sel.connectionFormKindLocalForward,
+      portField: sel.connectionFormLocalPort,
+      port: SLOW_CLIENT_PORT,
+      target: { host: "127.0.0.1", port: FLOOD_PORT },
+    });
+    await startForward("forward-16-slow");
+
+    // No data listener yet: nothing is read, so the stall reaches the tunnel.
+    const client = connect({ host: "127.0.0.1", port: SLOW_CLIENT_PORT });
+    await once(client, "connect");
+    let closed = false;
+    client.on("close", () => {
+      closed = true;
+    });
+    client.on("error", () => {
+      closed = true;
+    });
+    await sleep(14_000);
+    expect(closed).toBe(false);
+
+    let received = 0;
+    client.on("data", (chunk: Buffer) => {
+      received += chunk.length;
+    });
+    await browser.waitUntil(() => received >= size || closed, {
+      timeout: 60_000,
+      timeoutMsg: `The client got ${received} of ${size} bytes`,
+    });
+    expect(received).toBe(size);
+
+    client.destroy();
+    await stopForward("forward-16-slow");
+    await closeAllTabs();
+  });
+
   it("listens on the address it is told to, and warns about one others can reach", async () => {
     await fillForwardForm({
       name: "forward-16-bind",
@@ -535,6 +597,46 @@ describe("Remote and dynamic forwards", () => {
 
     await stopForward("forward-16-remote");
     await stopForward("forward-16-socks");
+  });
+
+  it("serves hundreds of clients at once, and a new session beside them", async () => {
+    await createForward({
+      name: "forward-16-crowded",
+      kind: sel.connectionFormKindDynamicForward,
+      portField: sel.connectionFormSocksPort,
+      port: CROWDED_PORT,
+    });
+    await startForward("forward-16-crowded");
+
+    const crowd: Client[] = [];
+    // In batches, so that the listener's backlog does not delay anyone.
+    while (crowd.length < CROWD) {
+      crowd.push(
+        ...(await Promise.all(Array.from({ length: 50 }, () => openClient(CROWDED_PORT)))),
+      );
+    }
+    // Only a client with a thread of its own gets this answer.
+    await Promise.all(
+      crowd.map(async (client) => {
+        client.socket.write(Buffer.from([5, 1, 0]));
+        expect([...(await client.take(2))]).toEqual([5, 0]);
+      }),
+    );
+    expect(await socksReply(CROWDED_PORT, CMD_CONNECT, ipv4([127, 0, 0, 1], 1))).toBe(
+      REPLY_CONNECTION_REFUSED,
+    );
+
+    // This session's socket gets a descriptor number above 1024 while the crowd
+    // is there, which a library using select() could not take.
+    await startForward("forward-16-socks");
+    expect(await socksReply(SOCKS_PORT, CMD_CONNECT, ipv4([127, 0, 0, 1], 1))).toBe(
+      REPLY_CONNECTION_REFUSED,
+    );
+    await waitForStatus("forward-16-crowded", "connected");
+
+    for (const client of crowd) client.socket.destroy();
+    await stopForward("forward-16-socks");
+    await stopForward("forward-16-crowded");
   });
 
   it("stops a running forward that is deleted", async () => {
