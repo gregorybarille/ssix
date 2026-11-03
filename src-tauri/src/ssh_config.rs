@@ -9,7 +9,8 @@
 //!   defaults usually come last. `IdentityFile` and the three forward
 //!   directives collect every value instead.
 //! - `ProxyJump` and `ProxyCommand` share one slot: whichever comes first
-//!   wins, and `none` counts as a value.
+//!   wins, and `none` counts as a value, except that a `ProxyCommand` still
+//!   replaces `ProxyJump none`.
 //! - `Include` reads relative paths from `~/.ssh`, expands `~` and globs, and
 //!   a `Host` or `Match` inside an included file does not leak out of it. An
 //!   `Include` inside a block that does not apply reads nothing that applies.
@@ -234,7 +235,13 @@ impl ResolvedHost {
                 }
             }
             Keyword::ProxyCommand => {
-                if self.proxy.is_none() {
+                // Raw on purpose: to `ssh`, `none # why` is a host called none.
+                let free = match &self.proxy {
+                    None => true,
+                    Some(Proxy::Jump(jump)) => jump.raw.eq_ignore_ascii_case("none"),
+                    Some(Proxy::Command(_)) => false,
+                };
+                if free {
                     self.proxy = Some(Proxy::Command(value.clone()));
                 }
             }
@@ -557,12 +564,21 @@ fn canonical(path: &Path) -> PathBuf {
     fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
 }
 
+/// Whether `ssh` would put a `%` token or `${VAR}` in place in this value. A
+/// bare `$` is literal, and `HOST$` is a real account name.
+pub fn uses_expansion(text: &str) -> bool {
+    text.contains('%') || text.contains("${")
+}
+
 /// The file names `arg` of an `Include` line stands for, in glob(3) order.
 /// `*` and `?` work in any path component and skip dotfiles unless the
 /// component starts with a dot; character classes are refused, not guessed.
 fn expand_include(arg: &str, home: &Path) -> Result<Vec<PathBuf>, String> {
     if arg.contains(['[', ']']) {
         return Err("character classes are not supported".to_string());
+    }
+    if uses_expansion(arg) {
+        return Err("tokens and environment variables are not supported".to_string());
     }
     let anchored = if arg == "~" {
         home.to_path_buf()
@@ -1131,6 +1147,49 @@ mod tests {
         }
     }
 
+    /// Every row compared by hand with `ssh -G` on OpenSSH 10.5.
+    #[test]
+    fn the_proxy_slot_follows_ssh_in_every_order() {
+        for (lines, expected) in [
+            (
+                "ProxyJump none\nHost *\nProxyCommand corp %h",
+                "command corp %h",
+            ),
+            ("ProxyJump NONE\nProxyCommand corp", "command corp"),
+            ("ProxyJump=none\nProxyCommand corp", "command corp"),
+            ("ProxyJump none  \nProxyCommand corp", "command corp"),
+            (
+                "ProxyJump none\nProxyJump j1\nProxyCommand corp",
+                "command corp",
+            ),
+            (
+                "ProxyJump none\nProxyCommand a\nProxyCommand b",
+                "command a",
+            ),
+            ("ProxyJump none\nProxyCommand a\nProxyJump j1", "command a"),
+            (
+                "ProxyJump none\nProxyCommand none\nProxyJump j1\nProxyCommand a",
+                "command none",
+            ),
+            ("ProxyJump none\nProxyJump j1", "jump none"),
+            ("ProxyJump j1\nProxyCommand corp", "jump j1"),
+            ("ProxyCommand corp\nProxyJump j1", "command corp"),
+            ("ProxyCommand none\nProxyJump j1", "command none"),
+            ("ProxyCommand none\nProxyCommand corp", "command none"),
+            // To `ssh` these two are hops through a host called `none`.
+            ("ProxyJump none # why\nProxyCommand corp", "jump none # why"),
+            ("ProxyJump \"none\"\nProxyCommand corp", "jump \"none\""),
+        ] {
+            let config = parse(&format!("Host web\n{lines}\n"));
+            let held = match config.resolve("web").proxy {
+                Some(Proxy::Jump(v)) => format!("jump {}", v.raw),
+                Some(Proxy::Command(v)) => format!("command {}", v.raw),
+                None => "nothing".to_string(),
+            };
+            assert_eq!(held, expected, "{lines:?}");
+        }
+    }
+
     #[test]
     fn wildcard_and_negated_patterns_are_not_aliases() {
         let config = parse("Host * db? !prod web\n  User a\nHost *.example.com\n  User b\n");
@@ -1226,6 +1285,8 @@ mod tests {
             ("Include \"a\n", true),
             ("Include [ab]\n", true),
             ("Include ~bob/config\n", true),
+            ("Include ${HOME}/work/ssh.conf\n", true),
+            ("Include %d/work/ssh.conf\n", true),
             ("Include ~/.ssh\n", true),
             ("Include inner\n", true),
         ] {

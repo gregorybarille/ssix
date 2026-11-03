@@ -42,7 +42,8 @@ use crate::forwards::listen_addr;
 use crate::models::{AppData, Connection, ConnectionKind, Credential, CredentialKind};
 use crate::ssh_config::{
     display_path, is_unix_socket, jump_value, parse_forward_end, parse_jump_hop, parse_port,
-    valid_host, HostEntry, ParsedConfig, Proxy, ResolvedHost, Source, Value, MAX_FORWARDS_PER_HOST,
+    uses_expansion, valid_host, HostEntry, ParsedConfig, Proxy, ResolvedHost, Source, Value,
+    MAX_FORWARDS_PER_HOST,
 };
 use crate::storage::{load_data, with_data_mut};
 
@@ -425,6 +426,11 @@ struct IdentityTokens<'a> {
 /// Turn an `IdentityFile` value into the absolute path a credential stores,
 /// which is opened as written when connecting. Nothing reads the file here.
 fn identity_path(raw: &str, tokens: &IdentityTokens) -> Result<String, String> {
+    if raw.contains("${") {
+        return Err(format!(
+            "IdentityFile '{raw}' uses an environment variable, which SSIX cannot expand"
+        ));
+    }
     let mut expanded = String::with_capacity(raw.len());
     let mut chars = raw.chars();
     while let Some(c) = chars.next() {
@@ -504,18 +510,18 @@ fn server_plan(
 
     let username = match (user, &resolved.user) {
         (Some(user), _) => {
-            if user.contains('%') {
+            if uses_expansion(user) {
                 return Err(Refusal::unsupported(format!(
-                    "The user '{user}' in ProxyJump uses a token, which SSIX cannot expand"
+                    "The user '{user}' in ProxyJump uses a token or environment variable, which SSIX cannot expand"
                 )));
             }
             user.to_string()
         }
         (None, Some(value)) => {
             let raw = value.single().map_err(Refusal::invalid)?;
-            if raw.contains('%') {
+            if uses_expansion(raw) {
                 return Err(Refusal::unsupported(format!(
-                    "User on {} uses a token, which SSIX cannot expand",
+                    "User on {} uses a token or environment variable, which SSIX cannot expand",
                     value.at
                 )));
             }
@@ -1928,6 +1934,85 @@ mod tests {
             );
             assert_eq!(item(&preview, "bastion").kind, "direct");
             assert_eq!(item(&preview, "inner").kind, "jump_shell");
+        });
+    }
+
+    #[test]
+    fn proxy_jump_none_gives_way_to_a_later_default_proxy_command() {
+        in_data_dir(|f| {
+            // `ssh -G bastion` keeps the proxycommand.
+            let preview = f.preview(
+                "Host bastion\n  User ops\n  ProxyJump none\nHost *\n  ProxyCommand corp-proxy %h %p\n",
+            );
+            let bastion = item(&preview, "bastion");
+            assert_eq!(bastion.kind, "direct");
+            assert_eq!(bastion.proxy_command.as_deref(), Some("corp-proxy %h %p"));
+        });
+    }
+
+    /// What `ssh` does with `${VAR}` differs by option. Each host compared by
+    /// hand with `ssh -G` and `ssh -v` on OpenSSH 10.5.
+    #[test]
+    fn an_environment_variable_is_refused_only_where_ssh_expands_it() {
+        in_data_dir(|f| {
+            let preview = f.preview(concat!(
+                // ssh expands these: `gregx`, `/keys/greg/id`.
+                "Host env-user\n  User ${USER}x\n",
+                "Host env-open\n  User HOST${\n",
+                "Host env-key\n  User u\n  IdentityFile /keys/${USER}/id\n",
+                "Host env-jump\n  User u\n  ProxyJump ${USER}@bastion\n",
+                // ssh takes these as written.
+                "Host bare-user\n  User HOST$\n",
+                "Host bare-key\n  User u\n  IdentityFile /keys/$USER/id\n",
+                // ssh gives it to the shell, and so does SSIX.
+                "Host env-command\n  User u\n  ProxyCommand nc ${USER} %h\n",
+                // Not expanded by ssh, and no host or port can hold it.
+                "Host env-name\n  User u\n  HostName ${USER}.example.com\n",
+                "Host env-port\n  User u\n  Port ${PORT}\n",
+                // ssh expands it, and no host can hold it.
+                "Host env-dest\n  User u\n  LocalForward 8080 ${USER}:80\n",
+                "Host bastion\n  User ops\n",
+            ));
+            for name in ["env-user", "env-open", "env-key", "env-jump"] {
+                let refused = skip(&preview, name);
+                assert_eq!(refused.category, ImportSkipCategory::Unsupported, "{name}");
+                assert!(
+                    refused.reason.contains("environment variable"),
+                    "{name}: {}",
+                    refused.reason
+                );
+            }
+            assert_eq!(item(&preview, "bare-user").credentials[0].username, "HOST$");
+            assert_eq!(
+                item(&preview, "bare-key").credentials[0]
+                    .private_key_path
+                    .as_deref(),
+                Some("/keys/$USER/id")
+            );
+            assert_eq!(
+                item(&preview, "env-command").proxy_command.as_deref(),
+                Some("nc ${USER} %h")
+            );
+            for name in ["env-name", "env-port"] {
+                assert_eq!(skip(&preview, name).category, ImportSkipCategory::Invalid);
+            }
+            assert_eq!(
+                skip(&preview, "env-dest (LocalForward)").category,
+                ImportSkipCategory::Invalid
+            );
+        });
+    }
+
+    #[test]
+    fn an_include_ssh_would_expand_holds_back_every_row() {
+        in_data_dir(|f| {
+            // `ssh -G web` finds the ProxyJump in the file this names.
+            let preview = f.preview("Include ${HOME}/work/ssh.conf\nHost web\n  User u\n");
+            assert_all_held_back(&preview);
+            assert!(preview
+                .notices
+                .iter()
+                .any(|n| n.message.contains("${HOME}/work/ssh.conf")));
         });
     }
 
