@@ -13,6 +13,7 @@ Files are written under:
 ## What Does Not Get Exported
 
 - password values
+- a password or token inside a URL remote
 - inline private key contents
 - raw secret storage from `~/.ssix/secrets.json`
 

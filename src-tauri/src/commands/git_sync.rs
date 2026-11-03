@@ -531,8 +531,21 @@ fn export_snapshot(repo_path: &Path, data: &AppData) -> Result<(), String> {
     Ok(())
 }
 
+/// A URL remote can hold a password or token, and the snapshot gets pushed.
+fn without_url_credentials(remote: &str) -> String {
+    let Some((scheme, rest)) = remote.split_once("://") else {
+        return remote.to_string();
+    };
+    let authority_end = rest.find('/').unwrap_or(rest.len());
+    match rest[..authority_end].rfind('@') {
+        Some(at) => format!("{scheme}://{}", &rest[at + 1..]),
+        None => remote.to_string(),
+    }
+}
+
 fn sanitize_app_data(data: &AppData) -> Result<AppData, String> {
     let mut sanitized = data.clone();
+    sanitized.settings.git_sync_remote = without_url_credentials(&data.settings.git_sync_remote);
     for cred in &mut sanitized.credentials {
         match &cred.kind {
             CredentialKind::Password { .. } => {
@@ -1209,5 +1222,24 @@ mod tests {
             run(&fx.repo, &["log", "-1", "--format=%s"]).trim(),
             "-m looks like an option"
         );
+    }
+
+    #[test]
+    fn a_token_in_a_url_remote_never_reaches_the_snapshot() {
+        for (remote, kept) in [
+            ("https://me:s3cret@github.com/me/cfg.git", "https://github.com/me/cfg.git"),
+            ("https://s3cret@github.com/me/cfg.git", "https://github.com/me/cfg.git"),
+            ("ssh://me:s3cret@host:2222/cfg@v1.git", "ssh://host:2222/cfg@v1.git"),
+            ("https://github.com/me/cfg.git", "https://github.com/me/cfg.git"),
+            ("git@github.com:me/cfg.git", "git@github.com:me/cfg.git"),
+            ("origin", "origin"),
+        ] {
+            let mut data = AppData::default();
+            data.settings.git_sync_remote = remote.to_string();
+            let sanitized = sanitize_app_data(&data).unwrap();
+            assert_eq!(sanitized.settings.git_sync_remote, kept);
+            let exported = serde_json::to_string(&sanitized).unwrap();
+            assert!(!exported.contains("s3cret"), "{remote} leaked: {exported}");
+        }
     }
 }
