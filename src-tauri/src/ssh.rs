@@ -1551,24 +1551,26 @@ fn run_io_loop<O: ShellOutput>(shell: OpenShell, io: &mut ShellIo<O>) -> ShellEn
 
         // Drain everything the remote has for us. Extended data arrives here
         // too: `open_shell_over_stream` merges it into this stream.
-        while !paused {
-            match channel.read(&mut buf) {
-                Ok(0) => {
-                    eof = true;
-                    break;
-                }
-                Ok(n) => {
-                    pending.extend_from_slice(&buf[..n]);
-                    active = true;
-                    watchdog.heard(Instant::now());
-                    if pending.len() >= OUTPUT_COALESCE_MAX {
+        if !paused {
+            loop {
+                match channel.read(&mut buf) {
+                    Ok(0) => {
+                        eof = true;
                         break;
                     }
-                }
-                Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => break,
-                Err(e) => {
-                    io.print(&pending);
-                    return after_io_error(&mut channel, format!("SSH read error: {}", e));
+                    Ok(n) => {
+                        pending.extend_from_slice(&buf[..n]);
+                        active = true;
+                        watchdog.heard(Instant::now());
+                        if pending.len() >= OUTPUT_COALESCE_MAX {
+                            break;
+                        }
+                    }
+                    Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => break,
+                    Err(e) => {
+                        io.print(&pending);
+                        return after_io_error(&mut channel, format!("SSH read error: {}", e));
+                    }
                 }
             }
         }

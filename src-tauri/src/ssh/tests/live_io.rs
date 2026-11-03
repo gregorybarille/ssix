@@ -48,6 +48,26 @@ impl ShellOutput for TestTerminal {
     }
 }
 
+fn shell_through(relay: &Relay, target: &Target, keepalive_interval: u16) -> OpenShell {
+    let opts = ShellOptions {
+        keepalive_interval,
+        ..ShellOptions::default()
+    };
+    open_shell_over_stream(relay.connect(), &target.endpoint, &opts).unwrap()
+}
+
+/// What the channel has now, after a short wait for more if that is nothing.
+fn read_or_wait(channel: &mut ssh2::Channel, buf: &mut [u8], fd: wake::Fd) -> usize {
+    match channel.read(buf) {
+        Ok(n) => n,
+        Err(e) if e.kind() == io::ErrorKind::WouldBlock => {
+            wake::wait_readable(&[fd], Duration::from_millis(50));
+            0
+        }
+        Err(e) => panic!("{e}"),
+    }
+}
+
 /// [`run_io_loop`] on its own thread, as a shell worker runs it.
 struct LiveShell {
     handle: SessionHandle,
@@ -254,13 +274,7 @@ fn live_a_slow_paste_outlasts_the_old_limit_and_the_watchdog() {
     let target = Target::from_env();
     with_isolated_data_dir(|| {
         let relay = Relay::start(&target.endpoint);
-        let opts = ShellOptions {
-            keepalive_interval: 2,
-            ..ShellOptions::default()
-        };
-        let shell = LiveShell::start(
-            open_shell_over_stream(relay.connect(), &target.endpoint, &opts).unwrap(),
-        );
+        let shell = LiveShell::start(shell_through(&relay, &target, 2));
         shell.wait_for_prompt();
         shell.send(b"stty -echo; cat >/dev/null; stty echo; echo done$((6*7))\n");
         thread::sleep(Duration::from_millis(300));
@@ -292,8 +306,7 @@ fn live_take_in_reads_what_a_read_held_up_by_a_half_sent_packet_cannot() {
             session,
             mut channel,
             ..
-        } = open_shell_over_stream(relay.connect(), &target.endpoint, &ShellOptions::default())
-            .unwrap();
+        } = shell_through(&relay, &target, 0);
         let fd = wake::fd_of(&session);
         wait_for_quiet(&mut channel, fd);
 
@@ -313,13 +326,7 @@ fn live_take_in_reads_what_a_read_held_up_by_a_half_sent_packet_cannot() {
                 start.elapsed() < Duration::from_secs(20),
                 "no flood: {read}"
             );
-            match channel.read(&mut buf) {
-                Ok(n) => read += n,
-                Err(e) if e.kind() == io::ErrorKind::WouldBlock => {
-                    wake::wait_readable(&[fd], Duration::from_millis(50));
-                }
-                Err(e) => panic!("{e}"),
-            }
+            read += read_or_wait(&mut channel, &mut buf, fd);
         }
 
         // Half send a packet on a full socket. The relay takes nothing up.
@@ -359,13 +366,7 @@ fn live_a_server_gone_silent_under_a_paste_is_judged_by_the_watchdog() {
     let target = Target::from_env();
     with_isolated_data_dir(|| {
         let relay = Relay::start(&target.endpoint);
-        let opts = ShellOptions {
-            keepalive_interval: 2,
-            ..ShellOptions::default()
-        };
-        let shell = LiveShell::start(
-            open_shell_over_stream(relay.connect(), &target.endpoint, &opts).unwrap(),
-        );
+        let shell = LiveShell::start(shell_through(&relay, &target, 2));
         shell.wait_for_prompt();
         relay.set_mode(RELAY_FROZEN);
         let start = Instant::now();
@@ -430,10 +431,7 @@ fn live_a_resize_on_a_full_socket_goes_out_later_and_jams_nothing() {
     let target = Target::from_env();
     with_isolated_data_dir(|| {
         let relay = Relay::start(&target.endpoint);
-        let shell = LiveShell::start(
-            open_shell_over_stream(relay.connect(), &target.endpoint, &ShellOptions::default())
-                .unwrap(),
-        );
+        let shell = LiveShell::start(shell_through(&relay, &target, 0));
         shell.wait_for_prompt();
 
         let filled = fill_session_socket(&relay, shell.fd);
@@ -467,8 +465,7 @@ fn live_a_tunnel_ending_on_a_full_socket_leaves_the_session_usable() {
             session,
             mut channel,
             ..
-        } = open_shell_over_stream(relay.connect(), &target.endpoint, &ShellOptions::default())
-            .unwrap();
+        } = shell_through(&relay, &target, 0);
         session.set_blocking(true);
         let tunnel = session.channel_direct_tcpip("127.0.0.1", 22, None).unwrap();
         session.set_blocking(false);
@@ -512,13 +509,8 @@ fn live_a_tunnel_ending_on_a_full_socket_leaves_the_session_usable() {
         let start = Instant::now();
         while !String::from_utf8_lossy(&printed).contains("alive42") {
             assert!(start.elapsed() < Duration::from_secs(10), "no answer");
-            match channel.read(&mut buf) {
-                Ok(n) => printed.extend_from_slice(&buf[..n]),
-                Err(e) if e.kind() == io::ErrorKind::WouldBlock => {
-                    wake::wait_readable(&[fd], Duration::from_millis(50));
-                }
-                Err(e) => panic!("{e}"),
-            }
+            let n = read_or_wait(&mut channel, &mut buf, fd);
+            printed.extend_from_slice(&buf[..n]);
         }
     });
 }
@@ -797,10 +789,7 @@ fn live_a_connection_lost_during_a_pause_is_noticed() {
     let target = Target::from_env();
     with_isolated_data_dir(|| {
         let relay = Relay::start(&target.endpoint);
-        let shell = LiveShell::start(
-            open_shell_over_stream(relay.connect(), &target.endpoint, &ShellOptions::default())
-                .unwrap(),
-        );
+        let shell = LiveShell::start(shell_through(&relay, &target, 0));
         shell.wait_for_prompt();
         shell.keeps_up.store(false, Ordering::SeqCst);
         shell.send(b"yes\n");

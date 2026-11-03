@@ -74,7 +74,7 @@ terminal, and no output is lost.
 
 Everything else goes on during the pause: keepalives, typing, resizing. Ctrl+C
 reaches the program at once. What the program had already printed still has to
-scroll past, at most a few MB.
+scroll past, about 10 MB at most.
 
 A terminal off screen goes on processing what it is sent, so a program printing in
 a hidden tab is not held up by that. If the whole window is hidden and the system
