@@ -82,8 +82,7 @@ async function createAgentCredential(name: string, username: string): Promise<vo
 
 /** Open `name` beside the active tab's shell. */
 async function openSplitWith(name: string): Promise<void> {
-  // This has failed now and then in CI with the picker closed and nothing dialled,
-  // and never locally. If it does again, the trace says where the Enter went.
+  // If the picker closes before the Enter, as it did until spec 20's pointer test, the trace says where it went.
   await startFocusTrace();
   await click(sel.terminalNewMenu);
   await click(sel.terminalNewSplitRight);

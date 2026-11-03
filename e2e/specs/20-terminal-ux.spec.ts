@@ -307,6 +307,27 @@ describe("Terminal UX", () => {
       expect(await textOf(first)).not.toContain("SPLIT");
     });
 
+    it("keeps the connect picker open when the pointer moves over the menu that opened it", async () => {
+      await createConnectionA("conn-20-pointer");
+      await openShell("conn-20-pointer");
+      await click(sel.terminalNewMenu);
+      const item = await browser.$(sel.terminalNewSplitRight);
+      await item.waitForClickable({ timeout: 10_000 });
+      const { x, y } = await item.getLocation();
+      await item.click();
+
+      const pointer = browser.action("pointer", { parameters: { pointerType: "mouse" } });
+      for (let step = 0; step < 8; step++) {
+        pointer.move({ x: Math.round(x + 20 + step * 3), y: Math.round(y + 8 + (step % 2) * 12), origin: "viewport" });
+      }
+      await pointer.perform();
+      await browser.pause(800);
+
+      expect(await (await browser.$(sel.connectPickerInput)).isExisting()).toBe(true);
+      await browser.keys(["Escape"]);
+      await (await browser.$(sel.connectPickerInput)).waitForExist({ reverse: true, timeout: 10_000 });
+    });
+
     it("leaves the keyboard with someone typing when a slow connection arrives", async () => {
       await createConnectionA("conn-20-typing");
       await createDirectConnection({
