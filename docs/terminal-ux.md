@@ -1,6 +1,6 @@
 # Terminal UX
 
-Find in scrollback, clickable links, broadcast input across a tab's panes, a
+Find in scrollback, paste, clickable links, broadcast input across a tab's panes, a
 look per connection, and terminals that keep their state while another view is
 on screen. `Mod` is `Cmd` on macOS and `Ctrl` everywhere else.
 
@@ -60,6 +60,19 @@ character", and programs such as `less` and `vim` have their own use for it.
 While the bar is open, moving between matches does not trigger
 **auto-copy on selection**.
 
+## Paste
+
+**A paste cannot run anything by ending its own brackets.** Control characters are
+removed from it, other than tabs and line breaks, under the same rule as
+[a snippet](snippets.md#line-breaks-and-control-characters). So text on the clipboard
+holding `ESC [ 201 ~` stays text. Line breaks are sent as `\r`, and a program that has
+asked for bracketed paste keeps them as text until you press Enter.
+
+A program that has not asked for it takes a paste as typed: each line break is Enter,
+as it is in any terminal. Control characters are removed there too, except when the
+paste starts with an escape, or is one control character alone: those cannot be told
+apart from a key or from the terminal's answer to a query, so they go as they are.
+
 ## Links
 
 Terminal output is untrusted, whatever server it came from, so a link in it
@@ -104,7 +117,7 @@ back receives only what is typed from then on: nothing is queued for it.
 stays off when a split adds one back, so you turn it on knowing what it reaches. A
 new tab starts off.
 
-**What is mirrored:** keys and pastes.
+**What is mirrored:** keys and pastes, a paste [cleaned](#paste) first.
 
 **What is not:**
 
