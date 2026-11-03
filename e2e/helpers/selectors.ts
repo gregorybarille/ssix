@@ -153,6 +153,7 @@ export const sel = {
   // Git sync
   gitSyncRepoPath: '[data-testid="git-sync-repo-path"]',
   gitSyncExportButton: '[data-testid="git-sync-export"]',
+  gitSyncRunButton: '[data-testid="git-sync-run"]',
   gitSyncStatus: '[data-testid="git-sync-status"]',
 
   // Generate / install key dialogs

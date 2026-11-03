@@ -52,6 +52,14 @@ The sync flow stops on the first failing git step and surfaces the git output.
 ## Notes
 
 - The sync repository must already exist and be a valid git checkout.
-- The configured remote defaults to `origin`.
-- Branch override is optional; otherwise the current branch is used.
+- The configured remote defaults to `origin`. It is either the name of a remote of that repository or a URL or path; anything else fails when Sync tries to reach it.
+- Branch override is optional; otherwise the current branch is used. The status and Sync use the same branch.
 - Empty commits are not created.
+
+## First Sync And New Branches
+
+The remote may be empty, and the branch may not exist on it yet. The status then counts every local commit as ahead (none when the repository has no commit yet), and Sync creates the branch with its push.
+
+## URL Remotes
+
+A URL has no `refs/remotes/` tracking ref, so Sync keeps its own, `refs/ssix-sync/<branch>`, updated by each fetch and push. The status reads it without going to the network, so it reflects the last Sync: before the first one, the remote branch counts as not existing yet. Sync does not bring the remote's tags into the repository.

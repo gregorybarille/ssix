@@ -70,7 +70,7 @@ Older builds showed this as `TypeError: ... window.__TAURI_INTERNALS__ is undefi
 ## Git Sync Fails
 
 - Confirm the configured repository path exists and contains `.git/`.
-- Confirm the configured remote name exists in that repository.
+- Confirm the configured remote is a remote name of that repository, or a URL or path. A name it does not know, such as a missing `origin`, is tried as a path and fails with "does not appear to be a git repository". An empty remote is fine: the first Sync creates the branch.
 - If one-click sync fails during pull, resolve the branch state manually and retry.
 - If push fails, inspect the returned git output in the Git Sync view.
 
