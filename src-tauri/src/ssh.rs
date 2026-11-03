@@ -20,7 +20,7 @@
 //! the session log (`crate::session_log`).
 
 use std::io::{self, Read, Write};
-use std::net::{Shutdown, SocketAddr, TcpListener, TcpStream, ToSocketAddrs};
+use std::net::{Shutdown, SocketAddr, TcpStream, ToSocketAddrs};
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender, TryRecvError};
@@ -1912,14 +1912,14 @@ fn bridge_unless_cancelled(
     verbosity: u8,
     cancelled: Option<&AtomicBool>,
 ) -> Result<TcpStream, String> {
-    let listener = TcpListener::bind("127.0.0.1:0")
-        .map_err(|e| format!("Failed to bind ephemeral loopback port: {}", e))?;
-    let local_port = listener
-        .local_addr()
-        .map_err(|e| format!("local_addr() failed: {}", e))?
-        .port();
     let gateway_session = open_hop_unless_cancelled(gateway, "Jump host", verbosity, cancelled)?;
     let debug = SshDebug::new(verbosity, gateway.addr());
+    // Past the jump host's login, so no port is open while that takes its time.
+    let (stream, local_stream) = crate::proxy::loopback_pair()
+        .map_err(|e| format!("Failed to connect inner SSH session: {}", e))?;
+    let peer = local_stream
+        .peer_addr()
+        .map_err(|e| format!("Failed to connect inner SSH session: {}", e))?;
 
     let (ready_tx, ready_rx) = mpsc::channel::<Result<(), String>>();
     {
@@ -1932,13 +1932,6 @@ fn bridge_unless_cancelled(
                     destination_host, destination_port
                 )
             });
-            let (local_stream, peer) = match listener.accept() {
-                Ok(accepted) => accepted,
-                Err(e) => {
-                    let _ = ready_tx.send(Err(format!("accept() failed: {}", e)));
-                    return;
-                }
-            };
             // Blocking open (single channel, nothing else to stall), then
             // non-blocking for the forwarding loop.
             match session.channel_direct_tcpip(
@@ -1970,15 +1963,6 @@ fn bridge_unless_cancelled(
             }
         });
     }
-
-    let stream = match TcpStream::connect(("127.0.0.1", local_port)) {
-        Ok(stream) => stream,
-        Err(e) => {
-            // Unblock accept() so the forwarder thread can exit.
-            let _ = TcpStream::connect(("127.0.0.1", local_port));
-            return Err(format!("Failed to connect inner SSH session: {}", e));
-        }
-    };
 
     let budget = CONNECT_TIMEOUT + Duration::from_millis(SESSION_TIMEOUT_MS as u64);
     match ready_rx.recv_timeout(budget) {
@@ -2164,6 +2148,7 @@ mod credential_failure_tests {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::net::TcpListener;
     use std::sync::atomic::AtomicU8;
 
     #[cfg(unix)]

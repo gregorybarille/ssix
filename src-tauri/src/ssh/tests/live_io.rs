@@ -822,3 +822,24 @@ fn live_a_connection_lost_during_a_pause_is_noticed() {
         }
     });
 }
+
+/// A port left open would hand the tunnel to whichever local process got there
+/// first, past the login to the jump host.
+#[test]
+#[ignore]
+fn live_a_jump_tunnel_leaves_no_port_to_connect_to() {
+    let target = Target::from_env();
+    with_isolated_data_dir(|| {
+        let stream = bridge_unless_cancelled(&target.endpoint, "127.0.0.1", 22, 0, None).unwrap();
+        let far_end = stream.peer_addr().unwrap();
+        assert!(
+            TcpStream::connect(far_end).is_err(),
+            "the tunnel's port still takes connections"
+        );
+
+        let opts = ShellOptions::default();
+        let shell =
+            LiveShell::start(open_shell_over_stream(stream, &target.endpoint, &opts).unwrap());
+        shell.wait_for_prompt();
+    });
+}

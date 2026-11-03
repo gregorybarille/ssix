@@ -93,19 +93,19 @@ fn shell(command: &str) -> Command {
 /// turned away.
 pub(crate) fn loopback_pair() -> Result<(TcpStream, TcpStream), String> {
     let listener = TcpListener::bind("127.0.0.1:0")
-        .map_err(|e| format!("Failed to bind a loopback port for the proxy: {}", e))?;
+        .map_err(|e| format!("Failed to bind a loopback port: {}", e))?;
     let addr = listener
         .local_addr()
         .map_err(|e| format!("local_addr() failed: {}", e))?;
     let near = TcpStream::connect(addr)
-        .map_err(|e| format!("Failed to connect the proxy bridge: {}", e))?;
+        .map_err(|e| format!("Failed to connect a loopback pair: {}", e))?;
     let near_addr = near
         .local_addr()
         .map_err(|e| format!("local_addr() failed: {}", e))?;
     loop {
         let (far, peer) = listener
             .accept()
-            .map_err(|e| format!("Failed to accept the proxy bridge: {}", e))?;
+            .map_err(|e| format!("Failed to accept a loopback pair: {}", e))?;
         if peer == near_addr {
             return Ok((near, far));
         }
@@ -201,6 +201,16 @@ fn pump(mut child: Child, far: TcpStream, addr: String) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_loopback_pair_is_connected_and_leaves_no_port_open() {
+        let (mut near, mut far) = loopback_pair().unwrap();
+        near.write_all(b"x").unwrap();
+        let mut got = [0u8; 1];
+        far.read_exact(&mut got).unwrap();
+        assert_eq!(&got, b"x");
+        assert!(TcpStream::connect(near.peer_addr().unwrap()).is_err());
+    }
 
     #[test]
     fn expands_openssh_tokens() {
