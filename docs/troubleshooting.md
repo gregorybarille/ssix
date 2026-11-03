@@ -40,7 +40,8 @@ Older builds showed this as `TypeError: ... window.__TAURI_INTERNALS__ is undefi
 ## Host Key Has Changed
 
 - SSIX refuses to connect when a server's host key differs from the one recorded on first use. The failure view shows the new SHA256 fingerprint.
-- Confirm out of band (hosting console, admin) that the server really was reinstalled or re-keyed, then click **Trust new host key**. If nobody changed the server, do not trust the key: the connection may be intercepted.
+- That includes a key of another type, for example an Ed25519 key when an ECDSA key is on record. The message names both types. SSIX asks for the recorded type first, so this means the server did not offer that type at all: it dropped the key, or it is not the same server.
+- Confirm out of band (hosting console, admin) that the server really was reinstalled or re-keyed, then click **Trust new host key**. It replaces every key recorded for that `host:port`. If nobody changed the server, do not trust the key: the connection may be intercepted.
 - Recorded keys live in `~/.ssix/known_hosts` (OpenSSH format). `ssh-keygen -R <host> -f ~/.ssix/known_hosts` removes an entry by hand; for a non-default port use `-R '[host]:port'`.
 
 ## A Port Forward Does Not Work

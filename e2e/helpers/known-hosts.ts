@@ -1,9 +1,9 @@
 /**
  * Stale `known_hosts` entries, to make the app see a changed host key.
  *
- * Keys are matched per algorithm (a server that gains a second key type is
- * not an interception), so one bogus key of every algorithm the server may
- * negotiate is planted: whichever libssh2 picks, the stored key differs.
+ * The server is asked for the recorded types first, so by default one bogus key
+ * of every algorithm it may negotiate is planted: whichever it presents, the
+ * stored key of that type differs.
  */
 import { writeFileSync } from "node:fs";
 
@@ -15,7 +15,7 @@ const ALGORITHMS = ["ssh-ed25519", "ssh-rsa", "ecdsa-sha2-nistp256", "ecdsa-sha2
  * body no real server has. known_hosts only needs the algorithm prefix and
  * base64 to parse it.
  */
-function bogusKey(algorithm: string): string {
+export function bogusKey(algorithm: string): string {
   const name = Buffer.from(algorithm, "utf8");
   const len = Buffer.alloc(4);
   len.writeUInt32BE(name.length);
@@ -31,7 +31,12 @@ export function knownHostsName(host: string, port: number): string {
 }
 
 /** Replace the file with stale entries for this host, one per algorithm. */
-export function plantBogusHostKeys(knownHostsPath: string, host: string, port: number): void {
+export function plantBogusHostKeys(
+  knownHostsPath: string,
+  host: string,
+  port: number,
+  keys: string[] = BOGUS_KEYS,
+): void {
   const entry = knownHostsName(host, port);
-  writeFileSync(knownHostsPath, BOGUS_KEYS.map((key) => `${entry} ${key}\n`).join(""));
+  writeFileSync(knownHostsPath, keys.map((key) => `${entry} ${key}\n`).join(""));
 }
