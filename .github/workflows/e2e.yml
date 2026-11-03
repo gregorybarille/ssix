@@ -3,7 +3,8 @@ name: E2E
 # Advisory E2E job — runs the full Tauri app under tauri-driver
 # against the Dockerized SSH fixtures. Per project decision:
 #   * push to main and tag pushes (release validation)
-#   * pull_request so PRs surface E2E failures before merge
+#   * pull_request so PRs surface E2E failures before merge, unless they
+#     only change docs
 #   * advisory status (never required for merges; flake-tolerant)
 #   * workflow_dispatch lets devs re-run a failing build without a commit
 on:
@@ -11,9 +12,10 @@ on:
     branches: [main]
     tags: ["v*"]
   pull_request:
+    paths-ignore: ["docs/**", "**/*.md"]
   workflow_dispatch:
 
-# A second push to main while one is running is a wasted ~15 min — let
+# A second push to main while one is running is wasted time — let
 # the in-progress run finish only when it's the latest commit.
 concurrency:
   group: e2e-${{ github.ref }}
@@ -51,6 +53,7 @@ jobs:
       - name: Install Tauri + WebDriver system deps
         run: |
           sudo apt-get update
+          # Recommended packages made each WebDriver session wait 30 s to start.
           sudo apt-get install -y --no-install-recommends \
             libwebkit2gtk-4.1-dev \
             libgtk-3-dev \
@@ -85,7 +88,7 @@ jobs:
           # Per-job isolated state dir; honored by data_dir() in
           # storage.rs and secrets_path() in keychain.rs.
           SSIX_DATA_DIR: ${{ runner.temp }}/ssix-e2e
-        run: xvfb-run -a npm run e2e:wdio -- --spec e2e/specs/03-direct-session.spec.ts --spec e2e/specs/05-port-forward.spec.ts
+        run: xvfb-run -a npm run e2e:wdio
 
       - name: Capture docker-compose logs (always)
         if: always()
