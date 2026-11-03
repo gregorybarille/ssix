@@ -37,7 +37,9 @@ app". Use it for layout work only; anything that loads or saves data needs
 ## Releases
 
 Releases are built by `.github/workflows/release.yml` and uploaded to the
-repository's GitHub Releases page as prereleases:
+repository's GitHub Releases page as prereleases. A manual run builds the
+tag you name, not the branch it was started from, and fails if that tag does
+not exist. Only the publishing job can write to the repository:
 
 | Platform | Runner | Asset |
 |---|---|---|
