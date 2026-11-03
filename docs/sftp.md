@@ -111,15 +111,16 @@ until you press **Upload changes**.
 
 ## Files view and SCP
 
-The **Transfer files** row action (SCP) stays as it is. See
-[File Transfer](file-transfer.md).
+The **Transfer files** row action (SCP) copies with the same code as this view, so
+the rules under [Transfers](#transfers) for temporary files and permissions apply to
+it too. See [File Transfer](file-transfer.md).
 
 | | Files view | SCP dialog |
 |---|---|---|
 | Purpose | Browse and manage files | Copy one path you already know |
 | See the server's files | Yes | No, you type the path |
 | Protocol | SFTP only | SFTP when the server offers it, otherwise legacy `scp` |
-| Large files | Streamed | Held in memory whole |
+| Large files | Streamed | Streamed |
 | Progress, cancel | Yes | No |
 | Existing target | Asks first | Replaced |
 | Rename, delete, permissions, edit | Yes | No |

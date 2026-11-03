@@ -55,7 +55,9 @@ Older builds showed this as `TypeError: ... window.__TAURI_INTERNALS__ is undefi
 
 - Make sure the connection is a Direct or Jump host connection.
 - Use recursive mode when the source or target is a directory.
-- Check whether the remote path exists or whether the remote user has permission to write there.
+- Check whether the remote path exists or whether the remote user has permission to write there. An upload writes a temporary file first, so it needs write permission on the folder and not only on the file.
+- An upload that was cut off can leave a hidden `.ssix-part-*` file on the server. It is safe to delete, and the file it was replacing is untouched.
+- "Could not put the new copy in place" on a server without SFTP means the shell refused the final `mv`: the target is a folder or a symlink, or the account has no shell. See [File Transfer](file-transfer.md#servers-without-sftp).
 
 ## A Script Fails On Some Hosts
 
