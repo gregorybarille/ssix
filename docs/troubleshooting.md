@@ -71,8 +71,9 @@ Older builds showed this as `TypeError: ... window.__TAURI_INTERNALS__ is undefi
 ## Git Sync Fails
 
 - Confirm the configured repository path exists and contains `.git/`.
-- Confirm the configured remote name exists in that repository.
-- If one-click sync fails during pull, resolve the branch state manually and retry.
+- Confirm the configured remote is a remote name of that repository, or a URL or path. A name it does not know, such as a missing `origin`, is tried as a path and fails with "does not appear to be a git repository". An empty remote is fine: the first Sync creates the branch.
+- If one-click sync reports that the branch has diverged, rebase or merge onto the remote branch in the repository and retry. A conflict in `.ssix-sync/` can be resolved either way, because Sync exports over it.
+- If the pull is refused because of local changes, those are your own files outside `.ssix-sync/`: commit or restore them and retry. Sync discards only `.ssix-sync/`.
 - If push fails, inspect the returned git output in the Git Sync view.
 
 ## Credentials Seem Missing

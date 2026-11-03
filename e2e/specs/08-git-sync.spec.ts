@@ -28,39 +28,22 @@ import {
 import { sel } from "../helpers/selectors.js";
 
 let repo: string;
+let remote: string;
 
 describe("Git sync export", () => {
   before(() => {
+    // A repo with no commits and an empty remote: the very first sync.
     repo = mkdtempSync(join(tmpdir(), "ssix-gitsync-repo-"));
     execSync("git init --initial-branch=main", { cwd: repo });
     execSync("git config user.email e2e@ssix.test", { cwd: repo });
     execSync("git config user.name e2e", { cwd: repo });
-    // git_sync_status calls `git status --short .ssix-sync` and
-    // `git rev-list --left-right --count HEAD...origin/main`. The
-    // ahead_behind() helper short-circuits when `current_branch`
-    // returns None (empty repo), but the moment we have any commit
-    // it'll resolve a branch and the rev-list call against the
-    // missing `origin/main` ref will fail, dropping the whole
-    // status into the Err path — so the GitSyncView never sees
-    // `configured: true`. We seed an initial commit AND register
-    // a no-op `origin` remote pointing at the repo itself so the
-    // remote ref exists once we fetch (we don't fetch in the spec
-    // because export is local-only, but having `origin` configured
-    // means rev-list errors only complain about the missing
-    // refs/remotes/origin/main pointer — which still errors).
-    //
-    // Simpler fix: create the initial commit so HEAD is real, then
-    // skip remote setup entirely. ahead_behind sees branch="main"
-    // and tries `HEAD...origin/main`. To avoid that error we point
-    // origin at a second local repo that already has main.
-    execSync("git commit --allow-empty -m initial", { cwd: repo });
-    const remote = mkdtempSync(join(tmpdir(), "ssix-gitsync-remote-"));
+    remote = mkdtempSync(join(tmpdir(), "ssix-gitsync-remote-"));
     execSync("git init --bare --initial-branch=main", { cwd: remote });
     execSync(`git remote add origin ${remote}`, { cwd: repo });
-    execSync("git push -u origin main", { cwd: repo });
   });
   after(() => {
     rmSync(repo, { recursive: true, force: true });
+    rmSync(remote, { recursive: true, force: true });
   });
 
   it("exports the catalogue to a local repo", async () => {
@@ -113,13 +96,26 @@ describe("Git sync export", () => {
       { timeout: 30_000, timeoutMsg: "git-sync export did not complete" },
     );
 
-    // Export only writes locally; we assert the local snapshot has
-    // changed-files state OR that a commit landed if commit was
-    // implicit. Either way the bare repo proves nothing yet (push
-    // is a separate action). For now, assert the export action
-    // produced visible status output — the bare repo assertion is
-    // restored once the spec covers Push.
+    // Export only writes locally; the next test covers the push.
     const statusText = await (await browser.$(sel.gitSyncStatus)).getText();
     expect(statusText.length).toBeGreaterThan(0);
+  });
+
+  it("first sync commits and pushes into an empty remote", async () => {
+    await (await browser.$(sel.gitSyncRunButton)).click();
+    await browser.waitUntil(
+      async () =>
+        /pushed 1 commit/i.test(
+          await (await browser.$(sel.gitSyncStatus)).getText(),
+        ),
+      { timeout: 30_000, timeoutMsg: "first sync did not push" },
+    );
+
+    const pushed = execSync("git show main:.ssix-sync/data.json", {
+      cwd: remote,
+      encoding: "utf8",
+    });
+    expect(pushed).toContain("conn-gitsync");
+    expect(pushed).not.toContain("passa");
   });
 });

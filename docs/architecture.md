@@ -108,4 +108,4 @@ Files that many features would otherwise edit at once are registries: a feature 
 
 - Git Sync exports a sanitized snapshot into `.ssix-sync/` inside a user-configured repository.
 - The export contains no passwords or inline private key material.
-- One-click sync performs export, fetch, fast-forward pull when needed, commit when there are local exported changes, and push.
+- One-click sync performs fetch, fast-forward pull when needed (discarding `.ssix-sync/` first, since it is derived data), export, commit of `.ssix-sync/` alone when there are local exported changes, and push.

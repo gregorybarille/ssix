@@ -42,7 +42,7 @@ export function GitSyncView() {
           users don't have to reason about the order of operations.
         */}
         <div className="flex items-center gap-2">
-          <Button size="sm" onClick={() => void runSync()} disabled={isLoading || !status.configured} aria-busy={isLoading}>
+          <Button size="sm" onClick={() => void runSync()} disabled={isLoading || !status.configured} aria-busy={isLoading} data-testid="git-sync-run">
             <WandSparkles aria-hidden="true" className="h-4 w-4 mr-1" />
             Sync
           </Button>
