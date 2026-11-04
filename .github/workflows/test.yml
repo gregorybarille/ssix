@@ -80,6 +80,14 @@ jobs:
       SSIX_LIVE_PLATFORM: windows
     steps:
       - uses: actions/checkout@v5
+      # The release runs these on Windows too, so a failure here would only
+      # show up at release time.
+      - uses: actions/setup-node@v5
+        with:
+          node-version: "24"
+          cache: "npm"
+      - run: npm ci
+      - run: npm test
       - name: Start a Windows OpenSSH server
         shell: pwsh
         run: |

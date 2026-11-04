@@ -15,8 +15,9 @@ describe("release version", () => {
 
   it("changes only the package's own version in the real manifest", () => {
     const manifest = readFileSync("src-tauri/Cargo.toml", "utf8");
-    const before = manifest.split("\n");
-    const after = withCargoVersion(manifest, "9.8.7").split("\n");
+    // Git checks the manifest out with CRLF on Windows.
+    const before = manifest.split(/\r?\n/);
+    const after = withCargoVersion(manifest, "9.8.7").split(/\r?\n/);
     const changed = after.filter((line, i) => line !== before[i]);
     expect(changed).toEqual(['version = "9.8.7"']);
     expect(after.slice(0, 5)).toContain('version = "9.8.7"');
