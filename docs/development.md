@@ -49,9 +49,7 @@ not exist. Only the publishing job can write to the repository:
 
 Windows and macOS tests run in their own jobs alongside the builds (Linux
 tests run on every push and pull request in `test.yml`). A small publish job
-uploads the assets only after every job succeeds. The builds disable
-release LTO and raise codegen units to cut turnaround time while still
-producing optimized binaries.
+uploads the assets only after every job succeeds.
 
 The workflow publishes against the actual Git tag (for example
 `v1.0.1`) using `gh release --verify-tag`, so the assets appear on the
