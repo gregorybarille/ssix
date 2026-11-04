@@ -1,0 +1,52 @@
+name: Temporary LTO build check
+on: pull_request
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: "24"
+          cache: "npm"
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: "src-tauri -> target"
+      - run: npm ci
+      - run: npm run tauri build -- --no-bundle
+      - shell: pwsh
+        run: (Get-Item src-tauri/target/release/ssix.exe).Length
+  macos:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: "24"
+          cache: "npm"
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: "src-tauri -> target"
+      - run: npm ci
+      - run: npm run tauri build
+      - run: ls -l src-tauri/target/release/ssix src-tauri/target/release/bundle/dmg/
+  linux:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: "24"
+          cache: "npm"
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: "src-tauri -> target"
+      - run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev patchelf libssl-dev
+      - run: npm ci
+      - run: npm run tauri build -- --bundles deb,rpm,appimage
+      - run: ls -l src-tauri/target/release/ssix src-tauri/target/release/bundle/*/ | grep -E 'ssix'
