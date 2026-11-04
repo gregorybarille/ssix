@@ -207,7 +207,9 @@ describe("FilesView", () => {
     await waitFor(() =>
       expect(screen.getByTestId("files-status")).toHaveAttribute("data-state", "connected"),
     );
-    expect(calls("ssh_forget_host_key")).toEqual([{ host: "web", port: 22 }]);
+    expect(calls("ssh_trust_host_key")).toEqual([
+      { host: "web", port: 22, fingerprint: "SHA256:new" },
+    ]);
     expect(screen.queryByTestId("files-connect-error")).not.toBeInTheDocument();
   });
 

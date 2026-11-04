@@ -74,7 +74,7 @@ pub fn run() {
             commands::ssh::ssh_output_ack,
             commands::ssh::ssh_resize,
             commands::ssh::ssh_disconnect,
-            commands::ssh::ssh_forget_host_key,
+            commands::ssh::ssh_trust_host_key,
             commands::scp::scp_upload,
             commands::scp::scp_download,
             commands::scripts::get_scripts,

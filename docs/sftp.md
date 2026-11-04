@@ -32,7 +32,8 @@ The view keeps its session and transfers when you switch to another view.
 
 Every session goes through the same connect path as a terminal, on direct and
 jump host connections alike, so host keys are checked the same way. A changed
-key refuses the connection and the view offers **Trust new host key**.
+key refuses the connection and the view offers **Trust new host key**, which
+accepts only the fingerprint shown.
 
 Only a terminal pane can answer a server's keyboard-interactive questions, so
 the view refuses such a server with a message saying so. Use a key or the agent

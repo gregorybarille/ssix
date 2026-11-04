@@ -113,7 +113,7 @@ describe("FailedTerminal", () => {
       expect(screen.getByTestId("trust-host-key-button")).toBeEnabled();
     });
 
-    it("forgets the old key then retries the connection", async () => {
+    it("trusts the fingerprint shown then retries the connection", async () => {
       invokeMock.mockResolvedValue(true);
       const onRetry = vi.fn();
       render(
@@ -129,10 +129,14 @@ describe("FailedTerminal", () => {
       );
       await userEvent.click(screen.getByTestId("trust-host-key-button"));
       await waitFor(() => expect(onRetry).toHaveBeenCalledWith(conn));
-      expect(invokeMock).toHaveBeenCalledWith("ssh_forget_host_key", { host: "10.0.0.1", port: 22 });
+      expect(invokeMock).toHaveBeenCalledWith("ssh_trust_host_key", {
+        host: "10.0.0.1",
+        port: 22,
+        fingerprint: "SHA256:abc",
+      });
     });
 
-    it("shows the backend error and does not retry when forgetting fails", async () => {
+    it("shows the backend error and does not retry when trusting fails", async () => {
       invokeMock.mockRejectedValue("known_hosts is unreadable");
       const onRetry = vi.fn();
       render(
