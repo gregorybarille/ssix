@@ -100,7 +100,7 @@ changes, because the unsaved-changes baseline follows the fetched values.
 - closing a split pane gives the keyboard to the pane that stays, once any question about it is answered
 - retry failed sessions
 - edit source connection from failure UI
-- GPU-accelerated rendering (xterm WebGL addon) for the terminals on screen, when the WebView supports it, 10 000 lines of scrollback
+- GPU-accelerated rendering (xterm WebGL addon) when the WebView supports it, 10 000 lines of scrollback
 - right-click pastes into the terminal under the cursor only
 - keepalive, auto-reconnect in the same tab and session logs: see [Session resilience](session-resilience.md)
 - find in scrollback, clickable links, broadcast input, a look per connection, and terminals that keep their state across views: see [Terminal UX](terminal-ux.md)

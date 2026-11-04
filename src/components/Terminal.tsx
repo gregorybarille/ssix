@@ -1,7 +1,7 @@
-import { useCallback, useEffect, useLayoutEffect, useRef } from "react";
+import { type RefObject, useCallback, useEffect, useLayoutEffect, useRef } from "react";
 import { Terminal as XTerm } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
-import type { WebglAddon } from "@xterm/addon-webgl";
+import { WebglAddon } from "@xterm/addon-webgl";
 import { keyboardIsInItsTab, isPanelOpen, nobodyTypingElsewhere } from "@/lib/focus";
 import { detectPlatform } from "@/lib/platform";
 import { invoke } from "@/lib/tauri";
@@ -24,7 +24,6 @@ import {
   type TerminalExtensionContext,
 } from "./terminal/extensions";
 import "./terminal/registerExtensions";
-import { loadWebglRenderer } from "./terminal/webglRenderer";
 import "@xterm/xterm/css/xterm.css";
 
 /** Lines kept above the viewport. xterm's default (1000) is low for an SSH client. */
@@ -53,11 +52,29 @@ export interface TerminalPasteDetail {
   sessionId?: string;
 }
 
+/**
+ * GPU rendering when the WebView offers WebGL; the DOM renderer stays in place
+ * otherwise. A webview keeps about 16 contexts and takes the oldest away for a new
+ * one: the DOM renderer takes over then too, and `lost` says a new one is wanted.
+ */
+function loadWebglRenderer(term: XTerm, lost: RefObject<boolean>) {
+  try {
+    const webgl = new WebglAddon();
+    webgl.onContextLoss(() => {
+      webgl.dispose();
+      lost.current = true;
+    });
+    term.loadAddon(webgl);
+  } catch {
+    // WebGL unavailable — DOM renderer.
+  }
+}
+
 export function Terminal({ sessionId, isVisible, onDisconnect, settings, connection }: TerminalProps) {
   const termRef = useRef<HTMLDivElement>(null);
   const xtermRef = useRef<XTerm | null>(null);
   const fitAddonRef = useRef<FitAddon | null>(null);
-  const webglRef = useRef<WebglAddon | null>(null);
+  const webglLostRef = useRef(false);
   // Keep `onDisconnect` in a ref so the listener registered inside the
   // [sessionId]-deps effect always calls the latest callback.
   const onDisconnectRef = useRef(onDisconnect);
@@ -99,19 +116,19 @@ export function Terminal({ sessionId, isVisible, onDisconnect, settings, connect
   }, [sessionId]);
 
   // On screen: refit, and take the keyboard. Off screen: let go of the keyboard,
-  // or typing in the view that replaced this terminal would reach its shell. Only
-  // a terminal on screen holds a WebGL context: a webview keeps about 16 and takes
-  // the oldest away for the next, which would leave that tab on the slow renderer.
+  // or typing in the view that replaced this terminal would reach its shell.
   useEffect(() => {
     const term = xtermRef.current;
     if (!term) return;
     if (!isVisible) {
       term.textarea?.blur();
-      webglRef.current?.dispose();
-      webglRef.current = null;
       return;
     }
-    webglRef.current ??= loadWebglRenderer(term);
+    // Only on being shown, so terminals on screen cannot keep taking each other's.
+    if (webglLostRef.current) {
+      webglLostRef.current = false;
+      loadWebglRenderer(term, webglLostRef);
+    }
     if (endedWhileHiddenRef.current) {
       endedWhileHiddenRef.current = false;
       onDisconnectRef.current();
@@ -167,7 +184,7 @@ export function Terminal({ sessionId, isVisible, onDisconnect, settings, connect
     term.open(termRef.current);
 
     // Before the first fit: the two renderers size their cells differently.
-    webglRef.current = isVisibleRef.current ? loadWebglRenderer(term) : null;
+    loadWebglRenderer(term, webglLostRef);
 
     xtermRef.current = term;
     fitAddonRef.current = fitAddon;
