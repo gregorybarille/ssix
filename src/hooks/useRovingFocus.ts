@@ -65,6 +65,10 @@ export function useRovingFocus({
     }
   }, [itemCount, focusedIndex]);
 
+  // The same functions for an index on every render, so that a memoized row
+  // changes only when its `tabIndex` does.
+  const itemHandlers = useRef(new Map<number, Pick<RovingFocusItemProps, "ref" | "onFocus">>());
+
   const focusItem = useCallback((index: number) => {
     const el = itemRefs.current[index];
     if (el) el.focus();
@@ -123,14 +127,23 @@ export function useRovingFocus({
   );
 
   const getItemProps = useCallback(
-    (index: number): RovingFocusItemProps => ({
-      ref: (el) => {
-        itemRefs.current[index] = el;
-      },
-      tabIndex: index === focusedIndex ? 0 : -1,
-      onFocus: () => setFocusedIndex(index),
-      "data-roving-index": index,
-    }),
+    (index: number): RovingFocusItemProps => {
+      let handlers = itemHandlers.current.get(index);
+      if (!handlers) {
+        handlers = {
+          ref: (el) => {
+            itemRefs.current[index] = el;
+          },
+          onFocus: () => setFocusedIndex(index),
+        };
+        itemHandlers.current.set(index, handlers);
+      }
+      return {
+        ...handlers,
+        tabIndex: index === focusedIndex ? 0 : -1,
+        "data-roving-index": index,
+      };
+    },
     [focusedIndex],
   );
 

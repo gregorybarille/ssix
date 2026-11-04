@@ -5,6 +5,7 @@ import { Dialog as DialogPrimitive } from "radix-ui";
 import { focusWasTaken } from "@/lib/focus";
 import { cn } from "@/lib/utils";
 import { usePanelSlot } from "./panel-slot";
+import { overlayHost } from "@/lib/overlayHost";
 
 function Dialog({
   modal,
@@ -131,7 +132,7 @@ function DialogContent({
   ensureFocusTrackerInstalled();
 
   return (
-    <DialogPortal data-slot="dialog-portal" container={kind === "panel" ? slot : undefined}>
+    <DialogPortal data-slot="dialog-portal" container={kind === "panel" && slot ? slot : overlayHost()}>
       {kind === "confirm" && <DialogOverlay />}
       <DialogPrimitive.Content
         data-slot="app-panel-content"

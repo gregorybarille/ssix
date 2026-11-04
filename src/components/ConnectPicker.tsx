@@ -32,6 +32,57 @@ function endpointSubtitle(conn: Connection): string {
   return `${conn.host}:${conn.port}`;
 }
 
+/** Its own component so that a closed picker builds no rows on each App render. */
+function PickerRows({
+  connections,
+  credentials,
+  activeIndex,
+  rowProps,
+  onChoose,
+}: {
+  connections: Connection[];
+  credentials: Credential[];
+  activeIndex: number;
+  rowProps: ReturnType<typeof useListboxNavigation>["rowProps"];
+  onChoose: (connection: Connection) => void;
+}) {
+  const names = useMemo(() => new Map(credentials.map((c) => [c.id, c.name])), [credentials]);
+  return connections.map((conn, idx) => {
+    const color = getColorHex(conn.color);
+    const isActive = idx === activeIndex;
+    const credentialName = conn.credential_id ? names.get(conn.credential_id) : undefined;
+    return (
+      <div
+        {...rowProps(idx)}
+        key={conn.id}
+        id={`connect-picker-row-${idx}`}
+        data-name={conn.name}
+        role="option"
+        aria-selected={isActive}
+        onClick={() => onChoose(conn)}
+        className={cn(
+          "flex items-center gap-3 px-3 py-2 cursor-pointer transition-colors",
+          isActive ? "bg-accent" : "hover:bg-accent/60",
+        )}
+        style={color ? { borderLeft: `3px solid ${color}` } : undefined}
+      >
+        {conn.type !== "direct" ? (
+          <Network className="h-4 w-4 text-muted-foreground shrink-0" aria-hidden="true" />
+        ) : (
+          <Server className="h-4 w-4 text-muted-foreground shrink-0" aria-hidden="true" />
+        )}
+        <div className="min-w-0 flex-1">
+          <p className="text-sm font-medium truncate">{conn.name}</p>
+          <p className="text-xs text-muted-foreground truncate">
+            {endpointSubtitle(conn)}
+            {credentialName && <span className="ml-1">· {credentialName}</span>}
+          </p>
+        </div>
+      </div>
+    );
+  });
+}
+
 export function ConnectPicker({
   open,
   onOpenChange,
@@ -41,11 +92,6 @@ export function ConnectPicker({
 }: ConnectPickerProps) {
   const [query, setQuery] = useState("");
   const inputRef = useRef<HTMLInputElement | null>(null);
-
-  const getCredentialName = (credId?: string) => {
-    if (!credId) return null;
-    return credentials.find((c) => c.id === credId)?.name ?? null;
-  };
 
   const tokens = useMemo(() => tokenize(query), [query]);
 
@@ -140,51 +186,13 @@ export function ConnectPicker({
             aria-label="Matching connections"
             className="max-h-[320px] overflow-y-auto py-1"
           >
-            {filtered.map((conn, idx) => {
-              const color = getColorHex(conn.color);
-              const isActive = idx === activeIndex;
-              return (
-                <div
-                  {...rowProps(idx)}
-                  key={conn.id}
-                  id={`connect-picker-row-${idx}`}
-                  data-name={conn.name}
-                  role="option"
-                  aria-selected={isActive}
-                  onClick={() => choose(conn)}
-                  className={cn(
-                    "flex items-center gap-3 px-3 py-2 cursor-pointer transition-colors",
-                    isActive ? "bg-accent" : "hover:bg-accent/60",
-                  )}
-                  style={
-                    color ? { borderLeft: `3px solid ${color}` } : undefined
-                  }
-                >
-                  {conn.type !== "direct" ? (
-                    <Network
-                      className="h-4 w-4 text-muted-foreground shrink-0"
-                      aria-hidden="true"
-                    />
-                  ) : (
-                    <Server
-                      className="h-4 w-4 text-muted-foreground shrink-0"
-                      aria-hidden="true"
-                    />
-                  )}
-                  <div className="min-w-0 flex-1">
-                    <p className="text-sm font-medium truncate">{conn.name}</p>
-                    <p className="text-xs text-muted-foreground truncate">
-                      {endpointSubtitle(conn)}
-                      {getCredentialName(conn.credential_id) && (
-                        <span className="ml-1">
-                          · {getCredentialName(conn.credential_id)}
-                        </span>
-                      )}
-                    </p>
-                  </div>
-                </div>
-              );
-            })}
+            <PickerRows
+              connections={filtered}
+              credentials={credentials}
+              activeIndex={activeIndex}
+              rowProps={rowProps}
+              onChoose={choose}
+            />
           </div>
         )}
         <div className="border-t px-3 py-1.5 text-[11px] text-muted-foreground flex items-center gap-3">

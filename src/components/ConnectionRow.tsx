@@ -1,4 +1,5 @@
 import React from "react";
+import { useLatestCallback } from "@/hooks/useLatestCallback";
 import {
   ArrowUpDown,
   Cable,
@@ -263,12 +264,12 @@ export function useConnectionRowMenu(credentials: Credential[], actions: Connect
   const ctx = useContextMenu();
   const [ctxConn, setCtxConn] = React.useState<Connection | null>(null);
 
-  const rowMenuProps = (conn: Connection) => ({
-    onContextMenu: (e: React.MouseEvent) => {
-      setCtxConn(conn);
-      ctx.open(e);
-    },
-    onKeyDown: (e: React.KeyboardEvent<HTMLElement>) => {
+  const onRowContextMenu = useLatestCallback((conn: Connection, e: React.MouseEvent) => {
+    setCtxConn(conn);
+    ctx.open(e);
+  });
+  const onRowKeyDown = useLatestCallback(
+    (conn: Connection, e: React.KeyboardEvent<HTMLElement>) => {
       // Keyboard alternative for the context menu (Shift+F10 or
       // the ContextMenu key). The container-level roving-focus
       // handler still runs on bubble for arrows / Home / End.
@@ -279,7 +280,7 @@ export function useConnectionRowMenu(credentials: Credential[], actions: Connect
         ctx.openAt(e.currentTarget);
       }
     },
-  });
+  );
 
   const menu =
     ctx.state && ctxConn ? (
@@ -294,7 +295,35 @@ export function useConnectionRowMenu(credentials: Credential[], actions: Connect
       />
     ) : null;
 
-  return { rowMenuProps, menu };
+  return { onRowContextMenu, onRowKeyDown, menu };
+}
+
+/**
+ * `actions` as one object that keeps its identity, so rows need not re-render
+ * for new handlers. It changes only when an optional action appears or goes,
+ * since a row shows a button only for the actions it has.
+ */
+export function useStableRowActions(actions: ConnectionRowActions): ConnectionRowActions {
+  const latest = React.useRef(actions);
+  React.useLayoutEffect(() => {
+    latest.current = actions;
+  });
+  const hasConnect = !!actions.onConnect;
+  const hasScp = !!actions.onScp;
+  const hasBrowse = !!actions.onBrowse;
+  const hasMove = !!actions.onMove;
+  return React.useMemo(
+    () => ({
+      onEdit: (conn) => latest.current.onEdit(conn),
+      onDelete: (id) => latest.current.onDelete(id),
+      onClone: (conn) => latest.current.onClone(conn),
+      onConnect: hasConnect ? (conn) => latest.current.onConnect?.(conn) : undefined,
+      onScp: hasScp ? (conn) => latest.current.onScp?.(conn) : undefined,
+      onBrowse: hasBrowse ? (conn) => latest.current.onBrowse?.(conn) : undefined,
+      onMove: hasMove ? (conn) => latest.current.onMove?.(conn) : undefined,
+    }),
+    [hasConnect, hasScp, hasBrowse, hasMove],
+  );
 }
 
 interface ConnectionRowProps extends Omit<React.ComponentProps<"div">, "onClick"> {
@@ -305,7 +334,12 @@ interface ConnectionRowProps extends Omit<React.ComponentProps<"div">, "onClick"
   selected?: boolean;
   actions: ConnectionRowActions;
   /** Click on the row itself. */
-  onActivate: () => void;
+  onActivate: (conn: Connection) => void;
+  /** From `useConnectionRowMenu`. */
+  onRowContextMenu: (conn: Connection, e: React.MouseEvent) => void;
+  onRowKeyDown: (conn: Connection, e: React.KeyboardEvent<HTMLElement>) => void;
+  /** A press on the row, for a layout that can drag it. */
+  onRowPointerDown?: (conn: Connection, e: React.PointerEvent<HTMLElement>) => void;
   /**
    * `tabIndex` of the row's action buttons, for a layout that is one tab stop.
    * Everything they do must then also be in the row's context menu.
@@ -315,16 +349,21 @@ interface ConnectionRowProps extends Omit<React.ComponentProps<"div">, "onClick"
 
 /**
  * One connection, in any layout. Everything else on the element (its role, the
- * roving-focus props, the menu's handlers, a tree row's ARIA) comes from the
- * layout through the remaining props.
+ * roving-focus props, a tree row's ARIA) comes from the layout through the
+ * remaining props. Memoized: a list re-renders on every focus move and right
+ * click, and with hundreds of rows that was most of the wait. Every function
+ * passed here has to keep its identity, or this does nothing.
  */
-export function ConnectionRow({
+export const ConnectionRow = React.memo(function ConnectionRow({
   conn,
   credentials,
   tile = false,
   selected = false,
   actions,
   onActivate,
+  onRowContextMenu,
+  onRowKeyDown,
+  onRowPointerDown,
   actionTabIndex,
   className,
   style,
@@ -344,6 +383,9 @@ export function ConnectionRow({
       aria-current={selected || undefined}
       className={cn(
         "group rounded-lg cursor-pointer transition-colors hover:bg-accent",
+        // Rows off screen skip layout and paint, as in the Files view.
+        "[content-visibility:auto]",
+        tile ? "[contain-intrinsic-size:auto_132px]" : "[contain-intrinsic-size:auto_62px]",
         "focus:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background",
         tile ? "border p-3 flex flex-col gap-2 h-full" : "flex flex-wrap items-center gap-3 p-3",
         selected && "bg-accent",
@@ -352,7 +394,10 @@ export function ConnectionRow({
       style={color ? { ...style, borderLeft: `3px solid ${color}` } : style}
       // The second click of a double-click must not activate again
       // (it used to open two sessions).
-      onClick={(e) => e.detail <= 1 && onActivate()}
+      onClick={(e) => e.detail <= 1 && onActivate(conn)}
+      onContextMenu={(e) => onRowContextMenu(conn, e)}
+      onKeyDown={(e) => onRowKeyDown(conn, e)}
+      onPointerDown={onRowPointerDown && ((e) => onRowPointerDown(conn, e))}
     >
       {tile ? (
         <>
@@ -408,4 +453,4 @@ export function ConnectionRow({
       )}
     </div>
   );
-}
+});

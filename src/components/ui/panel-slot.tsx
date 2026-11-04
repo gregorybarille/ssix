@@ -20,7 +20,7 @@ export function PanelSlotProvider({ children }: { children: React.ReactNode }) {
   return <PanelSlotContext.Provider value={value}>{children}</PanelSlotContext.Provider>;
 }
 
-/** The element dialogs should portal into, or null for `document.body`. */
+/** The element dialogs should portal into, or null for the overlay host. */
 export function usePanelSlot(): HTMLElement | null {
   return React.useContext(PanelSlotContext)?.slot ?? null;
 }

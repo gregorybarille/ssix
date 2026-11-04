@@ -25,6 +25,7 @@ import {
   pickOption,
   saveConnectionForm,
   textContentOf,
+  buttonInRow,
 } from "../helpers/flows.js";
 import { sel } from "../helpers/selectors.js";
 
@@ -32,9 +33,7 @@ async function openCloneForm(name: string): Promise<void> {
   await ensureConnectionRowsLayout();
   const row = await browser.$(sel.connectionRowByName(name));
   await row.waitForExist({ timeout: 10_000 });
-  const cloneButton = await row.$(sel.connectionRowCloneButton);
-  await cloneButton.waitForClickable({ timeout: 10_000 });
-  await cloneButton.click();
+  await (await buttonInRow(row, sel.connectionRowCloneButton)).click();
 }
 
 /** Use the Password tab and tick "save as a named credential". */
@@ -243,9 +242,7 @@ describe("Connections CRUD", () => {
     await ensureConnectionRowsLayout();
     const row = await browser.$(sel.connectionRowByName("conn-02-inline-delete"));
     await row.waitForExist({ timeout: 10_000 });
-    const deleteButton = await row.$(sel.connectionRowDeleteButton);
-    await deleteButton.waitForClickable({ timeout: 10_000 });
-    await deleteButton.click();
+    await (await buttonInRow(row, sel.connectionRowDeleteButton)).click();
     await clickDialogFooterButton(sel.confirmDeleteConnectionConfirm);
 
     // Looked up afresh on each try: a lookup that lands mid-removal throws a stale element error.

@@ -32,6 +32,7 @@ import {
   typeIntoTerminal,
   waitForGone,
   waitForTerminalContains,
+  buttonInRow,
 } from "../helpers/flows.js";
 import { sel } from "../helpers/selectors.js";
 
@@ -370,9 +371,7 @@ describe("Folders", () => {
 
       // What spec 02 does to reach a row.
       await ensureConnectionRowsLayout();
-      const clone = await (await rowOf(DB)).$(sel.connectionRowCloneButton);
-      await clone.waitForClickable({ timeout: 10_000 });
-      await clone.click();
+      await (await buttonInRow(await rowOf(DB), sel.connectionRowCloneButton)).click();
       await (await browser.$(sel.connectionForm)).waitForExist({ timeout: 10_000 });
       await click(sel.connectionFormCancel);
       await waitForGone(sel.connectionForm);
@@ -413,9 +412,7 @@ describe("Folders", () => {
     it("cancels a drag with Escape, which goes no further than the drag", async () => {
       const tabs = await showOwnRows();
       // A side panel to close, should Escape get that far.
-      const edit = await (await rowOf(DB)).$(sel.connectionRowEditButton);
-      await edit.waitForClickable({ timeout: 10_000 });
-      await edit.click();
+      await (await buttonInRow(await rowOf(DB), sel.connectionRowEditButton)).click();
       await (await browser.$(sel.connectionForm)).waitForExist({ timeout: 10_000 });
 
       const start = await grabPoint(sel.connectionRowByName(LOOSE));

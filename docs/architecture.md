@@ -6,6 +6,8 @@ SSIX is a Tauri v2 desktop application with a React frontend and a Rust backend.
 
 ### Frontend
 
+- Overlays mount in an empty element of their own beside `#root` (`src/lib/overlayHost.ts`). In WebKit, a new last child of `body` restyles the whole of the previous one, which is the app: with 500 connections a context menu took 279 ms to appear this way, and takes 46 ms in the host.
+- Connection rows are memoized and only redraw when their own props change. Off-screen rows skip layout and paint with `content-visibility`, so a test has to scroll a row into view before it can click inside it.
 - `src/App.tsx` is the composition layer: it wires stores to the top-level layout, hosts the app-wide dialogs, and holds the cross-store submit handlers. It mounts the side panel column (`PanelSlotProvider` / `PanelSlot` in `src/components/ui/panel-slot.tsx`) to the right of `<main>`; every `<DialogContent>` except the quick-connect palette portals into it, so dialogs take part in the layout instead of floating over it. It subscribes to stores through shallow selectors so loading/error flips in one store do not re-render the shell.
 - `src/components/views/` holds the tab-level views (`ConnectionsView`, `CredentialsView`, `ScriptsView`); `src/components/` contains the remaining UI components and feature views.
 - `src/hooks/` holds reusable React hooks (`useGlobalShortcuts`, `useRovingFocus`, `useUnsavedChangesGuard`, `useLeaveViewGuard`, `useScreenshotToast`, `useApplySettings`, `useDebouncedCallback`, `useListboxNavigation`, `useEditorPanel`).

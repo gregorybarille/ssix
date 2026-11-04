@@ -1,5 +1,6 @@
 import React from "react";
 import { ChevronRight, Edit, Folder, FolderOpen, Server, Trash2 } from "lucide-react";
+import { useLatestCallback } from "@/hooks/useLatestCallback";
 import { useRovingFocus } from "@/hooks/useRovingFocus";
 import { usePointerDrag } from "@/hooks/usePointerDrag";
 import { errorMessage } from "@/lib/errors";
@@ -31,7 +32,12 @@ import { cn } from "@/lib/utils";
 import { useConnectionsStore } from "@/store/useConnectionsStore";
 import type { Connection, Credential } from "@/types";
 import { ConfirmDialog } from "./ConfirmDialog";
-import { ConnectionRow, useConnectionRowMenu, type ConnectionRowActions } from "./ConnectionRow";
+import {
+  ConnectionRow,
+  useConnectionRowMenu,
+  useStableRowActions,
+  type ConnectionRowActions,
+} from "./ConnectionRow";
 import { ContextMenu, isContextMenuKey, useContextMenu, type ContextMenuItem } from "./ContextMenu";
 import { FolderPicker } from "./FolderPicker";
 import { Button } from "./ui/button";
@@ -52,7 +58,16 @@ interface FolderTreeProps extends Omit<ConnectionRowActions, "onMove"> {
 const TYPEAHEAD_RESET_MS = 500;
 
 /** The left edge of a row at `level`; the depth limit keeps this bounded. */
-const indent = (level: number) => ({ marginLeft: (level - 1) * 16 });
+// The same object for a level, which a memoized row compares by identity.
+const INDENTS = new Map<number, React.CSSProperties>();
+const indent = (level: number) => {
+  let style = INDENTS.get(level);
+  if (!style) {
+    style = { marginLeft: (level - 1) * 16 };
+    INDENTS.set(level, style);
+  }
+  return style;
+};
 
 const TREE_ROW_FOCUS =
   "focus:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background";
@@ -164,7 +179,7 @@ function FolderRow({
  * buttons on its rows are for the pointer: each row's menu offers the same
  * actions to the keyboard. See `docs/folders.md`.
  */
-export function FolderTree({
+export const FolderTree = React.memo(function FolderTree({
   connections,
   credentials,
   query,
@@ -301,7 +316,7 @@ export function FolderTree({
     }
   };
 
-  const actions: ConnectionRowActions = {
+  const actions = useStableRowActions({
     onEdit,
     onDelete,
     onClone,
@@ -309,8 +324,23 @@ export function FolderTree({
     onScp,
     onBrowse,
     onMove: (connection) => setMoving(connection),
-  };
-  const { rowMenuProps, menu: rowMenu } = useConnectionRowMenu(credentials, actions);
+  });
+  const { onRowContextMenu, onRowKeyDown, menu: rowMenu } = useConnectionRowMenu(
+    credentials,
+    actions,
+  );
+  const connectRow = useLatestCallback((connection: Connection) => onConnect?.(connection));
+  const pressRow = useLatestCallback(
+    (connection: Connection, e: React.PointerEvent<HTMLElement>) => {
+      // A press on one of the row's own buttons is that button's.
+      if ((e.target as HTMLElement).closest("button")) return;
+      drag.startPress(
+        e,
+        () => connection.name,
+        (target) => onDropOnFolder(connection, target),
+      );
+    },
+  );
 
   const folderMenu = useContextMenu();
   const [menuFolder, setMenuFolder] = React.useState<FolderTreeFolderRow | null>(null);
@@ -427,7 +457,8 @@ export function FolderTree({
               <ConnectionRow
                 key={row.key}
                 {...roving.getItemProps(index)}
-                {...rowMenuProps(row.connection)}
+                onRowContextMenu={onRowContextMenu}
+                onRowKeyDown={onRowKeyDown}
                 role="treeitem"
                 aria-level={row.level}
                 aria-posinset={row.posInSet}
@@ -438,16 +469,8 @@ export function FolderTree({
                 credentials={credentials}
                 actions={actions}
                 actionTabIndex={-1}
-                onActivate={() => activateRow(index)}
-                onPointerDown={(e) => {
-                  // A press on one of the row's own buttons is that button's.
-                  if ((e.target as HTMLElement).closest("button")) return;
-                  drag.startPress(
-                    e,
-                    () => row.connection.name,
-                    (target) => onDropOnFolder(row.connection, target),
-                  );
-                }}
+                onActivate={connectRow}
+                onRowPointerDown={pressRow}
               />
             ),
           )}
@@ -551,4 +574,4 @@ export function FolderTree({
       />
     </>
   );
-}
+});

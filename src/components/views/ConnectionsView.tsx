@@ -76,19 +76,26 @@ export function ConnectionsView({
 
   // Search is a pure filter over the loaded list; the tag-groups view
   // filters tag labels itself and always receives every connection.
+  // The list follows the box without holding up the typing.
+  const listQuery = React.useDeferredValue(searchQuery);
   const visibleConnections = React.useMemo(
-    () => filterConnections(connections, searchQuery),
-    [connections, searchQuery],
+    () => filterConnections(connections, listQuery),
+    [connections, listQuery],
   );
 
-  const rowActions = {
-    onEdit: (conn: Connection) => dialogs.openEditConnection(conn),
-    onDelete,
-    onClone: (conn: Connection) => dialogs.openCloneConnection(conn),
-    onConnect,
-    onScp: (conn: Connection) => dialogs.openScp(conn),
-    onBrowse: browseFiles,
-  };
+  const { openEditConnection, openCloneConnection, openScp } = dialogs;
+  // Stable while only the box changes, so the memoized list can skip that render.
+  const rowActions = React.useMemo(
+    () => ({
+      onEdit: (conn: Connection) => openEditConnection(conn),
+      onDelete,
+      onClone: (conn: Connection) => openCloneConnection(conn),
+      onConnect,
+      onScp: (conn: Connection) => openScp(conn),
+      onBrowse: browseFiles,
+    }),
+    [openEditConnection, openCloneConnection, openScp, onDelete, onConnect],
+  );
 
   return (
     <>
@@ -135,7 +142,7 @@ export function ConnectionsView({
           <Suspense fallback={<ViewFallback label="Loading tags…" />}>
             <TagGroupGrid
               connections={connections}
-              query={searchQuery}
+              query={listQuery}
               onConnectAll={onConnectAllInTag}
               onScpAll={onScpAllInTag}
             />
@@ -144,7 +151,7 @@ export function ConnectionsView({
           <FolderTree
             connections={connections}
             credentials={credentials}
-            query={searchQuery}
+            query={listQuery}
             {...rowActions}
           />
         ) : (

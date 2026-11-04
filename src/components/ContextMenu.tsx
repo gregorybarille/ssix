@@ -1,5 +1,6 @@
 import React, { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
+import { overlayHost } from "@/lib/overlayHost";
 import { cn } from "@/lib/utils";
 
 /**
@@ -50,7 +51,7 @@ const SEP = (item: ContextMenuItem): item is { separator: true } =>
  * - The menu position is clamped inside the viewport so it never opens off-
  *   screen at the right or bottom edge.
  *
- * Rendered via a portal into `document.body` so it escapes overflow clips
+ * Rendered via a portal into the overlay host so it escapes overflow clips
  * and stacking contexts of the trigger.
  */
 export function ContextMenu({
@@ -257,7 +258,7 @@ export function ContextMenu({
     </div>
   );
 
-  return createPortal(menu, document.body);
+  return createPortal(menu, overlayHost());
 }
 
 export function isContextMenuKey(e: React.KeyboardEvent<HTMLElement>): boolean {

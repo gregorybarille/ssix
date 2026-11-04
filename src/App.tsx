@@ -112,8 +112,11 @@ function App() {
       saveSettings: s.saveSettings,
     })),
   );
-  const { status: gitSyncStatus, fetchStatus: fetchGitSyncStatus } = useGitSyncStore(
-    useShallow((s) => ({ status: s.status, fetchStatus: s.fetchStatus })),
+  const fetchGitSyncStatus = useGitSyncStore((s) => s.fetchStatus);
+  // The flag only: each fetch stores a new status object, and the startup
+  // sequence fetches several times.
+  const gitPending = useGitSyncStore(
+    (s) => s.status.has_local_changes || s.status.has_remote_changes,
   );
   const [previewSettings, setPreviewSettings] = React.useState<typeof settings | null>(null);
 
@@ -149,7 +152,6 @@ function App() {
     fetchConnections();
     fetchCredentials();
     fetchSettings();
-    fetchGitSyncStatus();
   }, []);
 
   // Re-fetch git-sync status whenever the data we'd serialize changes.
@@ -341,8 +343,6 @@ function App() {
 
   const terminalsShowing = view === "terminals";
   const totalShellSessions = tabs.reduce((n, t) => n + t.panes.length, 0);
-  const gitPending =
-    gitSyncStatus.has_local_changes || gitSyncStatus.has_remote_changes;
 
   // Global keyboard shortcuts: the table, plus what needs App's handlers. The
   // hook reads the latest map from a ref, so these closures can be rebuilt each
