@@ -150,6 +150,9 @@ export function Terminal({ sessionId, isVisible, onDisconnect, settings, connect
       fontSize,
       fontFamily,
       theme,
+      // A right-click pastes. On macOS xterm would select the word under the mouse
+      // first, and auto-copy would put that word on the clipboard the paste reads.
+      rightClickSelectsWord: false,
     });
 
     const fitAddon = new FitAddon();

@@ -389,6 +389,11 @@ describe("a terminal off screen", () => {
     expect(term().written).toEqual([bytes]);
   });
 
+  it("does not select the word under a right-click, which auto-copy would put on the clipboard", () => {
+    render(element());
+    expect(term().options.rightClickSelectsWord).toBe(false);
+  });
+
   describe("when its shell ends", () => {
     it("asks at once on screen", () => {
       render(element());
