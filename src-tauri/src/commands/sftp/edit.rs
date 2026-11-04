@@ -26,7 +26,7 @@ use crate::storage::data_dir;
 use dashmap::DashMap;
 use serde::Serialize;
 use sha2::{Digest, Sha256};
-use ssh2::{FileStat, Sftp};
+use ssh2::{FileStat, Session, Sftp};
 use std::fs;
 use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
@@ -153,15 +153,18 @@ fn create_private_file(path: &Path) -> io::Result<fs::File> {
     options.open(path)
 }
 
-/// A fresh SFTP channel, which keeps its session alive for as long as it lives.
-pub(super) fn open_sftp(connection_id: &str) -> Result<Sftp, String> {
+/// A fresh SFTP channel, which keeps its session alive for as long as it lives,
+/// and that session, for its call limits.
+pub(super) fn open_sftp(connection_id: &str) -> Result<(Session, Sftp), String> {
     let (data, conn) = find_connection(connection_id)?;
     refuse_forward(&conn)?;
     let ssh = connect_session(&data, &conn, "Editing files")?;
     ssh.session.set_timeout(CALL_TIMEOUT_MS);
-    ssh.session
+    let sftp = ssh
+        .session
         .sftp()
-        .map_err(|e| format!("The server does not offer SFTP: {}", e.message()))
+        .map_err(|e| format!("The server does not offer SFTP: {}", e.message()))?;
+    Ok((ssh.session, sftp))
 }
 
 /// Hashes what passes through a reader.
@@ -203,7 +206,7 @@ pub async fn sftp_edit_open(
 
 pub(super) fn edit_open(connection_id: &str, remote_path: &str) -> Result<EditSession, String> {
     check_remote_path(remote_path)?;
-    let sftp = open_sftp(connection_id)?;
+    let (_session, sftp) = open_sftp(connection_id)?;
     // Through a symlink the real file is what gets replaced on save.
     let real = sftp
         .realpath(Path::new(remote_path))
@@ -436,7 +439,7 @@ fn remote_differs(sftp: &Sftp, rec: &EditRecord, current: &FileStat) -> Result<b
 
 pub(super) fn edit_save(edit_id: &str, force: bool) -> Result<EditSaveOutcome, String> {
     let rec = record(edit_id)?;
-    let sftp = open_sftp(&rec.connection_id)?;
+    let (session, sftp) = open_sftp(&rec.connection_id)?;
     let read_stat = |sftp: &Sftp| {
         missing_or(sftp.stat(Path::new(&rec.remote_path)))
             .map_err(|e| call_error("Could not read", &rec.remote_path, &e))
@@ -464,8 +467,15 @@ pub(super) fn edit_save(edit_id: &str, force: bool) -> Result<EditSaveOutcome, S
         inner: &mut file,
         hasher: Sha256::new(),
     };
-    let staged = stage_upload(&sftp, &mut hashing, &target, None, &mut |_| Ok(()))
-        .map_err(Stop::into_message)?;
+    let staged = stage_upload(
+        &session,
+        &sftp,
+        &mut hashing,
+        &target,
+        None,
+        &mut |_| Ok(()),
+    )
+    .map_err(Stop::into_message)?;
     let digest: Digest256 = hashing.hasher.finalize().into();
 
     // The upload took a while; look once more just before replacing. A
@@ -481,7 +491,7 @@ pub(super) fn edit_save(edit_id: &str, force: bool) -> Result<EditSaveOutcome, S
             return Ok(changed_outcome(latest.as_ref()));
         }
     }
-    commit_upload(&sftp, &staged, &target).map_err(Stop::into_message)?;
+    commit_upload(&session, &sftp, &staged, &target).map_err(Stop::into_message)?;
 
     let saved = sftp
         .stat(Path::new(&rec.remote_path))

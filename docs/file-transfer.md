@@ -21,6 +21,7 @@ The [Files view](sftp.md) is the alternative for browsing a server, with progres
 - If a connection has `remote_path`, SSIX uses it as the default base path when possible.
 - Relative download paths resolve against the connection `remote_path` when set.
 - Uploads can target an explicit remote path or fall back to the configured connection base path.
+- `~` and `~/...` mean your login folder, in the path you type and in a connection's `remote_path`.
 
 ## How Files Are Copied
 
@@ -30,10 +31,12 @@ code as the [Files view](sftp.md#transfers):
 - **Files stream in 128 KiB chunks**, so a file of any size takes the same small
   amount of memory.
 - **A transfer can take as long as it needs.** A dead link still fails: one chunk that
-  gets nowhere for 60 seconds ends the transfer, and tidying up on the dead link adds
-  to that, so the error took about two minutes on a download and three on an upload
-  when measured. A link too slow to move 128 KiB in 60 seconds (about 17 kbit/s)
-  counts as dead.
+  gets nowhere for 30 seconds ends the transfer, and each tidying step on the dead link
+  then gets 2 seconds, so the error took 36 seconds on a download and 38 on an upload
+  when measured. A link too slow to move 128 KiB in 30 seconds (about 35 kbit/s)
+  counts as dead. Closing a file and the final rename get 60 seconds each, since a
+  server can be slow to flush a big file, so a link that dies at that very moment
+  takes up to about two minutes to report.
 - **Nothing partial under the real name.** A copy goes to a hidden `.ssix-part-<id>`
   beside its target and is renamed when complete, so a failed one leaves the old file
   as it was. If the connection is cut during an upload, that temporary file can stay

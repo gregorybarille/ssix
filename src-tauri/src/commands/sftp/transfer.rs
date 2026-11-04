@@ -25,10 +25,11 @@ use super::{
 use crate::commands::blocking;
 use crate::commands::scripts::connect_unless_cancelled;
 use crate::commands::ssh::{find_connection, ConnectedSession};
+use crate::login_wait::connection_failed;
 use crate::logs::log_local;
 use dashmap::DashMap;
 use serde::{Deserialize, Serialize};
-use ssh2::{FileStat, OpenFlags, OpenType, Sftp};
+use ssh2::{FileStat, OpenFlags, OpenType, Session, Sftp};
 use std::collections::VecDeque;
 use std::fs;
 use std::io::{ErrorKind, Read, Write};
@@ -48,9 +49,14 @@ use ts_rs::TS;
 pub(super) const MAX_ACTIVE: usize = 3;
 const CHUNK_BYTES: usize = 128 * 1024;
 const PROGRESS_INTERVAL: Duration = Duration::from_millis(100);
-/// How long one SFTP call may take during a transfer. A cancel waits for the
+/// How long one SFTP call may take during a transfer. A link that cannot move a
+/// chunk in this time (about 35 kbit/s) counts as dead. A cancel waits for the
 /// call in progress, so a stalled link can hold it up this long.
-pub(crate) const CALL_TIMEOUT_MS: u32 = 60_000;
+pub(crate) const CALL_TIMEOUT_MS: u32 = 30_000;
+/// For the calls that end a file, since a server can be slow to flush a big one.
+const FINISH_TIMEOUT_MS: u32 = 60_000;
+/// For each call that tidies up once the link has died, which cannot succeed.
+const TIDY_TIMEOUT_MS: u32 = 2_000;
 
 static TRANSFERS: LazyLock<DashMap<String, Arc<AtomicBool>>> = LazyLock::new(DashMap::new);
 static QUEUE: LazyLock<Mutex<WorkQueue<Queued>>> = LazyLock::new(|| Mutex::new(WorkQueue::new()));
@@ -305,7 +311,7 @@ struct TransferSession {
     connection_id: String,
     sftp: Sftp,
     /// Keeps the session open for `sftp`; dropped after it.
-    _ssh: ConnectedSession,
+    ssh: ConnectedSession,
 }
 
 fn open_session(input: &TransferInput, cancel: &AtomicBool) -> Result<TransferSession, Stop> {
@@ -324,8 +330,32 @@ fn open_session(input: &TransferInput, cancel: &AtomicBool) -> Result<TransferSe
     Ok(TransferSession {
         connection_id: input.connection_id.clone(),
         sftp,
-        _ssh: ssh,
+        ssh,
     })
+}
+
+/// Call after a failure, before anything tidies up or a session closes: on a
+/// dead link each of those calls would wait out its whole limit. Any other
+/// failure leaves the link working, so tidying keeps the time it needs.
+pub(crate) fn limit_tidying(session: &Session) {
+    if ssh2::Error::last_session_error(session).is_some_and(|e| connection_failed(&e)) {
+        session.set_timeout(TIDY_TIMEOUT_MS);
+    }
+}
+
+/// Run a call that ends a file under the longer limit.
+pub(crate) fn with_finish_limit<T, E>(
+    session: &Session,
+    finish: impl FnOnce() -> Result<T, E>,
+) -> Result<T, E> {
+    let usual = session.timeout();
+    session.set_timeout(FINISH_TIMEOUT_MS);
+    let result = finish();
+    session.set_timeout(usual);
+    if result.is_err() {
+        limit_tidying(session);
+    }
+    result
 }
 
 /// Run one transfer to its end and report how it went. Returns the session
@@ -397,10 +427,15 @@ fn copy_on_a_session(
         },
     };
     let outcome = match input.direction {
-        TransferDirection::Upload => run_upload(&session.sftp, input, run),
-        TransferDirection::Download => run_download(&session.sftp, input, run),
+        TransferDirection::Upload => run_upload(&session.ssh.session, &session.sftp, input, run),
+        TransferDirection::Download => {
+            run_download(&session.ssh.session, &session.sftp, input, run)
+        }
     };
     let clean = matches!(outcome, Ok(_) | Err(Stop::Conflict { .. }));
+    if !clean {
+        limit_tidying(&session.ssh.session);
+    }
     (outcome, clean.then_some(session))
 }
 
@@ -770,7 +805,12 @@ fn carry_out<'a, P>(
 // Upload
 // ---------------------------------------------------------------------
 
-fn run_upload(sftp: &Sftp, input: &TransferInput, run: &mut Run<'_>) -> Result<String, Stop> {
+fn run_upload(
+    session: &Session,
+    sftp: &Sftp,
+    input: &TransferInput,
+    run: &mut Run<'_>,
+) -> Result<String, Stop> {
     let source = Path::new(&input.source);
     let name = local_entry_name(source)?;
     validate_name(name)?;
@@ -788,11 +828,12 @@ fn run_upload(sftp: &Sftp, input: &TransferInput, run: &mut Run<'_>) -> Result<S
         }
     }
 
-    upload_plan(sftp, source, &plan, &target, run)?;
+    upload_plan(session, sftp, source, &plan, &target, run)?;
     Ok(target)
 }
 
 fn upload_plan(
+    session: &Session,
     sftp: &Sftp,
     source: &Path,
     plan: &Plan,
@@ -811,10 +852,10 @@ fn upload_plan(
             let mut file = fs::File::open(local_under(source, rel))
                 .map_err(|e| format!("Could not read {}: {}", source.display(), e))?;
             let destination = RemoteTarget::resolve(sftp, &remote_under(target, rel))?;
-            let staged = stage_upload(sftp, &mut file, &destination, mode, &mut |n| {
+            let staged = stage_upload(session, sftp, &mut file, &destination, mode, &mut |n| {
                 run.on_chunk(n)
             })?;
-            commit_upload(sftp, &staged, &destination)
+            commit_upload(session, sftp, &staged, &destination)
         },
         |path, source| seal_remote_dir(sftp, path, source),
     )
@@ -840,25 +881,27 @@ fn unattended(copy: impl FnOnce(&mut Run<'_>) -> Result<(), Stop>) -> Result<(u6
 
 /// Upload `source` to exactly `target`, replacing what is there.
 pub(crate) fn upload_unattended(
+    session: &Session,
     sftp: &Sftp,
     source: &Path,
     target: &str,
 ) -> Result<(u64, u64), Stop> {
     unattended(|run| {
         let plan = plan_local(source, run.cancel)?;
-        upload_plan(sftp, source, &plan, target, run)
+        upload_plan(session, sftp, source, &plan, target, run)
     })
 }
 
 /// Download `source` to exactly `target`, replacing what is there.
 pub(crate) fn download_unattended(
+    session: &Session,
     sftp: &Sftp,
     source: &str,
     target: &Path,
 ) -> Result<(u64, u64), Stop> {
     unattended(|run| {
         let plan = plan_remote(sftp, source, run.cancel)?;
-        download_plan(sftp, source, &plan, target, run)
+        download_plan(session, sftp, source, &plan, target, run)
     })
 }
 
@@ -935,6 +978,7 @@ impl RemoteTarget {
 /// Copy `source` to a new temporary name beside the target and return that
 /// name. If this fails, the temporary file is gone and the target untouched.
 pub(super) fn stage_upload(
+    session: &Session,
     sftp: &Sftp,
     source: &mut dyn Read,
     target: &RemoteTarget,
@@ -959,15 +1003,18 @@ pub(super) fn stage_upload(
         )
         .map_err(|e| call_error("Could not create a temporary file in", &dir, &e))?;
     let written = copy_stream(source, &mut remote, on_chunk).and_then(|()| {
-        // Durable before it can replace anything. Not every server has the
-        // extension; a failing connection shows in the close below.
-        let _ = remote.fsync();
-        remote
-            .close()
-            .map_err(|e| Stop::Failed(call_error("Could not finish writing", &target.path, &e)))
+        with_finish_limit(session, || {
+            // Durable before it can replace anything. Not every server has the
+            // extension; a failing connection shows in the close below.
+            let _ = remote.fsync();
+            remote
+                .close()
+                .map_err(|e| Stop::Failed(call_error("Could not finish writing", &target.path, &e)))
+        })
     });
-    drop(remote);
     if let Err(stop) = written {
+        limit_tidying(session);
+        drop(remote);
         let _ = sftp.unlink(Path::new(&staged));
         return Err(stop);
     }
@@ -976,12 +1023,19 @@ pub(super) fn stage_upload(
 
 /// Put a staged file in place, keeping the replaced file's permissions and,
 /// where the server allows it, its owner.
-pub(super) fn commit_upload(sftp: &Sftp, staged: &str, target: &RemoteTarget) -> Result<(), Stop> {
+pub(super) fn commit_upload(
+    session: &Session,
+    sftp: &Sftp,
+    staged: &str,
+    target: &RemoteTarget,
+) -> Result<(), Stop> {
     if let Err(error) = keep_attributes(sftp, staged, target) {
+        limit_tidying(session);
         discard_upload(sftp, staged);
         return Err(Stop::Failed(error));
     }
-    place_staged(sftp, staged, &target.path).map_err(Stop::Failed)
+    let calls = SessionCalls { session, sftp };
+    with_finish_limit(session, || place_staged(&calls, staged, &target.path)).map_err(Stop::Failed)
 }
 
 /// Replace `target` with `staged`, removing `staged` only if it is not the
@@ -1049,17 +1103,27 @@ trait ReplaceCalls {
     fn unlink(&self, path: &str) -> Result<(), ssh2::Error>;
 }
 
-impl ReplaceCalls for Sftp {
+/// The real calls. A rename the link stopped is followed by more calls to undo it.
+struct SessionCalls<'a> {
+    session: &'a Session,
+    sftp: &'a Sftp,
+}
+
+impl ReplaceCalls for SessionCalls<'_> {
     fn rename(&self, from: &str, to: &str) -> Result<(), ssh2::Error> {
-        Sftp::rename(self, Path::new(from), Path::new(to), None)
+        let renamed = self.sftp.rename(Path::new(from), Path::new(to), None);
+        if renamed.is_err() {
+            limit_tidying(self.session);
+        }
+        renamed
     }
 
     fn exists(&self, path: &str) -> Result<bool, ssh2::Error> {
-        missing_or(self.lstat(Path::new(path))).map(|stat| stat.is_some())
+        missing_or(self.sftp.lstat(Path::new(path))).map(|stat| stat.is_some())
     }
 
     fn unlink(&self, path: &str) -> Result<(), ssh2::Error> {
-        Sftp::unlink(self, Path::new(path))
+        self.sftp.unlink(Path::new(path))
     }
 }
 
@@ -1115,7 +1179,12 @@ fn replace_remote(
 // Download
 // ---------------------------------------------------------------------
 
-fn run_download(sftp: &Sftp, input: &TransferInput, run: &mut Run<'_>) -> Result<String, Stop> {
+fn run_download(
+    session: &Session,
+    sftp: &Sftp,
+    input: &TransferInput,
+    run: &mut Run<'_>,
+) -> Result<String, Stop> {
     let name = remote_entry_name(&input.source)?;
     if !safe_local_name(name) {
         return Err(Stop::Failed(format!(
@@ -1134,11 +1203,12 @@ fn run_download(sftp: &Sftp, input: &TransferInput, run: &mut Run<'_>) -> Result
         });
     }
 
-    download_plan(sftp, &input.source, &plan, &target, run)?;
+    download_plan(session, sftp, &input.source, &plan, &target, run)?;
     Ok(target_text)
 }
 
 fn download_plan(
+    session: &Session,
     sftp: &Sftp,
     source: &str,
     plan: &Plan,
@@ -1159,9 +1229,14 @@ fn download_plan(
                 .open(Path::new(&remote_path))
                 .map_err(|e| call_error("Could not read", &remote_path, &e))?;
             let destination = local_target(&local_under(target, rel))?;
-            write_partial(&destination, mode, |file| {
+            let written = write_partial(&destination, mode, |file| {
                 copy_stream(&mut remote, file, &mut |n| run.on_chunk(n))
-            })
+            });
+            // Closing `remote` is the tidying here.
+            if written.is_err() {
+                limit_tidying(session);
+            }
+            written
         },
         |path, source| seal_local_dir(path, source),
     )

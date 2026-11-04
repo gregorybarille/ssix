@@ -87,6 +87,25 @@ describe("SCP upload + download", () => {
 
     expect(readFileSync(download).equals(PAYLOAD)).toBe(true);
     expect(statSync(download).mode & 0o777).toBe(0o600);
+
+    // `~` is the login folder, which SFTP alone would take as a plain name.
+    const tildeName = `tilde-${REMOTE_NAME}`;
+    const tildeUpload = join(workDir, tildeName);
+    const tildeDownload = join(workDir, "tilde-download.bin");
+    writeFileSync(tildeUpload, PAYLOAD);
+    await (await browser.$(sel.scpModeUpload)).click();
+    await (await browser.$(sel.scpLocalPath)).setValue(tildeUpload);
+    await (await browser.$(sel.scpRemotePath)).setValue("~/");
+    await (await browser.$(sel.scpUploadButton)).click();
+    await waitForScpStatusOrFail("upload", tildeUpload);
+
+    await (await browser.$(sel.scpModeDownload)).click();
+    await (await browser.$(sel.scpLocalPath)).setValue(tildeDownload);
+    await (await browser.$(sel.scpRemotePath)).setValue(`~/${tildeName}`);
+    await (await browser.$(sel.scpDownloadButton)).click();
+    await waitForScpStatusOrFail("download", tildeDownload);
+
+    expect(readFileSync(tildeDownload).equals(PAYLOAD)).toBe(true);
   });
 });
 
