@@ -21,7 +21,7 @@ SSIX is a desktop SSH client built with Tauri, React, and Rust. It combines save
 Prerequisites:
 
 - Rust stable
-- Node.js 22.12+
+- Node.js 26 LTS
 - npm 9+
 
 ```bash
