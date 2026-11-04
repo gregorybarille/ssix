@@ -15,8 +15,8 @@ use super::browse::{
 };
 use super::edit::{edit_close, edit_open, edit_save, edit_status, open_sftp, EditSaveOutcome};
 use super::transfer::{
-    sftp_cancel_transfer, start_transfer, Emit, TransferDirection, TransferEvent, TransferInput,
-    LOGINS, MAX_ACTIVE,
+    limit_tidying, sftp_cancel_transfer, stage_upload, start_transfer, Emit, RemoteTarget, Stop,
+    TransferDirection, TransferEvent, TransferInput, LOGINS, MAX_ACTIVE,
 };
 use super::FileKind;
 use crate::commands::ssh::{connect_session, find_connection};
@@ -800,6 +800,43 @@ fn live_sftp_edit_refuses_folders_and_a_missing_file_and_saves_through_a_link() 
         let kind = sh(id, &format!("stat -c %F {}", dir.child("link")));
         assert!(kind.contains("symbolic link"), "{}", kind);
         edit_close(&edit.edit_id).unwrap();
+    });
+}
+
+/// Only a dead link cuts tidying short: after any other failure the temporary
+/// file has to be removed, however slow the server is about it.
+#[test]
+#[ignore]
+fn live_sftp_tidying_after_other_failures_keeps_its_limit() {
+    struct Unreadable;
+    impl Read for Unreadable {
+        fn read(&mut self, _: &mut [u8]) -> std::io::Result<usize> {
+            Err(std::io::Error::other("disk error"))
+        }
+    }
+
+    with_connection(|id| {
+        let dir = RemoteDir::new(id);
+        let (session, sftp) = open_sftp(id).unwrap();
+        let limit = session.timeout();
+
+        let target = RemoteTarget {
+            path: dir.child("f"),
+            existing: None,
+        };
+        let mut source = (&[1u8; 1024][..]).chain(Unreadable);
+        let result = stage_upload(&session, &sftp, &mut source, &target, None, &mut |_| Ok(()));
+        assert!(matches!(result, Err(Stop::Failed(_))), "{:?}", result);
+        assert_eq!(session.timeout(), limit);
+        assert!(remote_names(id, &dir.path).is_empty());
+
+        assert!(sftp.stat(Path::new(&dir.child("missing"))).is_err());
+        limit_tidying(&session);
+        assert_eq!(
+            session.timeout(),
+            limit,
+            "a refused call is not a dead link"
+        );
     });
 }
 

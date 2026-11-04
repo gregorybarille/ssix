@@ -311,7 +311,7 @@ fn finish_listing(
 // ---------------------------------------------------------------------
 
 /// What the user typed or a connection stores, as a full path.
-pub(super) fn absolute_remote(home: &str, path: &str) -> String {
+pub(crate) fn absolute_remote(home: &str, path: &str) -> String {
     if path.is_empty() || path == "~" {
         home.to_string()
     } else if let Some(rest) = path.strip_prefix("~/") {

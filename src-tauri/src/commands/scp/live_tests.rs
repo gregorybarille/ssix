@@ -339,45 +339,6 @@ fn live_scp_slow_upload_outlasts_the_session_timeout() {
     });
 }
 
-/// A session over a link that goes dead, with a short call limit: at the real
-/// one each direction takes minutes, one limit per call a failed copy makes.
-fn session_over_a_dead_link(connection_id: &str) -> ConnectedSession {
-    let dead = connection_over(connection_id, Link::DeadAfter(MIB));
-    let (data, conn) = find_connection(&dead).unwrap();
-    let ssh = connect_session(&data, &conn, "the live test").unwrap();
-    ssh.session.set_timeout(2_000);
-    ssh
-}
-
-/// The other half of removing the limit: a link that stops moving still ends.
-#[test]
-#[ignore]
-fn live_scp_dead_link_fails_and_changes_nothing() {
-    with_connection(|id| {
-        let local = TempDir::new("scp-dead");
-        let remote = RemoteDir::new(id);
-
-        let source = local.0.join("up.bin");
-        write_local(&source, &payload(32 * MIB), 0o644);
-        let target = remote.child("up.bin");
-        write_remote(id, &target, b"old", 0o644);
-        let ssh = session_over_a_dead_link(id);
-        let sftp = ssh.session.sftp().unwrap();
-        assert!(upload_unattended(&sftp, &source, &target).is_err());
-        assert_eq!(read_remote(id, &target), b"old");
-
-        let big = remote.child("down.bin");
-        write_remote(id, &big, &payload(32 * MIB), 0o644);
-        let kept = local.0.join("kept.bin");
-        write_local(&kept, b"old", 0o644);
-        let ssh = session_over_a_dead_link(id);
-        let sftp = ssh.session.sftp().unwrap();
-        assert!(download_unattended(&sftp, &big, &kept).is_err());
-        assert_eq!(fs::read(&kept).unwrap(), b"old");
-        assert_eq!(local_names(&local.0), ["kept.bin", "up.bin"]);
-    });
-}
-
 #[test]
 #[ignore]
 fn live_scp_copies_do_not_hold_the_file_in_memory() {
@@ -564,6 +525,104 @@ fn live_scp_commands_fall_back_on_a_server_without_sftp() {
         assert_eq!(down.entries, Some(1));
         assert_eq!(fs::read(&back).unwrap(), bytes);
         assert_eq!(local_mode(&back), 0o600);
+
+        // Nothing can ask where `~` is, but `scp` starts there anyway.
+        let name = format!("ssix-live-{}", uuid::Uuid::new_v4().simple());
+        let in_home = local.0.join(&name);
+        write_local(&in_home, b"tilde", 0o644);
+        let up = upload(id, &in_home, "~").unwrap();
+        assert_eq!(up.remote_path, format!("./{}", name));
+        assert_eq!(sh(id, &format!("cat {}", name)), "tilde");
+        let tilde_back = local.0.join("tilde-back");
+        download(id, &format!("~/{}", name), &tilde_back).unwrap();
+        assert_eq!(fs::read(&tilde_back).unwrap(), b"tilde");
+        sh(id, &format!("rm {}", name));
         eprintln!("copied both ways over legacy scp");
+    });
+}
+
+/// The real limits on a link that stops moving, in every way a copy can go: the
+/// error comes after about one chunk's limit, with nothing changed on either side.
+#[test]
+#[ignore]
+fn live_scp_dead_link_ends_in_about_30_seconds_and_changes_nothing() {
+    with_connection(|id| {
+        let local = TempDir::new("scp-dead");
+        let remote = RemoteDir::new(id);
+        let dead = connection_over(id, Link::DeadAfter(MIB));
+        let source = local.0.join("up.bin");
+        write_local(&source, &payload(32 * MIB), 0o644);
+        let target = remote.child("up.bin");
+        write_remote(id, &target, b"old", 0o644);
+        let big = remote.child("down.bin");
+        write_remote(id, &big, &payload(32 * MIB), 0o644);
+        let kept = local.0.join("kept.bin");
+        write_local(&kept, b"old", 0o644);
+
+        let timed = |what: &str, copy: &dyn Fn() -> bool| {
+            let started = Instant::now();
+            assert!(copy(), "{} should fail", what);
+            let took = started.elapsed();
+            eprintln!("{} on a dead link failed after {:?}", what, took);
+            took
+        };
+        let times = [
+            timed("SFTP upload", &|| {
+                upload(&dead, &source, &remote.path).is_err()
+            }),
+            timed("SFTP download", &|| download(&dead, &big, &kept).is_err()),
+            timed("scp upload", &|| {
+                let (ssh, _) = connect_for_copy(&dead).unwrap();
+                upload_file_scp(&ssh, &source, &target).is_err()
+            }),
+            timed("scp download", &|| {
+                let (ssh, _) = connect_for_copy(&dead).unwrap();
+                download_file_scp(&ssh, &big, &kept).is_err()
+            }),
+        ];
+
+        assert_eq!(read_remote(id, &target), b"old");
+        assert_eq!(fs::read(&kept).unwrap(), b"old");
+        assert_eq!(local_names(&local.0), ["kept.bin", "up.bin"]);
+        for took in times {
+            assert!(took < Duration::from_secs(45), "took {:?}", took);
+        }
+    });
+}
+
+/// A connection can store `~/app`, as the Files view accepts, and SFTP does not
+/// expand it.
+#[test]
+#[ignore]
+fn live_scp_tilde_means_the_login_folder_both_ways() {
+    with_connection(|id| {
+        let local = TempDir::new("scp-tilde");
+        let name = format!("ssix-live-{}", uuid::Uuid::new_v4().simple());
+        let home = sh(id, "pwd").trim_end().to_string();
+        let in_home = format!("{}/{}", home, name);
+        sh(id, &format!("mkdir {}", in_home));
+        let source = local.0.join("f.txt");
+        write_local(&source, b"tilde", 0o644);
+        let tree = local.0.join("tree");
+        fs::create_dir(&tree).unwrap();
+        write_local(&tree.join("g.txt"), b"tree", 0o644);
+
+        let up = upload(id, &source, &format!("~/{}", name));
+        let folder = upload(id, &tree, &format!("~/{}/new/deep/", name));
+        let back = local.0.join("back.txt");
+        let down = download(id, &format!("~/{}/f.txt", name), &back);
+
+        let up = up.unwrap();
+        assert_eq!(up.remote_path, format!("{}/f.txt", in_home));
+        assert_eq!(read_remote(id, &up.remote_path), b"tilde");
+        let folder = folder.unwrap();
+        assert_eq!(folder.remote_path, format!("{}/new/deep/tree", in_home));
+        assert_eq!(
+            read_remote(id, &format!("{}/g.txt", folder.remote_path)),
+            b"tree"
+        );
+        assert_eq!(down.unwrap().remote_path, up.remote_path);
+        assert_eq!(fs::read(&back).unwrap(), b"tilde");
+        sh(id, &format!("rm -rf {}", in_home));
     });
 }

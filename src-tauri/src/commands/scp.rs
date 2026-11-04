@@ -14,9 +14,10 @@
 //! Only servers with no SFTP subsystem take the legacy `scp` path here.
 
 use crate::commands::blocking;
+use crate::commands::sftp::browse::absolute_remote;
 use crate::commands::sftp::transfer::{
-    copy_stream, download_unattended, file_mode, local_target, upload_unattended, write_partial,
-    Stop, CALL_TIMEOUT_MS,
+    copy_stream, download_unattended, file_mode, limit_tidying, local_target, upload_unattended,
+    with_finish_limit, write_partial, Stop, CALL_TIMEOUT_MS,
 };
 use crate::commands::sftp::{join_remote, remote_parent, temp_name, SESSION_LOST};
 use crate::commands::ssh::{connect_session, find_connection, ConnectedSession};
@@ -57,8 +58,6 @@ pub struct ScpResult {
     pub entries: Option<u64>,
 }
 
-const TEARDOWN_TIMEOUT_MS: u32 = 1_000;
-
 /// Forwards (`ssh -L`, `-R`, `-D`) open no shell on a host, so there is
 /// nothing to copy files to or from.
 fn refuse_forward(conn: &Connection) -> Result<(), String> {
@@ -88,11 +87,28 @@ fn copy_error(stop: Stop, destination: &str) -> String {
     format!("{} ({})", message, destination)
 }
 
-/// Closing a session on a dead link waits out its timeout at every step, and
-/// the copy has failed by now, so the error should not wait for that.
+/// The copy has failed, so the error should not wait for closing the session.
 fn copy_failed(stop: Stop, ssh: &ConnectedSession) -> String {
-    ssh.session.set_timeout(TEARDOWN_TIMEOUT_MS);
+    limit_tidying(&ssh.session);
     copy_error(stop, &ssh.destination_label)
+}
+
+/// SFTP and legacy `scp` both read `~` as a plain name. Without SFTP nothing can
+/// ask where the login folder is, but a command on the server starts in it.
+fn expand_tilde(sftp: Option<&Sftp>, path: &str) -> Result<String, String> {
+    if path != "~" && !path.starts_with("~/") {
+        return Ok(path.to_string());
+    }
+    let home = sftp.map_or(Ok(".".to_string()), remote_home)?;
+    Ok(absolute_remote(&home, path))
+}
+
+fn remote_home(sftp: &Sftp) -> Result<String, String> {
+    sftp.realpath(Path::new("."))
+        .map_err(|e| format!("Failed to resolve remote home directory: {}", e))?
+        .to_str()
+        .map(str::to_string)
+        .ok_or_else(|| "Remote home directory contains invalid UTF-8".to_string())
 }
 
 #[tauri::command]
@@ -119,8 +135,10 @@ fn scp_upload_sync(input: ScpUploadInput) -> Result<ScpResult, String> {
             .session
             .sftp()
             .map_err(|e| format!("Failed to open SFTP session: {}", e))?;
-        ensure_remote_parents(&sftp, &target_path)?;
-        let (bytes, files) = upload_unattended(&sftp, local, &target_path)
+        let target_path = expand_tilde(Some(&sftp), &target_path)
+            .and_then(|path| ensure_remote_parents(&sftp, &path).map(|()| path))
+            .map_err(|e| copy_failed(Stop::Failed(e), &ssh))?;
+        let (bytes, files) = upload_unattended(&ssh.session, &sftp, local, &target_path)
             .map_err(|stop| copy_failed(stop, &ssh))?;
         (target_path, bytes, Some(files))
     } else {
@@ -133,9 +151,12 @@ fn scp_upload_sync(input: ScpUploadInput) -> Result<ScpResult, String> {
             file_name,
         );
         // SFTP first: this is what OpenSSH's `scp` itself has done since 9.0.
-        let bytes = match ssh.session.sftp() {
+        let sftp = ssh.session.sftp();
+        let target_path = expand_tilde(sftp.as_ref().ok(), &target_path)
+            .map_err(|e| copy_failed(Stop::Failed(e), &ssh))?;
+        let bytes = match sftp {
             Ok(sftp) => {
-                upload_unattended(&sftp, local, &target_path)
+                upload_unattended(&ssh.session, &sftp, local, &target_path)
                     .map_err(|stop| copy_failed(stop, &ssh))?
                     .0
             }
@@ -165,18 +186,24 @@ pub async fn scp_download(input: ScpDownloadInput) -> Result<ScpResult, String> 
 
 fn scp_download_sync(input: ScpDownloadInput) -> Result<ScpResult, String> {
     let (ssh, conn) = connect_for_copy(&input.connection_id)?;
-    let remote_path = resolve_download_remote_path(&conn, &input.remote_path);
+    let sftp = ssh.session.sftp();
+    let remote_path = expand_tilde(
+        sftp.as_ref().ok(),
+        &resolve_download_remote_path(&conn, &input.remote_path),
+    )
+    .map_err(|e| copy_failed(Stop::Failed(e), &ssh))?;
     let local = Path::new(&input.local_path);
-    let (bytes, entries) = match ssh.session.sftp() {
+    let (bytes, entries) = match sftp {
         Ok(sftp) => {
-            let stat = sftp
-                .stat(Path::new(&remote_path))
-                .map_err(|e| format!("Failed to stat {}: {}", remote_path, e))?;
+            let stat = sftp.stat(Path::new(&remote_path)).map_err(|e| {
+                let error = format!("Failed to stat {}: {}", remote_path, e);
+                copy_failed(Stop::Failed(error), &ssh)
+            })?;
             if stat.is_dir() && !input.recursive {
                 return Err("Downloading a directory requires the recursive option".to_string());
             }
             create_local_parent(local)?;
-            let (bytes, files) = download_unattended(&sftp, &remote_path, local)
+            let (bytes, files) = download_unattended(&ssh.session, &sftp, &remote_path, local)
                 .map_err(|stop| copy_failed(stop, &ssh))?;
             (bytes, Some(files))
         }
@@ -229,9 +256,13 @@ fn upload_file_scp(ssh: &ConnectedSession, local: &Path, target: &str) -> Result
         .map(|(_, stat)| stat.mode() & 0o777);
     let mode = replaced_mode.unwrap_or(file_mode(&meta).unwrap_or(0o644) as i32 & 0o777);
 
-    let result = send_staged(ssh, file, &staged, mode, size)
-        .and_then(|()| run_remote(ssh, &place_staged_command(&staged, target, replaced_mode)));
+    let result = send_staged(ssh, file, &staged, mode, size).and_then(|()| {
+        with_finish_limit(&ssh.session, || {
+            run_remote(ssh, &place_staged_command(&staged, target, replaced_mode))
+        })
+    });
     if let Err(error) = result {
+        limit_tidying(&ssh.session);
         let _ = run_remote(ssh, &format!("rm -f -- {}", shell_single_quote(&staged)));
         return Err(format!(
             "SCP upload to {} failed ({}): {}",
@@ -273,14 +304,18 @@ fn send_staged(
         sent += n as u64;
         Ok(())
     })
-    .map_err(Stop::into_message)?;
+    .map_err(|stop| {
+        // Closing `channel` is tidying too.
+        limit_tidying(&ssh.session);
+        stop.into_message()
+    })?;
     if sent != size {
         return Err("The file shrank while it was being sent".to_string());
     }
     // The protocol's "file complete". Without it `scp -t` reports a lost
     // connection and exits 1, though the bytes have landed.
     channel.write_all(b"\0").map_err(|e| e.to_string())?;
-    check_scp_exit(&mut channel)
+    with_finish_limit(&ssh.session, || check_scp_exit(&mut channel))
 }
 
 fn download_file_scp(
@@ -318,7 +353,10 @@ fn download_file_scp(
         channel.write_all(b"\0").map_err(|e| e.to_string())?;
         check_scp_exit(&mut channel).map_err(Stop::Failed)
     })
-    .map_err(|stop| fail(stop.into_message()))?;
+    .map_err(|stop| {
+        limit_tidying(&ssh.session);
+        fail(stop.into_message())
+    })?;
     Ok(size)
 }
 
@@ -363,14 +401,7 @@ fn run_remote(ssh: &ConnectedSession, command: &str) -> Result<(), String> {
 /// The folders above `remote_path`. The folder itself is left to the copy,
 /// which gives it the source's mode.
 fn ensure_remote_parents(sftp: &Sftp, remote_path: &str) -> Result<(), String> {
-    let home_dir = sftp
-        .realpath(Path::new("."))
-        .map_err(|e| format!("Failed to resolve remote home directory: {}", e))?;
-    let home_dir = home_dir
-        .to_str()
-        .ok_or_else(|| "Remote home directory contains invalid UTF-8".to_string())?;
-
-    let mut dirs = directory_creation_sequence(remote_path, home_dir);
+    let mut dirs = directory_creation_sequence(remote_path, &remote_home(sftp)?);
     dirs.pop();
     for dir in dirs {
         if sftp.stat(Path::new(&dir)).is_err() {
@@ -398,18 +429,8 @@ fn directory_creation_sequence(remote_path: &str, home_dir: &str) -> Vec<String>
             .collect::<Vec<_>>()
     };
 
-    let parts = if trimmed == "~" {
-        ""
-    } else if let Some(rest) = trimmed.strip_prefix("~/") {
-        rest
-    } else if let Some(rest) = trimmed.strip_prefix('/') {
-        rest
-    } else {
-        trimmed
-    };
-
     let mut out = Vec::new();
-    for part in parts.split('/') {
+    for part in trimmed.trim_start_matches('/').split('/') {
         let part = part.trim();
         if part.is_empty() || part == "." {
             continue;
@@ -510,9 +531,11 @@ mod scp_tests {
     }
 
     #[test]
-    fn test_directory_creation_sequence_for_tilde_path_uses_home_dir() {
-        let dirs = directory_creation_sequence("~/deploy/current", "/home/dev");
-        assert_eq!(dirs, vec!["/home/dev/deploy", "/home/dev/deploy/current"]);
+    fn without_sftp_a_tilde_is_where_a_command_starts() {
+        assert_eq!(expand_tilde(None, "~/app/f").unwrap(), "./app/f");
+        assert_eq!(expand_tilde(None, "~").unwrap(), ".");
+        assert_eq!(expand_tilde(None, "/srv/f").unwrap(), "/srv/f");
+        assert_eq!(expand_tilde(None, "~other/f").unwrap(), "~other/f");
     }
 
     #[test]

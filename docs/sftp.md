@@ -74,6 +74,15 @@ cancelled.
   write access. The target's umask still applies, and a setgid parent still passes its
   bit on to a new folder. A folder that already exists keeps
   its own mode, as a replaced file does.
+- **A dead link fails the transfer in about 35 seconds.** One chunk (128 KiB) that
+  gets nowhere for 30 seconds ends it, about 35 kbit/s being the slowest link that
+  counts as alive, and each tidying step then gets 2 seconds. Measured over a link
+  that stops moving: 38 seconds on an upload, 36 on a download. A cancel waits for
+  the call in progress, so a stalled link can hold it up for the same 30 seconds.
+  Closing a file and the final rename get 60 seconds each, since a server can be slow
+  to flush a big file, so a link that dies at that very moment takes up to about two
+  minutes to report, and one that dies during a folder listing about a minute. Any
+  other failure leaves tidying its usual limit, so the temporary file does go.
 
 ### Symlinks
 
@@ -125,8 +134,8 @@ it too. See [File Transfer](file-transfer.md).
 | Existing target | Asks first | Replaced |
 | Rename, delete, permissions, edit | Yes | No |
 
-Use the SCP dialog on a server with the SFTP subsystem turned off, which the Files
-view cannot browse.
+Use the SCP dialog to copy a single file on a server with the SFTP subsystem turned
+off, which the Files view cannot browse. Folders need SFTP.
 
 ## Known gaps
 
