@@ -1019,7 +1019,7 @@ mod tests {
     /// race us.
     #[test]
     fn data_dir_honors_ssx_data_dir_env_override() {
-        let _g = TEST_ENV_LOCK.lock().unwrap();
+        let _g = TEST_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let prev = std::env::var("SSIX_DATA_DIR").ok();
         let custom = tmp_dir();
         std::env::set_var("SSIX_DATA_DIR", &custom);
@@ -1035,7 +1035,7 @@ mod tests {
 
     #[test]
     fn data_dir_falls_back_to_home_when_env_unset_or_empty() {
-        let _g = TEST_ENV_LOCK.lock().unwrap();
+        let _g = TEST_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let prev = std::env::var("SSIX_DATA_DIR").ok();
         std::env::remove_var("SSIX_DATA_DIR");
         let resolved = data_dir();

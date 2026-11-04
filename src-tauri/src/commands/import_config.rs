@@ -1587,6 +1587,7 @@ mod tests {
         "Host web\n  HostName 10.0.0.1\n  Port 2200\n  User deploy\n  IdentityFile ~/.ssh/id_web\n";
 
     #[test]
+    #[cfg(unix)]
     fn config_path_defaults_and_expands() {
         let home = Path::new("/home/u");
         assert_eq!(
@@ -1759,6 +1760,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(unix)]
     fn identity_file_tokens_and_paths() {
         in_data_dir(|f| {
             let preview = f.preview(
@@ -1941,7 +1943,7 @@ mod tests {
                 "Host env-jump\n  User u\n  ProxyJump ${USER}@bastion\n",
                 // ssh takes these as written.
                 "Host bare-user\n  User HOST$\n",
-                "Host bare-key\n  User u\n  IdentityFile /keys/$USER/id\n",
+                "Host bare-key\n  User u\n  IdentityFile ~/keys/$USER/id\n",
                 // ssh gives it to the shell, and so does SSIX.
                 "Host env-command\n  User u\n  ProxyCommand nc ${USER} %h\n",
                 // Not expanded by ssh, and no host or port can hold it.
@@ -1965,7 +1967,7 @@ mod tests {
                 item(&preview, "bare-key").credentials[0]
                     .private_key_path
                     .as_deref(),
-                Some("/keys/$USER/id")
+                Some(f.key_path("keys/$USER/id").as_str())
             );
             assert_eq!(
                 item(&preview, "env-command").proxy_command.as_deref(),
@@ -2852,7 +2854,7 @@ mod tests {
     }
 
     const SAME_FILE_NAME: &str =
-        "Host a\n  User u\n  IdentityFile /a/id\nHost b\n  User u\n  IdentityFile /b/id\nHost c\n  User u\n  IdentityFile /c/id\n";
+        "Host a\n  User u\n  IdentityFile ~/a/id\nHost b\n  User u\n  IdentityFile ~/b/id\nHost c\n  User u\n  IdentityFile ~/c/id\n";
 
     fn credential_name_of(connection: &str) -> String {
         credential_of(stored(connection).credential_id.as_deref().unwrap()).name
@@ -2900,7 +2902,7 @@ mod tests {
     #[test]
     fn hosts_sharing_a_new_credential_need_no_number() {
         in_data_dir(|f| {
-            let preview = f.preview("Host a b\n  User u\n  IdentityFile /a/id\n");
+            let preview = f.preview("Host a b\n  User u\n  IdentityFile ~/a/id\n");
             assert!(item(&preview, "b").notes.is_empty(), "{preview:#?}");
         });
     }
@@ -3245,7 +3247,7 @@ mod tests {
     fn thousands_of_keys_with_one_file_name_are_numbered_without_searching() {
         in_data_dir(|f| {
             let text: String = (0..MAX_HOSTS)
-                .map(|i| format!("Host h{i}\n  User u\n  IdentityFile /k{i}/id\n"))
+                .map(|i| format!("Host h{i}\n  User u\n  IdentityFile ~/k{i}/id\n"))
                 .collect();
             let started = std::time::Instant::now();
             let result = f.import(&text);
