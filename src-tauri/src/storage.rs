@@ -15,6 +15,8 @@ struct CachedData {
     /// (mtime, length): the length guards against an edit that lands in
     /// the same mtime tick on a coarse-granularity filesystem.
     stamp: Option<(SystemTime, u64)>,
+    /// `schema_version` as stored: `data` has been stamped current by then.
+    stored_version: u32,
     data: AppData,
 }
 
@@ -92,27 +94,27 @@ pub fn get_data_path() -> PathBuf {
 
 pub fn load_data() -> Result<AppData, String> {
     let _guard = DATA_LOCK.lock().map_err(|e| e.to_string())?;
-    load_data_unlocked()
+    load_data_unlocked().map(|(data, _)| data)
 }
 
 /// Load `data.json`, serving from the in-memory copy when the file on disk
-/// is unchanged since it was last read or written. Callers must hold
-/// `DATA_LOCK`.
-fn load_data_unlocked() -> Result<AppData, String> {
+/// is unchanged since it was last read or written. Also returns the schema
+/// version the file was stored at. Callers must hold `DATA_LOCK`.
+fn load_data_unlocked() -> Result<(AppData, u32), String> {
     let path = get_data_path();
-    if !path.exists() {
-        return Ok(AppData::default());
-    }
     let stamp = file_stamp(&path);
 
     let mut cache = DATA_CACHE.lock().unwrap_or_else(|e| e.into_inner());
     if let Some(cached) = cache.as_ref() {
         if cached.path == path && cached.stamp.is_some() && cached.stamp == stamp {
-            return Ok(cached.data.clone());
+            return Ok((cached.data.clone(), cached.stored_version));
         }
     }
 
-    let mut data = read_data_file(&path)?;
+    let Some(mut data) = read_data_file(&path)? else {
+        return Ok((AppData::default(), crate::models::CURRENT_SCHEMA_VERSION));
+    };
+    let stored_version = data.schema_version;
     // Walk the loaded `schema_version` up to the current one (also runs the
     // LegacyTunnel → JumpShell rewrite for pre-stamp v0 files). Idempotent
     // for files already at HEAD. Reads only migrate in memory; the repair
@@ -121,16 +123,23 @@ fn load_data_unlocked() -> Result<AppData, String> {
     *cache = Some(CachedData {
         path,
         stamp,
+        stored_version,
         data: data.clone(),
     });
-    Ok(data)
+    Ok((data, stored_version))
 }
 
-/// Parse `data.json` as stored, without migrating it.
-fn read_data_file(path: &Path) -> Result<AppData, String> {
-    let content = fs::read_to_string(path)
-        .map_err(|e| format!("{} could not be read: {}", path.display(), e))?;
+/// Parse `data.json` as stored, without migrating it. `None` only when there
+/// is no such file: any other read failure must not pass for an empty
+/// catalogue, which the next save would write over the real one.
+fn read_data_file(path: &Path) -> Result<Option<AppData>, String> {
+    let content = match fs::read_to_string(path) {
+        Ok(content) => content,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(e) => return Err(format!("{} could not be read: {}", path.display(), e)),
+    };
     serde_json::from_str(&content)
+        .map(Some)
         .map_err(|e| format!("{} is not valid SSIX data: {}", path.display(), e))
 }
 
@@ -194,11 +203,9 @@ fn restrict_file(_path: &Path) -> Result<(), String> {
 /// cheap, so a restored old backup or a hand edit is caught too.
 pub fn persist_migrations() -> Result<bool, String> {
     let _guard = DATA_LOCK.lock().map_err(|e| e.to_string())?;
-    let path = get_data_path();
-    if !path.exists() {
+    let Some(mut data) = read_data_file(&get_data_path())? else {
         return Ok(false);
-    }
-    let mut data = read_data_file(&path)?;
+    };
     if data.schema_version > crate::models::CURRENT_SCHEMA_VERSION {
         return Ok(false);
     }
@@ -336,6 +343,7 @@ fn save_data_unlocked(data: &AppData) -> Result<(), String> {
     *cache = Some(CachedData {
         stamp: file_stamp(&path),
         path,
+        stored_version: data.schema_version,
         data: data.clone(),
     });
     Ok(())
@@ -352,12 +360,21 @@ pub(crate) fn with_data_file_locked<T>(f: impl FnOnce() -> T) -> T {
 }
 
 /// Execute a read-modify-write transaction against AppData under one lock.
+/// Refused for a file from a newer build: this build dropped what it does not
+/// know when it parsed the file, so saving would strip that data for good.
 pub fn with_data_mut<R, F>(mutator: F) -> Result<R, String>
 where
     F: FnOnce(&mut AppData) -> Result<R, String>,
 {
     let _guard = DATA_LOCK.lock().map_err(|e| e.to_string())?;
-    let mut data = load_data_unlocked()?;
+    let (mut data, stored_version) = load_data_unlocked()?;
+    if stored_version > crate::models::CURRENT_SCHEMA_VERSION {
+        return Err(format!(
+            "{} was saved by a newer version of SSIX. Update SSIX to change anything: \
+             this version can only read it, so nothing was saved.",
+            get_data_path().display()
+        ));
+    }
     let result = mutator(&mut data)?;
     save_data_unlocked(&data)?;
     Ok(result)
@@ -464,6 +481,47 @@ mod tests {
             let before = fs::read_to_string(get_data_path()).unwrap();
             assert!(!persist_migrations().unwrap());
             assert_eq!(fs::read_to_string(get_data_path()).unwrap(), before);
+        });
+    }
+
+    /// Reads work and every save is refused, on the first load and on one
+    /// served from the cache.
+    #[test]
+    fn a_newer_file_can_be_read_but_never_saved_over() {
+        test_support::with_isolated_data_dir(|| {
+            let mut stored = serde_json::to_value(AppData {
+                schema_version: crate::models::CURRENT_SCHEMA_VERSION + 1,
+                ..AppData::default()
+            })
+            .unwrap();
+            stored["field_from_the_future"] = serde_json::json!(true);
+            let before = stored.to_string();
+            fs::write(get_data_path(), &before).unwrap();
+
+            for _ in 0..2 {
+                let err = with_data_mut(|_| Ok(())).unwrap_err();
+                assert!(err.contains("newer version of SSIX"), "got: {}", err);
+                load_data().unwrap();
+            }
+            assert_eq!(fs::read_to_string(get_data_path()).unwrap(), before);
+        });
+    }
+
+    /// A read that fails for any reason but "no such file" is an error in both
+    /// files. Here the data folder is a file, so the OS answers ENOTDIR; on
+    /// Windows that answer is "not found", hence Unix only.
+    #[cfg(unix)]
+    #[test]
+    fn only_a_missing_file_counts_as_no_file() {
+        test_support::with_isolated_data_dir(|| {
+            let not_a_folder = data_dir().join("a-file");
+            fs::write(&not_a_folder, "x").unwrap();
+            std::env::set_var("SSIX_DATA_DIR", &not_a_folder);
+
+            let err = load_data().unwrap_err();
+            assert!(err.contains("could not be read"), "got: {}", err);
+            let err = crate::keychain::snapshot_for_credential("any").unwrap_err();
+            assert!(err.contains("failed to read"), "got: {}", err);
         });
     }
 

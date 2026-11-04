@@ -209,7 +209,9 @@ pub async fn add_credential(input: AddCredentialInput) -> Result<Credential, Str
     blocking(move || add_credential_sync(input)).await
 }
 
-fn add_credential_sync(input: AddCredentialInput) -> Result<Credential, String> {
+fn add_credential_sync(mut input: AddCredentialInput) -> Result<Credential, String> {
+    input.name = input.name.trim().to_string();
+    input.username = input.username.trim().to_string();
     validate_credential_fields(&input.name, &input.username, input.is_private)?;
     let (kind_for_json, secrets) = split_secrets(&input.kind)?;
     // The id doubles as the keychain key, so it is generated up front and
@@ -220,7 +222,7 @@ fn add_credential_sync(input: AddCredentialInput) -> Result<Credential, String> 
     let result = with_data_mut(|data| {
         // Private credentials skip the unique-name check since they use
         // auto-generated UUID-based names and are never shown in the UI list.
-        if !input.is_private && data.credentials.iter().any(|c| c.name == input.name) {
+        if !input.is_private && data.credentials.iter().any(|c| c.name.trim() == input.name) {
             return Err(format!(
                 "A credential named '{}' already exists",
                 input.name
@@ -262,6 +264,8 @@ fn update_credential_sync(input: UpdateCredentialInput) -> Result<Credential, St
         kind,
         keep_secrets,
     } = input;
+    let name = name.trim().to_string();
+    let username = username.trim().to_string();
     // The frontend never calls update on private credentials (they're
     // managed via update_connection); validate as if non-private.
     validate_credential_fields(&name, &username, false)?;
@@ -281,7 +285,7 @@ fn update_credential_sync(input: UpdateCredentialInput) -> Result<Credential, St
         if data
             .credentials
             .iter()
-            .any(|c| c.name == name && c.id != id)
+            .any(|c| c.name.trim() == name && c.id != id)
         {
             return Err(format!("A credential named '{}' already exists", name));
         }
@@ -406,6 +410,46 @@ mod tests {
             let data = crate::storage::load_data().unwrap();
             let ids: Vec<&str> = data.credentials.iter().map(|c| c.id.as_str()).collect();
             assert_eq!(ids, vec![dest.id.as_str(), gateway.id.as_str()]);
+        });
+    }
+
+    #[test]
+    fn names_and_usernames_are_trimmed_before_they_are_checked_and_stored() {
+        with_isolated_data_dir(|| {
+            let input = |name: &str, is_private| AddCredentialInput {
+                name: name.to_string(),
+                username: " root ".to_string(),
+                kind: password_kind(),
+                is_private,
+            };
+            let prod = super::add_credential_sync(input(" prod ", false)).unwrap();
+            assert_eq!(
+                (prod.name.as_str(), prod.username.as_str()),
+                ("prod", "root")
+            );
+            let err = super::add_credential_sync(input("prod ", false)).unwrap_err();
+            assert_eq!(err, "A credential named 'prod' already exists");
+
+            let staging = add("staging", password_kind());
+            let update = |name: &str| UpdateCredentialInput {
+                id: staging.id.clone(),
+                name: name.to_string(),
+                username: " deploy ".to_string(),
+                kind: password_kind(),
+                keep_secrets: true,
+            };
+            let err = super::update_credential_sync(update(" prod")).unwrap_err();
+            assert_eq!(err, "A credential named 'prod' already exists");
+            let updated = super::update_credential_sync(update(" stage ")).unwrap();
+            assert_eq!(
+                (updated.name.as_str(), updated.username.as_str()),
+                ("stage", "deploy")
+            );
+
+            // A private credential's name is still exempt from both checks.
+            let private = super::add_credential_sync(input("", true)).unwrap();
+            assert_eq!(private.username, "root");
+            super::add_credential_sync(input("prod", true)).unwrap();
         });
     }
 

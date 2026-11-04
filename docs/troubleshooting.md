@@ -37,6 +37,11 @@ Older builds showed this as `TypeError: ... window.__TAURI_INTERNALS__ is undefi
 - To undo a restore, restore the "Before restore" backup it created.
 - Backups live in `~/.ssix/backups` (or `$SSIX_DATA_DIR/backups`). Copy one elsewhere to keep it safe from a lost disk, and remember that it contains your secrets.
 
+## "Saved By A Newer Version Of SSIX"
+
+- `data.json` was written by a newer SSIX, after a downgrade or a restore of a newer backup. This version can read it but refuses every change, because saving would drop what it does not understand.
+- Update SSIX, or restore a backup made by this version.
+
 ## Host Key Has Changed
 
 - SSIX refuses to connect when a server's host key differs from the one recorded on first use. The failure view shows the new SHA256 fingerprint.
@@ -81,5 +86,6 @@ Older builds showed this as `TypeError: ... window.__TAURI_INTERNALS__ is undefi
 ## Credentials Seem Missing
 
 - Remember that secrets are stored separately from `data.json`.
+- "could not be read" or "failed to read secrets file" means the file is there but SSIX cannot read it, for example because of its permissions or a failing disk. SSIX shows the error instead of an empty list and saves nothing over the file: fix the cause and try again.
 - If testing manually, inspect `~/.ssix/secrets.json` rather than expecting password material in `~/.ssix/data.json`.
 - A secret from an old `data.json` moves to `secrets.json` the next time SSIX starts. If `secrets.json` is corrupt, the move waits and the Logs view has a `migration` warning: fix or restore the file, then restart.

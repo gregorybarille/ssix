@@ -426,65 +426,49 @@ fn apply_update(
     // doesn't become an invisible orphan.
     if let Some(ref old_id) = old_cred_id {
         if f.credential_id.as_deref() != Some(old_id.as_str()) {
-            let is_private = data
-                .credentials
-                .iter()
-                .any(|c| c.id == *old_id && c.is_private);
-            if is_private {
-                let still_referenced = data
-                    .connections
-                    .iter()
-                    .any(|c| c.credential_ids().any(|id| id == old_id));
-                if !still_referenced {
-                    data.credentials.retain(|c| c.id != *old_id);
-                    orphaned_private = Some(old_id.clone());
-                }
-            }
+            orphaned_private = take_orphaned_private(data, old_id);
         }
     }
     Ok((updated, orphaned_private))
 }
 
-#[tauri::command]
-pub async fn delete_connection(id: String) -> Result<(), String> {
-    blocking(move || {
-        with_data_mut(|data| {
-            data.connections.retain(|c| c.id != id);
-            Ok(())
-        })
-    })
-    .await
+/// Remove the credential `id` from `data` if it is private and no connection
+/// uses it any more, since no screen could reach it again. Returns the id if
+/// so, for the caller to delete its secrets after the save.
+fn take_orphaned_private(data: &mut AppData, id: &str) -> Option<String> {
+    let orphaned = data.credentials.iter().any(|c| c.id == id && c.is_private)
+        && !data
+            .connections
+            .iter()
+            .any(|c| c.credential_ids().any(|used| used == id));
+    if orphaned {
+        data.credentials.retain(|c| c.id != id);
+    }
+    orphaned.then(|| id.to_string())
 }
 
-/// Returns the ID of the private credential associated with the given connection
-/// if that credential would become an orphan (not referenced by any other
-/// connection) when the connection is deleted.  Returns `None` if there is no
-/// private credential or if other connections still reference it.
 #[tauri::command]
-pub fn get_orphan_private_credential(conn_id: String) -> Result<Option<String>, String> {
-    let data = load_data()?;
-    let conn = data
-        .connections
-        .iter()
-        .find(|c| c.id == conn_id)
-        .ok_or_else(|| "Connection not found".to_string())?;
-    if let Some(ref cred_id) = conn.credential_id {
-        let is_private = data
-            .credentials
-            .iter()
-            .any(|c| c.id == *cred_id && c.is_private);
-        if is_private {
-            let other_refs = data
-                .connections
-                .iter()
-                .filter(|c| c.id != conn_id && c.credential_ids().any(|id| id == cred_id))
-                .count();
-            if other_refs == 0 {
-                return Ok(Some(cred_id.clone()));
-            }
-        }
+pub async fn delete_connection(id: String) -> Result<(), String> {
+    blocking(move || delete_connection_sync(&id)).await
+}
+
+/// Delete a connection and any private credential only it used.
+fn delete_connection_sync(id: &str) -> Result<(), String> {
+    let orphaned: Vec<String> = with_data_mut(|data| {
+        let Some(idx) = data.connections.iter().position(|c| c.id == id) else {
+            return Ok(Vec::new());
+        };
+        let removed = data.connections.remove(idx);
+        Ok(removed
+            .credential_ids()
+            .filter_map(|cred_id| take_orphaned_private(data, cred_id))
+            .collect())
+    })?;
+    // After the save, as in `update_connection_sync`.
+    for cred_id in &orphaned {
+        crate::keychain::delete_all_for_credential(cred_id);
     }
-    Ok(None)
+    Ok(())
 }
 
 #[tauri::command]
@@ -1234,26 +1218,37 @@ mod tests {
     }
 
     #[test]
-    fn test_orphan_check_counts_gateway_use() {
+    fn test_delete_removes_a_private_credential_with_its_last_connection() {
         with_isolated_data_dir(|| {
-            let cred = private_credential("inline-shared");
+            let private = private_credential("inline-shared");
             let direct = add_connection_sync(AddConnectionInput {
-                fields: direct_fields(Some(cred.id.clone())),
+                fields: direct_fields(Some(private.id.clone())),
             })
             .unwrap();
-            assert_eq!(
-                get_orphan_private_credential(direct.id.clone()).unwrap(),
-                Some(cred.id.clone())
-            );
-
-            let other = password_credential("dest");
-            store_credential(&other);
-            let mut fields = direct_fields(Some(other.id.clone()));
+            let named = password_credential("dest");
+            store_credential(&named);
+            let mut fields = direct_fields(Some(named.id.clone()));
             fields.name = "jump".to_string();
-            fields.kind = jump_kind(&cred.id);
-            add_connection_sync(AddConnectionInput { fields }).unwrap();
-            // Still the jump shell's gateway credential: not an orphan.
-            assert_eq!(get_orphan_private_credential(direct.id).unwrap(), None);
+            fields.kind = jump_kind(&private.id);
+            let jump = add_connection_sync(AddConnectionInput { fields }).unwrap();
+            let password = || {
+                crate::keychain::snapshot_for_credential(&private.id)
+                    .unwrap()
+                    .password
+            };
+
+            // Still the jump shell's gateway credential.
+            delete_connection_sync(&direct.id).unwrap();
+            assert_eq!(load_data().unwrap().credentials.len(), 2);
+            assert_eq!(password().as_deref(), Some("s3cret"));
+
+            // A named credential stays; the private one and its secret go.
+            delete_connection_sync(&jump.id).unwrap();
+            let data = load_data().unwrap();
+            assert!(data.connections.is_empty());
+            let left: Vec<&str> = data.credentials.iter().map(|c| c.id.as_str()).collect();
+            assert_eq!(left, vec![named.id.as_str()]);
+            assert_eq!(password(), None);
         });
     }
 
