@@ -46,6 +46,7 @@ jobs:
 
       - run: cargo test
         working-directory: src-tauri
+        timeout-minutes: 15
 
   windows-build:
     name: Windows Build
@@ -113,6 +114,7 @@ jobs:
 
       - run: cargo test
         working-directory: src-tauri
+        timeout-minutes: 15
 
   macos-build:
     name: macOS Build (Apple Silicon)

@@ -95,6 +95,10 @@ jobs:
       - name: Build the tests
         run: cargo test --no-run
         working-directory: src-tauri
+      - name: Unit tests
+        run: cargo test
+        working-directory: src-tauri
+        timeout-minutes: 15
       - name: Wait for sshd
         shell: pwsh
         run: |

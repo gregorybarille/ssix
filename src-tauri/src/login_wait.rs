@@ -169,6 +169,8 @@ mod tests {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let client = TcpStream::connect(listener.local_addr().unwrap()).unwrap();
         let (peer, _) = listener.accept().unwrap();
+        // The handshake would do this, and on Windows `wake::is_readable` hangs without it.
+        client.set_nonblocking(true).unwrap();
         let mut session = Session::new().unwrap();
         session.set_tcp_stream(client);
         (session, peer)
