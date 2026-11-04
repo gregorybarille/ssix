@@ -75,7 +75,7 @@ cancelled.
   write access. The target's umask still applies, and a setgid parent still passes its
   bit on to a new folder. A folder that already exists keeps
   its own mode, as a replaced file does.
-- **A dead link fails the transfer in about 35 seconds.** One chunk (128 KiB) that
+- **A dead link fails the transfer in about 35 seconds.** One chunk (128 to 256 KiB) that
   gets nowhere for 30 seconds ends it, about 35 kbit/s being the slowest link that
   counts as alive, and each tidying step then gets 2 seconds. Measured over a link
   that stops moving: 38 seconds on an upload, 36 on a download. A cancel waits for

@@ -52,7 +52,8 @@ const OUTPUT_COALESCE_MAX: usize = 256 * 1024;
 /// Output the terminal has not caught up with, at which a shell stops reading
 /// more. The SSH window then pushes back on the server. xterm throws away what it
 /// is given above 50 MB; the frontend's own buffer adds up to 4 MB on top of this.
-const OUTPUT_PAUSE_BYTES: u64 = 8 * 1024 * 1024;
+/// Kept small because all of it still scrolls past after a Ctrl+C.
+const OUTPUT_PAUSE_BYTES: u64 = 1024 * 1024;
 /// libssh2's "call again later" code, surfaced by ssh2 as `ErrorCode::Session`.
 const LIBSSH2_ERROR_EAGAIN: i32 = -37;
 /// libssh2's answer to waiting for a channel to close before the server's EOF.

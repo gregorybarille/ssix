@@ -146,6 +146,10 @@ pub(crate) fn loopback_pair() -> Result<(TcpStream, TcpStream), String> {
             .accept()
             .map_err(|e| format!("Failed to accept a loopback pair: {}", e))?;
         if peer == near_addr {
+            // Keys are small writes: Nagle would hold one back until the last is
+            // acknowledged, and direct connections already turn it off.
+            near.set_nodelay(true).ok();
+            far.set_nodelay(true).ok();
             return Ok((near, far));
         }
     }
@@ -246,6 +250,7 @@ mod tests {
     #[test]
     fn a_loopback_pair_is_connected_and_leaves_no_port_open() {
         let (mut near, mut far) = loopback_pair().unwrap();
+        assert!(near.nodelay().unwrap() && far.nodelay().unwrap());
         near.write_all(b"x").unwrap();
         let mut got = [0u8; 1];
         far.read_exact(&mut got).unwrap();
