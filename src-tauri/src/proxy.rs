@@ -350,6 +350,37 @@ mod tests {
         assert!(!alive(), "sleep {sleep} outlived the session");
     }
 
+    #[cfg(windows)]
+    #[test]
+    fn closing_the_socket_ends_what_cmd_started() {
+        // `cmd` stays as the parent, as it does for the "Through WSL" preset.
+        let sock = connect(
+            "powershell -NoProfile -Command \"Write-Output $PID; Start-Sleep 300\"",
+            &endpoint(),
+            &SshDebug::new(0, "t"),
+        )
+        .unwrap();
+        sock.set_read_timeout(Some(std::time::Duration::from_secs(60)))
+            .unwrap();
+        let mut line = String::new();
+        BufReader::new(&sock).read_line(&mut line).unwrap();
+        let pid: u32 = line.trim().parse().unwrap();
+        let alive = || {
+            let output = Command::new("tasklist")
+                .args(["/FI", &format!("PID eq {pid}"), "/NH"])
+                .output()
+                .unwrap();
+            String::from_utf8_lossy(&output.stdout).contains(&pid.to_string())
+        };
+        assert!(alive());
+        drop(sock);
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+        while alive() && std::time::Instant::now() < deadline {
+            thread::sleep(std::time::Duration::from_millis(200));
+        }
+        assert!(!alive(), "powershell {pid} outlived the session");
+    }
+
     /// If this reached the wrong group, the test run itself would die.
     #[cfg(unix)]
     #[test]
