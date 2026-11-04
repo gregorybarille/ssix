@@ -1257,7 +1257,8 @@ impl Plan {
         known: &mut KnownConnections,
     ) {
         let destination = planned.signature().to_string();
-        if let Some(refusal) = known.refusal(&planned.name, &destination) {
+        // Trimmed as the save will: " web" is stored as "web".
+        if let Some(refusal) = known.refusal(planned.name.trim(), &destination) {
             self.skip(refusal.skip(&planned.name, &planned.source));
             return;
         }
@@ -1305,7 +1306,7 @@ impl Plan {
         if planned.proxy_command.is_some() {
             planned.notes.push(PROXY_COMMAND_NOTE.to_string());
         }
-        known.add(&planned.name, destination, false);
+        known.add(planned.name.trim(), destination, false);
         // A copied config must not run a command or open a port on the default.
         let preselected = twin.is_none() && planned.proxy_command.is_none() && !planned.open_bind;
         self.items.push(PlanItem {
@@ -1421,6 +1422,36 @@ fn preview_sync(path: Option<&str>, env: &ImportEnv) -> Result<ImportPreview, St
     Ok(build_plan(&config, &data, env).into_preview(&config, shown))
 }
 
+/// Store `items` in `data`, or say why one cannot be. The caller's transaction
+/// is what keeps the rows before a refused one from being saved.
+fn store_items<'a>(
+    data: &mut AppData,
+    items: impl Iterator<Item = &'a PlanItem>,
+) -> Result<ImportResult, String> {
+    // Names come from what is really stored, in the order of the rows
+    // ticked: a row left unticked reserves nothing.
+    let mut book = CredentialBook::of(&data.credentials);
+    let mut result = ImportResult::default();
+    for item in items {
+        let credentials_before = data.credentials.len();
+        let mut store =
+            |spec: &Option<CredentialSpec>| spec.as_ref().map(|s| book.store(data, s)).transpose();
+        let gateway_id = store(&item.planned.gateway_credential)?;
+        let target_id = store(&item.planned.target_credential)?;
+        let mut fields = item.planned.fields(target_id, gateway_id);
+        check_connection(data, &mut fields, None)?;
+        result
+            .connections
+            .push(insert_new_connection(data, fields).name);
+        result.credentials.extend(
+            data.credentials[credentials_before..]
+                .iter()
+                .map(|credential| credential.name.clone()),
+        );
+    }
+    Ok(result)
+}
+
 fn apply_sync(input: &ImportApplyInput, env: &ImportEnv) -> Result<ImportResult, String> {
     if input.keys.is_empty() {
         return Err("Choose at least one host to import".to_string());
@@ -1435,33 +1466,12 @@ fn apply_sync(input: &ImportApplyInput, env: &ImportEnv) -> Result<ImportResult,
         if !selected.is_subset(&planned) {
             return Err(STALE_PREVIEW.to_string());
         }
-        // Names come from what is really stored, in the order of the rows
-        // ticked: a row left unticked reserves nothing.
-        let mut book = CredentialBook::of(&data.credentials);
-        let mut result = ImportResult::default();
-        for item in plan
-            .items
-            .iter()
-            .filter(|item| selected.contains(item.key.as_str()))
-        {
-            let credentials_before = data.credentials.len();
-            let mut store = |spec: &Option<CredentialSpec>| {
-                spec.as_ref().map(|s| book.store(data, s)).transpose()
-            };
-            let gateway_id = store(&item.planned.gateway_credential)?;
-            let target_id = store(&item.planned.target_credential)?;
-            let mut fields = item.planned.fields(target_id, gateway_id);
-            check_connection(data, &mut fields, None)?;
-            result
-                .connections
-                .push(insert_new_connection(data, fields).name);
-            result.credentials.extend(
-                data.credentials[credentials_before..]
-                    .iter()
-                    .map(|credential| credential.name.clone()),
-            );
-        }
-        Ok(result)
+        store_items(
+            data,
+            plan.items
+                .iter()
+                .filter(|item| selected.contains(item.key.as_str())),
+        )
     })
 }
 
@@ -2366,7 +2376,7 @@ mod tests {
             assert!(
                 plan.items
                     .iter()
-                    .all(|i| seen.insert(i.planned.name.clone())),
+                    .all(|i| seen.insert(i.planned.name.trim().to_string())),
                 "{text:?}"
             );
         }
@@ -3096,6 +3106,37 @@ mod tests {
             let preview = f.preview(BASIC);
             let keys = vec![preview.items[0].key.clone(), "forged".to_string()];
             assert_eq!(f.apply(keys).unwrap_err(), STALE_PREVIEW);
+            assert!(!crate::storage::get_data_path().exists());
+        });
+    }
+
+    #[test]
+    fn aliases_equal_after_trimming_import_as_one_connection() {
+        in_data_dir(|f| {
+            let reversed = f.preview("Host web\n  HostName b\nHost \" web\"\n  HostName a\n");
+            assert_eq!(names(&reversed), ["web"]);
+
+            let preview = f.preview("Host \" web\"\n  HostName a\nHost web\n  HostName b\n");
+            assert_eq!(names(&preview), [" web"]);
+            assert_eq!(
+                skip(&preview, "web").category,
+                ImportSkipCategory::Duplicate
+            );
+            assert_eq!(f.apply_all(&preview).connections, ["web"]);
+            assert_eq!(stored("web").host, "a");
+        });
+    }
+
+    #[test]
+    fn a_row_refused_after_earlier_rows_saves_nothing() {
+        in_data_dir(|f| {
+            let config = ParsedConfig::parse_text(BASIC, &f.env.home);
+            let plan = build_plan(&config, &AppData::default(), &f.env);
+            // No config gets this far now: the same row twice clashes on the second.
+            let row = &plan.items[0];
+            let error =
+                with_data_mut(|data| store_items(data, [row, row].into_iter())).unwrap_err();
+            assert!(error.contains("already exists"), "{error}");
             assert!(!crate::storage::get_data_path().exists());
         });
     }

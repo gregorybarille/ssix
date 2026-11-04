@@ -149,6 +149,16 @@ it does not read the connection's keepalive setting.
   tunnel, and its count in the view, until the server takes them or the forward
   stops. A client that aborts ends it at once. Stopping a forward can take up to
   3 s for such a client.
+- **Many idle clients sleep longer.** Clients share one SSH socket, and the thread
+  that reads it first can take in another client's packet without the socket waking
+  the owner, so each client also looks on a timer. With 2 to 15 clients that is every
+  10 ms; above that the wait grows by 10 ms per 8 clients, up to 250 ms at 200 or
+  more. A client that carried a byte in the last 10 s stays at 10 ms however many
+  others there are, so an answer to something it sent is not slowed. What can be: a
+  server that speaks first after 10 s of silence, by up to that wait, in a forward
+  with 16 or more clients. Measured with 300 idle clients in a debug build on a busy
+  machine: from about 250% of a core to 5 to 10%, and a request and answer through
+  one of them still takes about 11 ms at the median.
 - **A remote forward polls while it has clients.** New connections arrive over
   the session itself, and reading one client's data can pull in the next one
   without the socket waking anyone, so the supervisor looks every 20 ms instead

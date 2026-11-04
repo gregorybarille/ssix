@@ -16,6 +16,12 @@ come back.
 - Output that arrives meanwhile lands in the scrollback.
 - It keeps its size. A hidden pane has no size of its own, so a terminal off
   screen is not fitted and sends the server no resize. It refits when shown.
+- It keeps its WebGL renderer, so coming back is immediate. A webview keeps about 16
+  WebGL contexts and takes one away for each new one past that. A terminal that
+  lost its context this way uses the slower DOM renderer until it is next shown,
+  when it gets a new one; scrollback and scroll position are not part of the
+  renderer. One that loses it on screen, with more than that many on screen, stays
+  on the DOM renderer until then too.
 - It holds no keyboard. Keys typed in the view that replaced it stay there, and
   shortcuts do not reach it.
 - When it comes back it takes the keyboard again, unless a side panel has it or a
@@ -67,6 +73,18 @@ While the bar is open, moving between matches does not trigger
 | Copy the selection | `Cmd+C` | `Ctrl+Shift+C` |
 | Paste | `Cmd+V` | `Ctrl+Shift+V` |
 | Paste | Right-click | Right-click |
+
+A right-click only pastes what you copied. It does not select the word under the
+mouse, as macOS terminals usually do: with auto-copy on, that word would replace
+what you copied.
+
+**Copy selection to clipboard automatically**, off by default, copies a selection as
+soon as you finish it, in a terminal and anywhere else in the app. Outside a terminal
+that is when the mouse button or key comes up, and only for a selection that changed.
+It never copies from an input, a text area or anything else editable, passwords
+included: you select a field's text to paste over it. Text that cannot be selected
+in the first place, such as the title bar, list rows in the folder tree and the Files
+view, and field labels, stays out of it.
 
 Plain `Ctrl+C` and `Ctrl+V` always go to the program, with or without a selection:
 `Ctrl+C` interrupts it, and `Ctrl+V` is readline's quoted insert and vim's
@@ -182,6 +200,6 @@ if they differ.
 
 Extensions see a terminal once it exists, and cannot change how it is mounted.
 So `Terminal.tsx` itself holds what depends on visibility: fitting, focus, refusing
-keys off screen, the deferred question about an ended shell, and applying the
-look. It also acts on the clipboard keys, which `clipboardKeyAction` chooses, and calls the `onKey` hook, which is how `terminalSearch` keeps its shortcut
+keys off screen, a new WebGL renderer after a lost one, the deferred question about an ended shell, and
+applying the look. It also acts on the clipboard keys, which `clipboardKeyAction` chooses, and calls the `onKey` hook, which is how `terminalSearch` keeps its shortcut
 from xterm: xterm handles a key before the window's shortcut listener sees it.

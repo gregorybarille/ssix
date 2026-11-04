@@ -58,7 +58,11 @@ export function FailedTerminal({
     setTrusting(true);
     setTrustError(null);
     try {
-      await invoke("ssh_forget_host_key", { host: mismatch.host, port: mismatch.port });
+      await invoke("ssh_trust_host_key", {
+        host: mismatch.host,
+        port: mismatch.port,
+        fingerprint: mismatch.fingerprint,
+      });
       onRetry(connection);
     } catch (err) {
       setTrustError(String(err));

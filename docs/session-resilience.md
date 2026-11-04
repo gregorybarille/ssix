@@ -43,7 +43,10 @@ many minutes. A server that closes the connection is noticed either way.
 A proxy command can hide a drop the same way. OpenBSD `nc`, the `nc` of Debian
 and Ubuntu, stays alive after the server closes the connection, until something
 is written to it. Through such a proxy, a cut connection is noticed at the next
-keepalive or keystroke, not at once.
+keepalive or keystroke, not at once. It does not outlive the session: when a
+session closes or reconnects, SSIX stops the proxy command and everything it
+started, including each part of a pipeline and the `wsl.exe` and `nc` of **Through
+WSL**.
 
 A jump host connection sends its keepalives to the target, through the tunnel,
 so it also notices a dead jump host.

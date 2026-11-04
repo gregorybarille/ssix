@@ -103,7 +103,7 @@ interface SftpState {
   /** Try the failed connection again; picking it in the list again would change nothing. */
   retryConnect: () => Promise<void>;
   /** Accept the host key a connection now presents, and connect again. */
-  trustHostKey: (host: string, port: number) => Promise<void>;
+  trustHostKey: (host: string, port: number, fingerprint: string) => Promise<void>;
   navigate: (side: PaneSide, path: string) => Promise<void>;
   refresh: (side: PaneSide) => Promise<void>;
   select: (side: PaneSide, path: string, mode: SelectMode) => void;
@@ -393,11 +393,11 @@ export const useSftpStore = create<SftpState>((set, get) => {
       if (connectionId) await get().connect(connectionId);
     },
 
-    trustHostKey: async (host, port) => {
+    trustHostKey: async (host, port, fingerprint) => {
       const { connectionId } = get();
       if (!connectionId) return;
       try {
-        await invoke("ssh_forget_host_key", { host, port });
+        await invoke("ssh_trust_host_key", { host, port, fingerprint });
       } catch (err) {
         set({ connectError: errorMessage(err) });
         return;

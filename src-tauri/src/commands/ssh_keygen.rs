@@ -15,6 +15,9 @@ use ssh_key::{LineEnding, PrivateKey};
 use std::io::Read;
 use std::path::{Path, PathBuf};
 
+/// The form shows this as it is, so the rule has one wording.
+const RELATIVE_PATH_ERROR: &str = "Custom path must be an absolute path; ~ is not expanded";
+
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "snake_case", tag = "storage")]
 pub enum KeyStorage {
@@ -85,7 +88,7 @@ fn default_key_path(name_hint: Option<&str>) -> Result<PathBuf, String> {
     };
     let mut candidate = ssh_dir.join(&base);
     let mut counter: u32 = 2;
-    while candidate.exists() || candidate.with_extension("pub").exists() {
+    while candidate.exists() || public_key_path(&candidate).exists() {
         candidate = ssh_dir.join(format!("{}_{}", base, counter));
         counter += 1;
         if counter > 1000 {
@@ -95,11 +98,22 @@ fn default_key_path(name_hint: Option<&str>) -> Result<PathBuf, String> {
     Ok(candidate)
 }
 
+/// Where a key's public half goes: `<path>.pub`, as ssh-keygen does and as
+/// `derive_public_key_for_credential` reads it, whatever `path` ends in.
+fn public_key_path(path: &Path) -> PathBuf {
+    let mut public = path.as_os_str().to_os_string();
+    public.push(".pub");
+    public.into()
+}
+
 fn write_key_files(path: &Path, private_pem: &str, public_line: &str) -> Result<(), String> {
     if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent).map_err(|e| format!("create dir: {}", e))?;
         #[cfg(unix)]
-        {
+        let created = !parent.exists();
+        std::fs::create_dir_all(parent).map_err(|e| format!("create dir: {}", e))?;
+        // A folder that was already there is not ours to tighten.
+        #[cfg(unix)]
+        if created {
             use std::os::unix::fs::PermissionsExt;
             let _ = std::fs::set_permissions(parent, std::fs::Permissions::from_mode(0o700));
         }
@@ -115,7 +129,7 @@ fn write_key_files(path: &Path, private_pem: &str, public_line: &str) -> Result<
     let private_bytes = private_pem.as_bytes().to_vec();
     crate::storage::atomic_write(path, &private_bytes, Some(0o600))
         .map_err(|e| format!("write private key: {}", e))?;
-    let pub_path = path.with_extension("pub");
+    let pub_path = public_key_path(path);
     let public_bytes = public_line.as_bytes().to_vec();
     crate::storage::atomic_write(&pub_path, &public_bytes, Some(0o644))
         .map_err(|e| format!("write public key: {}", e))?;
@@ -168,8 +182,18 @@ pub(crate) fn generate_ssh_key_sync(input: GenerateSshKeyInput) -> Result<Genera
         }
         KeyStorage::CustomPath { path } => {
             let p = PathBuf::from(&path);
-            if p.exists() {
-                return Err(format!("Refusing to overwrite existing file at {}", path));
+            // Nothing expands `~`, so it would be a folder of that name in the
+            // app's working directory.
+            if !p.is_absolute() {
+                return Err(RELATIVE_PATH_ERROR.to_string());
+            }
+            for existing in [p.clone(), public_key_path(&p)] {
+                if existing.exists() {
+                    return Err(format!(
+                        "Refusing to overwrite existing file at {}",
+                        existing.display()
+                    ));
+                }
             }
             write_key_files(&p, &private_pem, &public_line)?;
             Some(p.to_string_lossy().to_string())
@@ -568,6 +592,83 @@ mod tests {
         })
         .unwrap_err();
         assert!(err.contains("Refusing to overwrite"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    fn generate_at(path: &Path) -> Result<GeneratedKey, String> {
+        generate_ssh_key_sync(GenerateSshKeyInput {
+            storage: KeyStorage::CustomPath {
+                path: path.to_string_lossy().to_string(),
+            },
+            name_hint: None,
+            passphrase: None,
+            comment: None,
+        })
+    }
+
+    fn temp_dir() -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("ssix-keygen-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn a_dotted_key_name_leaves_another_keys_public_half_alone() {
+        let dir = temp_dir();
+        let other_public = dir.join("id_ed25519.pub");
+        std::fs::write(&other_public, "other key").unwrap();
+
+        let out = generate_at(&dir.join("id_ed25519.work")).unwrap();
+
+        assert_eq!(std::fs::read_to_string(&other_public).unwrap(), "other key");
+        assert_eq!(
+            std::fs::read_to_string(dir.join("id_ed25519.work.pub")).unwrap(),
+            out.public_key
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn an_existing_public_key_refuses_the_whole_generation() {
+        let dir = temp_dir();
+        let path = dir.join("id_x");
+        let public = dir.join("id_x.pub");
+        std::fs::write(&public, "other key").unwrap();
+
+        let err = generate_at(&path).unwrap_err();
+
+        assert!(err.contains("Refusing to overwrite"), "{err}");
+        assert!(err.contains("id_x.pub"), "{err}");
+        assert_eq!(std::fs::read_to_string(&public).unwrap(), "other key");
+        assert!(!path.exists());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_path_that_is_not_absolute_is_refused() {
+        for path in ["id_ssix_relative_test", "~/id_ssix_relative_test"] {
+            assert_eq!(
+                generate_at(Path::new(path)).unwrap_err(),
+                RELATIVE_PATH_ERROR
+            );
+            assert!(!Path::new(path).exists());
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn only_a_folder_it_created_is_tightened() {
+        use std::os::unix::fs::PermissionsExt;
+        let mode = |p: &Path| std::fs::metadata(p).unwrap().permissions().mode() & 0o777;
+        let dir = temp_dir();
+        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+        generate_at(&dir.join("id_x")).unwrap();
+        assert_eq!(mode(&dir), 0o755);
+
+        let created = dir.join("new");
+        generate_at(&created.join("id_x")).unwrap();
+        assert_eq!(mode(&created), 0o700);
         let _ = std::fs::remove_dir_all(&dir);
     }
 

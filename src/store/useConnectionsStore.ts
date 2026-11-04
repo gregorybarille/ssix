@@ -19,7 +19,6 @@ interface ConnectionsState {
   deleteConnection: (id: string) => Promise<void>;
   /** Save the clone form's connection as a new one; `id` is the original's. */
   cloneConnection: (id: string, input: ConnectionInput) => Promise<void>;
-  getOrphanPrivateCredential: (connId: string) => Promise<string | null>;
   /** File a connection under `folder`; null takes it out of any folder. */
   moveConnectionToFolder: (id: string, folder: string | null) => Promise<void>;
   /** Rename a folder, which moves every connection in or under it. */
@@ -78,11 +77,6 @@ export const useConnectionsStore = create<ConnectionsState>((set) => ({
       });
       set((state) => ({ connections: [...state.connections, conn] }));
     }, { recordError: false }),
-
-  // Errors propagate: silently answering "no orphan" would let a delete
-  // proceed and leave a private credential's secrets behind.
-  getOrphanPrivateCredential: (connId) =>
-    invoke<string | null>("get_orphan_private_credential", { connId }),
 
   moveConnectionToFolder: (id, folder) =>
     runAsyncRethrow(set, async () => {

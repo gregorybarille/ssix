@@ -3,6 +3,7 @@ import { Connection, Credential, ForwardConnection } from "@/types";
 import { DEFAULT_BIND_ADDRESS } from "@/lib/bindAddress";
 import { formatSize } from "@/lib/sftp";
 import { forwardEndpoint, hopTerms, isForwardConnection } from "@/lib/sshTerms";
+import { usePortForwardsStore } from "@/store/usePortForwardsStore";
 import { Button } from "./ui/button";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { Cable, ChevronDown, ChevronRight, Copy, Pencil, Play, Trash2, X } from "lucide-react";
@@ -59,7 +60,6 @@ function listenPortLabel(conn: ForwardConnection): string {
 }
 
 interface PortForwardsViewProps {
-  sessions: ForwardSession[];
   connections: Connection[];
   credentials: Credential[];
   onCloseSession: (sessionId: string) => void;
@@ -70,7 +70,6 @@ interface PortForwardsViewProps {
 }
 
 export function PortForwardsView({
-  sessions,
   connections,
   credentials,
   onCloseSession,
@@ -79,6 +78,8 @@ export function PortForwardsView({
   onDelete,
   onClone,
 }: PortForwardsViewProps) {
+  // Here, not in App: a forward with clients updates this every second.
+  const sessions = usePortForwardsStore((s) => s.sessions);
   const forwardDefs = connections.filter(isForwardConnection);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   /*

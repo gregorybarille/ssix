@@ -28,6 +28,7 @@ Older builds showed this as `TypeError: ... window.__TAURI_INTERNALS__ is undefi
 ## Proxy Command Or WSL Connection Fails
 
 - Look in the Logs view for `proxy` entries: they are what the command printed on stderr (for example `nc: command not found`).
+- On macOS, an SSIX started from Finder does not get the `PATH` your shell sets up. SSIX adds `/opt/homebrew/bin` and `/usr/local/bin` after what it has. A tool anywhere else (`~/.local/bin`, for example) needs its full path in the command.
 - For **Through WSL**, check `wsl.exe -e nc -h` works in a Windows terminal, and install `netcat-openbsd` in the distribution if it does not.
 - Set the connection's verbosity to -v: the Logs view then shows the expanded command that was run.
 
@@ -37,11 +38,16 @@ Older builds showed this as `TypeError: ... window.__TAURI_INTERNALS__ is undefi
 - To undo a restore, restore the "Before restore" backup it created.
 - Backups live in `~/.ssix/backups` (or `$SSIX_DATA_DIR/backups`). Copy one elsewhere to keep it safe from a lost disk, and remember that it contains your secrets.
 
+## "Saved By A Newer Version Of SSIX"
+
+- `data.json` was written by a newer SSIX, after a downgrade or a restore of a newer backup. This version can read it but refuses every change, because saving would drop what it does not understand.
+- Update SSIX, or restore a backup made by this version.
+
 ## Host Key Has Changed
 
 - SSIX refuses to connect when a server's host key differs from the one recorded on first use. The failure view shows the new SHA256 fingerprint.
 - That includes a key of another type, for example an Ed25519 key when an ECDSA key is on record. The message names both types. SSIX asks for the recorded type first, so this means the server did not offer that type at all: it dropped the key, or it is not the same server.
-- Confirm out of band (hosting console, admin) that the server really was reinstalled or re-keyed, then click **Trust new host key**. It replaces every key recorded for that `host:port`. If nobody changed the server, do not trust the key: the connection may be intercepted.
+- Confirm out of band (hosting console, admin) that the server really was reinstalled or re-keyed, then click **Trust new host key**. Check the fingerprint shown first: only a key with that fingerprint is accepted, and it replaces every key recorded for that `host:port`. If the key changes again before the reconnect, nothing is recorded and SSIX shows the new fingerprint with "not the key you chose to trust". If nobody changed the server, do not trust the key: the connection may be intercepted.
 - Recorded keys live in `~/.ssix/known_hosts` (OpenSSH format). `ssh-keygen -R <host> -f ~/.ssix/known_hosts` removes an entry by hand; for a non-default port use `-R '[host]:port'`.
 
 ## A Port Forward Does Not Work
@@ -75,11 +81,12 @@ Older builds showed this as `TypeError: ... window.__TAURI_INTERNALS__ is undefi
 - Confirm the configured repository path exists and contains `.git/`.
 - Confirm the configured remote is a remote name of that repository, or a URL or path. A name it does not know, such as a missing `origin`, is tried as a path and fails with "does not appear to be a git repository". An empty remote is fine: the first Sync creates the branch.
 - If one-click sync reports that the branch has diverged, rebase or merge onto the remote branch in the repository and retry. A conflict in `.ssix-sync/` can be resolved either way, because Sync exports over it.
-- If the pull is refused because of local changes, those are your own files outside `.ssix-sync/`: commit or restore them and retry. Sync discards only `.ssix-sync/`.
+- If the pull is refused because of local changes, those are your own files outside `.ssix-sync/`: commit or restore them and retry. Sync discards only `.ssix-sync/`, and only after you confirm the dialog that lists the files.
 - If push fails, inspect the returned git output in the Git Sync view.
 
 ## Credentials Seem Missing
 
 - Remember that secrets are stored separately from `data.json`.
+- "could not be read" or "failed to read secrets file" means the file is there but SSIX cannot read it, for example because of its permissions, a failing disk, or a link to a volume that is not mounted. SSIX shows the error instead of an empty list and saves nothing over the file: fix the cause and try again.
 - If testing manually, inspect `~/.ssix/secrets.json` rather than expecting password material in `~/.ssix/data.json`.
 - A secret from an old `data.json` moves to `secrets.json` the next time SSIX starts. If `secrets.json` is corrupt, the move waits and the Logs view has a `migration` warning: fix or restore the file, then restart.

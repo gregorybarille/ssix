@@ -8,16 +8,18 @@
 //! is not one of those recorded for that `host:port`, even a key of another
 //! type, is refused with an error that starts with [`MISMATCH_PREFIX`]; the
 //! frontend parses that line to offer a "trust new host key" action, which
-//! calls [`forget`] and reconnects, so the new key replaces the recorded ones.
+//! calls [`trust`] with the fingerprint it showed and reconnects. Only a key
+//! with that fingerprint then replaces the recorded ones.
 //!
 //! A server may hold several keys and presents the type the client asks for
 //! first, so [`prefer_recorded_key_types`] asks for the recorded types first.
 
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
+use std::sync::{LazyLock, Mutex};
 
 use base64::engine::general_purpose::STANDARD_NO_PAD;
 use base64::Engine;
+use dashmap::DashMap;
 use ssh2::{KnownHostFileKind, KnownHostKeyFormat, MethodType, Session};
 
 /// Machine-readable marker at the start of a host-key mismatch error.
@@ -35,6 +37,11 @@ pub(crate) fn with_known_hosts_locked<T>(f: impl FnOnce() -> T) -> T {
     let _guard = KNOWN_HOSTS_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     f()
 }
+
+/// The fingerprint the user agreed to, by known_hosts entry name, until the next
+/// handshake with that `host:port`. In memory only: the agreement is for the
+/// reconnect it was given for, and there is no key to write down until then.
+static TRUSTED_FINGERPRINTS: LazyLock<DashMap<String, String>> = LazyLock::new(DashMap::new);
 
 pub fn known_hosts_path() -> PathBuf {
     crate::storage::data_dir().join("known_hosts")
@@ -171,36 +178,52 @@ pub(crate) fn check_and_record(
     path: &Path,
 ) -> Result<(), String> {
     let _guard = KNOWN_HOSTS_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let name = entry_name(host, port);
+    let trusted = TRUSTED_FINGERPRINTS.remove(&name).map(|(_, fp)| fp);
     let mut hosts = load(session, path)?;
-    let changed = match lookup(&hosts, &entry_name(host, port), key)? {
-        Lookup::Match => return Ok(()),
-        Lookup::Unknown => {
-            hosts
-                .add(&entry_name(host, port), key, "", format)
-                .map_err(|e| format!("known_hosts add failed: {}", e))?;
-            persist(&hosts, path)?;
+    let refusal = match (lookup(&hosts, &name, key)?, trusted) {
+        (Lookup::Match, _) => return Ok(()),
+        (_, Some(trusted)) if trusted == fingerprint => {
+            remove_entries(&hosts, &name)?;
             crate::logs::log_local(
-                "info",
+                "warn",
                 "ssh",
-                format!("recorded host key for {}:{} ({})", host, port, fingerprint),
+                format!("replaced the host keys of {}:{} on request", host, port),
             );
-            return Ok(());
+            None
         }
-        Lookup::Changed => format!("The host key for {}:{} has changed.", host, port),
-        Lookup::NewKeyType { offered, recorded } => format!(
+        (_, Some(_)) => Some(format!(
+            "The host key for {}:{} changed again, so it is not the key you chose to trust.",
+            host, port
+        )),
+        (Lookup::Unknown, None) => None,
+        (Lookup::Changed, None) => Some(format!("The host key for {}:{} has changed.", host, port)),
+        (Lookup::NewKeyType { offered, recorded }, None) => Some(format!(
             "The host key for {}:{} has changed: the server presented a key of type {}, \
              and the keys on record are of type {}.",
             host, port, offered, recorded
-        ),
+        )),
     };
-    Err(format!(
-        "{} host={} port={} fingerprint={}\n\
-         {} This happens when a server is reinstalled or re-keyed, but it can also \
-         mean the connection is being intercepted. New key: {}. If you expect this \
-         change, trust the new key and reconnect: it replaces the keys recorded for \
-         this host.",
-        MISMATCH_PREFIX, host, port, fingerprint, changed, fingerprint
-    ))
+    if let Some(refusal) = refusal {
+        return Err(format!(
+            "{} host={} port={} fingerprint={}\n\
+             {} This happens when a server is reinstalled or re-keyed, but it can also \
+             mean the connection is being intercepted. New key: {}. If you expect this \
+             change, trust the new key and reconnect: it replaces the keys recorded for \
+             this host.",
+            MISMATCH_PREFIX, host, port, fingerprint, refusal, fingerprint
+        ));
+    }
+    hosts
+        .add(&name, key, "", format)
+        .map_err(|e| format!("known_hosts add failed: {}", e))?;
+    persist(&hosts, path)?;
+    crate::logs::log_local(
+        "info",
+        "ssh",
+        format!("recorded host key for {}:{} ({})", host, port, fingerprint),
+    );
+    Ok(())
 }
 
 enum Lookup {
@@ -217,8 +240,8 @@ enum Lookup {
 }
 
 /// The key blobs of the entries named exactly `name`. libssh2's own check would
-/// fall back from `[host]:port` to the plain host entry, and [`forget`] removes
-/// exact names only, so it could report a change that `forget` never clears.
+/// fall back from `[host]:port` to the plain host entry, and trusting a key
+/// replaces exact names only, so it could report a change that never clears.
 fn recorded_keys(hosts: &ssh2::KnownHosts, name: &str) -> Result<Vec<Vec<u8>>, String> {
     let mut keys = Vec::new();
     for entry in hosts
@@ -276,40 +299,39 @@ fn key_algorithm(blob: &[u8]) -> Option<&[u8]> {
     blob.get(4..4 + len)
 }
 
-/// Remove every recorded key for `host:port`. Returns whether anything was removed.
-pub fn forget(host: &str, port: u16) -> Result<bool, String> {
-    forget_in(host, port, &known_hosts_path())
+/// Accept a key with exactly this fingerprint at the next handshake with
+/// `host:port`, replacing every key recorded for it. Any other key is refused
+/// and ends the agreement. The recorded keys stay until then: they decide which
+/// key type the server is asked for, so it presents the key the user saw.
+pub fn trust(host: &str, port: u16, fingerprint: &str) -> Result<(), String> {
+    if host.trim().is_empty() || port == 0 {
+        return Err(format!("Invalid host to trust: {}:{}", host, port));
+    }
+    let hash = fingerprint
+        .strip_prefix("SHA256:")
+        .and_then(|hash| STANDARD_NO_PAD.decode(hash).ok());
+    if hash.is_none_or(|hash| hash.len() != 32) {
+        return Err(format!(
+            "Not a SHA256 host key fingerprint: {}",
+            fingerprint
+        ));
+    }
+    TRUSTED_FINGERPRINTS.insert(entry_name(host, port), fingerprint.to_string());
+    Ok(())
 }
 
-pub(crate) fn forget_in(host: &str, port: u16, path: &Path) -> Result<bool, String> {
-    if !path.exists() {
-        return Ok(false);
-    }
-    let _guard = KNOWN_HOSTS_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-    let session = Session::new().map_err(|e| format!("SSH session create failed: {}", e))?;
-    let hosts = load(&session, path)?;
-    let name = entry_name(host, port);
-    let mut removed = false;
+fn remove_entries(hosts: &ssh2::KnownHosts, name: &str) -> Result<(), String> {
     for entry in hosts
         .hosts()
         .map_err(|e| format!("known_hosts iteration failed: {}", e))?
     {
-        if entry.name() == Some(name.as_str()) {
+        if entry.name() == Some(name) {
             hosts
                 .remove(&entry)
                 .map_err(|e| format!("known_hosts remove failed: {}", e))?;
-            removed = true;
         }
     }
-    if removed {
-        persist(&hosts, path)?;
-        crate::logs::log_local(
-            "warn",
-            "ssh",
-            format!("forgot host key for {}:{}", host, port),
-        );
-    }
-    Ok(removed)
+    Ok(())
 }
 
 #[cfg(test)]
@@ -329,6 +351,16 @@ mod tests {
     }
 
     fn check(path: &Path, host: &str, port: u16, key: &[u8]) -> Result<(), String> {
+        check_with(path, host, port, key, "SHA256:test")
+    }
+
+    fn check_with(
+        path: &Path,
+        host: &str,
+        port: u16,
+        key: &[u8],
+        fingerprint: &str,
+    ) -> Result<(), String> {
         let session = Session::new().unwrap();
         check_and_record(
             &session,
@@ -336,9 +368,14 @@ mod tests {
             port,
             key,
             KnownHostKeyFormat::Ed25519,
-            "SHA256:test",
+            fingerprint,
             path,
         )
+    }
+
+    /// A well-formed fingerprint, different for each `seed`.
+    fn fingerprint_of(seed: u8) -> String {
+        format!("SHA256:{}", STANDARD_NO_PAD.encode([seed; 32]))
     }
 
     #[test]
@@ -383,21 +420,108 @@ mod tests {
         assert_eq!(fs::read_to_string(&path).unwrap().lines().count(), 2);
     }
 
+    // Trusting is global state keyed by host:port and tests run in parallel, so
+    // each test that trusts has its own host.
     #[test]
-    fn forget_removes_only_the_requested_entry() {
-        let path = temp_path("forget");
-        check(&path, "a.example", 22, b"key-a").unwrap();
-        check(&path, "b.example", 22, b"key-b").unwrap();
-        assert!(forget_in("a.example", 22, &path).unwrap());
-        assert!(
-            !forget_in("a.example", 22, &path).unwrap(),
-            "second forget is a no-op"
-        );
+    fn trusting_replaces_only_the_requested_host() {
+        let path = temp_path("trust-other");
+        check(&path, "trust-a.example", 22, b"key-a").unwrap();
+        check(&path, "trust-b.example", 22, b"key-b").unwrap();
+        trust("trust-a.example", 22, &fingerprint_of(1)).unwrap();
+        check_with(&path, "trust-a.example", 22, b"key-a2", &fingerprint_of(1)).unwrap();
+
         let content = fs::read_to_string(&path).unwrap();
-        assert_eq!(content.lines().count(), 1);
-        assert!(content.starts_with("b.example "));
-        // After forgetting, a new key is accepted (trust-on-first-use again).
-        check(&path, "a.example", 22, b"key-a2").unwrap();
+        assert_eq!(content.lines().count(), 2, "got: {}", content);
+        check(&path, "trust-a.example", 22, b"key-a2").unwrap();
+        check(&path, "trust-a.example", 22, b"key-a").unwrap_err();
+        check(&path, "trust-b.example", 22, b"key-b").unwrap();
+    }
+
+    #[test]
+    fn a_different_key_after_trusting_is_not_recorded_and_reports_its_own_fingerprint() {
+        let path = temp_path("trust-swap");
+        let host = "trust-swap.example";
+        check(&path, host, 22, b"key-old").unwrap();
+        let before = fs::read_to_string(&path).unwrap();
+        let (shown, swapped) = (fingerprint_of(1), fingerprint_of(2));
+        check_with(&path, host, 22, b"key-shown", &shown).unwrap_err();
+
+        trust(host, 22, &shown).unwrap();
+        let err = check_with(&path, host, 22, b"key-swapped", &swapped).unwrap_err();
+
+        assert!(
+            err.starts_with(&format!(
+                "{} host={} port=22 fingerprint={}\n",
+                MISMATCH_PREFIX, host, swapped
+            )),
+            "got: {}",
+            err
+        );
+        assert!(
+            err.contains("not the key you chose to trust"),
+            "got: {}",
+            err
+        );
+        assert_eq!(fs::read_to_string(&path).unwrap(), before);
+
+        // That ended the agreement: the shown key needs trusting again, and the
+        // key the user has just been shown is what they can trust now.
+        check_with(&path, host, 22, b"key-shown", &shown).unwrap_err();
+        trust(host, 22, &swapped).unwrap();
+        check_with(&path, host, 22, b"key-swapped", &swapped).unwrap();
+        check_with(&path, host, 22, b"key-swapped", &swapped).unwrap();
+        check_with(&path, host, 22, b"key-old", &shown).unwrap_err();
+    }
+
+    #[test]
+    fn trusting_a_fingerprint_binds_host_and_port() {
+        let path = temp_path("trust-port");
+        let host = "trust-port.example";
+        check(&path, host, 2222, b"key-old").unwrap();
+        trust(host, 22, &fingerprint_of(1)).unwrap();
+        check_with(&path, host, 2222, b"key-new", &fingerprint_of(1)).unwrap_err();
+    }
+
+    #[test]
+    fn a_host_without_a_record_still_only_takes_the_trusted_key() {
+        let path = temp_path("trust-unknown");
+        let host = "trust-unknown.example";
+        trust(host, 22, &fingerprint_of(1)).unwrap();
+        let err = check_with(&path, host, 22, b"key-other", &fingerprint_of(2)).unwrap_err();
+        assert!(err.contains(&fingerprint_of(2)), "got: {}", err);
+        assert!(!path.exists(), "nothing may be recorded");
+    }
+
+    #[test]
+    fn a_recorded_key_still_matches_after_trusting_another() {
+        let path = temp_path("trust-match");
+        let host = "trust-match.example";
+        check(&path, host, 22, b"key-old").unwrap();
+        let before = fs::read_to_string(&path).unwrap();
+        trust(host, 22, &fingerprint_of(1)).unwrap();
+        check_with(&path, host, 22, b"key-old", &fingerprint_of(2)).unwrap();
+        assert_eq!(fs::read_to_string(&path).unwrap(), before);
+        // The handshake used the agreement up.
+        check_with(&path, host, 22, b"key-new", &fingerprint_of(1)).unwrap_err();
+    }
+
+    #[test]
+    fn only_a_real_fingerprint_can_be_trusted() {
+        for bad in [
+            "",
+            "unknown",
+            "SHA256:",
+            "SHA256:abc",
+            "SHA256:not base64!",
+            "MD5:aa:bb",
+        ] {
+            trust("trust-bad.example", 22, bad).unwrap_err();
+        }
+        trust("", 22, &fingerprint_of(1)).unwrap_err();
+        trust("trust-bad.example", 0, &fingerprint_of(1)).unwrap_err();
+        assert!(!TRUSTED_FINGERPRINTS.contains_key("trust-bad.example"));
+        // Well-formed, and tied to nothing else in this test.
+        trust("trust-good.example", 22, &fingerprint_of(1)).unwrap();
     }
 
     /// Build a key blob the way SSH does: `string algorithm` + body.
@@ -442,8 +566,9 @@ mod tests {
     }
 
     #[test]
-    fn trusting_a_new_key_type_replaces_every_recorded_key_of_that_host() {
+    fn trusting_the_shown_key_replaces_every_recorded_key_of_that_host() {
         let path = temp_path("keytype-trust");
+        let host = "trust-keytype.example";
         let (rsa, ecdsa, ed) = (
             wire_key("ssh-rsa", b"rsa-body"),
             wire_key("ecdsa-sha2-nistp256", b"ecdsa-body"),
@@ -454,30 +579,38 @@ mod tests {
         let mut hosts = load(&session, &path).unwrap();
         for key in [&rsa, &ecdsa] {
             hosts
-                .add("[example.com]:2222", key, "", KnownHostKeyFormat::Ed25519)
+                .add(
+                    &entry_name(host, 2222),
+                    key,
+                    "",
+                    KnownHostKeyFormat::Ed25519,
+                )
                 .unwrap();
         }
         hosts
-            .add("example.com", &rsa, "", KnownHostKeyFormat::Ed25519)
+            .add(host, &rsa, "", KnownHostKeyFormat::Ed25519)
             .unwrap();
         persist(&hosts, &path).unwrap();
         // Both still match: a key only has to equal one recorded key.
-        check(&path, "example.com", 2222, &rsa).unwrap();
-        check(&path, "example.com", 2222, &ecdsa).unwrap();
-        check(&path, "example.com", 2222, &ed).unwrap_err();
+        check(&path, host, 2222, &rsa).unwrap();
+        check(&path, host, 2222, &ecdsa).unwrap();
+        let shown = fingerprint_of(3);
+        check_with(&path, host, 2222, &ed, &shown).unwrap_err();
 
-        // What "Trust new host key" does: forget, then connect again.
-        assert!(forget_in("example.com", 2222, &path).unwrap());
-        check(&path, "example.com", 2222, &ed).unwrap();
+        // What "Trust new host key" does: agree to the key shown, then connect again.
+        trust(host, 2222, &shown).unwrap();
+        // Until then the recorded keys stand, and they set the order of key types.
+        assert_eq!(fs::read_to_string(&path).unwrap().lines().count(), 3);
+        check_with(&path, host, 2222, &ed, &shown).unwrap();
 
         let content = fs::read_to_string(&path).unwrap();
         assert_eq!(content.lines().count(), 2, "got: {}", content);
-        check(&path, "example.com", 2222, &ed).unwrap();
+        check(&path, host, 2222, &ed).unwrap();
         // The old keys are gone, so they now count as a change themselves.
-        let err = check(&path, "example.com", 2222, &rsa).unwrap_err();
+        let err = check(&path, host, 2222, &rsa).unwrap_err();
         assert!(err.starts_with(MISMATCH_PREFIX), "got: {}", err);
         // The same host on another port is someone else's entry.
-        check(&path, "example.com", 22, &rsa).unwrap();
+        check(&path, host, 22, &rsa).unwrap();
     }
 
     #[test]
@@ -574,11 +707,5 @@ mod tests {
         );
         assert_eq!(key_algorithm(b"key-one"), None);
         assert_eq!(key_algorithm(b""), None);
-    }
-
-    #[test]
-    fn forget_on_missing_file_is_false() {
-        let path = temp_path("missing");
-        assert!(!forget_in("nobody", 22, &path).unwrap());
     }
 }

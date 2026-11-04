@@ -126,9 +126,10 @@ describe("the status of a shell that lost its connection", () => {
     expect(screen.getByRole("alert")).toHaveTextContent("Host key for web.example:22 has changed");
 
     await userEvent.click(screen.getByTestId("trust-host-key-button"));
-    expect(invokeMock).toHaveBeenCalledWith("ssh_forget_host_key", {
+    expect(invokeMock).toHaveBeenCalledWith("ssh_trust_host_key", {
       host: "web.example",
       port: 22,
+      fingerprint: "SHA256:abc",
     });
     expect(onRetry).toHaveBeenCalledWith(conn);
   });

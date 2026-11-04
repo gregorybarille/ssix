@@ -31,17 +31,17 @@ pub(crate) fn secrets_path() -> PathBuf {
 /// so the caller refuses to save and the user sees a real failure.
 fn load_secrets() -> Result<HashMap<String, String>, String> {
     let path = secrets_path();
-    if !path.exists() {
-        return Ok(HashMap::new());
-    }
-    let content = fs::read_to_string(&path).map_err(|e| {
-        crate::logs::log_local(
-            "error",
-            "secrets",
-            format!("failed to read secrets file: {}", e),
-        );
-        format!("failed to read secrets file: {}", e)
-    })?;
+    let content = match fs::read_to_string(&path) {
+        Err(e) if crate::storage::is_no_file(&path, &e) => return Ok(HashMap::new()),
+        read => read.map_err(|e| {
+            crate::logs::log_local(
+                "error",
+                "secrets",
+                format!("failed to read secrets file: {}", e),
+            );
+            format!("failed to read secrets file: {}", e)
+        })?,
+    };
     serde_json::from_str(&content).map_err(|e| {
         crate::logs::log_local(
             "error",

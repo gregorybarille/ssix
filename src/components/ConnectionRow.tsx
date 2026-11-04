@@ -177,6 +177,7 @@ function RowActions({
         className={cn(ACTION_BUTTON, "text-destructive hover:text-destructive")}
         onClick={stop(onDelete, conn.id)}
         aria-label={`Delete ${conn.name}`}
+        data-testid={`delete-connection-${conn.id}`}
       >
         <Trash2 className="h-3.5 w-3.5" aria-hidden="true" />
       </Button>

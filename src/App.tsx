@@ -12,15 +12,6 @@ import { ConnectPicker } from "./components/ConnectPicker";
 import { ConfirmDialog } from "./components/ConfirmDialog";
 import { ScreenshotToast } from "./components/ScreenshotToast";
 import { ViewFallback } from "./components/ViewFallback";
-import { Button } from "./components/ui/button";
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-  DialogDescription,
-  DialogFooter,
-} from "./components/ui/dialog";
 import { useConnectionsStore } from "./store/useConnectionsStore";
 import { useCredentialsStore } from "./store/useCredentialsStore";
 import { useSettingsStore } from "./store/useSettingsStore";
@@ -31,6 +22,7 @@ import { useSnippetsStore } from "./store/useSnippetsStore";
 import { useTerminalsStore } from "./store/useTerminalsStore";
 import { runningForwardCount, usePortForwardsStore } from "./store/usePortForwardsStore";
 import { useApplySettings } from "./hooks/useApplySettings";
+import { useCopyOnSelect } from "./hooks/useCopyOnSelect";
 import { TABLE_SHORTCUTS, useGlobalShortcuts } from "./hooks/useGlobalShortcuts";
 import { useScreenshotToast } from "./hooks/useScreenshotToast";
 import { useShallow } from "zustand/react/shallow";
@@ -83,7 +75,6 @@ function App() {
     updateConnection,
     deleteConnection,
     cloneConnection,
-    getOrphanPrivateCredential,
   } = useConnectionsStore(
     useShallow((s) => ({
       connections: s.connections,
@@ -92,7 +83,6 @@ function App() {
       updateConnection: s.updateConnection,
       deleteConnection: s.deleteConnection,
       cloneConnection: s.cloneConnection,
-      getOrphanPrivateCredential: s.getOrphanPrivateCredential,
     })),
   );
 
@@ -143,10 +133,11 @@ function App() {
   const connect = useTerminalsStore((s) => s.connect);
   const closePane = useTerminalsStore((s) => s.closePane);
   const closeTab = useTerminalsStore((s) => s.closeTab);
-  const forwardSessions = usePortForwardsStore((s) => s.sessions);
+  const forwardCount = usePortForwardsStore((s) => runningForwardCount(s.sessions));
   const stopForward = usePortForwardsStore((s) => s.stopForward);
 
   useApplySettings(previewSettings ?? settings);
+  useCopyOnSelect();
 
   useEffect(() => {
     if (view !== "settings" && previewSettings) {
@@ -228,32 +219,6 @@ function App() {
     const conn = connections.find((c) => c.id === id);
     if (!conn) return;
     dialogs.setConfirmDeleteConn(conn);
-  };
-
-  const performDeleteConnection = async (id: string) => {
-    const orphanCredId = await getOrphanPrivateCredential(id);
-    if (orphanCredId) {
-      dialogs.setOrphanCredDialog({ connId: id, credId: orphanCredId });
-    } else {
-      await deleteConnection(id);
-    }
-  };
-
-  const handleOrphanCredDialogConfirm = async (deleteCredToo: boolean) => {
-    const payload = dialogs.orphanCredDialog;
-    if (!payload) return;
-    dialogs.setOrphanCredDialog(null);
-    try {
-      await deleteConnection(payload.connId);
-      if (deleteCredToo) {
-        await deleteCredential(payload.credId);
-      }
-    } catch (error) {
-      appLog.error(
-        "connections",
-        `Failed to delete connection: ${errorMessage(error)}`,
-      );
-    }
   };
 
   const handleCredSubmit = async (data: Omit<Credential, "id"> | Credential) => {
@@ -412,7 +377,7 @@ function App() {
             active={view}
             onNavigate={(v) => setView(v)}
             terminalCount={totalShellSessions}
-            forwardCount={runningForwardCount(forwardSessions)}
+            forwardCount={forwardCount}
             gitPending={gitPending}
           />
 
@@ -465,7 +430,6 @@ function App() {
 
                 {view === "forwards" && (
                   <PortForwardsView
-                    sessions={forwardSessions}
                     connections={connections}
                     credentials={credentials}
                     onCloseSession={stopForward}
@@ -571,7 +535,7 @@ function App() {
           testId="confirm-delete-connection"
           onConfirm={async () => {
             if (dialogs.confirmDeleteConn) {
-              await performDeleteConnection(dialogs.confirmDeleteConn.id);
+              await deleteConnection(dialogs.confirmDeleteConn.id);
             }
           }}
         />
@@ -675,42 +639,6 @@ function App() {
             }
           }}
         />
-
-        {/* Orphaned private credential prompt */}
-        <Dialog
-          modal
-          open={!!dialogs.orphanCredDialog}
-          onOpenChange={(open) => {
-            if (!open) dialogs.setOrphanCredDialog(null);
-          }}
-        >
-          <DialogContent kind="confirm">
-            <DialogHeader>
-              <DialogTitle>Delete private credential?</DialogTitle>
-              <DialogDescription>
-                This connection has a private credential that is not used by any
-                other connection. Do you want to delete it as well?
-              </DialogDescription>
-            </DialogHeader>
-            <DialogFooter className="flex-col-reverse sm:flex-col-reverse sm:space-x-0 gap-2">
-              <Button variant="ghost" onClick={() => dialogs.setOrphanCredDialog(null)}>
-                Cancel
-              </Button>
-              <Button
-                variant="secondary"
-                onClick={() => void handleOrphanCredDialogConfirm(false)}
-              >
-                Delete connection only
-              </Button>
-              <Button
-                variant="destructive"
-                onClick={() => void handleOrphanCredDialogConfirm(true)}
-              >
-                Delete connection and credential
-              </Button>
-            </DialogFooter>
-          </DialogContent>
-        </Dialog>
       </div>
     </PanelSlotProvider>
   );

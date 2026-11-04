@@ -16,6 +16,9 @@
  *
  * The second test does steps 2-4 with a key generated with a passphrase:
  * the credential has to keep it for the login to work.
+ *
+ * The third checks the Custom path field: `~/...` is refused with the form still
+ * open, and an absolute path in a new folder is taken.
  */
 import { waitForAppReady } from "../helpers/app.js";
 import { TARGETS, waitForServers } from "../helpers/docker.js";
@@ -143,6 +146,42 @@ describe("SSH keygen + install_public_key", () => {
       credentialName: "cred-07-key-pp",
       connectionName: "conn-07-key-pp",
       passphrase: "e2e-key-passphrase",
+    });
+  });
+
+  it("refuses a custom key path that is not absolute, then takes one that is", async () => {
+    await waitForAppReady();
+    await navigateTo("credentials");
+    await (await browser.$(sel.addCredentialButton)).click();
+    await (await browser.$(sel.credentialForm)).waitForExist({ timeout: 10_000 });
+    await (await browser.$(sel.credentialFormName)).setValue("cred-07-key-custom");
+    await (await browser.$(sel.credentialFormUsername)).setValue(TARGETS.a.user);
+    await (await browser.$(sel.credentialFormKindSshKey)).click();
+    const genOpen = await browser.$(sel.generateKeyOpen);
+    await genOpen.waitForClickable({ timeout: 10_000 });
+    await genOpen.click();
+    const genDialog = await browser.$(sel.generateKeyDialog);
+    await genDialog.waitForExist({ timeout: 10_000 });
+    await (await browser.$(sel.generateKeyStorageCustom)).click();
+
+    const customPath = await browser.$(sel.generateKeyCustomPath);
+    await customPath.setValue("~/id_e2e_07");
+    await (await browser.$(sel.generateKeySubmit)).click();
+    const error = await browser.$(sel.generateKeyError);
+    await error.waitForExist({ timeout: 10_000 });
+    expect(await error.getText()).toContain("absolute path");
+    expect(await genDialog.isExisting()).toBe(true);
+
+    // In a folder that does not exist yet, under a name with a dot in it.
+    const path = `/tmp/ssix-e2e-07-${Date.now()}/id_ed25519.work`;
+    await customPath.setValue(path);
+    await (await browser.$(sel.generateKeySubmit)).click();
+    await genDialog.waitForExist({ reverse: true, timeout: 30_000 });
+    expect(await (await browser.$(sel.credentialFormPrivateKeyPath)).getValue()).toBe(path);
+    await (await browser.$(sel.credentialFormSubmit)).click();
+    await (await browser.$(sel.credentialForm)).waitForExist({
+      reverse: true,
+      timeout: 10_000,
     });
   });
 });

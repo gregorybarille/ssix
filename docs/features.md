@@ -41,8 +41,10 @@ command instead of a TCP connection, like `ProxyCommand` in
 `%`; other tokens are refused when the connection is saved. A host or
 user containing anything but letters, digits and `. - _ : @` is refused
 rather than pasted into the command. Lines the command prints on stderr
-appear in the Logs view (source `proxy`), and the command is stopped when
-the session closes.
+appear in the Logs view (source `proxy`), and the command and whatever it
+started are stopped when the session closes. On macOS the command's `PATH`
+ends with `/opt/homebrew/bin` and `/usr/local/bin`, which an app started
+from Finder would otherwise not have.
 
 On Windows the **Through WSL** button fills in `wsl.exe -e nc %h %p`,
 which connects from inside the default WSL distribution, so SSIX reaches
@@ -69,6 +71,9 @@ Supported credential modes:
 - inline SSH private key
 
 The connection form can create inline credentials and optionally save them as named credentials.
+An inline credential that is not saved under a name belongs to its connection: deleting the connection deletes it too, with its secrets.
+
+Spaces around a credential's name and username are removed when it is saved.
 
 **Clone** opens the connection form prefilled from a connection, and
 everything in it (kind, jump host or SSH server, tags, colour, options) is saved as the
@@ -111,7 +116,7 @@ Every SSH connection — direct, the jump host, the target behind it, a port for
 
 - The first time a `host:port` is seen its key is recorded in `~/.ssix/known_hosts` (OpenSSH format, so `ssh-keygen -F`/`-R` work on it).
 - SSIX asks the server for the key types it has on record first, as OpenSSH does, so a server holding several keys presents the one that can be checked.
-- If the key later differs the connection is refused, also when it is a key of a type not on record for that `host:port`: a fresh key of another type is what an attacker would present. The failure view names the host, shows the new SHA256 fingerprint and offers **Trust new host key**, which forgets every key recorded for that `host:port` and reconnects, so the new key replaces them. Use it only when you know the server was reinstalled or re-keyed.
+- If the key later differs the connection is refused, also when it is a key of a type not on record for that `host:port`: a fresh key of another type is what an attacker would present. The failure view names the host, shows the new SHA256 fingerprint and offers **Trust new host key**, which reconnects and accepts a key with that fingerprint and no other: that key replaces every key recorded for that `host:port`. If the server presents another key by then, nothing is recorded and the failure view shows the new fingerprint. Use it only when you know the server was reinstalled or re-keyed.
 - Connections time out after 10 s (TCP) / 15 s (SSH setup) instead of hanging on a dead host.
 
 ### Terminal tab keyboard shortcuts
@@ -281,7 +286,9 @@ half-written backup in the list.
 ## SSH Key Utilities
 
 - generate keypairs
-- choose storage mode for generated keys
+- choose storage mode for generated keys. A custom path must be absolute (`~` is
+  not expanded), and generating is refused if that file or `<path>.pub` exists. A
+  folder SSIX has to create gets mode 700; one that exists keeps its mode
 - a passphrase set while generating fills in the credential's Passphrase field,
   so saving the credential is enough to log in with the encrypted key;
   generating a key with none clears the field
@@ -320,6 +327,8 @@ are shown inline for the final state of the burst.
 - list/tile layouts per section (the Connections view also offers
   **Tag groups** — see [Tag groups](#tag-groups) — and [Folders](folders.md))
 - default terminal open mode
+- copy selection to clipboard automatically (off by default; the whole app, not
+  from anything editable: see [Terminal UX](terminal-ux.md#copy-and-paste))
 - Git Sync repository settings
 
 ### About

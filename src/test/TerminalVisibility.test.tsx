@@ -17,6 +17,8 @@ const mocks = vi.hoisted(() => ({
     write: (bytes: Uint8Array) => void;
     onEvent: (event: { kind: string; message?: string }) => void;
   },
+  webgl: [] as { disposed: boolean; loseContext: () => void }[],
+  webglFails: false,
   terms: [] as {
     options: Record<string, unknown>;
     keyHandler: (event: KeyboardEvent) => boolean;
@@ -41,8 +43,18 @@ vi.mock("@xterm/addon-fit", () => ({
 }));
 vi.mock("@xterm/addon-webgl", () => ({
   WebglAddon: class {
-    onContextLoss() {}
-    dispose() {}
+    disposed = false;
+    loseContext = () => {};
+    constructor() {
+      if (mocks.webglFails) throw new Error("WebGL2 not supported");
+      mocks.webgl.push(this);
+    }
+    onContextLoss(listener: () => void) {
+      this.loseContext = listener;
+    }
+    dispose() {
+      this.disposed = true;
+    }
   },
 }));
 vi.mock("@xterm/addon-search", () => ({
@@ -129,6 +141,8 @@ describe("a terminal off screen", () => {
   beforeEach(() => {
     vi.useFakeTimers();
     mocks.terms.length = 0;
+    mocks.webgl.length = 0;
+    mocks.webglFails = false;
     mocks.output = null;
     mocks.resize = null;
     mocks.fit.mockClear();
@@ -387,6 +401,78 @@ describe("a terminal off screen", () => {
     const bytes = new Uint8Array([104, 105]);
     mocks.output?.write(bytes);
     expect(term().written).toEqual([bytes]);
+  });
+
+  describe("its WebGL renderer", () => {
+    /** How many renderers there were at the last fit: they fit different numbers of columns. */
+    function trackFits() {
+      const atFit: number[] = [];
+      mocks.fit.mockImplementation(() => atFit.push(mocks.webgl.length));
+      return atFit;
+    }
+
+    afterEach(() => {
+      mocks.fit.mockReset();
+    });
+
+    it("is there for the first fit, and creates or disposes nothing on a hide and show", () => {
+      const atFit = trackFits();
+      const view = render(element());
+      expect(atFit).toEqual([1]);
+
+      view.rerender(element({ isVisible: false }));
+      view.rerender(element());
+      settle();
+      expect(mocks.webgl).toHaveLength(1);
+      expect(mocks.webgl[0].disposed).toBe(false);
+    });
+
+    it("comes back when shown after losing its context off screen, before the fit", () => {
+      const view = render(element({ isVisible: false }));
+      expect(mocks.webgl).toHaveLength(1);
+      mocks.webgl[0].loseContext();
+      expect(mocks.webgl[0].disposed).toBe(true);
+      expect(mocks.webgl).toHaveLength(1);
+
+      const atFit = trackFits();
+      view.rerender(element());
+      expect(mocks.webgl).toHaveLength(2);
+      expect(mocks.webgl[1].disposed).toBe(false);
+      settle();
+      expect(atFit).toEqual([2]);
+
+      view.rerender(element({ isVisible: false }));
+      view.rerender(element());
+      expect(mocks.webgl).toHaveLength(2);
+    });
+
+    it("waits to be shown again after losing its context on screen, so it cannot loop", () => {
+      const view = render(element());
+      mocks.webgl[0].loseContext();
+      view.rerender(element());
+      settle();
+      expect(mocks.webgl).toHaveLength(1);
+
+      view.rerender(element({ isVisible: false }));
+      expect(mocks.webgl).toHaveLength(1);
+      view.rerender(element());
+      expect(mocks.webgl).toHaveLength(2);
+    });
+
+    it("stays on the DOM renderer quietly when a new one fails to load", () => {
+      const view = render(element({ isVisible: false }));
+      mocks.webgl[0].loseContext();
+      mocks.webglFails = true;
+      view.rerender(element());
+      settle();
+      expect(mocks.webgl).toHaveLength(1);
+      expect(mocks.fit).toHaveBeenCalled();
+    });
+  });
+
+  it("does not select the word under a right-click, which auto-copy would put on the clipboard", () => {
+    render(element());
+    expect(term().options.rightClickSelectsWord).toBe(false);
   });
 
   describe("when its shell ends", () => {

@@ -118,22 +118,22 @@ describe("connecting", () => {
     expect(state.remote.path).toBe("");
   });
 
-  it("forgets the host key and connects again when asked to trust it", async () => {
+  it("trusts the fingerprint shown and connects again", async () => {
     await connected();
-    await useSftpStore.getState().trustHostKey("h", 2222);
-    expect(calls("ssh_forget_host_key")).toEqual([{ host: "h", port: 2222 }]);
+    await useSftpStore.getState().trustHostKey("h", 2222, "SHA256:new");
+    expect(calls("ssh_trust_host_key")).toEqual([{ host: "h", port: 2222, fingerprint: "SHA256:new" }]);
     expect(calls("sftp_connect")).toHaveLength(2);
   });
 
-  it("does not connect again if the key could not be forgotten", async () => {
+  it("does not connect again if the key could not be trusted", async () => {
     await connected();
     backend({
-      ssh_forget_host_key: () => {
-        throw "disk full";
+      ssh_trust_host_key: () => {
+        throw "not a fingerprint";
       },
     });
-    await useSftpStore.getState().trustHostKey("h", 22);
-    expect(useSftpStore.getState().connectError).toBe("disk full");
+    await useSftpStore.getState().trustHostKey("h", 22, "SHA256:new");
+    expect(useSftpStore.getState().connectError).toBe("not a fingerprint");
     expect(calls("sftp_connect")).toHaveLength(1);
   });
 

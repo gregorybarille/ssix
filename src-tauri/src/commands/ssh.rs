@@ -438,12 +438,11 @@ pub fn ssh_cancel_reconnect(
     handle.send(SessionMsg::CancelReconnect)
 }
 
-/// Forget the recorded host key for `host:port` so the next connection
-/// records the server's current key (trust-on-first-use again). Returns
-/// whether an entry was removed.
+/// Let the next connection to `host:port` replace its recorded keys with the
+/// key whose fingerprint the user was shown, and with no other.
 #[tauri::command]
-pub async fn ssh_forget_host_key(host: String, port: u16) -> Result<bool, String> {
-    blocking(move || crate::known_hosts::forget(&host, port)).await
+pub fn ssh_trust_host_key(host: String, port: u16, fingerprint: String) -> Result<(), String> {
+    crate::known_hosts::trust(&host, port, &fingerprint)
 }
 
 #[cfg(test)]

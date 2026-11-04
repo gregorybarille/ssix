@@ -9,6 +9,7 @@ Files are written under:
 - `.ssix-sync/data.json`: connections, credentials (without secrets),
   settings, saved scripts and snippets
 - `.ssix-sync/README.md`
+- `.ssix-sync/.gitattributes`, which turns off line ending conversion for the folder. With it on, as Git for Windows has by default, git reports the snapshot as changed after a pull and then has nothing to commit.
 
 ## What Does Not Get Exported
 
@@ -32,17 +33,15 @@ The Git Sync view supports:
 - Commit (with editable commit message)
 - One-click bidirectional **Sync** (see below)
 
-The previously separate Fetch / Pull / Push toolbar buttons were collapsed
-into the single `Sync` action — the underlying store still exposes the
-individual primitives for tests and future automation, but the UI no
-longer surfaces them as standalone destructive operations.
+Fetch, pull and push exist only as steps of `Sync`: there is no separate
+button or backend command for them.
 
 ## One-Click Sync
 
 The primary `Sync` action performs these steps:
 
 1. Fetch remote updates
-2. If the branch is behind: discard uncommitted changes under `.ssix-sync/`, then fast-forward pull
+2. If the branch is behind: fast-forward pull. If `.ssix-sync/` has uncommitted changes, Sync first stops and asks (see below)
 3. Export sanitized snapshot
 4. Stage `.ssix-sync/`
 5. Commit if there are local exported changes
@@ -50,7 +49,11 @@ The primary `Sync` action performs these steps:
 
 The sync flow stops on the first failing git step and surfaces the git output.
 
-Exporting comes after the pull because a pull is refused when it would overwrite a changed snapshot, and exporting first would hit that on every retry. Only `.ssix-sync/` is discarded, so keep nothing of your own there. It holds derived data: when a pull then fails, nothing is lost, since the next Sync exports again.
+Exporting comes after the pull because a pull is refused when it would overwrite a changed snapshot, and exporting first would hit that on every retry.
+
+A pull needs those uncommitted changes gone, so Sync stops there, as git would: it discards nothing, pulls nothing, and a dialog lists the files. Sync exports them again from SSIX's data, so only edits made by hand are lost. Confirm runs Sync again with your agreement, and Cancel leaves everything as it was. Only `.ssix-sync/` is discarded, including untracked files in it. A clean snapshot, or a branch that is not behind, shows no dialog.
+
+**Export sanitized snapshot**, **Refresh diff** and **Commit** export too, so after any of them the dialog can list files you never edited by hand. A hand edit does not survive those exports either, nor a Sync on a branch that is not behind: the export writes over `data.json` and `README.md`.
 
 Sync and Commit commit `.ssix-sync/` and nothing else. Anything else you have staged stays staged and is not pushed by Sync's commit.
 

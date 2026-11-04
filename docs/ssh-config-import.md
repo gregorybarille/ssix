@@ -66,7 +66,8 @@ does not make a host direct. `ProxyCommand none` does.
 `${VAR}` in a `ProxyCommand` is left as written: `ssh` hands it to the shell, and
 so does SSIX.
 
-An import reads at most 1 MiB across 64 files. It plans at most 2000 hosts, or
+An import reads at most 1 MiB across 64 files and expands at most 256 `Include`
+paths. It plans at most 2000 hosts, or
 fewer when a very large file makes each one slow to work out, and offers at most
 2000 connections, with at most 64 forwards per host. It lists at most 2000 skipped
 entries and 200 passed-over lines. `Include` cycles stop at the file that would
@@ -74,8 +75,8 @@ repeat. Each limit is reported once in the panel under **Passed over**.
 
 ## When part of a config is not applied
 
-A `Match` block, an `Include` that could not be read or that uses a `%` token or
-`${VAR}`, and an unreadable `Host` line can each change what any host does. A
+A `Match` block, an `Include` that could not be read, that uses a `%` token or
+`${VAR}` or that is past the limit above, and an unreadable `Host` line can each change what any host does. A
 dropped `Match` may be the very line that sends a host through its bastion, and
 importing that host as a direct connection would connect straight to it. SSIX
 cannot tell which hosts they touch, so if a file has any of these:
@@ -140,6 +141,7 @@ offered again.
 | A name and destination | That destination under another name | Skipped: already imported as that name |
 | A name and destination | That name, with another destination or key | Skipped: **name clash**. The existing connection is left as it is |
 | Two aliases with one destination | | Both are offered. The first starts ticked and the second unticked, so you can pick either or both |
+| Two aliases with one name | | The first is offered and the second skipped as a duplicate. Spaces around a name do not count, because they are not stored: `Host " web"` and `Host web` are one name |
 
 Importing the same file again therefore creates nothing. To import a host whose
 name clashes, rename the connection or the `Host`.

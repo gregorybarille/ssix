@@ -52,6 +52,7 @@ export const sel = {
   addConnectionButton: '[data-testid="add-connection-button"]',
   // Scoped under a connection row (see connectionRowByName).
   connectionRowCloneButton: '[data-testid^="clone-connection-"]',
+  connectionRowDeleteButton: '[data-testid^="delete-connection-"]',
   connectionSearchInput: '[data-testid="connection-search-input"]',
   connectionSearchClear: '[data-testid="connection-search-clear"]',
 
@@ -155,11 +156,17 @@ export const sel = {
   gitSyncExportButton: '[data-testid="git-sync-export"]',
   gitSyncRunButton: '[data-testid="git-sync-run"]',
   gitSyncStatus: '[data-testid="git-sync-status"]',
+  gitSyncDiscard: '[data-testid="git-sync-discard"]',
+  gitSyncDiscardConfirm: '[data-testid="git-sync-discard-confirm"]',
+  gitSyncDiscardCancel: '[data-testid="git-sync-discard-cancel"]',
 
   // Generate / install key dialogs
   generateKeyOpen: '[data-testid="generate-key-open"]',
   generateKeyDialog: '[data-testid="generate-key-dialog"]',
   generateKeyPassphrase: '[data-testid="generate-key-passphrase"]',
+  generateKeyStorageCustom: '[data-testid="generate-key-storage-custom"]',
+  generateKeyCustomPath: '[data-testid="generate-key-custom-path"]',
+  generateKeyError: '[data-testid="generate-key-error"]',
   generateKeySubmit: '[data-testid="generate-key-submit"]',
   installKeyOpen: (credentialId: string) => `[data-testid="install-key-${credentialId}"]`,
   installKeyDialog: '[data-testid="install-key-dialog"]',
