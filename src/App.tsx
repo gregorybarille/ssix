@@ -458,7 +458,7 @@ function App() {
                   <Suspense fallback={<ViewFallback label="Loading settings…" />}>
                     <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain">
                       {settingsLoadError && (
-                        <div className="px-6 pt-6 max-w-lg">
+                        <div className="px-6 pt-6">
                           <ErrorBanner
                             message={`Could not load settings, showing defaults: ${settingsLoadError}`}
                             onRetry={() => void fetchSettings()}
