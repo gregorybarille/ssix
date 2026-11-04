@@ -72,6 +72,9 @@ jobs:
 
       - run: npm ci
 
+      - name: Give the build its tag's version
+        run: node scripts/release-version.mjs
+
       - name: Build portable executable
         run: npm run tauri build -- --no-bundle
         env:
@@ -140,6 +143,9 @@ jobs:
 
       - run: npm ci
 
+      - name: Give the build its tag's version
+        run: node scripts/release-version.mjs
+
       - name: Build macOS DMG
         run: npm run tauri build
         env:
@@ -193,6 +199,9 @@ jobs:
           workspaces: "src-tauri -> target"
 
       - run: npm ci
+
+      - name: Give the build its tag's version
+        run: node scripts/release-version.mjs
 
       - name: Build .deb, .rpm and AppImage
         run: npm run tauri build -- --bundles deb,rpm,appimage
