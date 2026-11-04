@@ -76,6 +76,7 @@ pub fn run() {
             commands::ssh::ssh_trust_host_key,
             commands::scp::scp_upload,
             commands::scp::scp_download,
+            commands::scp::scp_stop,
             commands::scripts::get_scripts,
             commands::scripts::add_script,
             commands::scripts::update_script,

@@ -18,7 +18,7 @@
  * spec is suffixed `-09` so the shared per-suite SSIX_DATA_DIR can
  * coexist with other specs without cross-contamination.
  */
-import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, rmSync, truncateSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { waitForAppReady } from "../helpers/app.js";
 import { TARGETS, waitForServers } from "../helpers/docker.js";
@@ -204,5 +204,31 @@ describe("Tag-group view + bulk actions", () => {
     await summary.waitForExist({ timeout: 10_000 });
     const summaryText = await summary.getText();
     expect(summaryText).toContain("2 succeeded");
+  });
+
+  it("stops a bulk transfer: the current host says stopped and the next is skipped", async () => {
+    // The dialog is still open from the test above. Sparse, so it costs no disk
+    // here, and long enough to click Stop on.
+    const big = join(workDir, "tag-big.bin");
+    writeFileSync(big, "");
+    truncateSync(big, 2 * 1024 * 1024 * 1024);
+    await setTextInputValue(sel.bulkScpLocalPath, big);
+    await clickDialogFooterButton(sel.bulkScpStart);
+
+    const stop = await browser.$(sel.bulkScpStop);
+    await stop.waitForExist({ timeout: 30_000 });
+    await clickDialogFooterButton(sel.bulkScpStop);
+
+    const summary = await browser.$(sel.bulkScpSummary);
+    await summary.waitForExist({ timeout: 60_000 });
+    expect(await summary.getText()).toBe("Transfer stopped — 0 succeeded, 1 stopped, 1 skipped.");
+    const stopped = await browser.$(
+      '[data-testid^="bulk-scp-row-"][data-status="cancelled"]',
+    );
+    expect(await stopped.getText()).toContain("Transfer stopped");
+    const skipped = await browser.$(
+      '[data-testid^="bulk-scp-row-"][data-status="skipped"]',
+    );
+    expect(await skipped.getText()).toContain("Not started");
   });
 });

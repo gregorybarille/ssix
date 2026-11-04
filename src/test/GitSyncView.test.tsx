@@ -17,7 +17,7 @@ describe("GitSyncView", () => {
         behind: 2,
         changed_files: [".ssix-sync/data.json"],
       },
-      diff: { staged: "", unstaged: "diff --git a/.ssix-sync/data.json b/.ssix-sync/data.json" },
+      diff: { staged: "", unstaged: "diff --git a/.ssix-sync/data.json b/.ssix-sync/data.json", at_risk: [] },
       isLoading: false,
       actionOutput: null,
       error: null,
@@ -26,7 +26,8 @@ describe("GitSyncView", () => {
       exportSnapshot: vi.fn().mockResolvedValue({ repo_path: "/tmp/repo", exported_files: [] }),
       commitSnapshot: vi.fn().mockResolvedValue(undefined),
       runSync: vi.fn().mockResolvedValue(undefined),
-      discardNeeded: [],
+      atRisk: [],
+      rerunAgreed: null,
     });
   });
 
@@ -50,41 +51,83 @@ describe("GitSyncView", () => {
     await waitFor(() => expect(runSync).toHaveBeenCalledTimes(1));
   });
 
-  it("asks before discarding, naming each file and what is lost", () => {
-    useGitSyncStore.setState({ discardNeeded: [".ssix-sync/README.md", ".ssix-sync/mine.txt"] });
+  it("asks before losing edits, naming each file and what happens to it", () => {
+    useGitSyncStore.setState({ atRisk: [".ssix-sync/README.md", ".ssix-sync/mine.txt"] });
     render(<GitSyncView />);
     const dialog = screen.getByTestId("git-sync-discard");
     expect(dialog).toHaveTextContent(".ssix-sync/README.md");
     expect(dialog).toHaveTextContent(".ssix-sync/mine.txt");
-    expect(dialog).toHaveTextContent("only edits made by hand are lost");
+    expect(dialog).toHaveTextContent("have edits that will be overwritten or removed");
+    expect(dialog).toHaveTextContent("SSIX never reads this folder back");
   });
 
-  it("shows no dialog while nothing needs discarding", () => {
+  it("shows no dialog while nothing is at risk", () => {
     render(<GitSyncView />);
     expect(screen.queryByTestId("git-sync-discard")).toBeNull();
   });
 
-  it("confirming reruns Sync with the agreement", async () => {
-    const runSync = vi.fn().mockImplementation(async () => {
-      useGitSyncStore.setState({ discardNeeded: [] });
+  it("confirming reruns the action with the listed files as the agreement", async () => {
+    const rerunAgreed = vi.fn().mockImplementation(async () => {
+      useGitSyncStore.setState({ atRisk: [] });
     });
-    useGitSyncStore.setState({ runSync, discardNeeded: [".ssix-sync/README.md"] });
+    useGitSyncStore.setState({ rerunAgreed, atRisk: [".ssix-sync/README.md"] });
     render(<GitSyncView />);
     fireEvent.click(screen.getByTestId("git-sync-discard-confirm"));
     await waitFor(() => expect(screen.queryByTestId("git-sync-discard")).toBeNull());
-    expect(runSync).toHaveBeenCalledTimes(1);
-    expect(runSync).toHaveBeenCalledWith(true);
+    expect(rerunAgreed).toHaveBeenCalledTimes(1);
+    expect(rerunAgreed).toHaveBeenCalledWith([".ssix-sync/README.md"]);
   });
 
-  it("cancelling closes the dialog without syncing or an error", async () => {
-    const runSync = vi.fn().mockResolvedValue(undefined);
-    useGitSyncStore.setState({ runSync, discardNeeded: [".ssix-sync/README.md"] });
+  // ConfirmDialog closes itself after onConfirm: that must not answer the new question.
+  it("asks again when the rerun finds a file that was not listed, and Cancel still declines", async () => {
+    const rerunAgreed = vi.fn().mockImplementation(async () => {
+      useGitSyncStore.setState({ atRisk: [".ssix-sync/README.md", ".ssix-sync/data.json"] });
+    });
+    useGitSyncStore.setState({ rerunAgreed, atRisk: [".ssix-sync/README.md"] });
+    render(<GitSyncView />);
+    fireEvent.click(screen.getByTestId("git-sync-discard-confirm"));
+    await waitFor(() => expect(screen.getByTestId("git-sync-discard")).toHaveTextContent("data.json"));
+    await waitFor(() => expect(screen.getByTestId("git-sync-discard-cancel")).toBeEnabled());
+    expect(useGitSyncStore.getState().atRisk).toHaveLength(2);
+
+    fireEvent.click(screen.getByTestId("git-sync-discard-cancel"));
+    await waitFor(() => expect(screen.queryByTestId("git-sync-discard")).toBeNull());
+    expect(rerunAgreed).toHaveBeenCalledTimes(1);
+  });
+
+  it("cancelling closes the dialog without rerunning or an error", async () => {
+    const rerunAgreed = vi.fn().mockResolvedValue(undefined);
+    useGitSyncStore.setState({ rerunAgreed, atRisk: [".ssix-sync/README.md"] });
     render(<GitSyncView />);
     fireEvent.click(screen.getByTestId("git-sync-discard-cancel"));
     await waitFor(() => expect(screen.queryByTestId("git-sync-discard")).toBeNull());
-    expect(runSync).not.toHaveBeenCalled();
+    expect(rerunAgreed).not.toHaveBeenCalled();
     expect(useGitSyncStore.getState().error).toBeNull();
     expect(screen.queryByRole("alert")).toBeNull();
+  });
+
+  it("a failed rerun keeps the question, and Cancel still declines it", async () => {
+    const rerunAgreed = vi.fn().mockRejectedValue("git failed");
+    useGitSyncStore.setState({ rerunAgreed, atRisk: [".ssix-sync/README.md"] });
+    render(<GitSyncView />);
+    fireEvent.click(screen.getByTestId("git-sync-discard-confirm"));
+    await screen.findByTestId("git-sync-discard-error");
+    fireEvent.click(screen.getByTestId("git-sync-discard-cancel"));
+    await waitFor(() => expect(screen.queryByTestId("git-sync-discard")).toBeNull());
+  });
+
+  it("names the files a refresh left alone, without a dialog", () => {
+    useGitSyncStore.setState({
+      diff: { staged: "", unstaged: "", at_risk: [".ssix-sync/README.md"] },
+    });
+    render(<GitSyncView />);
+    expect(screen.getByTestId("git-sync-hand-edits")).toHaveTextContent(".ssix-sync/README.md");
+    expect(screen.queryByTestId("git-sync-discard")).toBeNull();
+  });
+
+  it("shows no notice when a refresh left nothing alone", () => {
+    render(<GitSyncView />);
+    expect(screen.queryByTestId("git-sync-hand-edits")).toBeNull();
   });
 
   it("does not render separate Fetch / Pull / Push toolbar buttons", () => {
@@ -134,7 +177,7 @@ describe("GitSyncView", () => {
   });
 
   it("renders the empty-state placeholder when there is no diff text", () => {
-    useGitSyncStore.setState({ diff: { staged: "", unstaged: "" } });
+    useGitSyncStore.setState({ diff: { staged: "", unstaged: "", at_risk: [] } });
     render(<GitSyncView />);
     const unstaged = screen.getByRole("region", { name: /unstaged/i });
     const staged = screen.getByRole("region", { name: /^staged$/i });

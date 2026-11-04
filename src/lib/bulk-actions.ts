@@ -70,6 +70,8 @@ export interface BulkScpStep {
   entries?: number;
   /** Error message string when status === "error". */
   error?: string;
+  /** Why a stop ended this row, in neutral words. */
+  note?: string;
 }
 
 export interface BulkScpUploadInput {
@@ -110,6 +112,8 @@ export function planBulkUpload(
 
 /** Why a forward is skipped by bulk SCP. */
 const FORWARD_SKIP_REASON = "Port forwards cannot transfer files";
+/** Why a stop skipped a host. */
+const STOP_SKIP_REASON = "Not started: the transfer was stopped";
 
 /**
  * Build the initial `BulkScpStep[]` for a download. Each step's
@@ -148,13 +152,15 @@ export function planBulkDownload(
  *
  * The function never throws; per-host failures are recorded on the
  * row. The returned promise resolves once every row has reached a
- * terminal state.
+ * terminal state. Once `stopAsked` is true no further host starts: those
+ * rows end as `skipped`, and a host a stop ended as `cancelled`.
  */
 export async function runBulkScp(
   steps: BulkScpStep[],
   mode: "upload" | "download",
   recursive: boolean,
   onProgress: (steps: BulkScpStep[]) => void,
+  stopAsked: () => boolean = () => false,
 ): Promise<BulkScpStep[]> {
   // Defensive copy — we mutate per-row state in place to avoid
   // re-allocating the whole array on every transition. The caller
@@ -165,6 +171,12 @@ export async function runBulkScp(
   for (let i = 0; i < working.length; i++) {
     const step = working[i];
     if (step.status === "skipped") continue;
+    if (stopAsked()) {
+      step.status = "skipped";
+      step.note = STOP_SKIP_REASON;
+      emit();
+      continue;
+    }
     step.status = "running";
     emit();
     try {
@@ -186,13 +198,18 @@ export async function runBulkScp(
                 recursive,
               },
             });
-      step.status = "success";
-      step.bytes = result.bytes;
-      step.entries = result.entries;
-      // Backend may resolve a relative remote path against
-      // `conn.remote_path`; surface the real value to the user.
-      step.remotePath = result.remote_path;
-      step.localPath = result.local_path;
+      if (result.stopped) {
+        step.status = "cancelled";
+        step.note = result.stopped;
+      } else {
+        step.status = "success";
+        step.bytes = result.bytes;
+        step.entries = result.entries;
+        // Backend may resolve a relative remote path against
+        // `conn.remote_path`; surface the real value to the user.
+        step.remotePath = result.remote_path;
+        step.localPath = result.local_path;
+      }
     } catch (err) {
       step.status = "error";
       step.error = errorMessage(err);

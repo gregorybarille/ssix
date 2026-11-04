@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import { Button } from "./ui/button";
 import { Checkbox } from "./ui/checkbox";
 import { Input } from "./ui/input";
 import { Label } from "./ui/label";
@@ -6,6 +7,30 @@ import { Tabs, TabsList, TabsTrigger } from "./ui/tabs";
 import { cn } from "@/lib/utils";
 
 export type ScpMode = "upload" | "download";
+
+/** Shown while a transfer runs. A stop waits for the SFTP call in progress. */
+export function ScpStopButton({
+  stopping,
+  onStop,
+  testId,
+}: {
+  stopping: boolean;
+  onStop: () => void;
+  testId: string;
+}) {
+  return (
+    <Button
+      type="button"
+      variant="outline"
+      onClick={onStop}
+      disabled={stopping}
+      aria-busy={stopping}
+      data-testid={testId}
+    >
+      {stopping ? "Stopping..." : "Stop"}
+    </Button>
+  );
+}
 
 export function ScpModeTabs({
   mode,

@@ -12,25 +12,35 @@
 //!
 //! The copying itself is the Files view's (`commands/sftp/transfer.rs`).
 //! Only servers with no SFTP subsystem take the legacy `scp` path here.
+//!
+//! These commands return only when the copy is over, so `scp_stop` finds one by
+//! its connection: `COPIES` holds at most one per connection.
 
 use crate::commands::blocking;
+use crate::commands::scripts::connect_unless_cancelled;
 use crate::commands::sftp::browse::absolute_remote;
 use crate::commands::sftp::transfer::{
     copy_stream, download_unattended, file_mode, limit_tidying, local_target, upload_unattended,
-    with_finish_limit, write_partial, Stop, CALL_TIMEOUT_MS,
+    with_finish_limit, write_partial, Copied, Stop, CALL_TIMEOUT_MS,
 };
 use crate::commands::sftp::{join_remote, remote_parent, temp_name, SESSION_LOST};
-use crate::commands::ssh::{connect_session, find_connection, ConnectedSession};
+use crate::commands::ssh::{find_connection, ConnectedSession};
 use crate::commands::ssh_keygen::shell_single_quote;
 use crate::models::Connection;
+use dashmap::mapref::entry::Entry;
+use dashmap::DashMap;
 use serde::{Deserialize, Serialize};
 use ssh2::{Channel, Sftp};
 use std::fs;
 use std::io::{Read, Write};
 use std::path::Path;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, LazyLock};
 
 #[cfg(all(test, unix))]
 mod live_tests;
+
+static COPIES: LazyLock<DashMap<String, Arc<AtomicBool>>> = LazyLock::new(DashMap::new);
 
 #[derive(Debug, Deserialize)]
 pub struct ScpUploadInput {
@@ -56,6 +66,66 @@ pub struct ScpResult {
     pub remote_path: String,
     pub bytes: u64,
     pub entries: Option<u64>,
+    /// Set when a stop ended the copy: what to tell the user. `bytes` and
+    /// `entries` then say how far it got.
+    pub stopped: Option<String>,
+}
+
+/// A copy's place in `COPIES`, given up however the copy ends.
+struct RunningCopy {
+    connection_id: String,
+    stop: Arc<AtomicBool>,
+}
+
+impl RunningCopy {
+    fn begin(connection_id: &str) -> Result<Self, String> {
+        match COPIES.entry(connection_id.to_string()) {
+            Entry::Occupied(_) => {
+                Err("A transfer on this connection is already running".to_string())
+            }
+            Entry::Vacant(place) => {
+                let stop = Arc::new(AtomicBool::new(false));
+                place.insert(stop.clone());
+                Ok(Self {
+                    connection_id: connection_id.to_string(),
+                    stop,
+                })
+            }
+        }
+    }
+
+    fn stop_asked(&self) -> bool {
+        self.stop.load(Ordering::SeqCst)
+    }
+
+    /// What a legacy `scp` copy calls after each chunk.
+    fn check(&self) -> Result<(), Stop> {
+        if self.stop_asked() {
+            Err(Stop::Cancelled)
+        } else {
+            Ok(())
+        }
+    }
+}
+
+impl Drop for RunningCopy {
+    fn drop(&mut self) {
+        COPIES.remove(&self.connection_id);
+    }
+}
+
+/// Ask the copy running on a connection to stop. It stops once the SFTP call in
+/// progress returns, and its command then answers with `stopped` set. Asking when
+/// none runs is not an error: it may have ended while the request was on its way.
+#[tauri::command]
+pub fn scp_stop(connection_id: String) -> Result<(), String> {
+    if connection_id.trim().is_empty() {
+        return Err("A connection id is required to stop a transfer".to_string());
+    }
+    if let Some(stop) = COPIES.get(&connection_id) {
+        stop.store(true, Ordering::SeqCst);
+    }
+    Ok(())
 }
 
 /// Forwards (`ssh -L`, `-R`, `-D`) open no shell on a host, so there is
@@ -67,14 +137,17 @@ fn refuse_forward(conn: &Connection) -> Result<(), String> {
     Ok(())
 }
 
-/// A session for one copy. Copies go chunk by chunk, so this limit is on one
-/// chunk over a stalled link and not on how long a whole copy may take.
-fn connect_for_copy(connection_id: &str) -> Result<(ConnectedSession, Connection), String> {
-    let (data, conn) = find_connection(connection_id)?;
+/// A session for one copy, or `None` if it was stopped while connecting. Copies
+/// go chunk by chunk, so this limit is on one chunk over a stalled link and not
+/// on how long a whole copy may take.
+fn connect_for_copy(copy: &RunningCopy) -> Result<Option<(ConnectedSession, Connection)>, String> {
+    let (data, conn) = find_connection(&copy.connection_id)?;
     refuse_forward(&conn)?;
-    let ssh = connect_session(&data, &conn, "SCP")?;
-    ssh.session.set_timeout(CALL_TIMEOUT_MS);
-    Ok((ssh, conn))
+    let connected = connect_unless_cancelled(data, conn.clone(), "SCP", &|| copy.stop_asked())?;
+    Ok(connected.map(|ssh| {
+        ssh.session.set_timeout(CALL_TIMEOUT_MS);
+        (ssh, conn)
+    }))
 }
 
 /// The Files view reads `SESSION_LOST` to reconnect. This dialog only shows
@@ -88,9 +161,84 @@ fn copy_error(stop: Stop, destination: &str) -> String {
 }
 
 /// The copy has failed, so the error should not wait for closing the session.
-fn copy_failed(stop: Stop, ssh: &ConnectedSession) -> String {
+/// `limit_tidying` leaves a stop on a working link its usual limit.
+fn copy_failed(stop: Stop, ssh: &ConnectedSession) -> Stop {
     limit_tidying(&ssh.session);
-    copy_error(stop, &ssh.destination_label)
+    match stop {
+        Stop::Cancelled => Stop::Cancelled,
+        failed => Stop::Failed(copy_error(failed, &ssh.destination_label)),
+    }
+}
+
+fn stopped_message(copied: &Copied, failure: Option<&str>) -> String {
+    let what_happened = match (copied.bytes, copied.files) {
+        (0, 0) => "Transfer stopped before any file was copied.".to_string(),
+        (bytes, 0) => format!(
+            "Transfer stopped after {} bytes. The unfinished file was discarded, and what was at the target is unchanged.",
+            bytes
+        ),
+        (bytes, 1) => format!(
+            "Transfer stopped after {} bytes. The 1 finished file stays at the target, and any unfinished file was discarded.",
+            bytes
+        ),
+        (bytes, files) => format!(
+            "Transfer stopped after {} bytes. The {} finished files stay at the target, and any unfinished file was discarded.",
+            bytes, files
+        ),
+    };
+    match failure {
+        None => what_happened,
+        Some(error) => format!(
+            "{} The copy also failed while stopping, so an upload's temporary .ssix-part file may remain on the server: {}",
+            what_happened, error
+        ),
+    }
+}
+
+/// The command's answer for a copy that is over. Once a stop was asked for, a
+/// failure is how it ended on a stalled link, so it is shown as part of the stop.
+fn copy_ended(
+    copy: &RunningCopy,
+    local_path: String,
+    remote_path: String,
+    copied: Copied,
+    ended: Result<(), Stop>,
+) -> Result<ScpResult, String> {
+    let stopped = match ended {
+        Ok(()) => None,
+        Err(Stop::Cancelled) => Some(stopped_message(&copied, None)),
+        Err(Stop::Failed(error)) if copy.stop_asked() => {
+            Some(stopped_message(&copied, Some(&error)))
+        }
+        Err(failed) => return Err(failed.into_message()),
+    };
+    Ok(ScpResult {
+        local_path,
+        remote_path,
+        bytes: copied.bytes,
+        entries: Some(copied.files),
+        stopped,
+    })
+}
+
+/// Copy one file over legacy `scp`, which `run` does, stopping when asked.
+fn legacy_copy(
+    copy: &RunningCopy,
+    reword_failure: impl FnOnce(String) -> String,
+    run: impl FnOnce(&mut dyn FnMut(usize) -> Result<(), Stop>) -> Result<u64, Stop>,
+) -> (Copied, Result<(), Stop>) {
+    let mut bytes = 0;
+    let ended = run(&mut |n| {
+        bytes += n as u64;
+        copy.check()
+    });
+    let files = u64::from(ended.is_ok());
+    (
+        Copied { bytes, files },
+        ended
+            .map(|_| ())
+            .map_err(|stop| stop.map_failed(reword_failure)),
+    )
 }
 
 /// SFTP and legacy `scp` both read `~` as a plain name. Without SFTP nothing can
@@ -113,118 +261,156 @@ fn remote_home(sftp: &Sftp) -> Result<String, String> {
 
 #[tauri::command]
 pub async fn scp_upload(input: ScpUploadInput) -> Result<ScpResult, String> {
-    blocking(move || scp_upload_sync(input)).await
+    // Before any wait, so that a stop finds it from the moment it can be asked for.
+    let copy = RunningCopy::begin(&input.connection_id)?;
+    blocking(move || scp_upload_sync(input, copy)).await
 }
 
-fn scp_upload_sync(input: ScpUploadInput) -> Result<ScpResult, String> {
-    let (ssh, conn) = connect_for_copy(&input.connection_id)?;
-    let local = Path::new(&input.local_path);
-    let (remote, bytes, entries) = if local.is_dir() {
-        if !input.recursive {
-            return Err("Uploading a directory requires the recursive option".to_string());
-        }
-        let base_name = local
-            .file_name()
-            .and_then(|name| name.to_str())
-            .ok_or_else(|| "Local directory name is invalid".to_string())?;
-        let target_path = resolve_remote_target_path(
-            input.remote_path.as_deref().or(conn.remote_path.as_deref()),
-            base_name,
-        );
-        let sftp = ssh
-            .session
-            .sftp()
-            .map_err(|e| format!("Failed to open SFTP session: {}", e))?;
-        let target_path = expand_tilde(Some(&sftp), &target_path)
-            .and_then(|path| ensure_remote_parents(&sftp, &path).map(|()| path))
-            .map_err(|e| copy_failed(Stop::Failed(e), &ssh))?;
-        let (bytes, files) = upload_unattended(&ssh.session, &sftp, local, &target_path)
-            .map_err(|stop| copy_failed(stop, &ssh))?;
-        (target_path, bytes, Some(files))
-    } else {
-        let file_name = local
-            .file_name()
-            .and_then(|name| name.to_str())
-            .ok_or_else(|| "Local file name is invalid".to_string())?;
-        let target_path = resolve_remote_target_path(
-            input.remote_path.as_deref().or(conn.remote_path.as_deref()),
-            file_name,
-        );
-        // SFTP first: this is what OpenSSH's `scp` itself has done since 9.0.
-        let sftp = ssh.session.sftp();
-        let target_path = expand_tilde(sftp.as_ref().ok(), &target_path)
-            .map_err(|e| copy_failed(Stop::Failed(e), &ssh))?;
-        let bytes = match sftp {
-            Ok(sftp) => {
-                upload_unattended(&ssh.session, &sftp, local, &target_path)
-                    .map_err(|stop| copy_failed(stop, &ssh))?
-                    .0
-            }
-            // No SFTP subsystem: some embedded sshd builds, or it is turned off.
-            Err(sftp_err) => upload_file_scp(&ssh, local, &target_path).map_err(|scp_err| {
-                format!(
-                    "Upload to {} failed via both transports ({}). SFTP: {}. SCP: {}",
-                    target_path, ssh.destination_label, sftp_err, scp_err
-                )
-            })?,
-        };
-        (target_path, bytes, Some(1))
+fn scp_upload_sync(input: ScpUploadInput, copy: RunningCopy) -> Result<ScpResult, String> {
+    let requested = input.remote_path.clone().unwrap_or_default();
+    let Some((ssh, conn)) = connect_for_copy(&copy)? else {
+        let ended = Err(Stop::Cancelled);
+        return copy_ended(&copy, input.local_path, requested, Copied::default(), ended);
     };
+    let local = Path::new(&input.local_path);
+    // SFTP first: this is what OpenSSH's `scp` itself has done since 9.0.
+    let sftp = ssh.session.sftp();
+    let base = input.remote_path.as_deref().or(conn.remote_path.as_deref());
+    let target = upload_target(&ssh, sftp.as_ref(), local, base, input.recursive);
+    let (remote, copied, ended) = match target {
+        Err(stop) => (requested, Copied::default(), Err(stop)),
+        Ok(target) => {
+            let (copied, ended) = match &sftp {
+                Ok(sftp) => {
+                    let (copied, ended) =
+                        upload_unattended(&ssh.session, sftp, local, &target, &copy.stop);
+                    (copied, ended.map_err(|stop| copy_failed(stop, &ssh)))
+                }
+                // No SFTP subsystem: some embedded sshd builds, or it is turned off.
+                Err(sftp_err) => legacy_copy(
+                    &copy,
+                    |scp_err| {
+                        format!(
+                            "Upload to {} failed via both transports ({}). SFTP: {}. SCP: {}",
+                            target, ssh.destination_label, sftp_err, scp_err
+                        )
+                    },
+                    |on_chunk| upload_file_scp(&ssh, local, &target, on_chunk),
+                ),
+            };
+            (target, copied, ended)
+        }
+    };
+    copy_ended(&copy, input.local_path, remote, copied, ended)
+}
 
-    Ok(ScpResult {
-        local_path: input.local_path,
-        remote_path: remote,
-        bytes,
-        entries,
-    })
+/// Where an upload lands. A folder needs SFTP, and the folders above it.
+fn upload_target(
+    ssh: &ConnectedSession,
+    sftp: Result<&Sftp, &ssh2::Error>,
+    local: &Path,
+    base: Option<&str>,
+    recursive: bool,
+) -> Result<String, Stop> {
+    let is_dir = local.is_dir();
+    if is_dir && !recursive {
+        return Err("Uploading a directory requires the recursive option"
+            .to_string()
+            .into());
+    }
+    let name = local
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or_else(|| {
+            let kind = if is_dir { "directory" } else { "file" };
+            format!("Local {} name is invalid", kind)
+        })?;
+    if let (true, Err(e)) = (is_dir, sftp) {
+        return Err(format!("Failed to open SFTP session: {}", e).into());
+    }
+    expand_tilde(sftp.ok(), &resolve_remote_target_path(base, name))
+        .and_then(|path| match sftp {
+            Ok(sftp) if is_dir => ensure_remote_parents(sftp, &path).map(|()| path),
+            _ => Ok(path),
+        })
+        .map_err(|e| copy_failed(Stop::Failed(e), ssh))
 }
 
 #[tauri::command]
 pub async fn scp_download(input: ScpDownloadInput) -> Result<ScpResult, String> {
-    blocking(move || scp_download_sync(input)).await
+    // Before any wait, so that a stop finds it from the moment it can be asked for.
+    let copy = RunningCopy::begin(&input.connection_id)?;
+    blocking(move || scp_download_sync(input, copy)).await
 }
 
-fn scp_download_sync(input: ScpDownloadInput) -> Result<ScpResult, String> {
-    let (ssh, conn) = connect_for_copy(&input.connection_id)?;
+fn scp_download_sync(input: ScpDownloadInput, copy: RunningCopy) -> Result<ScpResult, String> {
+    let Some((ssh, conn)) = connect_for_copy(&copy)? else {
+        let ended = Err(Stop::Cancelled);
+        return copy_ended(
+            &copy,
+            input.local_path,
+            input.remote_path,
+            Copied::default(),
+            ended,
+        );
+    };
     let sftp = ssh.session.sftp();
-    let remote_path = expand_tilde(
-        sftp.as_ref().ok(),
-        &resolve_download_remote_path(&conn, &input.remote_path),
-    )
-    .map_err(|e| copy_failed(Stop::Failed(e), &ssh))?;
     let local = Path::new(&input.local_path);
-    let (bytes, entries) = match sftp {
-        Ok(sftp) => {
-            let stat = sftp.stat(Path::new(&remote_path)).map_err(|e| {
-                let error = format!("Failed to stat {}: {}", remote_path, e);
-                copy_failed(Stop::Failed(error), &ssh)
-            })?;
-            if stat.is_dir() && !input.recursive {
-                return Err("Downloading a directory requires the recursive option".to_string());
-            }
-            create_local_parent(local)?;
-            let (bytes, files) = download_unattended(&ssh.session, &sftp, &remote_path, local)
-                .map_err(|stop| copy_failed(stop, &ssh))?;
-            (bytes, Some(files))
+    let requested = resolve_download_remote_path(&conn, &input.remote_path);
+    let (remote_path, copied, ended) = match expand_tilde(sftp.as_ref().ok(), &requested) {
+        Err(e) => {
+            let ended = Err(copy_failed(Stop::Failed(e), &ssh));
+            (requested, Copied::default(), ended)
         }
-        // Only SFTP can list a folder, so without it a single file is all that can come.
-        Err(sftp_err) => {
-            let bytes = download_file_scp(&ssh, &remote_path, local).map_err(|scp_err| {
-                format!(
-                    "Download from {} failed via both transports ({}). SFTP: {}. SCP: {}",
-                    remote_path, ssh.destination_label, sftp_err, scp_err
-                )
-            })?;
-            (bytes, Some(1))
+        Ok(remote_path) => {
+            let (copied, ended) = match &sftp {
+                Ok(sftp) => {
+                    download_over_sftp(&ssh, sftp, &remote_path, local, input.recursive, &copy)
+                }
+                // Only SFTP can list a folder, so without it a single file is all that can come.
+                Err(sftp_err) => legacy_copy(
+                    &copy,
+                    |scp_err| {
+                        format!(
+                            "Download from {} failed via both transports ({}). SFTP: {}. SCP: {}",
+                            remote_path, ssh.destination_label, sftp_err, scp_err
+                        )
+                    },
+                    |on_chunk| download_file_scp(&ssh, &remote_path, local, on_chunk),
+                ),
+            };
+            (remote_path, copied, ended)
         }
     };
+    copy_ended(&copy, input.local_path, remote_path, copied, ended)
+}
 
-    Ok(ScpResult {
-        local_path: input.local_path,
-        remote_path,
-        bytes,
-        entries,
-    })
+fn download_over_sftp(
+    ssh: &ConnectedSession,
+    sftp: &Sftp,
+    remote_path: &str,
+    local: &Path,
+    recursive: bool,
+    copy: &RunningCopy,
+) -> (Copied, Result<(), Stop>) {
+    let refused = |stop: Stop| (Copied::default(), Err(stop));
+    let stat = match sftp.stat(Path::new(remote_path)) {
+        Ok(stat) => stat,
+        Err(e) => {
+            let error = format!("Failed to stat {}: {}", remote_path, e);
+            return refused(copy_failed(Stop::Failed(error), ssh));
+        }
+    };
+    if stat.is_dir() && !recursive {
+        return refused(Stop::Failed(
+            "Downloading a directory requires the recursive option".to_string(),
+        ));
+    }
+    if let Err(error) = create_local_parent(local) {
+        return refused(Stop::Failed(error));
+    }
+    let (copied, ended) = download_unattended(&ssh.session, sftp, remote_path, local, &copy.stop);
+    (copied, ended.map_err(|stop| copy_failed(stop, ssh)))
 }
 
 fn create_local_parent(local: &Path) -> Result<(), String> {
@@ -237,7 +423,12 @@ fn create_local_parent(local: &Path) -> Result<(), String> {
 /// Legacy `scp` can write only under the name it is given and has no rename,
 /// so the new copy goes to a temporary name and the server's shell moves it
 /// into place.
-fn upload_file_scp(ssh: &ConnectedSession, local: &Path, target: &str) -> Result<u64, String> {
+fn upload_file_scp(
+    ssh: &ConnectedSession,
+    local: &Path,
+    target: &str,
+    on_chunk: &mut dyn FnMut(usize) -> Result<(), Stop>,
+) -> Result<u64, Stop> {
     let file =
         fs::File::open(local).map_err(|e| format!("Could not read {}: {}", local.display(), e))?;
     let meta = file
@@ -256,18 +447,21 @@ fn upload_file_scp(ssh: &ConnectedSession, local: &Path, target: &str) -> Result
         .map(|(_, stat)| stat.mode() & 0o777);
     let mode = replaced_mode.unwrap_or(file_mode(&meta).unwrap_or(0o644) as i32 & 0o777);
 
-    let result = send_staged(ssh, file, &staged, mode, size).and_then(|()| {
+    let result = send_staged(ssh, file, &staged, mode, size, on_chunk).and_then(|()| {
         with_finish_limit(&ssh.session, || {
             run_remote(ssh, &place_staged_command(&staged, target, replaced_mode))
         })
+        .map_err(Stop::Failed)
     });
-    if let Err(error) = result {
+    if let Err(stop) = result {
         limit_tidying(&ssh.session);
         let _ = run_remote(ssh, &format!("rm -f -- {}", shell_single_quote(&staged)));
-        return Err(format!(
-            "SCP upload to {} failed ({}): {}",
-            target, ssh.destination_label, error
-        ));
+        return Err(stop.map_failed(|error| {
+            format!(
+                "SCP upload to {} failed ({}): {}",
+                target, ssh.destination_label, error
+            )
+        }));
     }
     Ok(size)
 }
@@ -294,7 +488,8 @@ fn send_staged(
     staged: &str,
     mode: i32,
     size: u64,
-) -> Result<(), String> {
+    on_chunk: &mut dyn FnMut(usize) -> Result<(), Stop>,
+) -> Result<(), Stop> {
     let mut channel = ssh
         .session
         .scp_send(Path::new(staged), mode, size, None)
@@ -302,27 +497,25 @@ fn send_staged(
     let mut sent = 0;
     copy_stream(&mut file.take(size), &mut channel, &mut |n| {
         sent += n as u64;
-        Ok(())
+        on_chunk(n)
     })
-    .map_err(|stop| {
-        // Closing `channel` is tidying too.
-        limit_tidying(&ssh.session);
-        stop.into_message()
-    })?;
+    // Closing `channel` is tidying too.
+    .inspect_err(|_| limit_tidying(&ssh.session))?;
     if sent != size {
-        return Err("The file shrank while it was being sent".to_string());
+        return Err("The file shrank while it was being sent".to_string().into());
     }
     // The protocol's "file complete". Without it `scp -t` reports a lost
     // connection and exits 1, though the bytes have landed.
     channel.write_all(b"\0").map_err(|e| e.to_string())?;
-    with_finish_limit(&ssh.session, || check_scp_exit(&mut channel))
+    with_finish_limit(&ssh.session, || check_scp_exit(&mut channel)).map_err(Stop::Failed)
 }
 
 fn download_file_scp(
     ssh: &ConnectedSession,
     remote_path: &str,
     local: &Path,
-) -> Result<u64, String> {
+    on_chunk: &mut dyn FnMut(usize) -> Result<(), Stop>,
+) -> Result<u64, Stop> {
     let fail = |error: String| {
         format!(
             "SCP download from {} failed ({}): {}",
@@ -341,7 +534,7 @@ fn download_file_scp(
         // ssh2 stops reading this channel at the size in the header.
         copy_stream(&mut channel, file, &mut |n| {
             received += n as u64;
-            Ok(())
+            on_chunk(n)
         })?;
         if received != size {
             return Err(Stop::Failed(format!(
@@ -355,7 +548,7 @@ fn download_file_scp(
     })
     .map_err(|stop| {
         limit_tidying(&ssh.session);
-        fail(stop.into_message())
+        stop.map_failed(fail)
     })?;
     Ok(size)
 }
@@ -480,7 +673,154 @@ fn resolve_download_remote_path(conn: &Connection, remote_path: &str) -> String 
 #[cfg(test)]
 mod scp_tests {
     use super::*;
-    use crate::models::{Connection, ConnectionKind};
+    use crate::models::{Connection, ConnectionKind, Credential, CredentialKind};
+    use crate::storage::test_support::with_isolated_data_dir;
+    use crate::storage::with_data_mut;
+    use std::net::TcpListener;
+    use std::thread;
+    use std::time::{Duration, Instant};
+
+    fn upload_input(connection_id: &str) -> ScpUploadInput {
+        ScpUploadInput {
+            connection_id: connection_id.to_string(),
+            local_path: "some-file".to_string(),
+            remote_path: Some("/tmp".to_string()),
+            recursive: false,
+        }
+    }
+
+    #[test]
+    fn a_second_copy_on_a_connection_is_refused_until_the_first_ends() {
+        let first = RunningCopy::begin("scp-test-second").unwrap();
+        let refused = RunningCopy::begin("scp-test-second").err().unwrap();
+        assert!(refused.contains("already running"), "{}", refused);
+        // A copy of another connection has nothing to do with it.
+        let other = RunningCopy::begin("scp-test-second-other").unwrap();
+        drop(first);
+        assert!(!COPIES.contains_key("scp-test-second"));
+        assert!(COPIES.contains_key("scp-test-second-other"));
+        RunningCopy::begin("scp-test-second").unwrap();
+        drop(other);
+    }
+
+    #[test]
+    fn a_stop_reaches_only_its_own_copy_and_never_a_later_one() {
+        let stopped = RunningCopy::begin("scp-test-stop").unwrap();
+        let other = RunningCopy::begin("scp-test-stop-other").unwrap();
+        scp_stop("scp-test-stop".to_string()).unwrap();
+        assert_eq!(stopped.check(), Err(Stop::Cancelled));
+        assert_eq!(other.check(), Ok(()));
+        drop(stopped);
+        // Too late for that copy: not an error, and the next one is not stopped.
+        scp_stop("scp-test-stop".to_string()).unwrap();
+        let next = RunningCopy::begin("scp-test-stop").unwrap();
+        assert_eq!(next.check(), Ok(()));
+    }
+
+    #[test]
+    fn a_stop_needs_a_connection_id() {
+        assert!(scp_stop(String::new()).is_err());
+        assert!(scp_stop("  ".to_string()).is_err());
+    }
+
+    #[test]
+    fn a_copy_that_fails_gives_up_its_place() {
+        with_isolated_data_dir(|| {
+            let id = "scp-test-unknown-connection";
+            let copy = RunningCopy::begin(id).unwrap();
+            assert!(COPIES.contains_key(id));
+            scp_upload_sync(upload_input(id), copy).unwrap_err();
+            assert!(!COPIES.contains_key(id));
+
+            let copy = RunningCopy::begin(id).unwrap();
+            let input = ScpDownloadInput {
+                connection_id: id.to_string(),
+                remote_path: "/tmp/f".to_string(),
+                local_path: "some-file".to_string(),
+                recursive: false,
+            };
+            scp_download_sync(input, copy).unwrap_err();
+            assert!(!COPIES.contains_key(id));
+        });
+    }
+
+    /// A server that takes the connection and never says a word.
+    #[test]
+    fn a_stop_while_connecting_ends_the_copy_at_once() {
+        with_isolated_data_dir(|| {
+            let silent = TcpListener::bind("127.0.0.1:0").unwrap();
+            let cred = Credential::new(
+                "c".to_string(),
+                "u".to_string(),
+                CredentialKind::Password {
+                    password: "p".to_string(),
+                },
+            );
+            let conn = Connection::new(
+                "n".to_string(),
+                "127.0.0.1".to_string(),
+                silent.local_addr().unwrap().port(),
+                Some(cred.id.clone()),
+                ConnectionKind::Direct,
+            );
+            let id = conn.id.clone();
+            with_data_mut(|data| {
+                data.credentials.push(cred);
+                data.connections.push(conn);
+                Ok(())
+            })
+            .unwrap();
+
+            let copy = RunningCopy::begin(&id).unwrap();
+            let input = upload_input(&id);
+            let running = thread::spawn(move || scp_upload_sync(input, copy));
+            thread::sleep(Duration::from_millis(300));
+            let asked = Instant::now();
+            scp_stop(id.clone()).unwrap();
+            let answer = running.join().unwrap().unwrap();
+
+            assert!(asked.elapsed() < Duration::from_secs(5));
+            assert_eq!(answer.bytes, 0);
+            assert_eq!(answer.entries, Some(0));
+            assert_eq!(
+                answer.stopped.as_deref(),
+                Some("Transfer stopped before any file was copied.")
+            );
+            assert!(!COPIES.contains_key(&id));
+        });
+    }
+
+    #[test]
+    fn a_stopped_copy_says_how_far_it_got_and_what_stays() {
+        let say = |bytes, files| stopped_message(&Copied { bytes, files }, None);
+        assert!(say(0, 0).contains("before any file"));
+        assert!(say(5, 0).contains("after 5 bytes"));
+        assert!(say(5, 0).contains("what was at the target is unchanged"));
+        assert!(say(5, 1).contains("The 1 finished file stays"));
+        assert!(say(5, 2).contains("The 2 finished files stay"));
+    }
+
+    #[test]
+    fn a_failure_is_part_of_a_stop_only_once_one_was_asked_for() {
+        let end = |copy: &RunningCopy, ended| {
+            copy_ended(
+                copy,
+                "l".to_string(),
+                "r".to_string(),
+                Copied::default(),
+                ended,
+            )
+        };
+        let copy = RunningCopy::begin("scp-test-failure").unwrap();
+        let failed = || Err(Stop::Failed("the link died".to_string()));
+        assert_eq!(end(&copy, failed()).unwrap_err(), "the link died");
+        assert_eq!(end(&copy, Ok(())).unwrap().stopped, None);
+
+        scp_stop("scp-test-failure".to_string()).unwrap();
+        let stopped = end(&copy, failed()).unwrap().stopped.unwrap();
+        assert!(stopped.starts_with("Transfer stopped"), "{}", stopped);
+        assert!(stopped.ends_with("the link died"), "{}", stopped);
+    }
 
     #[test]
     fn test_resolve_remote_target_path_appends_file_name() {

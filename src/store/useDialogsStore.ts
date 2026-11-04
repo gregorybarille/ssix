@@ -1,3 +1,4 @@
+import { useEffect } from "react";
 import { create } from "zustand";
 import type { Connection, Credential, OpenMode } from "@/types";
 import { useTerminalsStore } from "./useTerminalsStore";
@@ -75,6 +76,9 @@ interface DialogsState {
   // SCP file-transfer dialog
   scpConnection: Connection | null;
   scpOpen: boolean;
+  /** A transfer is running: its dialog keeps its target, so its outcome is shown. */
+  scpBusy: boolean;
+  setScpBusy: (busy: boolean) => void;
 
   // Bulk SCP dialog (operates on a tag group's connection set).
   // We deliberately store the connection list verbatim rather than
@@ -163,6 +167,8 @@ export const useDialogsStore = create<DialogsState>((set, get) => ({
   screenshotToast: null,
   scpConnection: null,
   scpOpen: false,
+  scpBusy: false,
+  setScpBusy: (scpBusy) => set({ scpBusy }),
   bulkScpOpen: false,
   bulkScpConnections: [],
   bulkScpLabel: "",
@@ -208,15 +214,19 @@ export const useDialogsStore = create<DialogsState>((set, get) => ({
 
   setScreenshotToast: (toast) => set({ screenshotToast: toast }),
 
-  openScp: (conn) => set({ scpConnection: conn, scpOpen: true }),
+  openScp: (conn) => set((s) => (s.scpBusy ? s : { scpConnection: conn, scpOpen: true })),
   setScpOpen: (open) => set({ scpOpen: open }),
 
   openBulkScp: (label, connections) =>
-    set({
-      bulkScpOpen: true,
-      bulkScpLabel: label,
-      bulkScpConnections: connections,
-    }),
+    set((s) =>
+      s.scpBusy
+        ? s
+        : {
+            bulkScpOpen: true,
+            bulkScpLabel: label,
+            bulkScpConnections: connections,
+          },
+    ),
   setBulkScpOpen: (open) =>
     set(
       open
@@ -244,3 +254,13 @@ export const useDialogsStore = create<DialogsState>((set, get) => ({
     }),
   setConfirmTagAction: (payload) => set({ confirmTagAction: payload }),
 }));
+
+/** Hold the SCP dialogs on their target for as long as `busy` is true. */
+export function useHoldScpTarget(busy: boolean) {
+  const setScpBusy = useDialogsStore((s) => s.setScpBusy);
+  useEffect(() => {
+    if (!busy) return;
+    setScpBusy(true);
+    return () => setScpBusy(false);
+  }, [busy, setScpBusy]);
+}

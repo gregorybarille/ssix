@@ -140,6 +140,7 @@ export const sel = {
   scpRemotePath: '[data-testid="scp-remote-path"]',
   scpUploadButton: '[data-testid="scp-upload"]',
   scpDownloadButton: '[data-testid="scp-download"]',
+  scpStop: '[data-testid="scp-stop"]',
   scpStatus: '[data-testid="scp-status"]',
 
   // Port forwards
@@ -155,6 +156,8 @@ export const sel = {
   gitSyncRepoPath: '[data-testid="git-sync-repo-path"]',
   gitSyncExportButton: '[data-testid="git-sync-export"]',
   gitSyncRunButton: '[data-testid="git-sync-run"]',
+  gitSyncRefreshDiff: '[data-testid="git-sync-refresh-diff"]',
+  gitSyncHandEdits: '[data-testid="git-sync-hand-edits"]',
   gitSyncStatus: '[data-testid="git-sync-status"]',
   gitSyncDiscard: '[data-testid="git-sync-discard"]',
   gitSyncDiscardConfirm: '[data-testid="git-sync-discard-confirm"]',
@@ -261,6 +264,7 @@ export const sel = {
   bulkScpLocalPath: '[data-testid="bulk-scp-local-path"]',
   bulkScpRemotePath: '[data-testid="bulk-scp-remote-path"]',
   bulkScpStart: '[data-testid="bulk-scp-start"]',
+  bulkScpStop: '[data-testid="bulk-scp-stop"]',
   bulkScpProgress: '[data-testid="bulk-scp-progress"]',
   bulkScpRow: (connectionId: string) =>
     `[data-testid="bulk-scp-row-${connectionId}"]`,
