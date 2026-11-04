@@ -86,6 +86,6 @@ Older builds showed this as `TypeError: ... window.__TAURI_INTERNALS__ is undefi
 ## Credentials Seem Missing
 
 - Remember that secrets are stored separately from `data.json`.
-- "could not be read" or "failed to read secrets file" means the file is there but SSIX cannot read it, for example because of its permissions or a failing disk. SSIX shows the error instead of an empty list and saves nothing over the file: fix the cause and try again.
+- "could not be read" or "failed to read secrets file" means the file is there but SSIX cannot read it, for example because of its permissions, a failing disk, or a link to a volume that is not mounted. SSIX shows the error instead of an empty list and saves nothing over the file: fix the cause and try again.
 - If testing manually, inspect `~/.ssix/secrets.json` rather than expecting password material in `~/.ssix/data.json`.
 - A secret from an old `data.json` moves to `secrets.json` the next time SSIX starts. If `secrets.json` is corrupt, the move waits and the Logs view has a `migration` warning: fix or restore the file, then restart.

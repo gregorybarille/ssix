@@ -30,8 +30,9 @@ pub(crate) fn secrets_path() -> PathBuf {
 /// after a crash, or any future format change. Errors are now propagated
 /// so the caller refuses to save and the user sees a real failure.
 fn load_secrets() -> Result<HashMap<String, String>, String> {
-    let content = match fs::read_to_string(secrets_path()) {
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(HashMap::new()),
+    let path = secrets_path();
+    let content = match fs::read_to_string(&path) {
+        Err(e) if crate::storage::is_no_file(&path, &e) => return Ok(HashMap::new()),
         read => read.map_err(|e| {
             crate::logs::log_local(
                 "error",

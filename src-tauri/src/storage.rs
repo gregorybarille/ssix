@@ -129,13 +129,22 @@ fn load_data_unlocked() -> Result<(AppData, u32), String> {
     Ok((data, stored_version))
 }
 
+/// Whether `read_error`, from reading `path`, means there is no file there. A
+/// link whose target is gone also reads as NotFound but does not count: the
+/// target may only be on an unmounted volume, and a save would replace the link.
+pub(crate) fn is_no_file(path: &Path, read_error: &std::io::Error) -> bool {
+    use std::io::ErrorKind::NotFound;
+    read_error.kind() == NotFound
+        && matches!(fs::symlink_metadata(path), Err(e) if e.kind() == NotFound)
+}
+
 /// Parse `data.json` as stored, without migrating it. `None` only when there
 /// is no such file: any other read failure must not pass for an empty
 /// catalogue, which the next save would write over the real one.
 fn read_data_file(path: &Path) -> Result<Option<AppData>, String> {
     let content = match fs::read_to_string(path) {
         Ok(content) => content,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(e) if is_no_file(path, &e) => return Ok(None),
         Err(e) => return Err(format!("{} could not be read: {}", path.display(), e)),
     };
     serde_json::from_str(&content)
@@ -522,6 +531,31 @@ mod tests {
             assert!(err.contains("could not be read"), "got: {}", err);
             let err = crate::keychain::snapshot_for_credential("any").unwrap_err();
             assert!(err.contains("failed to read"), "got: {}", err);
+        });
+    }
+
+    /// A link to an unmounted volume reads as NotFound. It must not look like an
+    /// empty catalogue, and no save may replace the link.
+    #[cfg(unix)]
+    #[test]
+    fn a_link_whose_target_is_gone_is_not_a_missing_file() {
+        test_support::with_isolated_data_dir(|| {
+            let gone = data_dir().join("unmounted").join("file.json");
+            let secrets = crate::keychain::secrets_path();
+            std::os::unix::fs::symlink(&gone, get_data_path()).unwrap();
+            std::os::unix::fs::symlink(&gone, &secrets).unwrap();
+
+            let err = load_data().unwrap_err();
+            assert!(err.contains("could not be read"), "got: {}", err);
+            assert!(with_data_mut(|_| Ok(())).is_err());
+            assert!(persist_migrations().is_err());
+            let err = crate::keychain::snapshot_for_credential("any").unwrap_err();
+            assert!(err.contains("failed to read"), "got: {}", err);
+            let store = crate::models::CredentialSecrets::default();
+            assert!(crate::keychain::replace_for_credential("any", &store).is_err());
+
+            assert!(get_data_path().is_symlink());
+            assert!(secrets.is_symlink());
         });
     }
 
