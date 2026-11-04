@@ -1,6 +1,6 @@
 import { create } from "zustand";
 import { invoke } from "@/lib/tauri";
-import { GitSyncActionResult, GitSyncDiff, GitSyncRunInput, GitSyncRunResult, GitSyncSnapshot, GitSyncStatus } from "@/types";
+import { GitSyncActionResult, GitSyncCommitInput, GitSyncDiff, GitSyncRunInput, GitSyncRunResult, GitSyncSnapshot, GitSyncStatus } from "@/types";
 import { runAsync, runAsyncRethrow } from "@/lib/asyncAction";
 
 interface GitSyncState {
@@ -9,15 +9,18 @@ interface GitSyncState {
   isLoading: boolean;
   actionOutput: string | null;
   error: string | null;
-  /** Files Sync would have to discard to pull: non-empty while it waits for the user's answer. */
-  discardNeeded: string[];
+  /** Files whose edits an action would lose: non-empty while it waits for the user's answer. */
+  atRisk: string[];
+  /** Reruns the action that stopped, with the user's agreement. */
+  rerunAgreed: ((agreed: string[]) => Promise<unknown>) | null;
   fetchStatus: () => Promise<void>;
   fetchDiff: () => Promise<void>;
-  exportSnapshot: () => Promise<GitSyncSnapshot>;
-  commitSnapshot: (message: string) => Promise<void>;
-  /** `discardAgreed`: the user agreed to lose uncommitted changes under `.ssix-sync/`. */
-  runSync: (discardAgreed?: boolean) => Promise<void>;
-  declineDiscard: () => void;
+  /** `agreed`, here and below: the files the user agreed to lose edits in. */
+  exportSnapshot: (agreed?: string[]) => Promise<GitSyncSnapshot>;
+  commitSnapshot: (message: string, agreed?: string[]) => Promise<void>;
+  runSync: (agreed?: string[]) => Promise<void>;
+  confirmAtRisk: () => Promise<void>;
+  declineAtRisk: () => void;
 }
 
 const DEFAULT_STATUS: GitSyncStatus = {
@@ -32,6 +35,7 @@ const DEFAULT_STATUS: GitSyncStatus = {
 const DEFAULT_DIFF: GitSyncDiff = {
   staged: "",
   unstaged: "",
+  at_risk: [],
 };
 
 function formatGitOutput(
@@ -41,13 +45,23 @@ function formatGitOutput(
   return [result.stdout, result.stderr].filter(Boolean).join("\n") || fallback;
 }
 
+/** Records the backend's answer; true when the action stopped to ask and changed nothing. */
+async function stoppedToAsk(atRisk: string[], rerunAgreed: GitSyncState["rerunAgreed"]) {
+  useGitSyncStore.setState({ atRisk, rerunAgreed });
+  if (atRisk.length === 0) return false;
+  // Not fetchDiff: it exports the files not in question, and Cancel promises nothing changed.
+  await useGitSyncStore.getState().fetchStatus();
+  return true;
+}
+
 export const useGitSyncStore = create<GitSyncState>((set, get) => ({
   status: DEFAULT_STATUS,
   diff: DEFAULT_DIFF,
   isLoading: false,
   actionOutput: null,
   error: null,
-  discardNeeded: [],
+  atRisk: [],
+  rerunAgreed: null,
 
   // Audit-4 Dup H1: actions that the caller awaits and reacts to
   // (commit, run, exportSnapshot) use
@@ -66,10 +80,12 @@ export const useGitSyncStore = create<GitSyncState>((set, get) => ({
       await get().fetchStatus();
     }).then(() => undefined),
 
-  exportSnapshot: () =>
+  exportSnapshot: (agreed = []) =>
     runAsyncRethrow(set, async () => {
       set({ actionOutput: null });
-      const snapshot = await invoke<GitSyncSnapshot>("git_sync_export_snapshot");
+      const input: GitSyncRunInput = { agreed };
+      const snapshot = await invoke<GitSyncSnapshot>("git_sync_export_snapshot", { input });
+      if (await stoppedToAsk(snapshot.at_risk, get().exportSnapshot)) return snapshot;
       set({
         actionOutput: `Exported ${snapshot.exported_files.join(", ")} to ${snapshot.repo_path}`,
       });
@@ -77,32 +93,33 @@ export const useGitSyncStore = create<GitSyncState>((set, get) => ({
       return snapshot;
     }),
 
-  commitSnapshot: (message) =>
+  commitSnapshot: (message, agreed = []) =>
     runAsyncRethrow(set, async () => {
       set({ actionOutput: null });
-      const result = await invoke<GitSyncActionResult>("git_sync_commit", {
-        input: { message },
-      });
-      set({ actionOutput: formatGitOutput(result, "Commit complete.") });
+      const input: GitSyncCommitInput = { message, agreed };
+      const result = await invoke<GitSyncRunResult>("git_sync_commit", { input });
+      const rerun = (nowAgreed: string[]) => get().commitSnapshot(message, nowAgreed);
+      if (await stoppedToAsk(result.at_risk, rerun)) return;
+      set({ actionOutput: formatGitOutput(result.output, "Commit complete.") });
       await Promise.all([get().fetchStatus(), get().fetchDiff()]);
     }),
 
-  runSync: (discardAgreed = false) =>
+  runSync: (agreed = []) =>
     runAsyncRethrow(set, async () => {
       set({ actionOutput: null });
-      const input: GitSyncRunInput = { discard_agreed: discardAgreed };
+      const input: GitSyncRunInput = { agreed };
       const result = await invoke<GitSyncRunResult>("git_sync_run", { input });
-      set({ discardNeeded: result.discard_needed });
-      if (result.discard_needed.length > 0) {
-        // Not fetchDiff: it exports over the very edits the user is deciding on.
-        await get().fetchStatus();
-        return;
-      }
+      if (await stoppedToAsk(result.at_risk, get().runSync)) return;
       set({
         actionOutput: [...result.steps, result.output.stdout].filter(Boolean).join("\n"),
       });
       await Promise.all([get().fetchStatus(), get().fetchDiff()]);
     }),
 
-  declineDiscard: () => set({ discardNeeded: [] }),
+  confirmAtRisk: async () => {
+    const { atRisk, rerunAgreed } = get();
+    await rerunAgreed?.(atRisk);
+  },
+
+  declineAtRisk: () => set({ atRisk: [], rerunAgreed: null }),
 }));

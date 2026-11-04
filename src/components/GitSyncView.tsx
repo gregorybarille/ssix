@@ -22,9 +22,12 @@ export function GitSyncView() {
     exportSnapshot,
     commitSnapshot,
     runSync,
-    discardNeeded,
-    declineDiscard,
+    atRisk,
+    confirmAtRisk,
+    declineAtRisk,
   } = useGitSyncStore();
+  // ConfirmDialog closes after onConfirm too, and the rerun may have asked again: only Cancel declines.
+  const confirmed = React.useRef(false);
 
   useEffect(() => {
     void fetchStatus();
@@ -76,7 +79,7 @@ export function GitSyncView() {
                 <Button variant="outline" size="sm" onClick={() => void exportSnapshot()} disabled={isLoading} aria-busy={isLoading} data-testid="git-sync-export">
                   Export sanitized snapshot
                 </Button>
-                <Button variant="outline" size="sm" onClick={() => void fetchDiff()} disabled={isLoading} aria-busy={isLoading}>
+                <Button variant="outline" size="sm" onClick={() => void fetchDiff()} disabled={isLoading} aria-busy={isLoading} data-testid="git-sync-refresh-diff">
                   <FileDiff aria-hidden="true" className="h-4 w-4 mr-1" />
                   Refresh diff
                 </Button>
@@ -124,6 +127,11 @@ export function GitSyncView() {
                   <p className="text-xs text-muted-foreground">
                     Tracks only the sanitized export under `.ssix-sync/`.
                   </p>
+                  {diff.at_risk.length > 0 && (
+                    <p className="mt-2 text-xs text-muted-foreground break-all" data-testid="git-sync-hand-edits">
+                      Not exported, because these hold hand edits: {diff.at_risk.join(", ")}
+                    </p>
+                  )}
                 </div>
                 <div className="p-4 space-y-4">
                   {/*
@@ -207,32 +215,37 @@ export function GitSyncView() {
       </div>
 
       <ConfirmDialog
-        open={discardNeeded.length > 0}
+        open={atRisk.length > 0}
         onOpenChange={(open) => {
-          if (!open) declineDiscard();
+          if (!open && !confirmed.current) declineAtRisk();
+          confirmed.current = false;
         }}
-        title="Discard uncommitted snapshot changes?"
+        title="Lose edits in these files?"
         description={
           <>
             <span className="block">
-              The remote has new commits, and Sync can only pull them once these files go back to
-              their last commit:
+              These files have edits that will be overwritten or removed, and SSIX never reads this
+              folder back:
             </span>
             <span className="block my-2 max-h-40 overflow-y-auto font-mono text-xs">
-              {discardNeeded.map((file) => (
+              {atRisk.map((file) => (
                 <span key={file} className="block break-all">
                   {file}
                 </span>
               ))}
             </span>
             <span className="block">
-              Sync exports these again from SSIX&apos;s data, so only edits made by hand are lost.
+              Copy anything you want to keep first. Nothing else in the folder is lost: SSIX exports
+              its own files again from its data.
             </span>
           </>
         }
-        confirmLabel="Discard and sync"
+        confirmLabel="Lose edits and continue"
         variant="destructive"
-        onConfirm={() => runSync(true)}
+        onConfirm={async () => {
+          await confirmAtRisk();
+          confirmed.current = true;
+        }}
         testId="git-sync-discard"
       />
     </div>

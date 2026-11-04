@@ -111,4 +111,5 @@ Files that many features would otherwise edit at once are registries: a feature 
 
 - Git Sync exports a sanitized snapshot into `.ssix-sync/` inside a user-configured repository.
 - The export contains no passwords or inline private key material.
-- One-click sync performs fetch, fast-forward pull when needed (when `.ssix-sync/` has uncommitted changes, it first stops with `discard_needed` until the user agrees to discard them), export, commit of `.ssix-sync/` alone when there are local exported changes, and push.
+- One-click sync performs fetch, fast-forward pull when needed, export, commit of `.ssix-sync/` alone when there are local exported changes, and push.
+- `files_at_risk` in `commands/git_sync.rs` is the one decision on what an overwrite would really lose, combining `git status --porcelain` with the SHA-256 of what SSIX last wrote, recorded in the repository's git directory (`ssix-sync-last-export`). Export, Commit and Sync stop with `at_risk` until the rerun's `agreed` covers the whole list; `git_sync_diff` never asks, and skips those files. See [Git Sync](git-sync.md#hand-edits-in-the-folder).

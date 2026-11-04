@@ -498,11 +498,15 @@ export interface GitSyncStatus {
 export interface GitSyncDiff {
   staged: string;
   unstaged: string;
+  /** Generated files holding hand edits. The refresh left them as they are. */
+  at_risk: string[];
 }
 
 export interface GitSyncSnapshot {
   repo_path: string;
   exported_files: string[];
+  /** Set when the export stopped for the user's answer: the files whose edits it would lose. Nothing was changed. */
+  at_risk: string[];
 }
 
 /** What git printed for a git_sync action. */
@@ -515,13 +519,19 @@ export interface GitSyncActionResult {
 export interface GitSyncRunResult {
   steps: string[];
   output: GitSyncActionResult;
-  /** Set when Sync stopped before pulling: the uncommitted files under `.ssix-sync/` a pull needs gone. Nothing was changed. */
-  discard_needed: string[];
+  /** Set when the action stopped for the user's answer: the files under `.ssix-sync/` whose edits it would lose. Nothing was changed. */
+  at_risk: string[];
 }
 
 export interface GitSyncRunInput {
-  /** The user agreed to lose uncommitted changes under `.ssix-sync/`. */
-  discard_agreed: boolean;
+  /** The files the user agreed to lose edits in. Anything else at risk asks again. */
+  agreed: string[];
+}
+
+export interface GitSyncCommitInput {
+  message: string;
+  /** The files the user agreed to lose edits in. Anything else at risk asks again. */
+  agreed: string[];
 }
 
 export interface ScpResult {

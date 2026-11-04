@@ -230,6 +230,7 @@ once.
 - exact diff view
 - fetch, pull, commit, push
 - one-click sync
+- asks before an action would lose a hand edit in `.ssix-sync/`, and only then
 - sidebar pending indicator for local or remote changes
 
 See [Git Sync](git-sync.md) for details.
