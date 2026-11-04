@@ -72,8 +72,9 @@ would notice. Edit the notes on the release page afterwards if a release
 needs a summary on top. The workflow creates the release only if it does
 not exist yet, so a re-run never overwrites edited notes.
 
-The package version remains semver (`1.0.0`) in `src-tauri/tauri.conf.json`.
-Use prerelease labels on the Git tag and GitHub release name.
+The repository stays at `1.0.0` in `src-tauri/tauri.conf.json` and `src-tauri/Cargo.toml`. Each release build sets both from its tag (`scripts/release-version.mjs`), so a package can upgrade the one before it without an uninstall. A tag of `v1.0.0-beta.19` builds version `1.0.0+beta.19`, because `rpm` refuses a `-` in a version.
+
+Both `dpkg` and `rpm` sort `1.0.0+beta.19` above a plain `1.0.0`. So the first stable release has to be `v1.0.1`, or it would not upgrade the betas.
 
 To publish a release, push a Git tag:
 

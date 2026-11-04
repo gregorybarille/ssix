@@ -16,9 +16,9 @@ export interface ThirdPartyPackage {
 }
 
 /**
- * The version to show. The manifests stay at the same number across the betas,
- * so a release build is told its tag (`VITE_RELEASE_TAG`, set in
- * `.github/workflows/release.yml`). Any other build shows the manifest's number.
+ * The version to show. A release build is told its tag (`VITE_RELEASE_TAG`, set
+ * in `.github/workflows/release.yml`), which reads better than the package's
+ * `1.0.0+beta.19`. Any other build shows the manifest's number.
  */
 export async function appVersion(
   releaseTag: string | undefined = import.meta.env.VITE_RELEASE_TAG,
