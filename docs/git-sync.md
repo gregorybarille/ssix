@@ -9,6 +9,7 @@ Files are written under:
 - `.ssix-sync/data.json`: connections, credentials (without secrets),
   settings, saved scripts and snippets
 - `.ssix-sync/README.md`
+- `.ssix-sync/.gitattributes`, which turns off line ending conversion for the folder. With it on, as Git for Windows has by default, git reports the snapshot as changed after a pull and then has nothing to commit.
 
 ## What Does Not Get Exported
 

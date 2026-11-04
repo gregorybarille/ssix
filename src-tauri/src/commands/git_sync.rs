@@ -12,6 +12,8 @@ use ts_rs::TS;
 const EXPORT_DIR: &str = ".ssix-sync";
 const DATA_FILE: &str = "data.json";
 const SUMMARY_FILE: &str = "README.md";
+/// Without it, line ending conversion makes git report changes it won't commit.
+const ATTRIBUTES_FILE: &str = ".gitattributes";
 const DEFAULT_COMMIT_MESSAGE: &str = "sync ssix config snapshot";
 
 #[derive(Debug, Serialize)]
@@ -182,6 +184,7 @@ fn git_sync_export_snapshot_sync() -> Result<GitSyncSnapshot, String> {
         exported_files: vec![
             format!("{}/{}", EXPORT_DIR, DATA_FILE),
             format!("{}/{}", EXPORT_DIR, SUMMARY_FILE),
+            format!("{}/{}", EXPORT_DIR, ATTRIBUTES_FILE),
         ],
     })
 }
@@ -533,6 +536,8 @@ fn ahead_behind(
 fn export_snapshot(repo_path: &Path, data: &AppData) -> Result<(), String> {
     let export_dir = repo_path.join(EXPORT_DIR);
     fs::create_dir_all(&export_dir).map_err(|e| e.to_string())?;
+    crate::storage::atomic_write(&export_dir.join(ATTRIBUTES_FILE), b"* -text\n", None)
+        .map_err(|e| e.to_string())?;
 
     let sanitized = sanitize_app_data(data)?;
     let data_json = serde_json::to_string_pretty(&sanitized).map_err(|e| e.to_string())?;
@@ -1148,6 +1153,24 @@ mod tests {
         let readme = fs::read_to_string(fx.repo.join(".ssix-sync/README.md")).unwrap();
         assert_ne!(readme, "edited by hand\n");
         assert_in_step(&fx, &data);
+    }
+
+    /// Git for Windows converts line endings by default: a checkout writes CRLF,
+    /// the next export writes LF, and git reports a change it then won't commit.
+    #[test]
+    fn line_ending_conversion_cannot_make_a_snapshot_look_changed() {
+        let Some(fx) = Fixture::new(true) else { return };
+        run(&fx.repo, &["config", "core.autocrlf", "true"]);
+        let data = data_with("one", "origin", None);
+        sync_in(&fx.repo, &data, false).unwrap();
+        fx.remote_commit("main", "from-other.txt", "x");
+        write(&fx.repo, ".ssix-sync/README.md", "edited by hand\n");
+
+        sync_in(&fx.repo, &data, true).unwrap();
+        assert_in_step(&fx, &data);
+
+        export_snapshot(&fx.repo, &data).unwrap();
+        assert_eq!(run(&fx.repo, &["status", "--short"]), "");
     }
 
     #[test]
