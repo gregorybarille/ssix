@@ -17,6 +17,7 @@ Older builds showed this as `TypeError: ... window.__TAURI_INTERNALS__ is undefi
 
 - Verify host, port, username, and credential choice.
 - Check whether a jump host connection has credentials for both the jump host and the target.
+- A host that is an alias in `~/.ssh/config` takes only its `HostName` from the file. Set a custom `Port` on the connection, or import the host to take everything. A `HostName` with a token other than `%h` or `%%`, or inside a `Match` block, is not used (see [Aliases when connecting](ssh-config-import.md#aliases-when-connecting)).
 - Set the connection's verbosity to -v (or -vv) and reconnect: the Logs view shows each step of the connection, like `ssh -v`, so the last line before the error tells you where it failed.
 
 ## Agent Login Fails

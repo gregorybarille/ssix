@@ -8,19 +8,20 @@ SSIX is a desktop SSH client built with Tauri, React, and Rust. It combines save
 
 ## Highlights
 
-- Direct SSH, local forward (`ssh -L`) and jump host (`ssh -J`) connections
+- Direct SSH, jump host (`ssh -J`), and local, remote and dynamic forward (`ssh -L`, `-R`, `-D`) connections
+- Host aliases from `~/.ssh/config` work when connecting, and whole hosts can be imported from it
 - Saved credentials with password, key-path, and inline-key support
 - Terminal tabs and split panes
 - SCP upload/download, including recursive directory transfer
 - Logs, screenshots, search, tags, and connection colors
-- Sanitized Git sync with diff, fetch, pull, commit, push, and one-click sync
+- Sanitized Git sync with diff, commit, and one-click sync
 
 ## Install
 
 Prerequisites:
 
 - Rust stable
-- Node.js 20+
+- Node.js 22.12+
 - npm 9+
 
 ```bash
@@ -42,7 +43,7 @@ cd src-tauri && cargo test
 ## Quick Start
 
 1. Create a credential or use inline auth in the connection form.
-2. Create a direct, local forward, or jump host connection.
+2. Create a connection: direct, jump host, or a local, remote or dynamic forward.
 3. Connect from the Connections view.
 4. Optionally set `login_command` and `remote_path` on the connection.
 5. Use `Transfer files` for SCP or `Git Sync` for sanitized config sync.
@@ -54,6 +55,7 @@ cd src-tauri && cargo test
 - [Development](docs/development.md)
 - [Git Sync](docs/git-sync.md)
 - [File Transfer](docs/file-transfer.md)
+- [Import from SSH config](docs/ssh-config-import.md)
 - [Troubleshooting](docs/troubleshooting.md)
 
 ## Storage
