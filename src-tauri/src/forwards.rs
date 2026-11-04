@@ -1495,13 +1495,27 @@ mod tests {
         }
         lower_open_file_limit(64);
         let f = Fixture::start(timing(NEVER), &[]);
+        // Made first: a descriptor freed for it later could go to another thread.
+        let client = unsafe { libc::socket(libc::AF_INET, libc::SOCK_STREAM, 0) };
+        assert!(client >= 0);
+        let _client = unsafe { <TcpStream as std::os::fd::FromRawFd>::from_raw_fd(client) };
         let mut hoard = Vec::new();
         while let Ok(file) = std::fs::File::open("/dev/null") {
             hoard.push(file);
         }
-        // One left, for this end of the client. The forward's end finds none.
-        hoard.pop();
-        let _client = TcpStream::connect(("127.0.0.1", f.port)).unwrap();
+        // None left, so the forward's end of the client finds none.
+        let mut server: libc::sockaddr_in = unsafe { std::mem::zeroed() };
+        server.sin_family = libc::AF_INET as libc::sa_family_t;
+        server.sin_port = f.port.to_be();
+        server.sin_addr.s_addr = u32::from(std::net::Ipv4Addr::LOCALHOST).to_be();
+        let connected = unsafe {
+            libc::connect(
+                client,
+                (&raw const server).cast(),
+                std::mem::size_of_val(&server) as libc::socklen_t,
+            )
+        };
+        assert_eq!(connected, 0);
 
         wait_for("the forward to report it", SOON, || {
             f.events.saw("client_error")
