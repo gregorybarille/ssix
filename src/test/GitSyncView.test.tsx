@@ -24,9 +24,6 @@ describe("GitSyncView", () => {
       fetchStatus: vi.fn().mockResolvedValue(undefined),
       fetchDiff: vi.fn().mockResolvedValue(undefined),
       exportSnapshot: vi.fn().mockResolvedValue({ repo_path: "/tmp/repo", exported_files: [] }),
-      fetchRemote: vi.fn().mockResolvedValue(undefined),
-      pullRemote: vi.fn().mockResolvedValue(undefined),
-      pushRemote: vi.fn().mockResolvedValue(undefined),
       commitSnapshot: vi.fn().mockResolvedValue(undefined),
       runSync: vi.fn().mockResolvedValue(undefined),
     });

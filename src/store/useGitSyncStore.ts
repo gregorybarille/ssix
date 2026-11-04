@@ -12,9 +12,6 @@ interface GitSyncState {
   fetchStatus: () => Promise<void>;
   fetchDiff: () => Promise<void>;
   exportSnapshot: () => Promise<GitSyncSnapshot>;
-  fetchRemote: () => Promise<void>;
-  pullRemote: () => Promise<void>;
-  pushRemote: () => Promise<void>;
   commitSnapshot: (message: string) => Promise<void>;
   runSync: () => Promise<void>;
 }
@@ -33,10 +30,6 @@ const DEFAULT_DIFF: GitSyncDiff = {
   unstaged: "",
 };
 
-/**
- * Audit-4 Dup H1: collapse the duplicated stdout/stderr formatting that
- * appeared in fetchRemote/pullRemote/pushRemote/commitSnapshot.
- */
 function formatGitOutput(
   result: GitSyncActionResult,
   fallback: string,
@@ -52,7 +45,7 @@ export const useGitSyncStore = create<GitSyncState>((set, get) => ({
   error: null,
 
   // Audit-4 Dup H1: actions that the caller awaits and reacts to
-  // (fetchRemote, pull, push, commit, run, exportSnapshot) use
+  // (commit, run, exportSnapshot) use
   // runAsyncRethrow. Pure refresh actions (fetchStatus, fetchDiff)
   // use runAsync.
   fetchStatus: () =>
@@ -77,30 +70,6 @@ export const useGitSyncStore = create<GitSyncState>((set, get) => ({
       });
       await Promise.all([get().fetchStatus(), get().fetchDiff()]);
       return snapshot;
-    }),
-
-  fetchRemote: () =>
-    runAsyncRethrow(set, async () => {
-      set({ actionOutput: null });
-      const result = await invoke<GitSyncActionResult>("git_sync_fetch");
-      set({ actionOutput: formatGitOutput(result, "Fetch complete.") });
-      await get().fetchStatus();
-    }),
-
-  pullRemote: () =>
-    runAsyncRethrow(set, async () => {
-      set({ actionOutput: null });
-      const result = await invoke<GitSyncActionResult>("git_sync_pull");
-      set({ actionOutput: formatGitOutput(result, "Pull complete.") });
-      await Promise.all([get().fetchStatus(), get().fetchDiff()]);
-    }),
-
-  pushRemote: () =>
-    runAsyncRethrow(set, async () => {
-      set({ actionOutput: null });
-      const result = await invoke<GitSyncActionResult>("git_sync_push");
-      set({ actionOutput: formatGitOutput(result, "Push complete.") });
-      await Promise.all([get().fetchStatus(), get().fetchDiff()]);
     }),
 
   commitSnapshot: (message) =>

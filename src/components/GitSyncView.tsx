@@ -35,11 +35,8 @@ export function GitSyncView() {
           Git Sync
         </h1>
         {/*
-          The toolbar exposes a single bidirectional Sync action. The
-          underlying store still implements distinct fetch / pull /
-          push primitives (used by tests and the future automation
-          surface), but the UI consolidates them into one click so
-          users don't have to reason about the order of operations.
+          A single bidirectional Sync action, so users don't have to
+          reason about the order of fetch, pull and push.
         */}
         <div className="flex items-center gap-2">
           <Button size="sm" onClick={() => void runSync()} disabled={isLoading || !status.configured} aria-busy={isLoading} data-testid="git-sync-run">
@@ -179,7 +176,7 @@ export function GitSyncView() {
 
             {/*
               Audit-3 follow-up P1#3: actionOutput is the success/info
-              banner shown after Sync/Fetch/Pull/Push/Export complete.
+              banner shown after Sync/Commit/Export complete.
               Wrap in role=status + aria-live=polite + aria-atomic=true
               so AT announces the full message on each change without
               interrupting current speech. Always-mounted (the

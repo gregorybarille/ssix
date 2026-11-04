@@ -184,42 +184,6 @@ fn git_sync_diff_sync() -> Result<GitSyncDiff, String> {
 }
 
 #[tauri::command]
-pub async fn git_sync_fetch() -> Result<GitSyncActionResult, String> {
-    blocking(|| {
-        let (data, repo_path) = require_configured_repo()?;
-        let remote = configured_remote(&data.settings)?;
-        let result = git(&repo_path, &["fetch", &remote])?;
-        Ok(to_action_result(result))
-    })
-    .await
-}
-
-#[tauri::command]
-pub async fn git_sync_pull() -> Result<GitSyncActionResult, String> {
-    blocking(|| {
-        let (data, repo_path) = require_configured_repo()?;
-        let remote = configured_remote(&data.settings)?;
-        let branch = branch_name(&repo_path, &data.settings)?;
-        let result = git(&repo_path, &["pull", "--ff-only", &remote, &branch])?;
-        Ok(to_action_result(result))
-    })
-    .await
-}
-
-#[tauri::command]
-pub async fn git_sync_push() -> Result<GitSyncActionResult, String> {
-    blocking(|| {
-        let (data, repo_path) = require_configured_repo()?;
-        export_snapshot(&repo_path, &data)?;
-        let remote = configured_remote(&data.settings)?;
-        let branch = branch_name(&repo_path, &data.settings)?;
-        let result = git(&repo_path, &["push", &remote, &format!("HEAD:{}", branch)])?;
-        Ok(to_action_result(result))
-    })
-    .await
-}
-
-#[tauri::command]
 pub async fn git_sync_commit(input: GitSyncCommitInput) -> Result<GitSyncActionResult, String> {
     blocking(move || git_sync_commit_sync(input)).await
 }
