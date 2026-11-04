@@ -44,6 +44,9 @@ const MAX_TOTAL_BYTES: u64 = 1024 * 1024;
 /// OpenSSH's own limit (`READCONF_MAX_DEPTH`).
 const MAX_INCLUDE_DEPTH: usize = 16;
 const MAX_FILES: usize = 64;
+/// `Include` arguments one import expands. Each can walk directories, and one
+/// that matches nothing never reaches `MAX_FILES`.
+const MAX_INCLUDE_ARGS: usize = 256;
 /// Forwards one host keeps. A `Host *` block with tens of thousands of them
 /// would otherwise be copied for every host.
 pub const MAX_FORWARDS_PER_HOST: usize = 64;
@@ -656,6 +659,7 @@ struct Reader<'a> {
     /// Canonical paths of the files being read, to refuse an `Include` cycle.
     stack: Vec<PathBuf>,
     bytes_left: u64,
+    include_args_seen: usize,
     files: Vec<String>,
     notices: Vec<Notice>,
     unapplied: bool,
@@ -667,6 +671,7 @@ impl<'a> Reader<'a> {
             home,
             stack: Vec::new(),
             bytes_left: MAX_TOTAL_BYTES,
+            include_args_seen: 0,
             files: Vec::new(),
             notices: Vec::new(),
             unapplied: false,
@@ -803,6 +808,18 @@ impl<'a> Reader<'a> {
                         Err(why) => self.left_out(&at, format!("Include line ignored: {why}")),
                         Ok(args) => {
                             for arg in args {
+                                self.include_args_seen += 1;
+                                if self.include_args_seen > MAX_INCLUDE_ARGS {
+                                    if self.include_args_seen == MAX_INCLUDE_ARGS + 1 {
+                                        self.left_out(
+                                            &at,
+                                            format!(
+                                                "Include paths after the first {MAX_INCLUDE_ARGS} were not read"
+                                            ),
+                                        );
+                                    }
+                                    continue;
+                                }
                                 match expand_include(&arg, self.home) {
                                     Err(why) => self
                                         .left_out(&at, format!("Include of {arg} skipped: {why}")),
@@ -1675,6 +1692,23 @@ mod tests {
         let config = ParsedConfig::read(&main, &home.0).unwrap();
         assert_eq!(config.files.len(), MAX_FILES);
         assert!(config.notices.iter().any(|n| n.message.contains("at most")));
+    }
+
+    #[test]
+    fn include_paths_past_the_limit_are_left_out_and_reported_once() {
+        let home = TempHome::new();
+        // Matching nothing holds nothing back, so only the limit can do it here.
+        let lines = "Include nothing-here/*\n".repeat(MAX_INCLUDE_ARGS);
+        assert!(!ParsedConfig::parse_text(&lines, &home.0).unapplied);
+        let over = format!("{lines}Include nothing-here/*\n");
+        assert!(ParsedConfig::parse_text(&over, &home.0).unapplied);
+
+        // These list fewer notices than the cap, so the limit's own one shows.
+        home.write(".ssh/empty", "");
+        let lines = "Include empty\n".repeat(MAX_INCLUDE_ARGS + 5);
+        let config = ParsedConfig::parse_text(&lines, &home.0);
+        let limit = |n: &&Notice| n.message.contains("Include paths after the first");
+        assert_eq!(config.notices.iter().filter(limit).count(), 1);
     }
 
     #[test]
