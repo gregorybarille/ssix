@@ -17,7 +17,9 @@
  */
 import { once } from "node:events";
 import { connect, createServer, type AddressInfo, type Server, type Socket } from "node:net";
-import { networkInterfaces } from "node:os";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { homedir, networkInterfaces } from "node:os";
+import { join } from "node:path";
 import { waitForAppReady } from "../helpers/app.js";
 import { TARGETS, waitForServers } from "../helpers/docker.js";
 import {
@@ -43,6 +45,7 @@ const SOCKS_PORT = 23661;
 /** On server-a, not on this machine. */
 const REMOTE_PORT = 23662;
 const LOCAL_PORT = 23663;
+const ALIAS_SOCKS_PORT = 23679;
 const RELAYED_SOCKS_PORT = 23664;
 const DELETED_SOCKS_PORT = 23665;
 const BIND_PORT = 23666;
@@ -423,6 +426,29 @@ describe("Remote and dynamic forwards", () => {
     await stopForward("forward-16-local");
     await client.waitForClose(10_000);
     await waitUntilRefused("127.0.0.1", LOCAL_PORT, "The local port");
+  });
+
+  it("reaches an SSH server named by an alias in ~/.ssh/config", async () => {
+    const sshDir = join(homedir(), ".ssh");
+    const config = join(sshDir, "config");
+    const before = existsSync(config) ? readFileSync(config) : null;
+    mkdirSync(sshDir, { recursive: true });
+    writeFileSync(config, `Host e2e16-alias\n  Hostname ${TARGETS.a.host}\n`);
+    try {
+      await createForward({
+        name: "forward-16-alias",
+        kind: sel.connectionFormKindDynamicForward,
+        portField: sel.connectionFormSocksPort,
+        port: ALIAS_SOCKS_PORT,
+        server: { host: "e2e16-alias", port: TARGETS.a.sshPort },
+      });
+      await startForward("forward-16-alias");
+      expect(await canConnect("127.0.0.1", ALIAS_SOCKS_PORT)).toBe(true);
+      await stopForward("forward-16-alias");
+    } finally {
+      if (before) writeFileSync(config, before);
+      else rmSync(config);
+    }
   });
 
   it("counts what a forward carries each way, and shows the speed", async () => {

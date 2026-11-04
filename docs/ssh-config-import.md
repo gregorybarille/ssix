@@ -10,6 +10,25 @@ ticked unless the row says otherwise. Change the ticks and choose **Import**.
 Nothing else writes to your data, and what a row creates never depends on a row
 you left unticked.
 
+## Aliases when connecting
+
+Separately from an import, every connection, jump host, forward's SSH server and
+key install looks up its host in `~/.ssh/config` each time it connects. If a
+`HostName` applies, that is the address used and the one its host key is checked
+against, as with `ssh`. So `dev-front1` works with this in the file:
+
+```
+Host dev-front1
+    Hostname my-real-host.domain.com
+```
+
+Only `HostName` is taken. Port, user, key and proxy stay as set on the connection,
+because those fields always hold a value and SSIX cannot tell a default from a
+choice. To take them from the file too, import the host. `Match` blocks are not
+evaluated. A `HostName` with a token other than `%h` or `%%`, or one `ssh` would
+refuse, is ignored. The file is never read for a forward's remote host or local
+target, because `ssh -L` does not read it for those either.
+
 ## What is read
 
 | Directive | Result |

@@ -330,6 +330,17 @@ impl ParsedConfig {
         out
     }
 
+    /// The address `ssh <alias>` connects to: the `HostName` that applies to
+    /// `alias`, or `alias` itself. One `ssh` would refuse is left out too, so
+    /// a name from the file can never reach a proxy command unchecked.
+    fn host_name(&self, alias: &str) -> String {
+        self.resolve(alias)
+            .host_name
+            .and_then(|value| expand_host_name(value.single().ok()?, alias).ok())
+            .filter(|host| valid_host(host))
+            .unwrap_or_else(|| alias.to_string())
+    }
+
     /// The work every `resolve` so far has done: statements visited and
     /// characters compared. Each host walks the whole file, so this is what a
     /// large or hostile file drives up, and it counts the same on every read
@@ -571,6 +582,24 @@ fn canonical(path: &Path) -> PathBuf {
 /// bare `$` is literal, and `HOST$` is a real account name.
 pub fn uses_expansion(text: &str) -> bool {
     text.contains('%') || text.contains("${")
+}
+
+/// `%h` and `%%` are the only tokens OpenSSH expands in `HostName`.
+pub fn expand_host_name(raw: &str, alias: &str) -> Result<String, String> {
+    expand_tokens(raw, |token| match token {
+        Some('h') => Ok(alias.to_string()),
+        _ => Err(format!("HostName '{raw}' uses a token SSIX cannot expand")),
+    })
+}
+
+/// What a connection's host means when connecting: an alias in
+/// `~/.ssh/config` becomes its `HostName`. No readable file changes nothing.
+pub fn host_name_of(alias: &str) -> String {
+    let Some(home) = dirs::home_dir() else {
+        return alias.to_string();
+    };
+    ParsedConfig::read(&home.join(".ssh").join("config"), &home)
+        .map_or_else(|_| alias.to_string(), |config| config.host_name(alias))
 }
 
 /// Copy `text`, putting `value`'s answer in place of each `%x` token. `%%` is a
@@ -1044,6 +1073,22 @@ mod tests {
 
     fn single(value: &Option<Value>) -> Option<String> {
         value.as_ref().map(|v| v.single().unwrap().to_string())
+    }
+
+    #[test]
+    fn an_alias_becomes_the_host_name_ssh_would_use() {
+        let config = parse(
+            "Host dev-front1\n  Hostname my-real-host.domain.com\n\
+             Host dev-*\n  HostName %h.domain.com\n\
+             Host bad\n  HostName \"a;touch b\"\n\
+             Host no-name\n  User someone\n",
+        );
+        assert_eq!(config.host_name("dev-front1"), "my-real-host.domain.com");
+        assert_eq!(config.host_name("dev-2"), "dev-2.domain.com");
+        assert_eq!(config.host_name("no-name"), "no-name");
+        assert_eq!(config.host_name("elsewhere.com"), "elsewhere.com");
+        // Never reaches a proxy command's %h; the name then simply fails to resolve.
+        assert_eq!(config.host_name("bad"), "bad");
     }
 
     fn aliases(config: &ParsedConfig) -> Vec<String> {

@@ -43,9 +43,9 @@ use crate::commands::credentials::validate_credential_fields;
 use crate::forwards::listen_addr;
 use crate::models::{AppData, Connection, ConnectionKind, Credential, CredentialKind};
 use crate::ssh_config::{
-    display_path, expand_tilde, expand_tokens, is_unix_socket, jump_value, parse_forward_end,
-    parse_jump_hop, parse_port, uses_expansion, valid_host, HostEntry, ParsedConfig, Proxy,
-    ResolvedHost, Source, Value, MAX_FORWARDS_PER_HOST,
+    display_path, expand_host_name, expand_tilde, expand_tokens, is_unix_socket, jump_value,
+    parse_forward_end, parse_jump_hop, parse_port, uses_expansion, valid_host, HostEntry,
+    ParsedConfig, Proxy, ResolvedHost, Source, Value, MAX_FORWARDS_PER_HOST,
 };
 use crate::storage::{load_data, with_data_mut};
 
@@ -395,14 +395,6 @@ impl ServerPlan {
     fn address(&self) -> String {
         format!("{}@{}:{}", self.credential.username, self.host, self.port)
     }
-}
-
-/// `%h` and `%%` are the only tokens OpenSSH expands in `HostName`.
-fn expand_host_name(raw: &str, alias: &str) -> Result<String, String> {
-    expand_tokens(raw, |token| match token {
-        Some('h') => Ok(alias.to_string()),
-        _ => Err(format!("HostName '{raw}' uses a token SSIX cannot expand")),
-    })
 }
 
 /// What an `IdentityFile` path may refer to.
