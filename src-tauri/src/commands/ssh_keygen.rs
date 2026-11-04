@@ -286,7 +286,7 @@ fn install_public_key_with_password(
     }
 
     let target = Endpoint {
-        host: host.to_string(),
+        host: crate::ssh_config::host_name_of(host),
         port,
         username: username.to_string(),
         auth: AuthMethod::Password(password.to_string()),

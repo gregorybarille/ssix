@@ -15,6 +15,9 @@ brings it into view. Starting one that was just stopped shows Connecting until
 the previous attempt has given back its port, rather than failing to bind.
 Deleting a connection stops its forward first.
 
+The SSH server can be an alias from `~/.ssh/config`, as for any connection (see
+[Aliases when connecting](ssh-config-import.md#aliases-when-connecting)).
+
 ## Where A Forward Listens
 
 - Local and dynamic forwards listen on their **Bind Address**. Empty means

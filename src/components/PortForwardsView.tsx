@@ -6,7 +6,7 @@ import { forwardEndpoint, hopTerms, isForwardConnection } from "@/lib/sshTerms";
 import { usePortForwardsStore } from "@/store/usePortForwardsStore";
 import { Button } from "./ui/button";
 import { ConfirmDialog } from "./ConfirmDialog";
-import { Cable, ChevronDown, ChevronRight, Copy, Pencil, Play, Trash2, X } from "lucide-react";
+import { Cable, ChevronDown, ChevronRight, Copy, Pencil, Play, Square, Trash2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 export interface ForwardSession {
@@ -219,7 +219,7 @@ export function PortForwardsView({
                         data-testid={`forward-stop-${conn.id}`}
                         aria-label={`Stop forward ${conn.name}`}
                       >
-                        <X className="h-4 w-4" aria-hidden="true" />
+                        <Square className="h-4 w-4" aria-hidden="true" />
                       </Button>
                     ) : (
                       <Button

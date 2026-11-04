@@ -63,7 +63,7 @@ pub(crate) fn resolve_endpoint(
 ) -> Result<Endpoint, String> {
     let (username, auth) = resolve_credential(credentials, cred_id)?;
     Ok(Endpoint {
-        host: host.to_string(),
+        host: crate::ssh_config::host_name_of(host),
         port,
         username,
         auth,
