@@ -304,7 +304,6 @@ mod tests {
         }
     }
 
-    #[cfg(unix)]
     fn endpoint() -> Endpoint {
         Endpoint {
             host: "localhost".into(),
