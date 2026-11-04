@@ -165,7 +165,7 @@ Continuous integration (`.github/workflows/test.yml`, required on PRs):
 - Backend: `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`, `cargo test`, and a
   `git diff --exit-code src/types/generated/` check so regenerated ts-rs
   bindings are always committed, then the script tests against `server-a`
-- Scripts on Windows: the script tests on a `windows-2022` runner against the
+- Scripts on Windows: the unit tests, then the script tests on a `windows-2022` runner against the
   `docker/windows-sshd` container, once with cmd and once with PowerShell as
   the server's default shell
 - `cargo audit` via `rustsec/audit-check` for advisories in `src-tauri/Cargo.lock`. `.cargo/audit.toml` (at the repo root, where the action runs) ignores advisories for optional crates that are in the lockfile but never compiled, with the reason for each

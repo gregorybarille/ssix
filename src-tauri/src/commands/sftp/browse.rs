@@ -811,7 +811,7 @@ mod tests {
             ));
             fs::create_dir_all(&dir).unwrap();
             // macOS's temp dir sits behind a symlink, which listings resolve.
-            Self(fs::canonicalize(dir).unwrap())
+            Self(canonical_local(&dir).unwrap())
         }
         fn path(&self, name: &str) -> String {
             self.0.join(name).to_str().unwrap().to_string()

@@ -860,7 +860,10 @@ fn host_patterns(args: Result<Vec<String>, String>) -> Result<Vec<Pattern>, Stri
 /// A path as the user would write it, with the home directory as `~`.
 pub fn display_path(path: &Path, home: &Path) -> String {
     match path.strip_prefix(home) {
-        Ok(rest) => format!("~/{}", rest.display()),
+        Ok(rest) => {
+            let parts: Vec<_> = rest.iter().map(|part| part.to_string_lossy()).collect();
+            format!("~/{}", parts.join("/"))
+        }
         Err(_) => path.display().to_string(),
     }
 }
@@ -987,7 +990,11 @@ pub(crate) mod test_support {
             let dir =
                 std::env::temp_dir().join(format!("ssix-ssh-config-{}", uuid::Uuid::new_v4()));
             fs::create_dir_all(dir.join(".ssh")).unwrap();
-            Self(fs::canonicalize(dir).unwrap())
+            // Windows gives a `\\?\` path, where `/` is no separator. No home is one.
+            let dir = fs::canonicalize(dir).unwrap();
+            Self(PathBuf::from(
+                dir.to_str().unwrap().trim_start_matches(r"\\?\"),
+            ))
         }
 
         pub(crate) fn write(&self, relative: &str, content: &str) -> PathBuf {

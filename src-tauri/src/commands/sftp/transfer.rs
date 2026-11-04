@@ -1838,7 +1838,7 @@ mod tests {
                 TransferInput {
                     connection_id,
                     direction: TransferDirection::Upload,
-                    source: "/a".into(),
+                    source: std::env::temp_dir().to_string_lossy().into_owned(),
                     target_dir: "/b".into(),
                     overwrite: false,
                 },
