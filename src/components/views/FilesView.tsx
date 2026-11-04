@@ -46,7 +46,7 @@ function ConnectFailure({ error }: { error: string }) {
             variant="outline"
             size="sm"
             className="mt-2"
-            onClick={() => void trustHostKey(mismatch.host, mismatch.port)}
+            onClick={() => void trustHostKey(mismatch.host, mismatch.port, mismatch.fingerprint)}
             data-testid="files-trust-host-key"
           >
             Trust new host key

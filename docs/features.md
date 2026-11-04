@@ -116,7 +116,7 @@ Every SSH connection — direct, the jump host, the target behind it, a port for
 
 - The first time a `host:port` is seen its key is recorded in `~/.ssix/known_hosts` (OpenSSH format, so `ssh-keygen -F`/`-R` work on it).
 - SSIX asks the server for the key types it has on record first, as OpenSSH does, so a server holding several keys presents the one that can be checked.
-- If the key later differs the connection is refused, also when it is a key of a type not on record for that `host:port`: a fresh key of another type is what an attacker would present. The failure view names the host, shows the new SHA256 fingerprint and offers **Trust new host key**, which forgets every key recorded for that `host:port` and reconnects, so the new key replaces them. Use it only when you know the server was reinstalled or re-keyed.
+- If the key later differs the connection is refused, also when it is a key of a type not on record for that `host:port`: a fresh key of another type is what an attacker would present. The failure view names the host, shows the new SHA256 fingerprint and offers **Trust new host key**, which reconnects and accepts a key with that fingerprint and no other: that key replaces every key recorded for that `host:port`. If the server presents another key by then, nothing is recorded and the failure view shows the new fingerprint. Use it only when you know the server was reinstalled or re-keyed.
 - Connections time out after 10 s (TCP) / 15 s (SSH setup) instead of hanging on a dead host.
 
 ### Terminal tab keyboard shortcuts

@@ -505,25 +505,23 @@ export interface GitSyncSnapshot {
   exported_files: string[];
 }
 
-/**
- * Audit-4 Phase 4: shape returned by every git_sync action that runs a
- * single git subprocess (fetch/pull/push/commit). The store inlined
- * `{ stdout: string; stderr: string }` four times — extracting it here
- * keeps the contract documented in one place and gives the Rust side a
- * single struct to mirror when ts-rs is adopted in Phase 6.
- */
+/** What git printed for a git_sync action. */
 export interface GitSyncActionResult {
   stdout: string;
   stderr: string;
+  status: number;
 }
 
 export interface GitSyncRunResult {
   steps: string[];
-  output: {
-    stdout: string;
-    stderr: string;
-    status: number;
-  };
+  output: GitSyncActionResult;
+  /** Set when Sync stopped before pulling: the uncommitted files under `.ssix-sync/` a pull needs gone. Nothing was changed. */
+  discard_needed: string[];
+}
+
+export interface GitSyncRunInput {
+  /** The user agreed to lose uncommitted changes under `.ssix-sync/`. */
+  discard_agreed: boolean;
 }
 
 export interface ScpResult {

@@ -5,7 +5,8 @@
  * stage files into), configures the SSIX app's `git_sync_repo_path`
  * setting via the Settings UI (so the in-memory store is updated and
  * the GitSyncView fetches a fresh status), then runs the export and
- * asserts the action produced visible status.
+ * asserts the action produced visible status. Then a remote commit meets a
+ * hand edit under `.ssix-sync/`: Sync asks before discarding it.
  *
  * Earlier revisions of this spec wrote the path directly into
  * `data.json`, but that bypasses the Zustand settings store — the
@@ -16,11 +17,12 @@
  * repo); export also requires a worktree.
  */
 import { execSync } from "node:child_process";
-import { mkdtempSync, rmSync } from "node:fs";
+import { appendFileSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { waitForAppReady } from "../helpers/app.js";
 import {
+  click,
   createPasswordCredential,
   createDirectConnection,
   navigateTo,
@@ -117,5 +119,48 @@ describe("Git sync export", () => {
     });
     expect(pushed).toContain("conn-gitsync");
     expect(pushed).not.toContain("passa");
+  });
+
+  it("asks before discarding a hand edit to pull, and cancelling changes nothing", async () => {
+    const other = mkdtempSync(join(tmpdir(), "ssix-gitsync-other-"));
+    execSync(`git clone ${remote} ${other}`);
+    writeFileSync(join(other, "from-other.txt"), "x");
+    execSync("git add from-other.txt", { cwd: other });
+    execSync("git -c user.email=e2e@ssix.test -c user.name=e2e commit -m other", { cwd: other });
+    execSync("git push origin main", { cwd: other });
+    rmSync(other, { recursive: true, force: true });
+
+    const readme = join(repo, ".ssix-sync", "README.md");
+    appendFileSync(readme, "edited by hand\n");
+    const head = () => execSync("git rev-parse HEAD", { cwd: repo, encoding: "utf8" });
+    const headBefore = head();
+
+    await click(sel.gitSyncRunButton);
+    const dialog = await browser.$(sel.gitSyncDiscard);
+    await dialog.waitForExist({ timeout: 30_000 });
+    const text = await dialog.getText();
+    expect(text).toContain(".ssix-sync/README.md");
+    expect(text).toContain("only edits made by hand are lost");
+
+    await click(sel.gitSyncDiscardCancel);
+    await dialog.waitForExist({ timeout: 10_000, reverse: true });
+    expect(readFileSync(readme, "utf8")).toContain("edited by hand");
+    expect(head()).toBe(headBefore);
+    expect(await (await browser.$('[role="alert"]')).isExisting()).toBe(false);
+  });
+
+  it("agreeing discards the edit, pulls and pushes", async () => {
+    const readme = join(repo, ".ssix-sync", "README.md");
+
+    await click(sel.gitSyncRunButton);
+    await (await browser.$(sel.gitSyncDiscard)).waitForExist({ timeout: 30_000 });
+    await click(sel.gitSyncDiscardConfirm);
+    await browser.waitUntil(
+      async () => /pulled 1 commit/i.test(await (await browser.$(sel.gitSyncStatus)).getText()),
+      { timeout: 30_000, timeoutMsg: "sync did not pull after the user agreed" },
+    );
+
+    expect(readFileSync(readme, "utf8")).not.toContain("edited by hand");
+    expect(execSync("git log --format=%s main", { cwd: remote, encoding: "utf8" })).toContain("other");
   });
 });

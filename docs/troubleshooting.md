@@ -47,7 +47,7 @@ Older builds showed this as `TypeError: ... window.__TAURI_INTERNALS__ is undefi
 
 - SSIX refuses to connect when a server's host key differs from the one recorded on first use. The failure view shows the new SHA256 fingerprint.
 - That includes a key of another type, for example an Ed25519 key when an ECDSA key is on record. The message names both types. SSIX asks for the recorded type first, so this means the server did not offer that type at all: it dropped the key, or it is not the same server.
-- Confirm out of band (hosting console, admin) that the server really was reinstalled or re-keyed, then click **Trust new host key**. It replaces every key recorded for that `host:port`. If nobody changed the server, do not trust the key: the connection may be intercepted.
+- Confirm out of band (hosting console, admin) that the server really was reinstalled or re-keyed, then click **Trust new host key**. Check the fingerprint shown first: only a key with that fingerprint is accepted, and it replaces every key recorded for that `host:port`. If the key changes again before the reconnect, nothing is recorded and SSIX shows the new fingerprint with "not the key you chose to trust". If nobody changed the server, do not trust the key: the connection may be intercepted.
 - Recorded keys live in `~/.ssix/known_hosts` (OpenSSH format). `ssh-keygen -R <host> -f ~/.ssix/known_hosts` removes an entry by hand; for a non-default port use `-R '[host]:port'`.
 
 ## A Port Forward Does Not Work
@@ -81,7 +81,7 @@ Older builds showed this as `TypeError: ... window.__TAURI_INTERNALS__ is undefi
 - Confirm the configured repository path exists and contains `.git/`.
 - Confirm the configured remote is a remote name of that repository, or a URL or path. A name it does not know, such as a missing `origin`, is tried as a path and fails with "does not appear to be a git repository". An empty remote is fine: the first Sync creates the branch.
 - If one-click sync reports that the branch has diverged, rebase or merge onto the remote branch in the repository and retry. A conflict in `.ssix-sync/` can be resolved either way, because Sync exports over it.
-- If the pull is refused because of local changes, those are your own files outside `.ssix-sync/`: commit or restore them and retry. Sync discards only `.ssix-sync/`.
+- If the pull is refused because of local changes, those are your own files outside `.ssix-sync/`: commit or restore them and retry. Sync discards only `.ssix-sync/`, and only after you confirm the dialog that lists the files.
 - If push fails, inspect the returned git output in the Git Sync view.
 
 ## Credentials Seem Missing

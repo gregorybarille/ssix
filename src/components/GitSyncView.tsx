@@ -5,6 +5,7 @@ import { Input } from "./ui/input";
 import { Label } from "./ui/label";
 import { Separator } from "./ui/separator";
 import { Badge } from "./ui/badge";
+import { ConfirmDialog } from "./ConfirmDialog";
 import { useGitSyncStore } from "@/store/useGitSyncStore";
 import { GitBranch, FileDiff, WandSparkles } from "lucide-react";
 
@@ -21,6 +22,8 @@ export function GitSyncView() {
     exportSnapshot,
     commitSnapshot,
     runSync,
+    discardNeeded,
+    declineDiscard,
   } = useGitSyncStore();
 
   useEffect(() => {
@@ -35,11 +38,8 @@ export function GitSyncView() {
           Git Sync
         </h1>
         {/*
-          The toolbar exposes a single bidirectional Sync action. The
-          underlying store still implements distinct fetch / pull /
-          push primitives (used by tests and the future automation
-          surface), but the UI consolidates them into one click so
-          users don't have to reason about the order of operations.
+          A single bidirectional Sync action, so users don't have to
+          reason about the order of fetch, pull and push.
         */}
         <div className="flex items-center gap-2">
           <Button size="sm" onClick={() => void runSync()} disabled={isLoading || !status.configured} aria-busy={isLoading} data-testid="git-sync-run">
@@ -179,7 +179,7 @@ export function GitSyncView() {
 
             {/*
               Audit-3 follow-up P1#3: actionOutput is the success/info
-              banner shown after Sync/Fetch/Pull/Push/Export complete.
+              banner shown after Sync/Commit/Export complete.
               Wrap in role=status + aria-live=polite + aria-atomic=true
               so AT announces the full message on each change without
               interrupting current speech. Always-mounted (the
@@ -205,6 +205,36 @@ export function GitSyncView() {
         */}
         {error && <ErrorBanner message={error} />}
       </div>
+
+      <ConfirmDialog
+        open={discardNeeded.length > 0}
+        onOpenChange={(open) => {
+          if (!open) declineDiscard();
+        }}
+        title="Discard uncommitted snapshot changes?"
+        description={
+          <>
+            <span className="block">
+              The remote has new commits, and Sync can only pull them once these files go back to
+              their last commit:
+            </span>
+            <span className="block my-2 max-h-40 overflow-y-auto font-mono text-xs">
+              {discardNeeded.map((file) => (
+                <span key={file} className="block break-all">
+                  {file}
+                </span>
+              ))}
+            </span>
+            <span className="block">
+              Sync exports these again from SSIX&apos;s data, so only edits made by hand are lost.
+            </span>
+          </>
+        }
+        confirmLabel="Discard and sync"
+        variant="destructive"
+        onConfirm={() => runSync(true)}
+        testId="git-sync-discard"
+      />
     </div>
   );
 }

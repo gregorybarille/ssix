@@ -156,6 +156,9 @@ export const sel = {
   gitSyncExportButton: '[data-testid="git-sync-export"]',
   gitSyncRunButton: '[data-testid="git-sync-run"]',
   gitSyncStatus: '[data-testid="git-sync-status"]',
+  gitSyncDiscard: '[data-testid="git-sync-discard"]',
+  gitSyncDiscardConfirm: '[data-testid="git-sync-discard-confirm"]',
+  gitSyncDiscardCancel: '[data-testid="git-sync-discard-cancel"]',
 
   // Generate / install key dialogs
   generateKeyOpen: '[data-testid="generate-key-open"]',

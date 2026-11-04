@@ -31,6 +31,8 @@ import type { AppData as GenAppData } from "@/types/generated/AppData";
 import type { AppSettings as GenAppSettings } from "@/types/generated/AppSettings";
 import type { Connection as GenConnection } from "@/types/generated/Connection";
 import type { Credential as GenCredential } from "@/types/generated/Credential";
+import type { GitSyncRunInput as GenGitSyncRunInput } from "@/types/generated/GitSyncRunInput";
+import type { GitSyncRunResult as GenGitSyncRunResult } from "@/types/generated/GitSyncRunResult";
 import type { CredentialSecrets as GenCredentialSecrets } from "@/types/generated/CredentialSecrets";
 import type { Script as GenScript } from "@/types/generated/Script";
 import type { ScriptResult as GenScriptResult } from "@/types/generated/ScriptResult";
@@ -40,6 +42,8 @@ import type {
   Connection as HandConnection,
   Credential as HandCredential,
   CredentialSecrets as HandCredentialSecrets,
+  GitSyncRunInput as HandGitSyncRunInput,
+  GitSyncRunResult as HandGitSyncRunResult,
   Script as HandScript,
   ScriptResult as HandScriptResult,
   Snippet as HandSnippet,
@@ -328,6 +332,19 @@ describe("Phase 6a — ts-rs parity (Rust models <-> TS index.ts)", () => {
     const handResult = fieldSet(handScriptResult, ["exit_code", "exit_signal"]);
     const resultMissing = [...fieldSet(genScriptResult)].filter((f) => !handResult.has(f));
     expect(resultMissing, `Hand-written ScriptResult is missing: ${resultMissing.join(", ")}`).toEqual([]);
+  });
+
+  it("Git Sync run: the generated and hand-written shapes accept each other", () => {
+    const genResult: GenGitSyncRunResult = {
+      steps: [],
+      output: { stdout: "", stderr: "", status: 0 },
+      discard_needed: [],
+    };
+    const handResult: HandGitSyncRunResult = genResult;
+    const genInput: GenGitSyncRunInput = { discard_agreed: true };
+    const handInput: HandGitSyncRunInput = genInput;
+    expect(handResult).toBe(genResult);
+    expect(handInput).toBe(genInput);
   });
 
   it("Snippet: every generated field exists on the hand-written interface", () => {
