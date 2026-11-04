@@ -19,6 +19,7 @@ import {
   type BulkScpStep,
 } from "@/lib/bulk-actions";
 import { StatusIcon } from "./ui/status-icon";
+import { useHoldScpTarget } from "@/store/useDialogsStore";
 
 interface BulkScpDialogProps {
   open: boolean;
@@ -63,6 +64,7 @@ export function BulkScpDialog({
   const [submitted, setSubmitted] = useState(false);
   const [steps, setSteps] = useState<BulkScpStep[]>([]);
   const [running, setRunning] = useState(false);
+  useHoldScpTarget(running);
 
   const actionableCount = useMemo(
     () => connections.filter(isBulkActionable).length,

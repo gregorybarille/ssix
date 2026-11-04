@@ -5,6 +5,7 @@ import { Button } from "./ui/button";
 import { type ScpMode, ScpModeTabs, ScpPathField, ScpRecursiveCheckbox } from "./ScpFields";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "./ui/dialog";
 import { submitWithoutReset } from "@/lib/formSubmit";
+import { useHoldScpTarget } from "@/store/useDialogsStore";
 
 interface ScpDialogProps {
   open: boolean;
@@ -80,6 +81,7 @@ export function ScpDialog({ open, onOpenChange, connection }: ScpDialogProps) {
     }, initialScpState);
   // Only surface the outcome of the transfer kind currently selected, from
   // this opening of the dialog, and never while a transfer is in flight.
+  useHoldScpTarget(isSubmitting);
   const showOutcome = !isSubmitting && state.mode === mode && state.opening === opening;
   const result = showOutcome ? state.result : null;
   const error = showOutcome ? state.error : null;

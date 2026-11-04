@@ -3,6 +3,7 @@ import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { ScpDialog } from "@/components/ScpDialog";
 import { invoke } from "@/lib/tauri";
+import { useDialogsStore } from "@/store/useDialogsStore";
 
 vi.mock("@/lib/tauri", () => ({
   invoke: vi.fn(),
@@ -302,6 +303,38 @@ describe("ScpDialog result scoping", () => {
     expect(await screen.findByTestId("scp-error")).toHaveTextContent("disk full");
     await user.keyboard("{Escape}");
     expect(onOpenChange).toHaveBeenCalledWith(false);
+  });
+
+  it("keeps its target until the transfer ends, so its outcome is shown", async () => {
+    let finish = (_result: unknown) => {};
+    vi.mocked(invoke).mockReturnValueOnce(
+      new Promise((resolve) => {
+        finish = resolve;
+      }),
+    );
+    const connection = (id: string, name: string) =>
+      ({ id, name, host: "host", port: 22, type: "direct" }) as never;
+    const Bound = () => {
+      const open = useDialogsStore((s) => s.scpOpen);
+      const target = useDialogsStore((s) => s.scpConnection);
+      return <ScpDialog open={open} onOpenChange={vi.fn()} connection={target} />;
+    };
+    useDialogsStore.getState().openScp(connection("c1", "prod"));
+    render(<Bound />);
+    fireEvent.change(screen.getByTestId("scp-local-path"), { target: { value: "/tmp/up.txt" } });
+    fireEvent.click(screen.getByTestId("scp-upload"));
+    await waitFor(() => expect(screen.getByTestId("scp-upload")).toBeDisabled());
+
+    useDialogsStore.getState().openScp(connection("c2", "staging"));
+    useDialogsStore.getState().openBulkScp("group", [connection("c2", "staging")]);
+    expect(useDialogsStore.getState().scpConnection?.id).toBe("c1");
+    expect(useDialogsStore.getState().bulkScpOpen).toBe(false);
+
+    finish({ local_path: "/tmp/up.txt", remote_path: "/srv/up.txt", bytes: 12, entries: 1 });
+    expect(await screen.findByTestId("scp-status")).toHaveTextContent("Transferred 12 bytes");
+
+    useDialogsStore.getState().openScp(connection("c2", "staging"));
+    expect(useDialogsStore.getState().scpConnection?.id).toBe("c2");
   });
 
   it("hides the previous transfer's status once the mode changes", async () => {

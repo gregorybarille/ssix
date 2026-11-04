@@ -72,5 +72,6 @@ rather than written through, and the replaced file's owner is not kept.
 - No progress bar yet
 - No cancel action yet: the dialog stays open until a running transfer ends, whatever
   closes it otherwise (Close, Escape), so its result or error is always shown
+- While a transfer runs, opening SCP for another connection or a group does nothing, so the running transfer keeps its dialog and shows its result.
 - No advanced sync semantics such as delta transfer
 - Modification times are not preserved
