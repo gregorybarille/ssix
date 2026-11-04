@@ -2,7 +2,7 @@
 
 ## Prerequisites
 
-- Node.js 22.12+ (CI and the e2e Docker image use Node 24) for frontend tooling and npm commands in this guide (`npm run tauri dev`, `npm run build`, and `npm test`). Vitest 5 requires `^22.12 || ^24 || >=26`; concurrently 10, jest-dom 7 and WebdriverIO 10 require 22+.
+- Node.js 26 LTS, as used by CI and the e2e Docker image, for frontend tooling and npm commands in this guide (`npm run tauri dev`, `npm run build`, and `npm test`). Earlier versions are not tested.
 - Rust stable
 - Perl, to build the vendored OpenSSL (on Windows, Strawberry Perl on `PATH`)
 - Tauri CLI

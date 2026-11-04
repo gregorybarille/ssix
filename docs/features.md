@@ -37,8 +37,9 @@ the jump host, or a port forward's SSH server — through a local
 command instead of a TCP connection, like `ProxyCommand` in
 `ssh_config`. SSIX runs the command (`/bin/sh -c` on macOS and Linux,
 `cmd.exe /S /C` on Windows) and speaks SSH over its stdin and stdout.
-`%h`, `%p` and `%r` expand to the hop's host, port and user, and `%%` to
-`%`; other tokens are refused when the connection is saved. A host or
+`%h`, `%p` and `%r` expand to the hop's host (after any
+[`~/.ssh/config` alias](ssh-config-import.md#aliases-when-connecting)), port
+and user, and `%%` to `%`; other tokens are refused when the connection is saved. A host or
 user containing anything but letters, digits and `. - _ : @` is refused
 rather than pasted into the command. Lines the command prints on stderr
 appear in the Logs view (source `proxy`), and the command and whatever it
@@ -53,7 +54,7 @@ distribution needs `nc` (`netcat-openbsd` on Debian and Ubuntu). SCP and
 port forwards use the proxy too; the copied `ssh` command carries it as
 `-o ProxyCommand=…`.
 
-Hosts in `~/.ssh/config` can be imported: see [Import from SSH config](ssh-config-import.md).
+A host can be an alias from `~/.ssh/config`: when connecting, SSIX uses the `HostName` that applies to it, as `ssh` does. Whole hosts, with their port, user, key and forwards, can be imported: see [Import from SSH config](ssh-config-import.md).
 
 Connections can be filed in nested folders and shown as a tree: see [Folders](folders.md).
 
