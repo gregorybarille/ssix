@@ -9,6 +9,7 @@
  *   - a refused save deletes the inline credential it created;
  *   - a clone keeps every field of its form;
  *   - a refused clone deletes the inline credential its form created;
+ *   - deleting a connection with an inline credential asks once, not twice;
  *   - a credential that connections use cannot be deleted.
  */
 import { waitForAppReady } from "../helpers/app.js";
@@ -224,6 +225,34 @@ describe("Connections CRUD", () => {
       "conn-a-other",
       "conn-a-clone-inline",
       "cred-02-clone",
+    );
+  });
+
+  it("deletes a connection with an inline credential after one confirmation", async () => {
+    await navigateTo("connections");
+    await click(sel.addConnectionButton);
+    await fill(sel.connectionFormName, "conn-02-inline-delete");
+    await pickOption(sel.connectionFormType, sel.connectionFormKindDirect);
+    await fill(sel.connectionFormHost, TARGETS.a.host);
+    await fill(sel.connectionFormPort, String(TARGETS.a.sshPort));
+    await click(sel.connectionFormAuthPassword);
+    await fill(sel.connectionFormInlineUsername, TARGETS.a.user);
+    await fill(sel.connectionFormInlinePassword, TARGETS.a.password);
+    await saveConnectionForm();
+
+    await ensureConnectionRowsLayout();
+    const row = await browser.$(sel.connectionRowByName("conn-02-inline-delete"));
+    await row.waitForExist({ timeout: 10_000 });
+    const deleteButton = await row.$(sel.connectionRowDeleteButton);
+    await deleteButton.waitForClickable({ timeout: 10_000 });
+    await deleteButton.click();
+    await clickDialogFooterButton(sel.confirmDeleteConnectionConfirm);
+
+    // Looked up afresh on each try: a lookup that lands mid-removal throws a stale element error.
+    await browser.waitUntil(
+      async () =>
+        !(await (await browser.$(sel.connectionRowByName("conn-02-inline-delete"))).isExisting()),
+      { timeout: 10_000, timeoutMsg: "One confirmation should delete the connection" },
     );
   });
 

@@ -57,7 +57,6 @@ pub fn run() {
             commands::connections::update_connection,
             commands::connections::delete_connection,
             commands::connections::clone_connection,
-            commands::connections::get_orphan_private_credential,
             commands::backup::list_backups,
             commands::backup::create_backup,
             commands::backup::restore_backup,

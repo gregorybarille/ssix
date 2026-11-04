@@ -86,9 +86,6 @@ interface DialogsState {
   bulkScpConnections: Connection[];
   bulkScpLabel: string;
 
-  // Orphaned-private-credential prompt when deleting a connection
-  orphanCredDialog: { connId: string; credId: string } | null;
-
   // Confirmation dialogs
   confirmDeleteConn: Connection | null;
   confirmDeleteCred: Credential | null;
@@ -132,9 +129,6 @@ interface DialogsState {
   openBulkScp: (label: string, connections: Connection[]) => void;
   setBulkScpOpen: (open: boolean) => void;
 
-  setOrphanCredDialog: (
-    payload: { connId: string; credId: string } | null,
-  ) => void;
   setConfirmDeleteConn: (conn: Connection | null) => void;
   setConfirmDeleteCred: (cred: Credential | null) => void;
   /** Ask about closing this, once, and after any question already waiting. */
@@ -172,7 +166,6 @@ export const useDialogsStore = create<DialogsState>((set, get) => ({
   bulkScpOpen: false,
   bulkScpConnections: [],
   bulkScpLabel: "",
-  orphanCredDialog: null,
   confirmDeleteConn: null,
   confirmDeleteCred: null,
   confirmClosePane: null,
@@ -231,7 +224,6 @@ export const useDialogsStore = create<DialogsState>((set, get) => ({
         : { bulkScpOpen: false, bulkScpConnections: [], bulkScpLabel: "" },
     ),
 
-  setOrphanCredDialog: (payload) => set({ orphanCredDialog: payload }),
   setConfirmDeleteConn: (conn) => set({ confirmDeleteConn: conn }),
   setConfirmDeleteCred: (cred) => set({ confirmDeleteCred: cred }),
   askClosePane: (target) =>

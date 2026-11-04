@@ -52,6 +52,7 @@ export const sel = {
   addConnectionButton: '[data-testid="add-connection-button"]',
   // Scoped under a connection row (see connectionRowByName).
   connectionRowCloneButton: '[data-testid^="clone-connection-"]',
+  connectionRowDeleteButton: '[data-testid^="delete-connection-"]',
   connectionSearchInput: '[data-testid="connection-search-input"]',
   connectionSearchClear: '[data-testid="connection-search-clear"]',
 
