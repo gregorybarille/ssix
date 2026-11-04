@@ -46,7 +46,7 @@ jobs:
           workspaces: "src-tauri -> target"
       - run: |
           sudo apt-get update -q
-          sudo apt-get install -y -q libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev patchelf libssl-dev
+          sudo apt-get install -y -q libwebkit2gtk-4.1-dev build-essential curl wget file libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev
       - run: npm ci
       - run: npm run tauri build -- --bundles deb,rpm,appimage
       - run: ls -l src-tauri/target/release/ssix src-tauri/target/release/bundle/*/ | grep -E 'ssix'
