@@ -110,7 +110,13 @@ export function ScpDialog({ open, onOpenChange, connection }: ScpDialogProps) {
       : null;
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog
+      open={open}
+      onOpenChange={(next) => {
+        // Escape too: closing now would lose the transfer's outcome.
+        if (!isSubmitting) onOpenChange(next);
+      }}
+    >
       <DialogContent data-testid="scp-dialog">
         <DialogHeader>
           <DialogTitle>SCP {connection ? `for ${connection.name}` : ""}</DialogTitle>

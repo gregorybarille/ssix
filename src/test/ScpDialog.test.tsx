@@ -274,6 +274,36 @@ describe("ScpDialog result scoping", () => {
     await waitFor(() => expect(screen.queryByTestId("scp-status")).toBeNull());
   });
 
+  it("stays open on Escape until the transfer ends, so its outcome is shown", async () => {
+    const user = userEvent.setup();
+    const { invoke } = await import("@/lib/tauri");
+    let fail = (_reason: string) => {};
+    vi.mocked(invoke).mockReturnValueOnce(
+      new Promise((_resolve, reject) => {
+        fail = reject;
+      }),
+    );
+    const onOpenChange = vi.fn();
+    render(
+      <ScpDialog
+        open
+        onOpenChange={onOpenChange}
+        connection={{ id: "c1", name: "prod", host: "host", port: 22, type: "direct" }}
+      />,
+    );
+    fireEvent.change(screen.getByTestId("scp-local-path"), { target: { value: "/tmp/up.txt" } });
+    fireEvent.click(screen.getByTestId("scp-upload"));
+    await waitFor(() => expect(screen.getByTestId("scp-upload")).toBeDisabled());
+
+    await user.keyboard("{Escape}");
+    expect(onOpenChange).not.toHaveBeenCalled();
+
+    fail("disk full");
+    expect(await screen.findByTestId("scp-error")).toHaveTextContent("disk full");
+    await user.keyboard("{Escape}");
+    expect(onOpenChange).toHaveBeenCalledWith(false);
+  });
+
   it("hides the previous transfer's status once the mode changes", async () => {
     const user = userEvent.setup();
     const { invoke } = await import("@/lib/tauri");

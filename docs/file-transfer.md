@@ -70,6 +70,7 @@ rather than written through, and the replaced file's owner is not kept.
 ## Current Limitations
 
 - No progress bar yet
-- No cancel action yet
+- No cancel action yet: the dialog stays open until a running transfer ends, whatever
+  closes it otherwise (Close, Escape), so its result or error is always shown
 - No advanced sync semantics such as delta transfer
 - Modification times are not preserved

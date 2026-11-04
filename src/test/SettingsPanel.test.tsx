@@ -328,7 +328,8 @@ describe("SettingsPanel", () => {
     const describedBy = toggle.getAttribute("aria-describedby");
     expect(describedBy).toBeTruthy();
     const description = document.getElementById(describedBy!);
-    expect(description?.textContent).toMatch(/ctrl\+shift\+c\s+elsewhere, still copies/i);
+    expect(description?.textContent).toMatch(/anywhere in the app/i);
+    expect(description?.textContent).toMatch(/fields you can type in is never\s+copied/i);
   });
 
   /*

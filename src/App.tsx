@@ -22,6 +22,7 @@ import { useSnippetsStore } from "./store/useSnippetsStore";
 import { useTerminalsStore } from "./store/useTerminalsStore";
 import { runningForwardCount, usePortForwardsStore } from "./store/usePortForwardsStore";
 import { useApplySettings } from "./hooks/useApplySettings";
+import { useCopyOnSelect } from "./hooks/useCopyOnSelect";
 import { TABLE_SHORTCUTS, useGlobalShortcuts } from "./hooks/useGlobalShortcuts";
 import { useScreenshotToast } from "./hooks/useScreenshotToast";
 import { useShallow } from "zustand/react/shallow";
@@ -132,10 +133,11 @@ function App() {
   const connect = useTerminalsStore((s) => s.connect);
   const closePane = useTerminalsStore((s) => s.closePane);
   const closeTab = useTerminalsStore((s) => s.closeTab);
-  const forwardSessions = usePortForwardsStore((s) => s.sessions);
+  const forwardCount = usePortForwardsStore((s) => runningForwardCount(s.sessions));
   const stopForward = usePortForwardsStore((s) => s.stopForward);
 
   useApplySettings(previewSettings ?? settings);
+  useCopyOnSelect();
 
   useEffect(() => {
     if (view !== "settings" && previewSettings) {
@@ -375,7 +377,7 @@ function App() {
             active={view}
             onNavigate={(v) => setView(v)}
             terminalCount={totalShellSessions}
-            forwardCount={runningForwardCount(forwardSessions)}
+            forwardCount={forwardCount}
             gitPending={gitPending}
           />
 
@@ -428,7 +430,6 @@ function App() {
 
                 {view === "forwards" && (
                   <PortForwardsView
-                    sessions={forwardSessions}
                     connections={connections}
                     credentials={credentials}
                     onCloseSession={stopForward}

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useRef } from "react";
+import { type RefObject, useCallback, useEffect, useLayoutEffect, useRef } from "react";
 import { Terminal as XTerm } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { WebglAddon } from "@xterm/addon-webgl";
@@ -52,10 +52,29 @@ export interface TerminalPasteDetail {
   sessionId?: string;
 }
 
+/**
+ * GPU rendering when the WebView offers WebGL; the DOM renderer stays in place
+ * otherwise. A webview keeps about 16 contexts and takes the oldest away for a new
+ * one: the DOM renderer takes over then too, and `lost` says a new one is wanted.
+ */
+function loadWebglRenderer(term: XTerm, lost: RefObject<boolean>) {
+  try {
+    const webgl = new WebglAddon();
+    webgl.onContextLoss(() => {
+      webgl.dispose();
+      lost.current = true;
+    });
+    term.loadAddon(webgl);
+  } catch {
+    // WebGL unavailable — DOM renderer.
+  }
+}
+
 export function Terminal({ sessionId, isVisible, onDisconnect, settings, connection }: TerminalProps) {
   const termRef = useRef<HTMLDivElement>(null);
   const xtermRef = useRef<XTerm | null>(null);
   const fitAddonRef = useRef<FitAddon | null>(null);
+  const webglLostRef = useRef(false);
   // Keep `onDisconnect` in a ref so the listener registered inside the
   // [sessionId]-deps effect always calls the latest callback.
   const onDisconnectRef = useRef(onDisconnect);
@@ -105,6 +124,11 @@ export function Terminal({ sessionId, isVisible, onDisconnect, settings, connect
       term.textarea?.blur();
       return;
     }
+    // Only on being shown, so terminals on screen cannot keep taking each other's.
+    if (webglLostRef.current) {
+      webglLostRef.current = false;
+      loadWebglRenderer(term, webglLostRef);
+    }
     if (endedWhileHiddenRef.current) {
       endedWhileHiddenRef.current = false;
       onDisconnectRef.current();
@@ -150,21 +174,17 @@ export function Terminal({ sessionId, isVisible, onDisconnect, settings, connect
       fontSize,
       fontFamily,
       theme,
+      // A right-click pastes. On macOS xterm would select the word under the mouse
+      // first, and auto-copy would put that word on the clipboard the paste reads.
+      rightClickSelectsWord: false,
     });
 
     const fitAddon = new FitAddon();
     term.loadAddon(fitAddon);
     term.open(termRef.current);
 
-    // GPU rendering when the WebView offers WebGL; the DOM renderer stays
-    // in place otherwise (and takes over again if the context is lost).
-    try {
-      const webgl = new WebglAddon();
-      webgl.onContextLoss(() => webgl.dispose());
-      term.loadAddon(webgl);
-    } catch {
-      // WebGL unavailable — DOM renderer.
-    }
+    // Before the first fit: the two renderers size their cells differently.
+    loadWebglRenderer(term, webglLostRef);
 
     xtermRef.current = term;
     fitAddonRef.current = fitAddon;

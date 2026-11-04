@@ -143,6 +143,7 @@ export function CredentialForm({
   // the effect writes into state so it never lags a render behind.
   const baselineRef = useRef<string>("");
   useEffect(() => {
+    secretsBaselineRef.current = "";
     const init = initialCredentialState(credential, null);
     setName(init.name);
     setUsername(init.username);
