@@ -509,15 +509,19 @@ export interface GitSyncSnapshot {
 export interface GitSyncActionResult {
   stdout: string;
   stderr: string;
+  status: number;
 }
 
 export interface GitSyncRunResult {
   steps: string[];
-  output: {
-    stdout: string;
-    stderr: string;
-    status: number;
-  };
+  output: GitSyncActionResult;
+  /** Set when Sync stopped before pulling: the uncommitted files under `.ssix-sync/` a pull needs gone. Nothing was changed. */
+  discard_needed: string[];
+}
+
+export interface GitSyncRunInput {
+  /** The user agreed to lose uncommitted changes under `.ssix-sync/`. */
+  discard_agreed: boolean;
 }
 
 export interface ScpResult {

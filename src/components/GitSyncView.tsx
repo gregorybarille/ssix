@@ -5,6 +5,7 @@ import { Input } from "./ui/input";
 import { Label } from "./ui/label";
 import { Separator } from "./ui/separator";
 import { Badge } from "./ui/badge";
+import { ConfirmDialog } from "./ConfirmDialog";
 import { useGitSyncStore } from "@/store/useGitSyncStore";
 import { GitBranch, FileDiff, WandSparkles } from "lucide-react";
 
@@ -21,6 +22,8 @@ export function GitSyncView() {
     exportSnapshot,
     commitSnapshot,
     runSync,
+    discardNeeded,
+    declineDiscard,
   } = useGitSyncStore();
 
   useEffect(() => {
@@ -202,6 +205,36 @@ export function GitSyncView() {
         */}
         {error && <ErrorBanner message={error} />}
       </div>
+
+      <ConfirmDialog
+        open={discardNeeded.length > 0}
+        onOpenChange={(open) => {
+          if (!open) declineDiscard();
+        }}
+        title="Discard uncommitted snapshot changes?"
+        description={
+          <>
+            <span className="block">
+              The remote has new commits, and Sync can only pull them once these files go back to
+              their last commit:
+            </span>
+            <span className="block my-2 max-h-40 overflow-y-auto font-mono text-xs">
+              {discardNeeded.map((file) => (
+                <span key={file} className="block break-all">
+                  {file}
+                </span>
+              ))}
+            </span>
+            <span className="block">
+              Sync exports these again from SSIX&apos;s data, so only edits made by hand are lost.
+            </span>
+          </>
+        }
+        confirmLabel="Discard and sync"
+        variant="destructive"
+        onConfirm={() => runSync(true)}
+        testId="git-sync-discard"
+      />
     </div>
   );
 }

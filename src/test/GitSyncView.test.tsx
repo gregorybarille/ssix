@@ -26,6 +26,7 @@ describe("GitSyncView", () => {
       exportSnapshot: vi.fn().mockResolvedValue({ repo_path: "/tmp/repo", exported_files: [] }),
       commitSnapshot: vi.fn().mockResolvedValue(undefined),
       runSync: vi.fn().mockResolvedValue(undefined),
+      discardNeeded: [],
     });
   });
 
@@ -47,6 +48,43 @@ describe("GitSyncView", () => {
     render(<GitSyncView />);
     fireEvent.click(screen.getByRole("button", { name: /^sync$/i }));
     await waitFor(() => expect(runSync).toHaveBeenCalledTimes(1));
+  });
+
+  it("asks before discarding, naming each file and what is lost", () => {
+    useGitSyncStore.setState({ discardNeeded: [".ssix-sync/README.md", ".ssix-sync/mine.txt"] });
+    render(<GitSyncView />);
+    const dialog = screen.getByTestId("git-sync-discard");
+    expect(dialog).toHaveTextContent(".ssix-sync/README.md");
+    expect(dialog).toHaveTextContent(".ssix-sync/mine.txt");
+    expect(dialog).toHaveTextContent("only edits made by hand are lost");
+  });
+
+  it("shows no dialog while nothing needs discarding", () => {
+    render(<GitSyncView />);
+    expect(screen.queryByTestId("git-sync-discard")).toBeNull();
+  });
+
+  it("confirming reruns Sync with the agreement", async () => {
+    const runSync = vi.fn().mockImplementation(async () => {
+      useGitSyncStore.setState({ discardNeeded: [] });
+    });
+    useGitSyncStore.setState({ runSync, discardNeeded: [".ssix-sync/README.md"] });
+    render(<GitSyncView />);
+    fireEvent.click(screen.getByTestId("git-sync-discard-confirm"));
+    await waitFor(() => expect(screen.queryByTestId("git-sync-discard")).toBeNull());
+    expect(runSync).toHaveBeenCalledTimes(1);
+    expect(runSync).toHaveBeenCalledWith(true);
+  });
+
+  it("cancelling closes the dialog without syncing or an error", async () => {
+    const runSync = vi.fn().mockResolvedValue(undefined);
+    useGitSyncStore.setState({ runSync, discardNeeded: [".ssix-sync/README.md"] });
+    render(<GitSyncView />);
+    fireEvent.click(screen.getByTestId("git-sync-discard-cancel"));
+    await waitFor(() => expect(screen.queryByTestId("git-sync-discard")).toBeNull());
+    expect(runSync).not.toHaveBeenCalled();
+    expect(useGitSyncStore.getState().error).toBeNull();
+    expect(screen.queryByRole("alert")).toBeNull();
   });
 
   it("does not render separate Fetch / Pull / Push toolbar buttons", () => {
