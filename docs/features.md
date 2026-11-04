@@ -41,8 +41,10 @@ command instead of a TCP connection, like `ProxyCommand` in
 `%`; other tokens are refused when the connection is saved. A host or
 user containing anything but letters, digits and `. - _ : @` is refused
 rather than pasted into the command. Lines the command prints on stderr
-appear in the Logs view (source `proxy`), and the command is stopped when
-the session closes.
+appear in the Logs view (source `proxy`), and the command and whatever it
+started are stopped when the session closes. On macOS the command's `PATH`
+ends with `/opt/homebrew/bin` and `/usr/local/bin`, which an app started
+from Finder would otherwise not have.
 
 On Windows the **Through WSL** button fills in `wsl.exe -e nc %h %p`,
 which connects from inside the default WSL distribution, so SSIX reaches

@@ -28,6 +28,7 @@ Older builds showed this as `TypeError: ... window.__TAURI_INTERNALS__ is undefi
 ## Proxy Command Or WSL Connection Fails
 
 - Look in the Logs view for `proxy` entries: they are what the command printed on stderr (for example `nc: command not found`).
+- On macOS, an SSIX started from Finder does not get the `PATH` your shell sets up. SSIX adds `/opt/homebrew/bin` and `/usr/local/bin` after what it has. A tool anywhere else (`~/.local/bin`, for example) needs its full path in the command.
 - For **Through WSL**, check `wsl.exe -e nc -h` works in a Windows terminal, and install `netcat-openbsd` in the distribution if it does not.
 - Set the connection's verbosity to -v: the Logs view then shows the expanded command that was run.
 

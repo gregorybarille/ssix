@@ -6,8 +6,9 @@
 //! `ssh2` needs a socket, so the command is bridged to a loopback
 //! connection: one thread copies the socket to the child's stdin, another
 //! the child's stdout to the socket, and a third logs its stderr. The child
-//! is killed when the SSH session closes its end.
+//! and whatever it started are killed when the SSH session closes its end.
 
+use std::ffi::OsString;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{Shutdown, TcpListener, TcpStream};
 use std::process::{Child, Command, Stdio};
@@ -16,6 +17,9 @@ use std::thread;
 use crate::ssh::Endpoint;
 use crate::ssh_config::expand_tokens;
 use crate::ssh_debug::SshDebug;
+
+#[cfg(windows)]
+const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
 /// Characters a host or user name may contain to be put in a command line
 /// as-is. Anything else (spaces, quotes, `;`, `$`…) is refused rather than
@@ -60,22 +64,67 @@ pub fn expand(template: &str, host: &str, port: u16, user: &str) -> Result<Strin
     })
 }
 
+/// A proxy command's `PATH` on macOS. An app started from Finder gets launchd's
+/// short one, without Homebrew, so a command that works in Terminal is not found.
+/// What is there stays first, so this never changes which program a name means.
+fn path_with_homebrew(path: Option<OsString>) -> OsString {
+    let mut path = path
+        .filter(|path| !path.is_empty())
+        .unwrap_or_else(|| "/usr/bin:/bin:/usr/sbin:/sbin".into());
+    path.push(":/opt/homebrew/bin:/usr/local/bin");
+    path
+}
+
 #[cfg(unix)]
 fn shell(command: &str) -> Command {
+    use std::os::unix::process::CommandExt;
     let mut cmd = Command::new("/bin/sh");
-    cmd.arg("-c").arg(command);
+    // Its own group, so `kill_tree` reaches a pipeline as well as the shell.
+    cmd.arg("-c").arg(command).process_group(0);
     cmd
 }
 
 #[cfg(windows)]
 fn shell(command: &str) -> Command {
     use std::os::windows::process::CommandExt;
-    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
     let mut cmd = Command::new("cmd.exe");
     // `/S /C "…"` makes cmd take the line verbatim, whatever its quotes.
     cmd.raw_arg(format!("/S /C \"{}\"", command))
         .creation_flags(CREATE_NO_WINDOW);
     cmd
+}
+
+/// Kill the group `shell` made. `spawn` fails if the group could not be made, so
+/// its id is the child's pid: never ours, and no one else's until `stop` reaps the
+/// child. A group already gone only makes `kill` return an error, ignored here.
+/// The guard is because 0 would mean our own group and -1 every process.
+#[cfg(unix)]
+fn kill_tree(child: &Child) {
+    if let Ok(pid @ 2..) = libc::pid_t::try_from(child.id()) {
+        // SAFETY: `kill` takes plain integers and touches no memory of ours.
+        unsafe { libc::kill(-pid, libc::SIGKILL) };
+    }
+}
+
+/// Killing `cmd.exe` alone would leave "Through WSL"'s `wsl.exe` and `nc` running.
+/// The handle `child` holds keeps the pid from going to anyone else.
+#[cfg(windows)]
+fn kill_tree(child: &Child) {
+    use std::os::windows::process::CommandExt;
+    let _ = Command::new("taskkill")
+        .args(["/T", "/F", "/PID", &child.id().to_string()])
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .creation_flags(CREATE_NO_WINDOW)
+        .status();
+}
+
+/// End the command and what it started. Reaping comes last, as `kill_tree` needs.
+fn stop(mut child: Child) {
+    kill_tree(&child);
+    let _ = child.kill();
+    let _ = child.wait();
 }
 
 /// A connected loopback pair whose far end is accepted from our own
@@ -110,7 +159,11 @@ pub(crate) fn connect(
 ) -> Result<TcpStream, String> {
     let command = expand(template, &endpoint.host, endpoint.port, &endpoint.username)?;
     debug.at(1, || format!("Executing proxy command: {}", command));
-    let mut child = shell(&command)
+    let mut cmd = shell(&command);
+    if cfg!(target_os = "macos") {
+        cmd.env("PATH", path_with_homebrew(std::env::var_os("PATH")));
+    }
+    let child = cmd
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -119,8 +172,7 @@ pub(crate) fn connect(
     let (near, far) = match loopback_pair() {
         Ok(pair) => pair,
         Err(e) => {
-            let _ = child.kill();
-            let _ = child.wait();
+            stop(child);
             return Err(e);
         }
     };
@@ -132,11 +184,11 @@ fn pump(mut child: Child, far: TcpStream, addr: String) {
     let (Some(mut stdin), Some(mut stdout), Some(stderr)) =
         (child.stdin.take(), child.stdout.take(), child.stderr.take())
     else {
-        let _ = child.kill();
+        stop(child);
         return;
     };
     let Ok(mut to_socket) = far.try_clone() else {
-        let _ = child.kill();
+        stop(child);
         return;
     };
 
@@ -183,8 +235,7 @@ fn pump(mut child: Child, far: TcpStream, addr: String) {
         }
         drop(stdin);
         let _ = from_socket.shutdown(Shutdown::Both);
-        let _ = child.kill();
-        let _ = child.wait();
+        stop(child);
     });
 }
 
@@ -199,7 +250,13 @@ mod tests {
         let mut got = [0u8; 1];
         far.read_exact(&mut got).unwrap();
         assert_eq!(&got, b"x");
-        assert!(TcpStream::connect(near.peer_addr().unwrap()).is_err());
+        // A process another test is starting can hold the listener for a moment.
+        let port = near.peer_addr().unwrap();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while TcpStream::connect(port).is_ok() && std::time::Instant::now() < deadline {
+            thread::sleep(std::time::Duration::from_millis(20));
+        }
+        assert!(TcpStream::connect(port).is_err());
     }
 
     #[test]
@@ -232,18 +289,88 @@ mod tests {
         assert!(expand("nc %h %p", "::1", 22, "u").is_ok());
     }
 
-    #[cfg(unix)]
     #[test]
-    fn bridges_the_command_stdio_to_a_socket() {
-        let endpoint = Endpoint {
+    fn homebrew_comes_after_the_path_already_there() {
+        assert_eq!(
+            path_with_homebrew(Some("/first:/usr/bin".into())),
+            OsString::from("/first:/usr/bin:/opt/homebrew/bin:/usr/local/bin")
+        );
+        // Homebrew alone would lose the system's own tools.
+        for missing in [None, Some(OsString::new())] {
+            assert_eq!(
+                path_with_homebrew(missing),
+                OsString::from("/usr/bin:/bin:/usr/sbin:/sbin:/opt/homebrew/bin:/usr/local/bin")
+            );
+        }
+    }
+
+    #[cfg(unix)]
+    fn endpoint() -> Endpoint {
+        Endpoint {
             host: "localhost".into(),
             port: 22,
             username: "me".into(),
             auth: crate::ssh::AuthMethod::Password(String::new()),
             proxy_command: None,
-        };
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn a_proxy_command_runs_with_homebrew_on_its_path() {
+        let mut sock = connect("echo \"$PATH\"", &endpoint(), &SshDebug::new(0, "t")).unwrap();
+        let mut got = String::new();
+        sock.read_to_string(&mut got).unwrap();
+        assert!(got.contains("/opt/homebrew/bin:/usr/local/bin"), "{got}");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn closing_the_socket_ends_all_of_a_compound_command() {
+        // A pipeline, so the shell cannot `exec` its way out, and it says who `sleep` is.
+        let sock = connect(
+            "{ sleep 300 & echo $!; wait; } | cat",
+            &endpoint(),
+            &SshDebug::new(0, "t"),
+        )
+        .unwrap();
+        sock.set_read_timeout(Some(std::time::Duration::from_secs(10)))
+            .unwrap();
+        let mut line = String::new();
+        BufReader::new(&sock).read_line(&mut line).unwrap();
+        let sleep: libc::pid_t = line.trim().parse().unwrap();
+        // SAFETY: signal 0 only asks whether the process exists.
+        let alive = || unsafe { libc::kill(sleep, 0) } == 0;
+        assert!(alive());
+        drop(sock);
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        while alive() && std::time::Instant::now() < deadline {
+            thread::sleep(std::time::Duration::from_millis(20));
+        }
+        assert!(!alive(), "sleep {sleep} outlived the session");
+    }
+
+    /// If this reached the wrong group, the test run itself would die.
+    #[cfg(unix)]
+    #[test]
+    fn stopping_a_command_that_already_exited_is_harmless() {
+        let mut child = shell("exit 0").stdout(Stdio::piped()).spawn().unwrap();
+        // End of its output, and it is left unreaped, as `pump` leaves it.
+        let mut output = Vec::new();
+        child
+            .stdout
+            .take()
+            .unwrap()
+            .read_to_end(&mut output)
+            .unwrap();
+        stop(child);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn bridges_the_command_stdio_to_a_socket() {
         // `cat` echoes what the SSH side writes.
-        let mut sock = connect("cat", &endpoint, &SshDebug::new(0, "t")).unwrap();
+        let mut sock = connect("cat", &endpoint(), &SshDebug::new(0, "t")).unwrap();
         sock.write_all(b"ping").unwrap();
         let mut got = [0u8; 4];
         sock.read_exact(&mut got).unwrap();
@@ -253,14 +380,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn a_command_that_exits_closes_the_socket() {
-        let endpoint = Endpoint {
-            host: "localhost".into(),
-            port: 22,
-            username: "me".into(),
-            auth: crate::ssh::AuthMethod::Password(String::new()),
-            proxy_command: None,
-        };
-        let mut sock = connect("printf SSH-2.0-x", &endpoint, &SshDebug::new(0, "t")).unwrap();
+        let mut sock = connect("printf SSH-2.0-x", &endpoint(), &SshDebug::new(0, "t")).unwrap();
         let mut got = String::new();
         sock.read_to_string(&mut got).unwrap();
         assert_eq!(got, "SSH-2.0-x");
