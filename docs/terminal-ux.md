@@ -16,6 +16,11 @@ come back.
 - Output that arrives meanwhile lands in the scrollback.
 - It keeps its size. A hidden pane has no size of its own, so a terminal off
   screen is not fitted and sends the server no resize. It refits when shown.
+- It gives up its WebGL renderer and gets a new one when shown, so any number of
+  tabs can be open: a webview keeps about 16 WebGL contexts and would take the
+  oldest away from a terminal still using it. Scrollback, selection and scroll
+  position are not part of the renderer. The cost is about one blank frame as
+  the terminal comes back.
 - It holds no keyboard. Keys typed in the view that replaced it stay there, and
   shortcuts do not reach it.
 - When it comes back it takes the keyboard again, unless a side panel has it or a
@@ -186,6 +191,6 @@ if they differ.
 
 Extensions see a terminal once it exists, and cannot change how it is mounted.
 So `Terminal.tsx` itself holds what depends on visibility: fitting, focus, refusing
-keys off screen, the deferred question about an ended shell, and applying the
-look. It also acts on the clipboard keys, which `clipboardKeyAction` chooses, and calls the `onKey` hook, which is how `terminalSearch` keeps its shortcut
+keys off screen, the WebGL renderer, the deferred question about an ended shell, and
+applying the look. It also acts on the clipboard keys, which `clipboardKeyAction` chooses, and calls the `onKey` hook, which is how `terminalSearch` keeps its shortcut
 from xterm: xterm handles a key before the window's shortcut listener sees it.

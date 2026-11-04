@@ -17,6 +17,7 @@ const mocks = vi.hoisted(() => ({
     write: (bytes: Uint8Array) => void;
     onEvent: (event: { kind: string; message?: string }) => void;
   },
+  webgl: [] as { disposed: boolean }[],
   terms: [] as {
     options: Record<string, unknown>;
     keyHandler: (event: KeyboardEvent) => boolean;
@@ -41,8 +42,14 @@ vi.mock("@xterm/addon-fit", () => ({
 }));
 vi.mock("@xterm/addon-webgl", () => ({
   WebglAddon: class {
+    disposed = false;
+    constructor() {
+      mocks.webgl.push(this);
+    }
     onContextLoss() {}
-    dispose() {}
+    dispose() {
+      this.disposed = true;
+    }
   },
 }));
 vi.mock("@xterm/addon-search", () => ({
@@ -129,6 +136,7 @@ describe("a terminal off screen", () => {
   beforeEach(() => {
     vi.useFakeTimers();
     mocks.terms.length = 0;
+    mocks.webgl.length = 0;
     mocks.output = null;
     mocks.resize = null;
     mocks.fit.mockClear();
@@ -387,6 +395,33 @@ describe("a terminal off screen", () => {
     const bytes = new Uint8Array([104, 105]);
     mocks.output?.write(bytes);
     expect(term().written).toEqual([bytes]);
+  });
+
+  it("holds a WebGL context only on screen, loaded before the fit that depends on it", () => {
+    const view = render(element({ isVisible: false }));
+    expect(mocks.webgl).toEqual([]);
+
+    view.rerender(element());
+    expect(mocks.webgl).toHaveLength(1);
+    expect(mocks.webgl[0].disposed).toBe(false);
+
+    view.rerender(element({ isVisible: false }));
+    expect(mocks.webgl[0].disposed).toBe(true);
+
+    view.rerender(element());
+    expect(mocks.webgl).toHaveLength(2);
+    expect(mocks.webgl[1].disposed).toBe(false);
+    view.unmount();
+
+    // On screen from the start, the renderer has to be there for the first fit:
+    // the two renderers fit a different number of columns into the same pane.
+    let loadedAtFit = -1;
+    mocks.fit.mockImplementationOnce(() => {
+      loadedAtFit = mocks.webgl.length;
+    });
+    mocks.webgl.length = 0;
+    render(element());
+    expect(loadedAtFit).toBe(1);
   });
 
   it("does not select the word under a right-click, which auto-copy would put on the clipboard", () => {
