@@ -337,8 +337,7 @@ are shown inline for the final state of the burst.
 
 The last section of Settings says which version this is, who makes SSIX, where
 the source code is and its licence (MIT). The links open in the default browser.
-A release build shows its tag, such as `v1.0.0-beta.17`, because the version in
-the manifests stays the same across betas; other builds show the manifest's
+A release build's version comes from its tag; other builds show the manifest's
 version.
 
 **Show third-party licences** lists what ships inside SSIX with the licence each

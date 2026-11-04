@@ -6,7 +6,6 @@ import { AboutSection } from "@/components/settings/AboutSection";
 import {
   APP_LICENSE_URL,
   APP_REPOSITORY_URL,
-  appVersion,
   filterPackages,
   type ThirdPartyPackage,
 } from "@/lib/appInfo";
@@ -15,19 +14,6 @@ const open = vi.hoisted(() => vi.fn());
 const getVersion = vi.hoisted(() => vi.fn());
 vi.mock("@tauri-apps/plugin-shell", () => ({ open }));
 vi.mock("@tauri-apps/api/app", () => ({ getVersion }));
-
-describe("appVersion", () => {
-  beforeEach(() => getVersion.mockReset().mockResolvedValue("1.0.0"));
-
-  it("prefers the release tag, because the manifests do not change across betas", async () => {
-    await expect(appVersion("v1.0.0-beta.17")).resolves.toBe("v1.0.0-beta.17");
-    expect(getVersion).not.toHaveBeenCalled();
-  });
-
-  it("falls back on the manifest in a build that has no tag", async () => {
-    await expect(appVersion("")).resolves.toBe("1.0.0");
-  });
-});
 
 describe("filterPackages", () => {
   const packages: ThirdPartyPackage[] = [

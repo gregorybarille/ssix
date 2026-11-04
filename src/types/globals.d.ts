@@ -14,11 +14,3 @@ declare module "*.svg" {
   const url: string;
   export default url;
 }
-
-/** Set by the release workflow: see `src/lib/appInfo.ts`. */
-interface ImportMetaEnv {
-  readonly VITE_RELEASE_TAG?: string;
-}
-interface ImportMeta {
-  readonly env: ImportMetaEnv;
-}

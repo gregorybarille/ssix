@@ -37,7 +37,7 @@ app". Use it for layout work only; anything that loads or saves data needs
 ## Releases
 
 Releases are built by `.github/workflows/release.yml` and uploaded to the
-repository's GitHub Releases page as prereleases. A manual run builds the
+repository's GitHub Releases page. A manual run builds the
 tag you name, not the branch it was started from, and fails if that tag does
 not exist. Only the publishing job can write to the repository:
 
@@ -49,12 +49,12 @@ not exist. Only the publishing job can write to the repository:
 
 Windows and macOS tests run in their own jobs alongside the builds (Linux
 tests run on every push and pull request in `test.yml`). A small publish job
-uploads the assets only after every job succeeds. The beta builds disable
+uploads the assets only after every job succeeds. The builds disable
 release LTO and raise codegen units to cut turnaround time while still
 producing optimized binaries.
 
 The workflow publishes against the actual Git tag (for example
-`v1.0.0-beta.11`) using `gh release --verify-tag`, so the assets appear on the
+`v1.0.1`) using `gh release --verify-tag`, so the assets appear on the
 tagged release page. The release notes are written by
 `scripts/release-notes.mjs` (`node scripts/release-notes.mjs <tag>` prints
 them locally):
@@ -72,19 +72,19 @@ would notice. Edit the notes on the release page afterwards if a release
 needs a summary on top. The workflow creates the release only if it does
 not exist yet, so a re-run never overwrites edited notes.
 
-The repository stays at `1.0.0` in `src-tauri/tauri.conf.json` and `src-tauri/Cargo.toml`. Each release build sets both from its tag (`scripts/release-version.mjs`), so a package can upgrade the one before it without an uninstall. A tag of `v1.0.0-beta.19` builds version `1.0.0+beta.19`, because `rpm` refuses a `-` in a version.
+The repository stays at `1.0.0` in `src-tauri/tauri.conf.json` and `src-tauri/Cargo.toml`. Each release build sets both from its tag (`scripts/release-version.mjs`), so a package can upgrade the one before it without an uninstall.
 
-Both `dpkg` and `rpm` sort `1.0.0+beta.19` above a plain `1.0.0`. So the first stable release has to be `v1.0.1`, or it would not upgrade the betas.
+Tags are plain numbers, `vMAJOR.MINOR.PATCH`, and each one has to be higher than the last. The script refuses anything else: `rpm` does not accept a `-` in a version, and the `+` it does accept sorts above the final number, so `1.0.2+rc.1` would never upgrade to `1.0.2`. The old betas all installed as `1.0.0`, so a package numbered `1.0.0` would not upgrade them either.
 
 To publish a release, push a Git tag:
 
 ```bash
-git tag v1.0.0-beta.1
-git push origin v1.0.0-beta.1
+git tag v1.0.1
+git push origin v1.0.1
 ```
 
 The release workflow can also be started manually from the Actions tab by
-providing the release tag input, for example `v1.0.0-beta.1`.
+providing the release tag input, for example `v1.0.1`.
 
 Current builds are unsigned and intended for personal use:
 

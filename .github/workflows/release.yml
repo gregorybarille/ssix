@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       release_tag:
-        description: "Git tag and release name suffix, for example v1.0.0-beta.1"
+        description: "Git tag and release name suffix, for example v1.0.1"
         required: true
   push:
     tags:
@@ -78,7 +78,6 @@ jobs:
       - name: Build portable executable
         run: npm run tauri build -- --no-bundle
         env:
-          VITE_RELEASE_TAG: ${{ env.RELEASE_TAG }}
           CARGO_PROFILE_RELEASE_LTO: "false"
           CARGO_PROFILE_RELEASE_CODEGEN_UNITS: "16"
 
@@ -149,7 +148,6 @@ jobs:
       - name: Build macOS DMG
         run: npm run tauri build
         env:
-          VITE_RELEASE_TAG: ${{ env.RELEASE_TAG }}
           CARGO_PROFILE_RELEASE_LTO: "false"
           CARGO_PROFILE_RELEASE_CODEGEN_UNITS: "16"
 
@@ -206,7 +204,6 @@ jobs:
       - name: Build .deb, .rpm and AppImage
         run: npm run tauri build -- --bundles deb,rpm,appimage
         env:
-          VITE_RELEASE_TAG: ${{ env.RELEASE_TAG }}
           CARGO_PROFILE_RELEASE_LTO: "false"
           CARGO_PROFILE_RELEASE_CODEGEN_UNITS: "16"
 
@@ -263,7 +260,7 @@ jobs:
       - name: Write release notes
         run: node scripts/release-notes.mjs "$RELEASE_TAG" > release-notes.md
 
-      - name: Publish tagged prerelease
+      - name: Publish tagged release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: >-
@@ -272,6 +269,5 @@ jobs:
           --verify-tag
           --title "SSIX $RELEASE_TAG"
           --notes-file release-notes.md
-          --prerelease
           && gh release upload "$RELEASE_TAG" release-assets/ssix.exe release-assets/*.dmg
           release-assets/deb/*.deb release-assets/rpm/*.rpm release-assets/appimage/*.AppImage --clobber

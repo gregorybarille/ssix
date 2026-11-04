@@ -3,7 +3,7 @@
  * changed since the previous tag, one line per commit with the pull
  * request it came in, then the install steps from .github/release-notes.md.
  *
- *   node scripts/release-notes.mjs v1.0.0-beta.16 > notes.md
+ *   node scripts/release-notes.mjs v1.0.1 > notes.md
  *
  * Commits that touch only CI, tests, docs or tooling are listed apart, so
  * the first list is what users of the app will notice. Needs the full

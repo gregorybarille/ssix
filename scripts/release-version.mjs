@@ -3,10 +3,10 @@
  * release as newer than the last. The release workflow runs this on a fresh
  * checkout; the files stay at their plain number in the repository.
  *
- *   RELEASE_TAG=v1.0.0-beta.19 node scripts/release-version.mjs
+ *   RELEASE_TAG=v1.0.1 node scripts/release-version.mjs
  *
- * A beta becomes `1.0.0+beta.19`: rpm refuses the `-` in `1.0.0-beta.19`, and
- * both rpm and dpkg sort this form above an installed `1.0.0`.
+ * Only plain numbers: rpm refuses a `-`, and the `+` it does accept sorts above
+ * the final version, so `1.0.2+rc.1` would never upgrade to `1.0.2`.
  */
 import { readFileSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
@@ -15,9 +15,9 @@ const TAURI_CONFIG = new URL("../src-tauri/tauri.conf.json", import.meta.url);
 const CARGO_MANIFEST = new URL("../src-tauri/Cargo.toml", import.meta.url);
 
 export function packageVersion(tag) {
-  const match = /^v(\d+\.\d+\.\d+)(?:-([0-9A-Za-z.]+))?$/.exec(tag ?? "");
-  if (!match) throw new Error(`"${tag}" is not a release tag like v1.0.0-beta.19`);
-  return match[2] ? `${match[1]}+${match[2]}` : match[1];
+  const match = /^v(\d+\.\d+\.\d+)$/.exec(tag ?? "");
+  if (!match) throw new Error(`"${tag}" is not a release tag like v1.0.1`);
+  return match[1];
 }
 
 /** Replace the package's own version, the first one in the manifest. */
