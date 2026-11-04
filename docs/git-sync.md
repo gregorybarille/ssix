@@ -8,7 +8,7 @@ Files are written under:
 
 - `.ssix-sync/data.json`: connections, credentials (without secrets),
   settings, saved scripts and snippets
-- `.ssix-sync/README.md`
+- `.ssix-sync/README.md`, whose first line says it is generated and that edits in this folder are overwritten
 - `.ssix-sync/.gitattributes`, which turns off line ending conversion for the folder. With it on, as Git for Windows has by default, git reports the snapshot as changed after a pull and then has nothing to commit.
 
 ## What Does Not Get Exported
@@ -41,7 +41,7 @@ button or backend command for them.
 The primary `Sync` action performs these steps:
 
 1. Fetch remote updates
-2. If the branch is behind: fast-forward pull. If `.ssix-sync/` has uncommitted changes, Sync first stops and asks (see below)
+2. If the branch is behind: put `.ssix-sync/` back to its last commit, then fast-forward pull
 3. Export sanitized snapshot
 4. Stage `.ssix-sync/`
 5. Commit if there are local exported changes
@@ -51,13 +51,28 @@ The sync flow stops on the first failing git step and surfaces the git output.
 
 Exporting comes after the pull because a pull is refused when it would overwrite a changed snapshot, and exporting first would hit that on every retry.
 
-A pull needs those uncommitted changes gone, so Sync stops there, as git would: it discards nothing, pulls nothing, and a dialog lists the files. Sync exports them again from SSIX's data, so only edits made by hand are lost. Confirm runs Sync again with your agreement, and Cancel leaves everything as it was. Only `.ssix-sync/` is discarded, including untracked files in it. A clean snapshot, or a branch that is not behind, shows no dialog.
-
-**Export sanitized snapshot**, **Refresh diff** and **Commit** export too, so after any of them the dialog can list files you never edited by hand. A hand edit does not survive those exports either, nor a Sync on a branch that is not behind: the export writes over `data.json` and `README.md`.
-
 Sync and Commit commit `.ssix-sync/` and nothing else. Anything else you have staged stays staged and is not pushed by Sync's commit.
 
 Sync only fast-forwards. If the branch and the remote have diverged, for example after a Commit that was not pushed while another machine pushed, it stops and changes nothing. Rebase or merge in the repository, then Sync again. A conflict in `.ssix-sync/` can be resolved either way, because Sync exports over it.
+
+## Hand Edits In The Folder
+
+SSIX never reads `.ssix-sync/` back, so every export writes over the generated files (`data.json`, `README.md`, `.gitattributes`). **Export sanitized snapshot**, **Commit** and **Sync** stop first when that would really lose something: nothing changes, nothing is committed, pulled or pushed, and a dialog lists the files. Confirm runs the same action again with your agreement to those files, and Cancel leaves everything as it was. If the rerun finds a file you were not asked about, it asks again.
+
+| File | At risk? |
+|---|---|
+| Generated, only ever written by SSIX, even uncommitted or older than the current data | No: SSIX writes it again |
+| Clean in `git status`, including a hand edit you committed | No: git still has it |
+| Identical to what the export would write | No |
+| Generated, with an uncommitted edit | Yes |
+| Any other uncommitted file in the folder, on a Sync that pulls | Yes: pulling puts the folder back to its last commit and deletes untracked files there |
+| Any other uncommitted file in the folder, otherwise | No: exports leave it alone, and Commit and Sync commit it |
+
+To tell its own output from an edit, each export records a SHA-256 per generated file in the repository's git directory (`git rev-parse --git-path ssix-sync-last-export`), never in the snapshot. Without a record, as right after updating to this version, an uncommitted file that differs from the new export counts as at risk, so you may get one extra question. Changing a file by hand and back to what SSIX wrote is not an edit.
+
+**Refresh diff** never overwrites an at-risk file and never asks. It exports the other files, shows the diff of what is on disk, and names the files it held back under the diff. They stay at risk until you commit them, restore them, or agree to lose them through one of the other actions.
+
+An edit is only noticed in the working tree: a hand edit that is staged while the file on disk holds SSIX's output is not listed, and an agreement is per file, so a further edit made while the dialog is open is lost with the one you agreed to.
 
 ## Notes
 

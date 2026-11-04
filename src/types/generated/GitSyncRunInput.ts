@@ -2,6 +2,6 @@
 
 export type GitSyncRunInput = { 
 /**
- * The user agreed to lose uncommitted changes under `.ssix-sync/`.
+ * The files the user agreed to lose edits in. Anything else at risk asks again.
  */
-discard_agreed: boolean, };
+agreed: Array<string>, };

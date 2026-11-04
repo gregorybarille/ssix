@@ -31,8 +31,11 @@ import type { AppData as GenAppData } from "@/types/generated/AppData";
 import type { AppSettings as GenAppSettings } from "@/types/generated/AppSettings";
 import type { Connection as GenConnection } from "@/types/generated/Connection";
 import type { Credential as GenCredential } from "@/types/generated/Credential";
+import type { GitSyncCommitInput as GenGitSyncCommitInput } from "@/types/generated/GitSyncCommitInput";
+import type { GitSyncDiff as GenGitSyncDiff } from "@/types/generated/GitSyncDiff";
 import type { GitSyncRunInput as GenGitSyncRunInput } from "@/types/generated/GitSyncRunInput";
 import type { GitSyncRunResult as GenGitSyncRunResult } from "@/types/generated/GitSyncRunResult";
+import type { GitSyncSnapshot as GenGitSyncSnapshot } from "@/types/generated/GitSyncSnapshot";
 import type { CredentialSecrets as GenCredentialSecrets } from "@/types/generated/CredentialSecrets";
 import type { Script as GenScript } from "@/types/generated/Script";
 import type { ScriptResult as GenScriptResult } from "@/types/generated/ScriptResult";
@@ -42,8 +45,11 @@ import type {
   Connection as HandConnection,
   Credential as HandCredential,
   CredentialSecrets as HandCredentialSecrets,
+  GitSyncCommitInput as HandGitSyncCommitInput,
+  GitSyncDiff as HandGitSyncDiff,
   GitSyncRunInput as HandGitSyncRunInput,
   GitSyncRunResult as HandGitSyncRunResult,
+  GitSyncSnapshot as HandGitSyncSnapshot,
   Script as HandScript,
   ScriptResult as HandScriptResult,
   Snippet as HandSnippet,
@@ -338,13 +344,22 @@ describe("Phase 6a — ts-rs parity (Rust models <-> TS index.ts)", () => {
     const genResult: GenGitSyncRunResult = {
       steps: [],
       output: { stdout: "", stderr: "", status: 0 },
-      discard_needed: [],
+      at_risk: [],
     };
     const handResult: HandGitSyncRunResult = genResult;
-    const genInput: GenGitSyncRunInput = { discard_agreed: true };
+    const genInput: GenGitSyncRunInput = { agreed: [] };
     const handInput: HandGitSyncRunInput = genInput;
+    const genCommit: GenGitSyncCommitInput = { message: "m", agreed: [] };
+    const handCommit: HandGitSyncCommitInput = genCommit;
+    const genSnapshot: GenGitSyncSnapshot = { repo_path: "r", exported_files: [], at_risk: [] };
+    const handSnapshot: HandGitSyncSnapshot = genSnapshot;
+    const genDiff: GenGitSyncDiff = { staged: "", unstaged: "", at_risk: [] };
+    const handDiff: HandGitSyncDiff = genDiff;
     expect(handResult).toBe(genResult);
     expect(handInput).toBe(genInput);
+    expect(handCommit).toBe(genCommit);
+    expect(handSnapshot).toBe(genSnapshot);
+    expect(handDiff).toBe(genDiff);
   });
 
   it("Snippet: every generated field exists on the hand-written interface", () => {

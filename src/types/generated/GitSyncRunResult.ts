@@ -3,7 +3,7 @@ import type { GitSyncActionResult } from "./GitSyncActionResult";
 
 export type GitSyncRunResult = { steps: Array<string>, output: GitSyncActionResult, 
 /**
- * Set when Sync stopped before pulling: the uncommitted files under
- * `.ssix-sync/` that a pull needs gone. Nothing was changed.
+ * Set when the action stopped for the user's answer: the files under
+ * `.ssix-sync/` whose edits it would lose. Nothing was changed.
  */
-discard_needed: Array<string>, };
+at_risk: Array<string>, };

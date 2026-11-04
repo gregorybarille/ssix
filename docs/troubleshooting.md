@@ -81,7 +81,9 @@ Older builds showed this as `TypeError: ... window.__TAURI_INTERNALS__ is undefi
 - Confirm the configured repository path exists and contains `.git/`.
 - Confirm the configured remote is a remote name of that repository, or a URL or path. A name it does not know, such as a missing `origin`, is tried as a path and fails with "does not appear to be a git repository". An empty remote is fine: the first Sync creates the branch.
 - If one-click sync reports that the branch has diverged, rebase or merge onto the remote branch in the repository and retry. A conflict in `.ssix-sync/` can be resolved either way, because Sync exports over it.
-- If the pull is refused because of local changes, those are your own files outside `.ssix-sync/`: commit or restore them and retry. Sync discards only `.ssix-sync/`, and only after you confirm the dialog that lists the files.
+- If the pull is refused because of local changes, those are your own files outside `.ssix-sync/`: commit or restore them and retry. Sync only touches `.ssix-sync/`, and asks first when that would lose an edit there.
+- If a dialog lists a file you never edited, it is usually the first export after updating: SSIX has no record of what it last wrote yet, so an uncommitted file that differs counts as a hand edit. A conflict in `.ssix-sync/` is listed too. Confirm, or commit the file first. See [Hand Edits In The Folder](git-sync.md#hand-edits-in-the-folder).
+- If Refresh diff says files were not exported because they hold hand edits, it left them alone on purpose. Commit or restore them, or use Export and confirm to overwrite them.
 - If push fails, inspect the returned git output in the Git Sync view.
 
 ## Credentials Seem Missing
