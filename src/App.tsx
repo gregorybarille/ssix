@@ -31,6 +31,7 @@ import { useSnippetsStore } from "./store/useSnippetsStore";
 import { useTerminalsStore } from "./store/useTerminalsStore";
 import { runningForwardCount, usePortForwardsStore } from "./store/usePortForwardsStore";
 import { useApplySettings } from "./hooks/useApplySettings";
+import { useCopyOnSelect } from "./hooks/useCopyOnSelect";
 import { TABLE_SHORTCUTS, useGlobalShortcuts } from "./hooks/useGlobalShortcuts";
 import { useScreenshotToast } from "./hooks/useScreenshotToast";
 import { useShallow } from "zustand/react/shallow";
@@ -147,6 +148,7 @@ function App() {
   const stopForward = usePortForwardsStore((s) => s.stopForward);
 
   useApplySettings(previewSettings ?? settings);
+  useCopyOnSelect();
 
   useEffect(() => {
     if (view !== "settings" && previewSettings) {

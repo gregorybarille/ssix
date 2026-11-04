@@ -320,6 +320,8 @@ are shown inline for the final state of the burst.
 - list/tile layouts per section (the Connections view also offers
   **Tag groups** — see [Tag groups](#tag-groups) — and [Folders](folders.md))
 - default terminal open mode
+- copy selection to clipboard automatically (off by default; the whole app, not
+  from anything editable: see [Terminal UX](terminal-ux.md#copy-and-paste))
 - Git Sync repository settings
 
 ### About

@@ -1,8 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
-import { act, render } from "@testing-library/react";
+import { act, fireEvent, render } from "@testing-library/react";
 import App from "@/App";
 import type { ForwardSession } from "@/components/PortForwardsView";
 import { usePortForwardsStore } from "@/store/usePortForwardsStore";
+import { useSettingsStore } from "@/store/useSettingsStore";
 
 // A child of App that takes the count, and is not memoised: its renders are App's.
 const sidebar = vi.hoisted(() => ({ renders: 0, forwardCount: -1 }));
@@ -31,5 +32,21 @@ describe("App renders", () => {
 
     act(() => usePortForwardsStore.setState({ sessions: [forward("a", 1024), forward("b")] }));
     expect(sidebar.forwardCount).toBe(2);
+  });
+
+  it("copies a selection anywhere in the app when the setting is on", () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText } });
+    useSettingsStore.setState((s) => ({ settings: { ...s.settings, auto_copy_selection: true } }));
+    render(<App />);
+
+    const text = document.body.appendChild(document.createElement("p"));
+    text.textContent = "db.example.com";
+    window.getSelection()?.selectAllChildren(text);
+    fireEvent.pointerUp(text);
+    expect(writeText).toHaveBeenCalledExactlyOnceWith("db.example.com");
+
+    text.remove();
+    useSettingsStore.setState((s) => ({ settings: { ...s.settings, auto_copy_selection: false } }));
   });
 });

@@ -77,6 +77,14 @@ A right-click only pastes what you copied. It does not select the word under the
 mouse, as macOS terminals usually do: with auto-copy on, that word would replace
 what you copied.
 
+**Copy selection to clipboard automatically**, off by default, copies a selection as
+soon as you finish it, in a terminal and anywhere else in the app. Outside a terminal
+that is when the mouse button or key comes up, and only for a selection that changed.
+It never copies from an input, a text area or anything else editable, passwords
+included: you select a field's text to paste over it. Text that cannot be selected
+in the first place, such as the title bar, list rows in the folder tree and the Files
+view, and field labels, stays out of it.
+
 Plain `Ctrl+C` and `Ctrl+V` always go to the program, with or without a selection:
 `Ctrl+C` interrupts it, and `Ctrl+V` is readline's quoted insert and vim's
 block-visual. Copying clears the selection. With nothing selected, the copy key does
