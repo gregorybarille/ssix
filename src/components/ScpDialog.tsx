@@ -2,7 +2,13 @@ import { useActionState, useEffect, useState } from "react";
 import { Connection, ScpResult } from "@/types";
 import { invoke } from "@/lib/tauri";
 import { Button } from "./ui/button";
-import { type ScpMode, ScpModeTabs, ScpPathField, ScpRecursiveCheckbox } from "./ScpFields";
+import {
+  type ScpMode,
+  ScpModeTabs,
+  ScpPathField,
+  ScpRecursiveCheckbox,
+  ScpStopButton,
+} from "./ScpFields";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "./ui/dialog";
 import { submitWithoutReset } from "@/lib/formSubmit";
 import { useHoldScpTarget } from "@/store/useDialogsStore";
@@ -25,6 +31,7 @@ export function ScpDialog({ open, onOpenChange, connection }: ScpDialogProps) {
   // mounted once at the App root, so the action state outlives a close; a
   // result is only shown for the opening that produced it.
   const [opening, setOpening] = useState(0);
+  const [stopping, setStopping] = useState(false);
 
   /*
    * React 19: form-level error + result live in useActionState so
@@ -85,6 +92,24 @@ export function ScpDialog({ open, onOpenChange, connection }: ScpDialogProps) {
   const showOutcome = !isSubmitting && state.mode === mode && state.opening === opening;
   const result = showOutcome ? state.result : null;
   const error = showOutcome ? state.error : null;
+  const outcomeText =
+    result &&
+    (result.stopped ??
+      `Transferred ${result.bytes} bytes${
+        result.entries ? ` across ${result.entries} item${result.entries === 1 ? "" : "s"}` : ""
+      } between ${result.local_path} and ${result.remote_path}.`);
+
+  const stop = () => {
+    if (!connection) return;
+    setStopping(true);
+    // Refused, nothing will stop: the button comes back.
+    invoke("scp_stop", { connectionId: connection.id }).catch(() => setStopping(false));
+  };
+
+  // Here and not in the action, whose updates only land once it has ended.
+  useEffect(() => {
+    if (!isSubmitting) setStopping(false);
+  }, [isSubmitting]);
 
   // Reset on every open (and on close) so the remote path always comes
   // from the connection the dialog was opened for, never from the one it
@@ -182,24 +207,18 @@ export function ScpDialog({ open, onOpenChange, connection }: ScpDialogProps) {
             className="sr-only"
           >
             {isSubmitting
-              ? `${mode === "upload" ? "Uploading" : "Downloading"} — please wait.`
-              : result
-                ? `Transferred ${result.bytes} bytes${
-                    result.entries
-                      ? ` across ${result.entries} item${result.entries === 1 ? "" : "s"}`
-                      : ""
-                  } between ${result.local_path} and ${result.remote_path}.`
-                : ""}
+              ? stopping
+                ? "Stopping the transfer — please wait."
+                : `${mode === "upload" ? "Uploading" : "Downloading"} — please wait.`
+              : (outcomeText ?? "")}
           </div>
 
-          {result && (
+          {outcomeText && (
             <div
               className="rounded-md border p-3 text-xs"
               data-testid="scp-status"
             >
-              Transferred {result.bytes} bytes
-              {result.entries ? ` across ${result.entries} item${result.entries === 1 ? "" : "s"}` : ""}
-              {` between ${result.local_path} and ${result.remote_path}.`}
+              {outcomeText}
             </div>
           )}
 
@@ -218,6 +237,9 @@ export function ScpDialog({ open, onOpenChange, connection }: ScpDialogProps) {
             <Button type="button" variant="outline" onClick={() => onOpenChange(false)} disabled={isSubmitting}>
               Close
             </Button>
+            {isSubmitting && (
+              <ScpStopButton stopping={stopping} onStop={stop} testId="scp-stop" />
+            )}
             <Button
               type="submit"
               disabled={isSubmitting || !connection}

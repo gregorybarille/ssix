@@ -529,6 +529,8 @@ export interface ScpResult {
   remote_path: string;
   bytes: number;
   entries?: number;
+  /** Set when a stop ended the copy: what to tell the user. */
+  stopped?: string | null;
 }
 
 export interface LogEntry {

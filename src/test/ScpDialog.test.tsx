@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { ScpDialog } from "@/components/ScpDialog";
@@ -249,6 +249,89 @@ describe("ScpDialog", () => {
 
     const hint = document.getElementById("scp-remote-path-hint");
     expect(hint?.textContent ?? "").toMatch(/base directory/i);
+  });
+});
+
+describe("ScpDialog Stop", () => {
+  const prod = { id: "c1", name: "prod", host: "host", port: 22, type: "direct" } as const;
+  let finish: (result: unknown) => void = () => {};
+
+  beforeEach(() => {
+    vi.mocked(invoke).mockReset();
+    vi.mocked(invoke).mockImplementation(((command: string) =>
+      command === "scp_stop"
+        ? Promise.resolve()
+        : new Promise((resolve) => {
+            finish = resolve as (result: unknown) => void;
+          })) as typeof invoke);
+  });
+
+  // React holds every other action back while one is pending, so none may hang.
+  afterEach(async () => {
+    finish({ local_path: "/l", remote_path: "/r", bytes: 0 });
+    await waitFor(() => expect(screen.queryByTestId("scp-stop")).toBeNull());
+    vi.mocked(invoke).mockReset();
+  });
+
+  async function startUpload(onOpenChange = vi.fn()) {
+    render(<ScpDialog open onOpenChange={onOpenChange} connection={prod} />);
+    expect(screen.queryByTestId("scp-stop")).toBeNull();
+    fireEvent.change(screen.getByTestId("scp-local-path"), { target: { value: "/tmp/big" } });
+    fireEvent.click(screen.getByTestId("scp-upload"));
+    return screen.findByTestId("scp-stop");
+  }
+
+  it("asks the backend to stop, shows it is stopping, and ends on a neutral status", async () => {
+    const stop = await startUpload();
+    expect(stop).toBeEnabled();
+    expect(stop).toHaveTextContent("Stop");
+
+    fireEvent.click(stop);
+    expect(invoke).toHaveBeenCalledWith("scp_stop", { connectionId: "c1" });
+    await waitFor(() => expect(screen.getByTestId("scp-stop")).toBeDisabled());
+    expect(screen.getByTestId("scp-stop")).toHaveTextContent("Stopping...");
+    const live = screen.getByText(/Stopping the transfer/);
+    expect(live).toHaveAttribute("aria-live", "polite");
+
+    const message = "Transfer stopped after 5 bytes.";
+    finish({ local_path: "/tmp/big", remote_path: "/tmp/big", bytes: 5, entries: 0, stopped: message });
+
+    expect(await screen.findByTestId("scp-status")).toHaveTextContent(message);
+    expect(screen.queryByTestId("scp-error")).toBeNull();
+    expect(screen.queryByTestId("scp-stop")).toBeNull();
+    // The always-mounted region was subscribed before the words arrived.
+    expect(live).toHaveTextContent(message);
+    expect(screen.queryByText(/^Transferred/)).toBeNull();
+  });
+
+  it("gives the button back if the stop is refused", async () => {
+    vi.mocked(invoke).mockImplementation(((command: string) =>
+      command === "scp_stop"
+        ? Promise.reject("no")
+        : new Promise((resolve) => {
+            finish = resolve as (result: unknown) => void;
+          })) as typeof invoke);
+    fireEvent.click(await startUpload());
+    await waitFor(() => expect(screen.getByTestId("scp-stop")).toBeEnabled());
+  });
+
+  it("leaves Stop as the only way out while running", async () => {
+    const user = userEvent.setup();
+    const onOpenChange = vi.fn();
+    await startUpload(onOpenChange);
+    await user.keyboard("{Escape}");
+    expect(onOpenChange).not.toHaveBeenCalled();
+    expect(screen.getByText("Close", { selector: "button" })).toBeDisabled();
+  });
+
+  it("starts the next transfer with the button ready again", async () => {
+    fireEvent.click(await startUpload());
+    await waitFor(() => expect(screen.getByTestId("scp-stop")).toBeDisabled());
+    finish({ local_path: "/l", remote_path: "/r", bytes: 0, entries: 0, stopped: "Transfer stopped." });
+    await screen.findByTestId("scp-status");
+
+    fireEvent.click(screen.getByTestId("scp-upload"));
+    await waitFor(() => expect(screen.getByTestId("scp-stop")).toBeEnabled());
   });
 });
 

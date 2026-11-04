@@ -131,7 +131,8 @@ it too. See [File Transfer](file-transfer.md).
 | See the server's files | Yes | No, you type the path |
 | Protocol | SFTP only | SFTP when the server offers it, otherwise legacy `scp` |
 | Large files | Streamed | Streamed |
-| Progress, cancel | Yes | No |
+| Progress | Yes | No |
+| Stop a running copy | Cancel, per transfer | Stop; in a bulk transfer it also skips the hosts left |
 | Existing target | Asks first | Replaced |
 | Rename, delete, permissions, edit | Yes | No |
 

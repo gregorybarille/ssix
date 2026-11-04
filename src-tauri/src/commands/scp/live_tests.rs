@@ -6,6 +6,7 @@
 use super::*;
 use crate::commands::sftp::browse::TempDir;
 use crate::commands::sftp::live_tests::{sh, with_connection, RemoteDir};
+use crate::commands::ssh::connect_session;
 use crate::models::ConnectionKind;
 use crate::storage::with_data_mut;
 use std::net::{Shutdown, TcpListener, TcpStream};
@@ -16,21 +17,65 @@ use std::time::{Duration, Instant};
 const MIB: usize = 1024 * 1024;
 
 fn upload(connection_id: &str, local: &Path, remote_dir: &str) -> Result<ScpResult, String> {
-    scp_upload_sync(ScpUploadInput {
-        connection_id: connection_id.to_string(),
-        local_path: local.to_str().unwrap().to_string(),
-        remote_path: Some(remote_dir.to_string()),
-        recursive: true,
-    })
+    let copy = RunningCopy::begin(connection_id)?;
+    scp_upload_sync(
+        ScpUploadInput {
+            connection_id: connection_id.to_string(),
+            local_path: local.to_str().unwrap().to_string(),
+            remote_path: Some(remote_dir.to_string()),
+            recursive: true,
+        },
+        copy,
+    )
 }
 
 fn download(connection_id: &str, remote: &str, local: &Path) -> Result<ScpResult, String> {
-    scp_download_sync(ScpDownloadInput {
-        connection_id: connection_id.to_string(),
-        remote_path: remote.to_string(),
-        local_path: local.to_str().unwrap().to_string(),
-        recursive: true,
-    })
+    let copy = RunningCopy::begin(connection_id)?;
+    scp_download_sync(
+        ScpDownloadInput {
+            connection_id: connection_id.to_string(),
+            remote_path: remote.to_string(),
+            local_path: local.to_str().unwrap().to_string(),
+            recursive: true,
+        },
+        copy,
+    )
+}
+
+/// A legacy `scp` upload nothing stops.
+fn upload_scp(ssh: &ConnectedSession, local: &Path, target: &str) -> Result<u64, String> {
+    upload_file_scp(ssh, local, target, &mut |_| Ok(())).map_err(Stop::into_message)
+}
+
+/// A legacy `scp` download nothing stops.
+fn download_scp(ssh: &ConnectedSession, remote: &str, local: &Path) -> Result<u64, String> {
+    download_file_scp(ssh, remote, local, &mut |_| Ok(())).map_err(Stop::into_message)
+}
+
+/// What `scp_upload` does on a server with no SFTP.
+fn upload_legacy(connection_id: &str, local: &Path, target: &str) -> Result<ScpResult, String> {
+    let copy = RunningCopy::begin(connection_id)?;
+    let (ssh, _) = connect_for_copy(&copy)?.expect("nothing has asked to stop yet");
+    let (copied, ended) = legacy_copy(
+        &copy,
+        |error| error,
+        |on_chunk| upload_file_scp(&ssh, local, target, on_chunk),
+    );
+    let local = local.to_str().unwrap().to_string();
+    copy_ended(&copy, local, target.to_string(), copied, ended)
+}
+
+/// What `scp_download` does on a server with no SFTP.
+fn download_legacy(connection_id: &str, remote: &str, local: &Path) -> Result<ScpResult, String> {
+    let copy = RunningCopy::begin(connection_id)?;
+    let (ssh, _) = connect_for_copy(&copy)?.expect("nothing has asked to stop yet");
+    let (copied, ended) = legacy_copy(
+        &copy,
+        |error| error,
+        |on_chunk| download_file_scp(&ssh, remote, local, on_chunk),
+    );
+    let local = local.to_str().unwrap().to_string();
+    copy_ended(&copy, local, remote.to_string(), copied, ended)
 }
 
 /// Bytes no chunk boundary can hide a mistake in.
@@ -167,6 +212,332 @@ fn connection_over(connection_id: &str, link: Link) -> String {
     })
     .unwrap();
     id
+}
+
+/// Too big to finish through `Link::Slow(MIB)` while a test waits.
+const LONG_COPY: usize = 64 * MIB;
+
+fn write_big_remote(connection_id: &str, path: &str, mib: usize) {
+    sh(
+        connection_id,
+        &format!(
+            "dd if=/dev/zero of={} bs=1048576 count={} 2>/dev/null",
+            path, mib
+        ),
+    );
+}
+
+fn has_temp_file(names: &[String]) -> bool {
+    names.iter().any(|name| name.starts_with(".ssix-part-"))
+}
+
+/// Run `copy` and stop it once `underway` holds. Returns what the command answered
+/// and how long the stop took.
+fn stop_when(
+    connection_id: &str,
+    underway: impl Fn() -> bool,
+    copy: impl FnOnce() -> Result<ScpResult, String> + Send,
+) -> (ScpResult, Duration) {
+    thread::scope(|scope| {
+        let running = scope.spawn(copy);
+        let started = Instant::now();
+        while !underway() {
+            assert!(
+                started.elapsed() < Duration::from_secs(60),
+                "the copy never got going"
+            );
+            thread::sleep(Duration::from_millis(100));
+        }
+        // Enough for bytes to have moved through the slowest link here.
+        thread::sleep(Duration::from_secs(1));
+        let asked = Instant::now();
+        scp_stop(connection_id.to_string()).unwrap();
+        let answer = running.join().unwrap().unwrap();
+        (answer, asked.elapsed())
+    })
+}
+
+fn assert_stopped_midway(what: &str, answer: &ScpResult, took: Duration, connection_id: &str) {
+    eprintln!(
+        "{}: stopped {:?} after asking: {:?}",
+        what, took, answer.stopped
+    );
+    let message = answer.stopped.as_deref().expect("should say it stopped");
+    assert!(message.starts_with("Transfer stopped"), "{}", message);
+    assert!(answer.bytes > 0, "{}: no bytes moved", what);
+    assert!(answer.bytes < LONG_COPY as u64, "{}: it finished", what);
+    assert_eq!(answer.entries, Some(0));
+    assert!(!COPIES.contains_key(connection_id));
+}
+
+/// Over `Link::Slow`, in all four ways a copy can go: the old file stays and no
+/// temporary file does.
+#[test]
+#[ignore]
+fn live_scp_stop_mid_sftp_upload_leaves_the_old_file_and_no_temp_file() {
+    with_connection(|id| {
+        let local = TempDir::new("scp-stop-up");
+        let remote = RemoteDir::new(id);
+        let slow = connection_over(id, Link::Slow(MIB));
+        let source = local.0.join("big.bin");
+        fs::File::create(&source)
+            .unwrap()
+            .set_len(LONG_COPY as u64)
+            .unwrap();
+        let target = remote.child("big.bin");
+        write_remote(id, &target, b"old", 0o644);
+
+        let (answer, took) = stop_when(
+            &slow,
+            || has_temp_file(&remote_names(id, &remote.path)),
+            || upload(&slow, &source, &remote.path),
+        );
+
+        assert_stopped_midway("SFTP upload", &answer, took, &slow);
+        assert_eq!(read_remote(id, &target), b"old");
+        assert_eq!(remote_names(id, &remote.path), ["big.bin"]);
+    });
+}
+
+#[test]
+#[ignore]
+fn live_scp_stop_mid_sftp_download_leaves_the_old_file_and_no_temp_file() {
+    with_connection(|id| {
+        let local = TempDir::new("scp-stop-down");
+        let remote = RemoteDir::new(id);
+        let slow = connection_over(id, Link::Slow(MIB));
+        let source = remote.child("big.bin");
+        write_big_remote(id, &source, LONG_COPY / MIB);
+        let kept = local.0.join("kept.bin");
+        write_local(&kept, b"old", 0o644);
+
+        let (answer, took) = stop_when(
+            &slow,
+            || has_temp_file(&local_names(&local.0)),
+            || download(&slow, &source, &kept),
+        );
+
+        assert_stopped_midway("SFTP download", &answer, took, &slow);
+        assert_eq!(fs::read(&kept).unwrap(), b"old");
+        assert_eq!(local_names(&local.0), ["kept.bin"]);
+    });
+}
+
+#[test]
+#[ignore]
+fn live_scp_stop_mid_legacy_upload_leaves_the_old_file_and_no_temp_file() {
+    with_connection(|id| {
+        let local = TempDir::new("scp-stop-legacy-up");
+        let remote = RemoteDir::new(id);
+        let slow = connection_over(id, Link::Slow(MIB));
+        let source = local.0.join("big.bin");
+        fs::File::create(&source)
+            .unwrap()
+            .set_len(LONG_COPY as u64)
+            .unwrap();
+        let target = remote.child("big.bin");
+        write_remote(id, &target, b"old", 0o644);
+
+        let (answer, took) = stop_when(
+            &slow,
+            || has_temp_file(&remote_names(id, &remote.path)),
+            || upload_legacy(&slow, &source, &target),
+        );
+
+        assert_stopped_midway("legacy upload", &answer, took, &slow);
+        assert_eq!(read_remote(id, &target), b"old");
+        assert_eq!(remote_names(id, &remote.path), ["big.bin"]);
+    });
+}
+
+#[test]
+#[ignore]
+fn live_scp_stop_mid_legacy_download_leaves_the_old_file_and_no_temp_file() {
+    with_connection(|id| {
+        let local = TempDir::new("scp-stop-legacy-down");
+        let remote = RemoteDir::new(id);
+        let slow = connection_over(id, Link::Slow(MIB));
+        let source = remote.child("big.bin");
+        write_big_remote(id, &source, LONG_COPY / MIB);
+        let kept = local.0.join("kept.bin");
+        write_local(&kept, b"old", 0o644);
+
+        let (answer, took) = stop_when(
+            &slow,
+            || has_temp_file(&local_names(&local.0)),
+            || download_legacy(&slow, &source, &kept),
+        );
+
+        assert_stopped_midway("legacy download", &answer, took, &slow);
+        assert_eq!(fs::read(&kept).unwrap(), b"old");
+        assert_eq!(local_names(&local.0), ["kept.bin"]);
+    });
+}
+
+/// Files a folder copy finished stay and are counted, and only the one in
+/// progress goes.
+#[test]
+#[ignore]
+fn live_scp_stop_mid_folder_keeps_the_finished_files_both_ways() {
+    const FILE: usize = 4 * MIB;
+    const FILES: usize = 12;
+    let finished = |names: Vec<String>| {
+        names
+            .iter()
+            .filter(|name| !name.starts_with(".ssix-part-"))
+            .count()
+    };
+    with_connection(|id| {
+        let local = TempDir::new("scp-stop-tree");
+        let remote = RemoteDir::new(id);
+        let slow = connection_over(id, Link::Slow(MIB));
+
+        let tree = local.0.join("tree");
+        fs::create_dir(&tree).unwrap();
+        for n in 0..FILES {
+            fs::File::create(tree.join(format!("{:02}.bin", n)))
+                .unwrap()
+                .set_len(FILE as u64)
+                .unwrap();
+        }
+        let remote_tree = remote.child("tree");
+        let (up, took) = stop_when(
+            &slow,
+            || {
+                let names = sh(id, &format!("ls -A {} 2>/dev/null; true", remote_tree));
+                finished(names.lines().map(str::to_string).collect()) >= 2
+            },
+            || upload(&slow, &tree, &remote.path),
+        );
+        eprintln!(
+            "folder upload: stopped {:?} after asking: {:?}",
+            took, up.stopped
+        );
+        let names = remote_names(id, &remote_tree);
+        assert!(!has_temp_file(&names), "{:?}", names);
+        let kept = up.entries.unwrap() as usize;
+        assert!((2..FILES).contains(&kept), "{:?}", up);
+        assert_eq!(names.len(), kept);
+        let message = up.stopped.unwrap();
+        assert!(
+            message.contains(&format!("The {} finished files stay", kept)),
+            "{}",
+            message
+        );
+
+        let source = remote.child("source");
+        sh(id, &format!("mkdir {}", source));
+        for n in 0..FILES {
+            write_big_remote(id, &format!("{}/{:02}.bin", source, n), FILE / MIB);
+        }
+        let back = local.0.join("back");
+        let (down, took) = stop_when(
+            &slow,
+            || back.is_dir() && finished(local_names(&back)) >= 2,
+            || download(&slow, &source, &back),
+        );
+        eprintln!(
+            "folder download: stopped {:?} after asking: {:?}",
+            took, down.stopped
+        );
+        let names = local_names(&back);
+        assert!(!has_temp_file(&names), "{:?}", names);
+        let kept = down.entries.unwrap() as usize;
+        assert!((2..FILES).contains(&kept), "{:?}", down);
+        assert_eq!(names.len(), kept);
+        for name in names {
+            assert_eq!(fs::metadata(back.join(name)).unwrap().len(), FILE as u64);
+        }
+    });
+}
+
+/// With nothing in the way, a stop takes as long as the chunk in progress.
+#[test]
+#[ignore]
+fn live_scp_stop_on_a_healthy_link_is_quick() {
+    with_connection(|id| {
+        let local = TempDir::new("scp-stop-quick");
+        let remote = RemoteDir::new(id);
+        let size = 8 * 1024 * MIB as u64;
+        let source = local.0.join("big.bin");
+        fs::File::create(&source).unwrap().set_len(size).unwrap();
+        let (up, took) = stop_when(
+            id,
+            || has_temp_file(&remote_names(id, &remote.path)),
+            || upload(id, &source, &remote.path),
+        );
+        eprintln!(
+            "healthy upload: {} bytes, stopped {:?} after asking",
+            up.bytes, took
+        );
+        assert!(up.stopped.is_some(), "{:?}", up);
+        assert!(took < Duration::from_secs(5), "took {:?}", took);
+        assert_eq!(remote_names(id, &remote.path), Vec::<String>::new());
+    });
+}
+
+/// A stop waits for the call in progress, whose limit is 30 seconds, then shows
+/// as a stop that names the failure, with the old file kept on both sides. A
+/// temporary file can stay on the server, since the link cannot remove it.
+#[test]
+#[ignore]
+fn live_scp_stop_on_a_stalled_link_ends_within_about_a_chunks_limit() {
+    with_connection(|id| {
+        let local = TempDir::new("scp-stop-stalled");
+        let remote = RemoteDir::new(id);
+        let stalled = connection_over(id, Link::DeadAfter(MIB));
+        let source = local.0.join("up.bin");
+        write_local(&source, &payload(32 * MIB), 0o644);
+        let target = remote.child("up.bin");
+        write_remote(id, &target, b"old", 0o644);
+        let big = remote.child("down.bin");
+        write_big_remote(id, &big, 32);
+        let kept = local.0.join("kept.bin");
+        write_local(&kept, b"old", 0o644);
+
+        let after_a_while = || {
+            let started = Instant::now();
+            move || started.elapsed() > Duration::from_secs(4)
+        };
+        let answers = [
+            (
+                "SFTP upload",
+                stop_when(&stalled, after_a_while(), || {
+                    upload(&stalled, &source, &remote.path)
+                }),
+            ),
+            (
+                "SFTP download",
+                stop_when(&stalled, after_a_while(), || {
+                    download(&stalled, &big, &kept)
+                }),
+            ),
+            (
+                "legacy upload",
+                stop_when(&stalled, after_a_while(), || {
+                    upload_legacy(&stalled, &source, &target)
+                }),
+            ),
+            (
+                "legacy download",
+                stop_when(&stalled, after_a_while(), || {
+                    download_legacy(&stalled, &big, &kept)
+                }),
+            ),
+        ];
+
+        assert_eq!(read_remote(id, &target), b"old");
+        assert_eq!(fs::read(&kept).unwrap(), b"old");
+        assert_eq!(local_names(&local.0), ["kept.bin", "up.bin"]);
+        for (what, (answer, took)) in answers {
+            eprintln!(
+                "{} on a stalled link: stopped {:?} after asking",
+                what, took
+            );
+            assert!(answer.stopped.is_some(), "{}: {:?}", what, answer);
+            assert!(took < Duration::from_secs(50), "{} took {:?}", what, took);
+        }
+    });
 }
 
 /// The most memory this process has held, in bytes.
@@ -372,9 +743,9 @@ fn live_scp_copies_do_not_hold_the_file_in_memory() {
         let legacy = local.0.join("legacy.bin");
         let target = remote.child("legacy.bin");
         fs::File::create(&legacy).unwrap().set_len(size).unwrap();
-        assert_eq!(upload_file_scp(&ssh, &legacy, &target).unwrap(), size);
+        assert_eq!(upload_scp(&ssh, &legacy, &target).unwrap(), size);
         let back = local.0.join("legacy-back.bin");
-        assert_eq!(download_file_scp(&ssh, &target, &back).unwrap(), size);
+        assert_eq!(download_scp(&ssh, &target, &back).unwrap(), size);
         let after_legacy = peak_memory();
         eprintln!(
             "and by {} KiB on the same both ways over legacy scp",
@@ -400,7 +771,7 @@ fn live_scp_legacy_copies_many_chunks_with_modes_and_nothing_left_over() {
         write_local(&source, &bytes, 0o600);
         let target = remote.child("private.bin");
         assert_eq!(
-            upload_file_scp(&ssh, &source, &target).unwrap(),
+            upload_scp(&ssh, &source, &target).unwrap(),
             bytes.len() as u64
         );
         assert_eq!(read_remote(id, &target), bytes);
@@ -413,16 +784,13 @@ fn live_scp_legacy_copies_many_chunks_with_modes_and_nothing_left_over() {
         sh(id, &format!("chmod 664 {}", open));
         let replacement = local.0.join("group-writable");
         write_local(&replacement, b"new", 0o600);
-        upload_file_scp(&ssh, &replacement, &open).unwrap();
+        upload_scp(&ssh, &replacement, &open).unwrap();
         assert_eq!(read_remote(id, &open), b"new");
         assert_eq!(remote_mode(id, &open), "664");
 
         let empty = local.0.join("empty");
         write_local(&empty, b"", 0o644);
-        assert_eq!(
-            upload_file_scp(&ssh, &empty, &remote.child("empty")).unwrap(),
-            0
-        );
+        assert_eq!(upload_scp(&ssh, &empty, &remote.child("empty")).unwrap(), 0);
         assert!(read_remote(id, &remote.child("empty")).is_empty());
 
         assert_eq!(
@@ -433,7 +801,7 @@ fn live_scp_legacy_copies_many_chunks_with_modes_and_nothing_left_over() {
         // Downloads: the exact bytes, no status byte after them, and the modes.
         let fresh = local.0.join("fresh.bin");
         assert_eq!(
-            download_file_scp(&ssh, &target, &fresh).unwrap(),
+            download_scp(&ssh, &target, &fresh).unwrap(),
             bytes.len() as u64
         );
         assert_eq!(fs::read(&fresh).unwrap(), bytes);
@@ -441,13 +809,13 @@ fn live_scp_legacy_copies_many_chunks_with_modes_and_nothing_left_over() {
 
         let env = local.0.join(".env");
         write_local(&env, b"old", 0o600);
-        download_file_scp(&ssh, &open, &env).unwrap();
+        download_scp(&ssh, &open, &env).unwrap();
         assert_eq!(fs::read(&env).unwrap(), b"new");
         assert_eq!(local_mode(&env), 0o600);
 
         let nothing = local.0.join("nothing");
         assert_eq!(
-            download_file_scp(&ssh, &remote.child("empty"), &nothing).unwrap(),
+            download_scp(&ssh, &remote.child("empty"), &nothing).unwrap(),
             0
         );
         assert!(fs::read(&nothing).unwrap().is_empty());
@@ -468,7 +836,7 @@ fn live_scp_legacy_failed_upload_keeps_what_was_there() {
 
         let folder = remote.child("folder");
         sh(id, &format!("mkdir {}", folder));
-        let err = upload_file_scp(&ssh, &source, &folder).unwrap_err();
+        let err = upload_scp(&ssh, &source, &folder).unwrap_err();
         assert!(err.contains("in place"), "{}", err);
         assert_eq!(remote_names(id, &folder), Vec::<String>::new());
 
@@ -476,19 +844,19 @@ fn live_scp_legacy_failed_upload_keeps_what_was_there() {
         write_remote(id, &real, b"old", 0o644);
         let link = remote.child("link");
         sh(id, &format!("ln -s {} {}", real, link));
-        assert!(upload_file_scp(&ssh, &source, &link).is_err());
+        assert!(upload_scp(&ssh, &source, &link).is_err());
         assert_eq!(read_remote(id, &real), b"old");
 
         assert_eq!(remote_names(id, &remote.path), ["folder", "link", "real"]);
 
         // A folder that does not exist gives no temporary name to keep either.
         let missing = remote.child("not-here/f");
-        assert!(upload_file_scp(&ssh, &source, &missing).is_err());
+        assert!(upload_scp(&ssh, &source, &missing).is_err());
         assert_eq!(remote_names(id, &remote.path), ["folder", "link", "real"]);
 
         let kept = local.0.join("kept");
         write_local(&kept, b"old", 0o644);
-        assert!(download_file_scp(&ssh, &remote.child("not-here"), &kept).is_err());
+        assert!(download_scp(&ssh, &remote.child("not-here"), &kept).is_err());
         assert_eq!(fs::read(&kept).unwrap(), b"old");
         assert_eq!(local_names(&local.0), ["f", "kept"]);
     });
@@ -572,12 +940,10 @@ fn live_scp_dead_link_ends_in_about_30_seconds_and_changes_nothing() {
             }),
             timed("SFTP download", &|| download(&dead, &big, &kept).is_err()),
             timed("scp upload", &|| {
-                let (ssh, _) = connect_for_copy(&dead).unwrap();
-                upload_file_scp(&ssh, &source, &target).is_err()
+                upload_legacy(&dead, &source, &target).is_err()
             }),
             timed("scp download", &|| {
-                let (ssh, _) = connect_for_copy(&dead).unwrap();
-                download_file_scp(&ssh, &big, &kept).is_err()
+                download_legacy(&dead, &big, &kept).is_err()
             }),
         ];
 

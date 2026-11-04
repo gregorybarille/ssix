@@ -1,7 +1,14 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { Connection } from "@/types";
+import { invoke } from "@/lib/tauri";
 import { Button } from "./ui/button";
-import { type ScpMode, ScpModeTabs, ScpPathField, ScpRecursiveCheckbox } from "./ScpFields";
+import {
+  type ScpMode,
+  ScpModeTabs,
+  ScpPathField,
+  ScpRecursiveCheckbox,
+  ScpStopButton,
+} from "./ScpFields";
 import {
   Dialog,
   DialogContent,
@@ -64,6 +71,10 @@ export function BulkScpDialog({
   const [submitted, setSubmitted] = useState(false);
   const [steps, setSteps] = useState<BulkScpStep[]>([]);
   const [running, setRunning] = useState(false);
+  const [stopping, setStopping] = useState(false);
+  // Refs, since hosts change between renders: a stop must reach the one running now.
+  const stopAsked = useRef(false);
+  const currentHost = useRef<string | undefined>(undefined);
   useHoldScpTarget(running);
 
   const actionableCount = useMemo(
@@ -114,8 +125,27 @@ export function BulkScpDialog({
           });
     setSteps(planned);
     setRunning(true);
-    await runBulkScp(planned, mode, recursive, (next) => setSteps(next));
+    setStopping(false);
+    stopAsked.current = false;
+    await runBulkScp(
+      planned,
+      mode,
+      recursive,
+      (next) => {
+        currentHost.current = next.find((s) => s.status === "running")?.connectionId;
+        setSteps(next);
+      },
+      () => stopAsked.current,
+    );
     setRunning(false);
+  };
+
+  const stop = () => {
+    stopAsked.current = true;
+    setStopping(true);
+    if (!currentHost.current) return;
+    // Refused, this host runs on, but the hosts after it still will not start.
+    invoke("scp_stop", { connectionId: currentHost.current }).catch(() => setStopping(false));
   };
 
   const completed = steps.filter(
@@ -123,6 +153,9 @@ export function BulkScpDialog({
   ).length;
   const successCount = steps.filter((s) => s.status === "success").length;
   const errorCount = steps.filter((s) => s.status === "error").length;
+  const stoppedCount = steps.filter((s) => s.status === "cancelled").length;
+  const skippedCount = steps.filter((s) => s.status === "skipped").length;
+  const wasStopped = steps.some((s) => s.note);
 
   return (
     <Dialog
@@ -230,6 +263,9 @@ export function BulkScpDialog({
                       {step.error && (
                         <div className="text-destructive">{step.error}</div>
                       )}
+                      {step.note && (
+                        <div className="text-muted-foreground">{step.note}</div>
+                      )}
                     </div>
                   </li>
                 ))}
@@ -242,8 +278,13 @@ export function BulkScpDialog({
               className="text-xs text-muted-foreground"
               data-testid="bulk-scp-summary"
             >
-              {completed}/{steps.length} done — {successCount} succeeded
-              {errorCount > 0 ? `, ${errorCount} failed` : ""}.
+              {wasStopped
+                ? `Transfer stopped — ${successCount} succeeded${
+                    errorCount > 0 ? `, ${errorCount} failed` : ""
+                  }, ${stoppedCount} stopped, ${skippedCount} skipped.`
+                : `${completed}/${steps.length} done — ${successCount} succeeded${
+                    errorCount > 0 ? `, ${errorCount} failed` : ""
+                  }.`}
             </div>
           )}
         </div>
@@ -257,6 +298,9 @@ export function BulkScpDialog({
           >
             {steps.length > 0 ? "Close" : "Cancel"}
           </Button>
+          {running && (
+            <ScpStopButton stopping={stopping} onStop={stop} testId="bulk-scp-stop" />
+          )}
           <Button
             type="button"
             onClick={handleStart}

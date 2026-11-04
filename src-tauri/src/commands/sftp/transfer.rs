@@ -148,13 +148,21 @@ impl From<String> for Stop {
 }
 
 impl Stop {
-    /// For a caller with no use for the difference: its copies cannot be
-    /// cancelled and never ask about a conflict.
+    /// For a caller with no use for the difference: its copies are not
+    /// cancelled at this point and never ask about a conflict.
     pub(crate) fn into_message(self) -> String {
         match self {
             Stop::Failed(error) => error,
             Stop::Cancelled => "Cancelled".to_string(),
             Stop::Conflict { target, .. } => format!("{} already exists", target),
+        }
+    }
+
+    /// Reword a failure. Any other reason stays what it is.
+    pub(crate) fn map_failed(self, reword: impl FnOnce(String) -> String) -> Self {
+        match self {
+            Stop::Failed(error) => Stop::Failed(reword(error)),
+            other => other,
         }
     }
 }
@@ -861,11 +869,21 @@ fn upload_plan(
     )
 }
 
-/// A copy nobody watches or cancels. Returns its bytes and files.
-fn unattended(copy: impl FnOnce(&mut Run<'_>) -> Result<(), Stop>) -> Result<(u64, u64), Stop> {
-    let cancel = AtomicBool::new(false);
-    let mut run = Run::new("", &cancel, Arc::new(|_| {}));
-    copy(&mut run)?;
+/// How far a copy got, whether or not it reached its end. `bytes` includes a
+/// file it did not finish.
+#[derive(Debug, Default, PartialEq)]
+pub(crate) struct Copied {
+    pub(crate) bytes: u64,
+    pub(crate) files: u64,
+}
+
+/// A copy nobody watches, which `cancel` stops.
+fn unattended(
+    cancel: &AtomicBool,
+    copy: impl FnOnce(&mut Run<'_>) -> Result<(), Stop>,
+) -> (Copied, Result<(), Stop>) {
+    let mut run = Run::new("", cancel, Arc::new(|_| {}));
+    let ended = copy(&mut run);
     if run.skipped > 0 {
         log_local(
             "info",
@@ -876,7 +894,11 @@ fn unattended(copy: impl FnOnce(&mut Run<'_>) -> Result<(), Stop>) -> Result<(u6
             ),
         );
     }
-    Ok((run.bytes_done, run.files_done))
+    let copied = Copied {
+        bytes: run.bytes_done,
+        files: run.files_done,
+    };
+    (copied, ended)
 }
 
 /// Upload `source` to exactly `target`, replacing what is there.
@@ -885,8 +907,9 @@ pub(crate) fn upload_unattended(
     sftp: &Sftp,
     source: &Path,
     target: &str,
-) -> Result<(u64, u64), Stop> {
-    unattended(|run| {
+    cancel: &AtomicBool,
+) -> (Copied, Result<(), Stop>) {
+    unattended(cancel, |run| {
         let plan = plan_local(source, run.cancel)?;
         upload_plan(session, sftp, source, &plan, target, run)
     })
@@ -898,8 +921,9 @@ pub(crate) fn download_unattended(
     sftp: &Sftp,
     source: &str,
     target: &Path,
-) -> Result<(u64, u64), Stop> {
-    unattended(|run| {
+    cancel: &AtomicBool,
+) -> (Copied, Result<(), Stop>) {
+    unattended(cancel, |run| {
         let plan = plan_remote(sftp, source, run.cancel)?;
         download_plan(session, sftp, source, &plan, target, run)
     })

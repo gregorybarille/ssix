@@ -3,9 +3,20 @@
  *
  * Writes a private fixture larger than one transfer chunk, uploads via SCP
  * dialog, downloads back to a separate local path, asserts byte-for-byte
- * equality and that the mode survived both directions.
+ * equality and that the mode survived both directions. Then stops a transfer
+ * of a big sparse file each way: what was at the target stays. A temporary file
+ * left on the server is not visible from here; the live tests in
+ * src-tauri/src/commands/scp/live_tests.rs cover that.
  */
-import { writeFileSync, readFileSync, mkdtempSync, rmSync, statSync } from "node:fs";
+import {
+  writeFileSync,
+  readFileSync,
+  mkdtempSync,
+  rmSync,
+  statSync,
+  truncateSync,
+  readdirSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { waitForAppReady } from "../helpers/app.js";
@@ -24,6 +35,8 @@ let download: string;
 const PAYLOAD = Buffer.alloc(3 * 128 * 1024 + 5, "ssix-scp-roundtrip-payload\n");
 // Unique, since a file that is already on the server would keep its own mode.
 const REMOTE_NAME = `scp-06-${Date.now()}.bin`;
+// Long enough to click Stop on, and sparse, so it costs no disk here.
+const BIG_BYTES = 2 * 1024 * 1024 * 1024;
 
 describe("SCP upload + download", () => {
   before(async () => {
@@ -107,7 +120,68 @@ describe("SCP upload + download", () => {
 
     expect(readFileSync(tildeDownload).equals(PAYLOAD)).toBe(true);
   });
+
+  it("stops an upload and a download midway and keeps what was at the target", async () => {
+    // The dialog is still open from the test above. A small file first, for the
+    // stopped upload to leave alone.
+    const name = `stop-${REMOTE_NAME}`;
+    const source = join(workDir, name);
+    writeFileSync(source, "old on the server\n");
+    await (await browser.$(sel.scpModeUpload)).click();
+    await (await browser.$(sel.scpLocalPath)).setValue(source);
+    await (await browser.$(sel.scpRemotePath)).setValue("/tmp/");
+    await (await browser.$(sel.scpUploadButton)).click();
+    await waitForScpStatusOrFail("upload", source);
+
+    truncateSync(source, BIG_BYTES);
+    await (await browser.$(sel.scpUploadButton)).click();
+    await stopAndExpectStatus();
+
+    // Nothing partial replaced it.
+    const check = join(workDir, "stop-check.bin");
+    await (await browser.$(sel.scpModeDownload)).click();
+    await (await browser.$(sel.scpLocalPath)).setValue(check);
+    await (await browser.$(sel.scpRemotePath)).setValue(`/tmp/${name}`);
+    await (await browser.$(sel.scpDownloadButton)).click();
+    await waitForScpStatusOrFail("download", check);
+    expect(readFileSync(check, "utf8")).toBe("old on the server\n");
+
+    // The whole file goes up, then comes back and stops, over a local file. It
+    // stays in the fixture's /tmp until the containers go: SCP cannot delete it.
+    const bigName = `stop-big-${REMOTE_NAME}`;
+    const bigSource = join(workDir, bigName);
+    writeFileSync(bigSource, "");
+    truncateSync(bigSource, BIG_BYTES / 2);
+    await (await browser.$(sel.scpModeUpload)).click();
+    await (await browser.$(sel.scpLocalPath)).setValue(bigSource);
+    await (await browser.$(sel.scpRemotePath)).setValue("/tmp/");
+    await (await browser.$(sel.scpUploadButton)).click();
+    await waitForScpStatusOrFail("upload", bigSource, 300_000);
+
+    const dropDir = mkdtempSync(join(workDir, "stop-down-"));
+    const kept = join(dropDir, "kept.bin");
+    writeFileSync(kept, "old here\n");
+    await (await browser.$(sel.scpModeDownload)).click();
+    await (await browser.$(sel.scpLocalPath)).setValue(kept);
+    await (await browser.$(sel.scpRemotePath)).setValue(`/tmp/${bigName}`);
+    await (await browser.$(sel.scpDownloadButton)).click();
+    await stopAndExpectStatus();
+
+    expect(readFileSync(kept, "utf8")).toBe("old here\n");
+    expect(readdirSync(dropDir)).toEqual(["kept.bin"]);
+  });
 });
+
+async function stopAndExpectStatus(): Promise<void> {
+  const stop = await browser.$(sel.scpStop);
+  await stop.waitForClickable({ timeout: 30_000 });
+  await stop.click();
+  await stop.waitForExist({ reverse: true, timeout: 60_000 });
+  const status = await browser.$(sel.scpStatus);
+  await status.waitForExist({ timeout: 10_000 });
+  expect(await status.getText()).toContain("Transfer stopped");
+  expect(await (await browser.$('[data-testid="scp-error"]')).isExisting()).toBe(false);
+}
 
 /**
  * wdio's `timeoutMsg` is a string, not an async callback, so we can't
@@ -120,6 +194,7 @@ describe("SCP upload + download", () => {
 async function waitForScpStatusOrFail(
   phase: "upload" | "download",
   localPath: string,
+  timeout = 30_000,
 ): Promise<void> {
   try {
     await browser.waitUntil(
@@ -137,13 +212,13 @@ async function waitForScpStatusOrFail(
         if (await errorEl.isExisting()) return true;
         return false;
       },
-      { timeout: 30_000, timeoutMsg: `SCP ${phase} did not complete` },
+      { timeout, timeoutMsg: `SCP ${phase} did not complete` },
     );
   } catch (err) {
     const status = await (await browser.$(sel.scpStatus)).getText().catch(() => "(no status)");
     const errorText = await (await browser.$('[data-testid="scp-error"]')).getText().catch(() => "(no error)");
     throw new Error(
-      `SCP ${phase} did not complete within 30s.\n  status: ${JSON.stringify(status)}\n  error: ${JSON.stringify(errorText)}\n${(err as Error).message}`,
+      `SCP ${phase} did not complete within ${timeout / 1000}s.\n  status: ${JSON.stringify(status)}\n  error: ${JSON.stringify(errorText)}\n${(err as Error).message}`,
     );
   }
   // Surface backend error if the action came back with an error rather

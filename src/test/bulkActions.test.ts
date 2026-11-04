@@ -163,6 +163,39 @@ describe("runBulkScp", () => {
     expect(vi.mocked(invoke).mock.calls[0][0]).toBe("scp_download");
   });
 
+  it("starts no host once a stop was asked for, and marks a stopped host cancelled", async () => {
+    let stopAsked = false;
+    vi.mocked(invoke)
+      .mockResolvedValueOnce({ local_path: "/x", remote_path: "/srv/x", bytes: 9 })
+      .mockImplementationOnce(async () => {
+        stopAsked = true;
+        return { local_path: "/x", remote_path: "/x", bytes: 5, stopped: "Transfer stopped." };
+      });
+    const steps = planBulkUpload(
+      [direct("1", "a"), direct("2", "b"), direct("3", "c"), portfwd("4", "tun")],
+      { localPath: "/x", remotePath: "/srv/x", recursive: false },
+    );
+    const emitted: string[][] = [];
+    const final = await runBulkScp(
+      steps,
+      "upload",
+      false,
+      (s) => emitted.push(s.map((r) => r.status)),
+      () => stopAsked,
+    );
+
+    expect(vi.mocked(invoke)).toHaveBeenCalledTimes(2);
+    expect(final.map((s) => s.status)).toEqual(["success", "cancelled", "skipped", "skipped"]);
+    expect(final[1].note).toBe("Transfer stopped.");
+    expect(final[1].error).toBeUndefined();
+    // The planned path stays: a stopped copy has no resolved one to report.
+    expect(final[1].remotePath).toBe("/srv/x");
+    expect(final[2].note).toMatch(/not started/i);
+    // The forward keeps its own reason.
+    expect(final[3].note).toBeUndefined();
+    expect(emitted.at(-1)).toEqual(final.map((s) => s.status));
+  });
+
   it("skips local forward steps without invoking the backend", async () => {
     vi.mocked(invoke).mockResolvedValue({
       local_path: "",

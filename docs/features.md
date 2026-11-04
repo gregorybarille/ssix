@@ -169,6 +169,7 @@ See [Port Forwards](forwards.md) for details.
 - download directories recursively
 - direct and jump host connections supported
 - port forwards are not SCP targets
+- **Stop** ends a running transfer; the target stays as it was, and a folder keeps the files it finished
 
 See [File Transfer](file-transfer.md) for behavior and limitations.
 
@@ -737,7 +738,9 @@ hosts that carry no tags) and offers two bulk actions:
     (`mydir-server-a/`).
   - Transfers run sequentially, one host at a time, with a live
     per-host progress list. Errors on one host don't abort the
-    rest of the batch.
+    rest of the batch. **Stop** does: it ends the current host's
+    transfer and skips the hosts after it, and hosts already done
+    keep their result.
   - Connections that have multiple tags appear under each of their
     tags so bulk actions on `prod` really do hit every prod host
     even when some are also in `db`.
