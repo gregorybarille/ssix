@@ -28,13 +28,14 @@ The [Files view](sftp.md) is the alternative for browsing a server, with progres
 The dialog, and the bulk transfer that shares its commands, copy with the same
 code as the [Files view](sftp.md#transfers):
 
-- **Files stream in 128 KiB chunks**, so a file of any size takes the same small
-  amount of memory.
+- **Files stream in chunks of 128 KiB, growing to 256 KiB while the link keeps up**,
+  since a bigger chunk moves faster over a link with delay. A file of any size takes
+  the same small amount of memory.
 - **A transfer can take as long as it needs.** A dead link still fails: one chunk that
   gets nowhere for 30 seconds ends the transfer, and each tidying step on the dead link
   then gets 2 seconds, so the error took 36 seconds on a download and 38 on an upload
   when measured. A link too slow to move 128 KiB in 30 seconds (about 35 kbit/s)
-  counts as dead. Closing a file and the final rename get 60 seconds each, since a
+  counts as dead, and a chunk that takes over 2 seconds makes the next one smaller. Closing a file and the final rename get 60 seconds each, since a
   server can be slow to flush a big file, so a link that dies at that very moment
   takes up to about two minutes to report.
 - **Nothing partial under the real name.** A copy goes to a hidden `.ssix-part-<id>`
@@ -58,8 +59,8 @@ is the way out and the outcome is always shown.
 
 - **It waits for the call in progress**, so the button says *Stopping...* and is
   disabled until then. When measured, a stop took under a second on a working link,
-  including a 1 MiB/s one. On a stalled link it took 29 to 33 seconds, since a chunk has a
-  30-second limit.
+  including a 1 MiB/s one. On a link that fell to 100 kbit/s mid-copy it took about 20
+  seconds. On a stalled link it took 29 to 33 seconds, since a chunk has a 30-second limit.
 - **A stopped copy leaves the target as it was** and removes its `.ssix-part-*` file on
   either side. A stop is not a link failure, so that tidying keeps the usual limit. On
   a link that has also stalled the file cannot be removed from the server, and the status

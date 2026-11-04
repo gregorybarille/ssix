@@ -48,6 +48,15 @@ use ts_rs::TS;
 /// connection, and servers limit those (`MaxStartups`).
 pub(super) const MAX_ACTIVE: usize = 3;
 const CHUNK_BYTES: usize = 128 * 1024;
+/// libssh2 pipelines only the buffer it is given, so over a link with any delay
+/// the chunk size limits a transfer's speed. One write call must get all of it
+/// out, so this takes about 21 s if the link falls to 100 kbit/s mid-copy, inside
+/// `CALL_TIMEOUT_MS`. 1 MiB timed out on that same link.
+const MAX_CHUNK_BYTES: usize = 256 * 1024;
+/// A chunk this quick means the next can be bigger.
+const GROW_UNDER: Duration = Duration::from_millis(500);
+/// A chunk this slow means the link got worse, so go back towards `CHUNK_BYTES`.
+const SHRINK_OVER: Duration = Duration::from_secs(2);
 const PROGRESS_INTERVAL: Duration = Duration::from_millis(100);
 /// How long one SFTP call may take during a transfer. A link that cannot move a
 /// chunk in this time (about 35 kbit/s) counts as dead. A cancel waits for the
@@ -533,8 +542,28 @@ pub(crate) fn copy_stream(
     target: &mut dyn Write,
     on_chunk: &mut dyn FnMut(usize) -> Result<(), Stop>,
 ) -> Result<(), Stop> {
+    copy_chunks(source, target, on_chunk, CHUNK_BYTES)
+}
+
+/// `copy_stream` for an SFTP file: the chunk starts small, so a slow link is
+/// treated as it always was, and grows for as long as the link keeps up.
+fn copy_stream_growing(
+    source: &mut dyn Read,
+    target: &mut dyn Write,
+    on_chunk: &mut dyn FnMut(usize) -> Result<(), Stop>,
+) -> Result<(), Stop> {
+    copy_chunks(source, target, on_chunk, MAX_CHUNK_BYTES)
+}
+
+fn copy_chunks(
+    source: &mut dyn Read,
+    target: &mut dyn Write,
+    on_chunk: &mut dyn FnMut(usize) -> Result<(), Stop>,
+    max_chunk: usize,
+) -> Result<(), Stop> {
     let mut buffer = vec![0u8; CHUNK_BYTES];
     loop {
+        let started = Instant::now();
         let read = match source.read(&mut buffer) {
             Ok(0) => return Ok(()),
             Ok(read) => read,
@@ -545,6 +574,20 @@ pub(crate) fn copy_stream(
             .write_all(&buffer[..read])
             .map_err(|e| Stop::Failed(format!("Writing failed: {}", e)))?;
         on_chunk(read)?;
+        let size = next_chunk(buffer.len(), read, started.elapsed(), max_chunk);
+        buffer.resize(size, 0);
+    }
+}
+
+/// The next chunk's size, after `read` bytes of a `size` chunk took `took`. A
+/// short read says nothing about the link, so only a slow one changes the size.
+fn next_chunk(size: usize, read: usize, took: Duration, max_chunk: usize) -> usize {
+    if took > SHRINK_OVER {
+        (size / 2).max(CHUNK_BYTES)
+    } else if took < GROW_UNDER && read == size {
+        (size * 2).min(max_chunk)
+    } else {
+        size
     }
 }
 
@@ -1026,7 +1069,7 @@ pub(super) fn stage_upload(
             OpenType::File,
         )
         .map_err(|e| call_error("Could not create a temporary file in", &dir, &e))?;
-    let written = copy_stream(source, &mut remote, on_chunk).and_then(|()| {
+    let written = copy_stream_growing(source, &mut remote, on_chunk).and_then(|()| {
         with_finish_limit(session, || {
             // Durable before it can replace anything. Not every server has the
             // extension; a failing connection shows in the close below.
@@ -1254,7 +1297,7 @@ fn download_plan(
                 .map_err(|e| call_error("Could not read", &remote_path, &e))?;
             let destination = local_target(&local_under(target, rel))?;
             let written = write_partial(&destination, mode, |file| {
-                copy_stream(&mut remote, file, &mut |n| run.on_chunk(n))
+                copy_stream_growing(&mut remote, file, &mut |n| run.on_chunk(n))
             });
             // Closing `remote` is the tidying here.
             if written.is_err() {
@@ -1418,6 +1461,62 @@ mod tests {
             .collect();
         names.sort();
         names
+    }
+
+    #[test]
+    fn a_chunk_grows_only_while_the_link_keeps_up() {
+        let quick = Duration::from_millis(50);
+        let middling = Duration::from_secs(1);
+        let slow = Duration::from_secs(3);
+        let max = MAX_CHUNK_BYTES;
+        assert_eq!(
+            next_chunk(CHUNK_BYTES, CHUNK_BYTES, quick, max),
+            CHUNK_BYTES * 2
+        );
+        assert_eq!(
+            next_chunk(max, max, quick, max),
+            max,
+            "never above the most"
+        );
+        assert_eq!(
+            next_chunk(CHUNK_BYTES, CHUNK_BYTES, quick, CHUNK_BYTES),
+            CHUNK_BYTES
+        );
+        assert_eq!(
+            next_chunk(CHUNK_BYTES * 2, CHUNK_BYTES, quick, max),
+            CHUNK_BYTES * 2,
+            "short read"
+        );
+        assert_eq!(
+            next_chunk(CHUNK_BYTES * 2, CHUNK_BYTES * 2, middling, max),
+            CHUNK_BYTES * 2
+        );
+        assert_eq!(
+            next_chunk(CHUNK_BYTES * 4, CHUNK_BYTES * 4, slow, max),
+            CHUNK_BYTES * 2
+        );
+        assert_eq!(
+            next_chunk(CHUNK_BYTES, CHUNK_BYTES, slow, max),
+            CHUNK_BYTES,
+            "never below the first"
+        );
+    }
+
+    #[test]
+    fn a_growing_copy_arrives_whole_in_fewer_chunks() {
+        let data: Vec<u8> = (0..5 * MAX_CHUNK_BYTES + 7)
+            .map(|i| (i % 251) as u8)
+            .collect();
+        let mut out = Vec::new();
+        let mut sizes = Vec::new();
+        copy_stream_growing(&mut Cursor::new(data.clone()), &mut out, &mut |n| {
+            sizes.push(n);
+            Ok(())
+        })
+        .unwrap();
+        assert_eq!(out, data);
+        assert_eq!(&sizes[..3], [CHUNK_BYTES, MAX_CHUNK_BYTES, MAX_CHUNK_BYTES]);
+        assert!(sizes.iter().all(|&n| n <= MAX_CHUNK_BYTES));
     }
 
     #[test]

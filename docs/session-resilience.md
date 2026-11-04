@@ -70,14 +70,14 @@ anything else typed then: it is not sent to the new shell.
 ## Fast output
 
 A program can print faster than the terminal can show it, and the terminal throws
-away what it is given above 50 MB. So SSIX stops reading once about 8 MB has been
+away what it is given above 50 MB. So SSIX stops reading once about 1 MB has been
 sent to a terminal and not processed yet, and carries on as it catches up. The
 server feels this as a slow connection and the program slows down, as under any
 terminal, and no output is lost.
 
 Everything else goes on during the pause: keepalives, typing, resizing. Ctrl+C
 reaches the program at once. What the program had already printed still has to
-scroll past, about 10 MB at most.
+scroll past, about 1 MB at most.
 
 A terminal off screen goes on processing what it is sent, so a program printing in
 a hidden tab is not held up by that. If the whole window is hidden and the system
