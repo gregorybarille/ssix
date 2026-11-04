@@ -77,9 +77,6 @@ jobs:
 
       - name: Build portable executable
         run: npm run tauri build -- --no-bundle
-        env:
-          CARGO_PROFILE_RELEASE_LTO: "false"
-          CARGO_PROFILE_RELEASE_CODEGEN_UNITS: "16"
 
       - name: Upload portable executable artifact
         uses: actions/upload-artifact@v4
@@ -147,9 +144,6 @@ jobs:
 
       - name: Build macOS DMG
         run: npm run tauri build
-        env:
-          CARGO_PROFILE_RELEASE_LTO: "false"
-          CARGO_PROFILE_RELEASE_CODEGEN_UNITS: "16"
 
       - name: Upload macOS DMG artifact
         uses: actions/upload-artifact@v4
@@ -203,9 +197,6 @@ jobs:
 
       - name: Build .deb, .rpm and AppImage
         run: npm run tauri build -- --bundles deb,rpm,appimage
-        env:
-          CARGO_PROFILE_RELEASE_LTO: "false"
-          CARGO_PROFILE_RELEASE_CODEGEN_UNITS: "16"
 
       - name: Upload Linux packages artifact
         uses: actions/upload-artifact@v4
