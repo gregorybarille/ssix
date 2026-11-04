@@ -281,7 +281,9 @@ half-written backup in the list.
 ## SSH Key Utilities
 
 - generate keypairs
-- choose storage mode for generated keys
+- choose storage mode for generated keys. A custom path must be absolute (`~` is
+  not expanded), and generating is refused if that file or `<path>.pub` exists. A
+  folder SSIX has to create gets mode 700; one that exists keeps its mode
 - a passphrase set while generating fills in the credential's Passphrase field,
   so saving the credential is enough to log in with the encrypted key;
   generating a key with none clears the field

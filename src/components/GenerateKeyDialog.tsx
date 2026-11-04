@@ -129,6 +129,7 @@ export function GenerateKeyDialog({
               <label className="flex items-start gap-2 cursor-pointer text-sm">
                 <RadioGroupItem
                   value="custom_path"
+                  data-testid="generate-key-storage-custom"
                   className="mt-1 h-4 w-4 rounded-full border border-input bg-background data-[state=checked]:border-primary data-[state=checked]:bg-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
                 />
                 <span>
@@ -158,6 +159,7 @@ export function GenerateKeyDialog({
               <Label htmlFor="key-custom-path">Path *</Label>
               <Input
                 id="key-custom-path"
+                data-testid="generate-key-custom-path"
                 placeholder="/home/me/.ssh/id_ed25519_custom"
                 value={customPath}
                 onChange={(e) => setCustomPath(e.target.value)}
@@ -178,10 +180,10 @@ export function GenerateKeyDialog({
                 id="key-custom-path-hint"
                 className="text-xs text-muted-foreground"
               >
-                Absolute path for the private key. SSIX writes both
-                this file (mode 600) and a sibling{" "}
-                <code>.pub</code> file (mode 644). The directory
-                must already exist.
+                Absolute path for the private key; <code>~</code> is not
+                expanded. SSIX writes both this file (mode 600) and{" "}
+                <code>&lt;path&gt;.pub</code> (mode 644), and refuses if
+                either exists. A missing folder is created (mode 700).
               </p>
             </div>
           )}
@@ -219,6 +221,7 @@ export function GenerateKeyDialog({
             <p
               role="alert"
               aria-live="assertive"
+              data-testid="generate-key-error"
               className="text-sm text-destructive bg-destructive/10 px-3 py-2 rounded-md"
             >
               {error}
