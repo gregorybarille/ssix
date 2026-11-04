@@ -1,7 +1,8 @@
-import { describe, it, expect, vi } from "vitest";
-import { render, screen, within } from "@testing-library/react";
+import { beforeEach, describe, it, expect, vi } from "vitest";
+import { act, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { PortForwardsView, ForwardSession } from "@/components/PortForwardsView";
+import { usePortForwardsStore } from "@/store/usePortForwardsStore";
 import { Connection, Credential } from "@/types";
 
 const portForwardConn: Connection = {
@@ -56,7 +57,6 @@ const mockConnections: Connection[] = [portForwardConn, directConn];
 const mockCredentials: Credential[] = [];
 
 const defaultProps = {
-  sessions: [] as ForwardSession[],
   connections: mockConnections,
   credentials: mockCredentials,
   onCloseSession: vi.fn(),
@@ -67,13 +67,15 @@ const defaultProps = {
 };
 
 describe("PortForwardsView", () => {
+  beforeEach(() => usePortForwardsStore.setState({ sessions: [] }));
+
   it("renders the Port forwards heading", () => {
     render(<PortForwardsView {...defaultProps} />);
     expect(screen.getByText("Port forwards")).toBeInTheDocument();
   });
 
   it("renders every local forward as a status row", () => {
-    render(<PortForwardsView {...defaultProps} sessions={[]} />);
+    render(<PortForwardsView {...defaultProps} />);
     const row = screen.getByTestId("forward-row-pf-1");
     expect(row).toHaveAttribute("data-status", "disconnected");
     expect(screen.getByTestId("forward-status-pf-1")).toHaveAccessibleName(
@@ -89,7 +91,8 @@ describe("PortForwardsView", () => {
         connection: portForwardConn,
       },
     ];
-    render(<PortForwardsView {...defaultProps} sessions={sessions} />);
+    usePortForwardsStore.setState({ sessions });
+    render(<PortForwardsView {...defaultProps} />);
     // The header of the session card shows the connection name
     expect(screen.getAllByText("api-tunnel").length).toBeGreaterThan(0);
   });
@@ -104,8 +107,9 @@ describe("PortForwardsView", () => {
         connection: portForwardConn,
       },
     ];
+    usePortForwardsStore.setState({ sessions });
     render(
-      <PortForwardsView {...defaultProps} sessions={sessions} onCloseSession={onCloseSession} />,
+      <PortForwardsView {...defaultProps} onCloseSession={onCloseSession} />,
     );
 
     // Audit-2 #1: the icon-only button must expose an aria-label that
@@ -138,8 +142,9 @@ describe("PortForwardsView", () => {
         connection: portForwardConn,
       },
     ];
+    usePortForwardsStore.setState({ sessions });
     render(
-      <PortForwardsView {...defaultProps} sessions={sessions} onCloseSession={onCloseSession} />,
+      <PortForwardsView {...defaultProps} onCloseSession={onCloseSession} />,
     );
     await user.click(
       screen.getByRole("button", { name: "Stop forward api-tunnel" }),
@@ -157,7 +162,8 @@ describe("PortForwardsView", () => {
         error: "Connection refused",
       },
     ];
-    render(<PortForwardsView {...defaultProps} sessions={sessions} />);
+    usePortForwardsStore.setState({ sessions });
+    render(<PortForwardsView {...defaultProps} />);
     expect(screen.getByTestId("forward-row-pf-1")).toHaveAttribute(
       "data-status",
       "error",
@@ -229,7 +235,8 @@ describe("PortForwardsView", () => {
         lost: true,
       },
     ];
-    render(<PortForwardsView {...defaultProps} sessions={sessions} />);
+    usePortForwardsStore.setState({ sessions });
+    render(<PortForwardsView {...defaultProps} />);
     expect(screen.getByTestId("forward-row-pf-1")).toHaveAttribute("data-status", "error");
     expect(screen.getByTestId("forward-status-pf-1")).toHaveAccessibleName(
       "api-tunnel: Connection lost",
@@ -252,7 +259,8 @@ describe("PortForwardsView", () => {
         receivedPerSecond: 1536,
       },
     ];
-    render(<PortForwardsView {...defaultProps} sessions={sessions} />);
+    usePortForwardsStore.setState({ sessions });
+    render(<PortForwardsView {...defaultProps} />);
     const row = screen.getByTestId("forward-row-pf-1");
     expect(row).toHaveAttribute("data-bytes-sent", "2048");
     expect(row).toHaveAttribute("data-bytes-received", String(3 * 1024 * 1024));
@@ -265,13 +273,12 @@ describe("PortForwardsView", () => {
   });
 
   it("shows no speed on a forward that is not running, and zero before any traffic", () => {
-    const { rerender } = render(<PortForwardsView {...defaultProps} />);
+    render(<PortForwardsView {...defaultProps} />);
     expect(screen.queryByTestId("forward-speed-pf-1")).not.toBeInTheDocument();
-    rerender(
-      <PortForwardsView
-        {...defaultProps}
-        sessions={[{ sessionId: "s", connectionName: "api-tunnel", connection: portForwardConn }]}
-      />,
+    act(() =>
+      usePortForwardsStore.setState({
+        sessions: [{ sessionId: "s", connectionName: "api-tunnel", connection: portForwardConn }],
+      }),
     );
     expect(screen.getByTestId("forward-speed-pf-1")).toHaveTextContent("Up 0 B/s, down 0 B/s");
   });
@@ -305,8 +312,9 @@ describe("PortForwardsView", () => {
         clientError: "to db:5432: connect failed",
       },
     ];
+    usePortForwardsStore.setState({ sessions });
     render(
-      <PortForwardsView {...defaultProps} connections={[dynamicForwardConn]} sessions={sessions} />,
+      <PortForwardsView {...defaultProps} connections={[dynamicForwardConn]} />,
     );
     const row = screen.getByTestId("forward-row-df-1");
     expect(row).toHaveAttribute("data-clients", "3");
@@ -351,7 +359,8 @@ describe("PortForwardsView", () => {
     const sessions: ForwardSession[] = [
       { sessionId: "s-stop", connectionName: conn.name, connection: conn },
     ];
-    render(<PortForwardsView {...defaultProps} connections={[conn]} sessions={sessions} />);
+    usePortForwardsStore.setState({ sessions });
+    render(<PortForwardsView {...defaultProps} connections={[conn]} />);
     await user.click(screen.getByTestId(`forward-stop-${conn.id}`));
     expect(screen.getByTestId("confirm-stop-forward")).toHaveTextContent(consequence);
     expect(screen.getByTestId("confirm-stop-forward")).toHaveTextContent(conn.name);
@@ -369,12 +378,13 @@ describe("PortForwardsView", () => {
       const onCloseSession = vi.fn();
       const props = { ...defaultProps, onCloseSession };
       const user = userEvent.setup();
-      const view = render(<PortForwardsView {...props} sessions={[connecting]} />);
+      usePortForwardsStore.setState({ sessions: [connecting] });
+      render(<PortForwardsView {...props} />);
       await user.click(screen.getByTestId("forward-stop-pf-1"));
       return {
         onCloseSession,
         becomes: (sessions: ForwardSession[]) =>
-          view.rerender(<PortForwardsView {...props} sessions={sessions} />),
+          act(() => usePortForwardsStore.setState({ sessions })),
         confirm: () => user.click(screen.getByRole("button", { name: "Stop" })),
       };
     };
