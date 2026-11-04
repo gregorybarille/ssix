@@ -25,6 +25,7 @@ import {
   createPasswordCredential,
   createDirectConnection,
   ensureConnectionRowsLayout,
+  buttonInRow,
 } from "../helpers/flows.js";
 import { sel } from "../helpers/selectors.js";
 
@@ -71,9 +72,7 @@ describe("SCP upload + download", () => {
     // cluster, so we have to hover before it becomes interactable.
     await row.moveTo();
     // Open SCP dialog via the per-row affordance.
-    const scpBtn = await row.$('[data-testid^="scp-open-"]');
-    await scpBtn.waitForClickable({ timeout: 10_000 });
-    await scpBtn.click();
+    await (await buttonInRow(row, '[data-testid^="scp-open-"]')).click();
 
     const dialog = await browser.$(sel.scpDialog);
     await dialog.waitForExist({ timeout: 10_000 });

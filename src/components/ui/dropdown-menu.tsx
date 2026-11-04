@@ -3,6 +3,7 @@ import { DropdownMenu as DropdownMenuPrimitive } from "radix-ui";
 
 import { focusWasTaken } from "@/lib/focus";
 import { cn } from "@/lib/utils";
+import { overlayHost } from "@/lib/overlayHost";
 
 function DropdownMenu({
   ...props
@@ -28,7 +29,7 @@ function DropdownMenuContent({
   ...props
 }: React.ComponentProps<typeof DropdownMenuPrimitive.Content>) {
   return (
-    <DropdownMenuPrimitive.Portal>
+    <DropdownMenuPrimitive.Portal container={overlayHost()}>
       <DropdownMenuPrimitive.Content
         data-slot="dropdown-menu-content"
         sideOffset={sideOffset}

@@ -1,7 +1,14 @@
+import { memo } from "react";
 import { Connection, Credential, LayoutMode } from "@/types";
 import { Server } from "lucide-react";
+import { useLatestCallback } from "@/hooks/useLatestCallback";
 import { useRovingFocus } from "@/hooks/useRovingFocus";
-import { ConnectionRow, useConnectionRowMenu, type ConnectionRowActions } from "./ConnectionRow";
+import {
+  ConnectionRow,
+  useConnectionRowMenu,
+  useStableRowActions,
+  type ConnectionRowActions,
+} from "./ConnectionRow";
 import { EmptyState } from "./ui/EmptyState";
 
 interface ConnectionListProps extends ConnectionRowActions {
@@ -13,7 +20,7 @@ interface ConnectionListProps extends ConnectionRowActions {
   layout?: LayoutMode;
 }
 
-export function ConnectionList({
+export const ConnectionList = memo(function ConnectionList({
   connections,
   credentials,
   onEdit,
@@ -32,20 +39,20 @@ export function ConnectionList({
   // Space on a row prefer onSelect (caller-controlled selection); if no
   // onSelect is wired, fall back to onConnect (the primary action). Action
   // buttons inside the row stop propagation and keep their own behaviour.
-  const activateRow = (index: number) => {
-    const conn = connections[index];
-    if (!conn) return;
+  const activateRow = useLatestCallback((conn: Connection) => {
     if (onSelect) onSelect(conn);
     else if (onConnect) onConnect(conn);
-  };
+  });
   const roving = useRovingFocus({
     itemCount: connections.length,
-    onActivate: activateRow,
+    onActivate: (index) => {
+      if (connections[index]) activateRow(connections[index]);
+    },
     orientation: isTile ? "grid" : "vertical",
   });
 
-  const actions = { onEdit, onDelete, onClone, onConnect, onScp, onBrowse };
-  const { rowMenuProps, menu } = useConnectionRowMenu(credentials, actions);
+  const actions = useStableRowActions({ onEdit, onDelete, onClone, onConnect, onScp, onBrowse });
+  const { onRowContextMenu, onRowKeyDown, menu } = useConnectionRowMenu(credentials, actions);
 
   if (connections.length === 0) {
     return (
@@ -71,17 +78,18 @@ export function ConnectionList({
           <ConnectionRow
             key={conn.id}
             {...roving.getItemProps(index)}
-            {...rowMenuProps(conn)}
+            onRowContextMenu={onRowContextMenu}
+            onRowKeyDown={onRowKeyDown}
             conn={conn}
             credentials={credentials}
             tile={isTile}
             selected={selectedId === conn.id}
             actions={actions}
-            onActivate={() => activateRow(index)}
+            onActivate={activateRow}
           />
         ))}
       </div>
       {menu}
     </>
   );
-}
+});

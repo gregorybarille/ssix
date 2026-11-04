@@ -41,6 +41,20 @@ export async function reveal(selector: string): Promise<void> {
   await el.scrollIntoView({ block: "center" });
 }
 
+/**
+ * A clickable button inside a connection row. A row off screen has no layout
+ * (`content-visibility`) until it comes into view, as a person scrolling would bring it.
+ */
+export async function buttonInRow(
+  row: WebdriverIO.Element,
+  selector: string,
+): Promise<WebdriverIO.Element> {
+  await row.scrollIntoView({ block: "center" });
+  const button = await row.$(selector);
+  await button.waitForClickable({ timeout: 10_000 });
+  return button;
+}
+
 export async function clickDialogFooterButton(selector: string): Promise<void> {
   const el = await browser.$(selector);
   await el.waitForExist({ timeout: 10_000 });
@@ -243,8 +257,7 @@ export async function connectToConnection(name: string): Promise<void> {
   await ensureConnectionRowsLayout();
   const row = await browser.$(sel.connectionRowByName(name));
   await row.waitForExist({ timeout: 10_000 });
-  const btn = await row.$('[data-testid^=\"connect-button-\"]');
-  await btn.waitForClickable({ timeout: 10_000 });
+  const btn = await buttonInRow(row, '[data-testid^=\"connect-button-\"]');
   await btn.click();
 }
 
