@@ -40,9 +40,12 @@ use tauri::{AppHandle, Manager};
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 /// libssh2 timeout for blocking calls during setup (handshake, auth, channel open).
 pub(crate) const SESSION_TIMEOUT_MS: u32 = 15_000;
+/// Idle wait per [`SHARED_WAIT_READERS`] threads reading the same session.
+const SHARED_WAIT_STEP: Duration = Duration::from_millis(10);
+const SHARED_WAIT_READERS: usize = 8;
+/// How long after its last byte a tunnel still counts as in use.
+const TUNNEL_IN_USE_FOR: Duration = Duration::from_secs(10);
 /// Longest an idle worker waits for socket readiness before re-checking its queue.
-/// Idle wait for a thread that shares its session with another that reads it.
-const SHARED_WAIT_MAX: Duration = Duration::from_millis(10);
 const WAIT_MAX: Duration = Duration::from_millis(250);
 /// Cap on bytes coalesced into one output message.
 const OUTPUT_COALESCE_MAX: usize = 256 * 1024;
@@ -1653,14 +1656,16 @@ fn run_io_loop<O: ShellOutput>(shell: OpenShell, io: &mut ShellIo<O>) -> ShellEn
                     continue;
                 }
             }
-            let shared = agent_pump
-                .as_ref()
-                .is_some_and(crate::agent::ForwardPump::serving);
+            let readers = 1 + usize::from(
+                agent_pump
+                    .as_ref()
+                    .is_some_and(crate::agent::ForwardPump::serving),
+            );
             // A shut window has to wait for the server: the socket is writable
             // all along, and waiting on that would spin.
             let socket = [fds[0]];
             let writable: &[wake::Fd] = if send_blocked { &socket } else { &[] };
-            wake::wait_ready(&fds, writable, idle_wait(shared));
+            wake::wait_ready(&fds, writable, idle_wait(readers));
             io.control.wake.drain();
         }
     }
@@ -1668,13 +1673,30 @@ fn run_io_loop<O: ShellOutput>(shell: OpenShell, io: &mut ShellIo<O>) -> ShellEn
 
 /// How long an idle reader of a session may sleep. Another thread reading the
 /// same session can pull its packet into libssh2's queue without the socket ever
-/// turning readable for the sleeper, so then it cannot sleep for long.
-fn idle_wait(shared: bool) -> Duration {
-    if shared {
-        SHARED_WAIT_MAX
-    } else {
-        WAIT_MAX
+/// turning readable for the sleeper, so then it cannot sleep for long. That is the
+/// usual case with company, not a rare race: poll looks at the socket again after
+/// waking, so the first thread's read sends the others back to sleep.
+///
+/// Each expiry costs a pass over the session's lock, which is why the wait stretches
+/// with the readers: 300 clients at 10 ms would be 30,000 passes a second.
+fn idle_wait(readers: usize) -> Duration {
+    if readers <= 1 {
+        return WAIT_MAX;
     }
+    // 25 steps is WAIT_MAX.
+    SHARED_WAIT_STEP * (readers / SHARED_WAIT_READERS).clamp(1, 25) as u32
+}
+
+/// How long a tunnel may sleep, `since_moved` after it last carried a byte. One in
+/// use keeps the short wait however many others there are, since a client that
+/// sent something expects an answer, and that answer would otherwise take the
+/// whole of a long wait, as [`idle_wait`] says.
+fn tunnel_wait(readers: usize, since_moved: Duration) -> Duration {
+    idle_wait(if since_moved < TUNNEL_IN_USE_FOR {
+        readers.min(2)
+    } else {
+        readers
+    })
 }
 
 /// Send a keepalive if one is due and the socket can take it now. On a full
@@ -1780,6 +1802,7 @@ pub(crate) fn forward_bidi(
     let mut buf = vec![0u8; 64 * 1024];
     let mut up = Outgoing::default();
     let mut down = Outgoing::default();
+    let mut last_moved = Instant::now();
 
     loop {
         let mut idle = true;
@@ -1844,7 +1867,9 @@ pub(crate) fn forward_bidi(
             return;
         }
 
-        if idle {
+        if !idle {
+            last_moved = Instant::now();
+        } else {
             let send_blocked = send_blocked_on_socket(session);
             if !up.is_empty() || send_blocked {
                 // A close with data still queued looks like more data, so only a
@@ -1885,7 +1910,7 @@ pub(crate) fn forward_bidi(
             wake::wait_ready(
                 &readable,
                 &writable,
-                idle_wait(clients.load(Ordering::Relaxed) > 1),
+                tunnel_wait(clients.load(Ordering::Relaxed), last_moved.elapsed()),
             );
         }
     }
@@ -2031,9 +2056,25 @@ mod idle_wait_tests {
 
     #[test]
     fn a_reader_with_company_cannot_sleep_for_long() {
-        assert_eq!(idle_wait(false), WAIT_MAX);
-        assert_eq!(idle_wait(true), SHARED_WAIT_MAX);
-        assert!(SHARED_WAIT_MAX < WAIT_MAX);
+        assert_eq!(idle_wait(1), WAIT_MAX);
+        assert_eq!(idle_wait(2), SHARED_WAIT_STEP);
+        assert!(SHARED_WAIT_STEP < WAIT_MAX);
+    }
+
+    #[test]
+    fn the_idle_wait_stretches_with_the_readers_up_to_the_longest_wait() {
+        assert_eq!(idle_wait(15), Duration::from_millis(10));
+        assert_eq!(idle_wait(16), Duration::from_millis(20));
+        assert_eq!(idle_wait(300), WAIT_MAX);
+        assert_eq!(idle_wait(1024), WAIT_MAX);
+    }
+
+    #[test]
+    fn a_tunnel_in_use_keeps_the_short_wait_among_idle_ones() {
+        let long_ago = TUNNEL_IN_USE_FOR;
+        assert_eq!(tunnel_wait(300, Duration::ZERO), SHARED_WAIT_STEP);
+        assert_eq!(tunnel_wait(300, long_ago), WAIT_MAX);
+        assert_eq!(tunnel_wait(1, Duration::ZERO), WAIT_MAX);
     }
 }
 
