@@ -181,6 +181,7 @@ export const sel = {
   installKeyClose: '[data-testid="install-key-close"]',
 
   // Settings panel
+  settingsPanel: '[data-testid="settings-panel"]',
   settingsGitSyncRepoPath: '[data-testid="settings-git-sync-repo-path"]',
   settingsSavedStatus: '[data-testid="settings-saved-status"]',
 

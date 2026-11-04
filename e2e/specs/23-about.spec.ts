@@ -1,5 +1,5 @@
 /**
- * Spec 23: the logo in the title bar, and the About section of Settings.
+ * Spec 23: the logo in the title bar, the width of Settings, and its About section.
  *
  * Opening a link hands it to the system browser, which the test container does
  * not have, so only the unit tests follow the links.
@@ -29,6 +29,17 @@ describe("About", () => {
         ),
       { timeoutMsg: "The title bar's logo never loaded" },
     );
+  });
+
+  it("fills the width of the window", async () => {
+    const panel = await browser.$(sel.settingsPanel);
+    await panel.waitForDisplayed();
+    const [width, available] = await browser.execute(
+      (el) => [el.getBoundingClientRect().width, el.parentElement!.clientWidth],
+      panel as unknown as HTMLElement,
+    );
+    expect(available).toBeGreaterThan(512);
+    expect(width).toBe(available);
   });
 
   it("names the version and the author, and links to the source and licence", async () => {

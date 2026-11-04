@@ -148,7 +148,7 @@ export function SettingsPanel({ settings, onSave, onPreview }: SettingsPanelProp
   };
 
   return (
-    <div className="space-y-6 p-6 max-w-lg">
+    <div className="space-y-6 p-6" data-testid="settings-panel">
       <div>
         <h2 className="text-lg font-semibold">Settings</h2>
         <p className="text-sm text-muted-foreground mt-1">
