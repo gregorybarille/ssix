@@ -102,6 +102,19 @@ fn direct_target(data: &AppData, conn: &Connection) -> Result<Endpoint, String> 
     )
 }
 
+/// The endpoint of `conn`'s jump host or SSH server, through its proxy command
+/// if any: the proxy command always reaches the first hop.
+fn gateway_endpoint(
+    data: &AppData,
+    conn: &Connection,
+    host: &str,
+    port: u16,
+    cred_id: &str,
+) -> Result<Endpoint, String> {
+    Ok(resolve_endpoint(&data.credentials, host, port, cred_id)?
+        .through(conn.proxy_command.as_deref()))
+}
+
 /// The jump host and target of a jump connection. The proxy command, if any,
 /// reaches the jump host.
 fn jump_endpoints(data: &AppData, conn: &Connection) -> Result<(Endpoint, Endpoint), String> {
@@ -119,13 +132,13 @@ fn jump_endpoints(data: &AppData, conn: &Connection) -> Result<(Endpoint, Endpoi
         .credential_id
         .as_deref()
         .ok_or("Jump host connection requires a target credential")?;
-    let gateway = resolve_endpoint(
-        &data.credentials,
+    let gateway = gateway_endpoint(
+        data,
+        conn,
         gateway_host,
         *gateway_port,
         gateway_credential_id,
-    )?
-    .through(conn.proxy_command.as_deref());
+    )?;
     let destination = resolve_endpoint(
         &data.credentials,
         destination_host,
@@ -305,13 +318,13 @@ pub async fn ssh_connect(
             destination_host,
             destination_port,
         } => {
-            let gateway = resolve_endpoint(
-                &data.credentials,
+            let gateway = gateway_endpoint(
+                &data,
+                &conn,
                 gateway_host,
                 *gateway_port,
                 gateway_credential_id,
-            )?
-            .through(conn.proxy_command.as_deref());
+            )?;
             start_port_forward(
                 gateway,
                 listen_addr(bind_address.as_deref(), *local_port)?,
@@ -333,13 +346,13 @@ pub async fn ssh_connect(
             destination_host,
             destination_port,
         } => {
-            let gateway = resolve_endpoint(
-                &data.credentials,
+            let gateway = gateway_endpoint(
+                &data,
+                &conn,
                 gateway_host,
                 *gateway_port,
                 gateway_credential_id,
-            )?
-            .through(conn.proxy_command.as_deref());
+            )?;
             crate::forwards::start_remote_forward(
                 gateway,
                 *remote_port,
@@ -356,13 +369,13 @@ pub async fn ssh_connect(
             bind_address,
             local_port,
         } => {
-            let gateway = resolve_endpoint(
-                &data.credentials,
+            let gateway = gateway_endpoint(
+                &data,
+                &conn,
                 gateway_host,
                 *gateway_port,
                 gateway_credential_id,
-            )?
-            .through(conn.proxy_command.as_deref());
+            )?;
             crate::forwards::start_dynamic_forward(
                 gateway,
                 listen_addr(bind_address.as_deref(), *local_port)?,

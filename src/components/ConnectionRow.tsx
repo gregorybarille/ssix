@@ -331,7 +331,6 @@ interface ConnectionRowProps extends Omit<React.ComponentProps<"div">, "onClick"
   credentials: Credential[];
   /** "tile" renders a card; otherwise a full-width row. */
   tile?: boolean;
-  selected?: boolean;
   actions: ConnectionRowActions;
   /** Click on the row itself. */
   onActivate: (conn: Connection) => void;
@@ -358,7 +357,6 @@ export const ConnectionRow = React.memo(function ConnectionRow({
   conn,
   credentials,
   tile = false,
-  selected = false,
   actions,
   onActivate,
   onRowContextMenu,
@@ -380,7 +378,6 @@ export const ConnectionRow = React.memo(function ConnectionRow({
       data-testid={`connection-row-${conn.id}`}
       data-name={conn.name}
       aria-label={`${conn.name}${conn.tags && conn.tags.length > 0 ? `, tagged ${conn.tags.join(", ")}` : ""}`}
-      aria-current={selected || undefined}
       className={cn(
         "group rounded-lg cursor-pointer transition-colors hover:bg-accent",
         // Rows off screen skip layout and paint, as in the Files view.
@@ -388,7 +385,6 @@ export const ConnectionRow = React.memo(function ConnectionRow({
         tile ? "[contain-intrinsic-size:auto_132px]" : "[contain-intrinsic-size:auto_62px]",
         "focus:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background",
         tile ? "border p-3 flex flex-col gap-2 h-full" : "flex flex-wrap items-center gap-3 p-3",
-        selected && "bg-accent",
         className,
       )}
       style={color ? { ...style, borderLeft: `3px solid ${color}` } : style}

@@ -38,6 +38,7 @@
 //! since it sends the status just before closing; a run whose channel did
 //! not close has none.
 
+use crate::commands::ssh_keygen::shell_single_quote;
 use crate::models::ScriptPlatform;
 use crate::ssh::{close_channel, is_eagain, wake};
 use base64::engine::general_purpose::STANDARD;
@@ -241,9 +242,8 @@ fn pid_marker(run_id: &str) -> String {
 fn wrapped_command(platform: ScriptPlatform, interpreter: &str, run_id: &str) -> String {
     match platform {
         ScriptPlatform::Posix => format!(
-            "exec sh -c 'echo {}$$; {}'",
-            pid_marker(run_id),
-            interpreter.replace('\'', r"'\''")
+            "exec sh -c {}",
+            shell_single_quote(&format!("echo {}$$; {}", pid_marker(run_id), interpreter))
         ),
         ScriptPlatform::Windows => encoded_powershell(
             interpreter,

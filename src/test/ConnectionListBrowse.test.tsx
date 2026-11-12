@@ -37,7 +37,7 @@ const forward: Connection = {
 };
 
 function renderList(onBrowse?: (connection: Connection) => void) {
-  const onSelect = vi.fn();
+  const onConnect = vi.fn();
   render(
     <ConnectionList
       connections={[direct, jump, forward]}
@@ -45,22 +45,22 @@ function renderList(onBrowse?: (connection: Connection) => void) {
       onEdit={vi.fn()}
       onDelete={vi.fn()}
       onClone={vi.fn()}
-      onSelect={onSelect}
+      onConnect={onConnect}
       onBrowse={onBrowse}
     />,
   );
-  return { onSelect };
+  return { onConnect };
 }
 
 describe("ConnectionList Browse files action", () => {
   it("opens a direct or jump host connection, without activating the row", () => {
     const onBrowse = vi.fn();
-    const { onSelect } = renderList(onBrowse);
+    const { onConnect } = renderList(onBrowse);
     fireEvent.click(screen.getByRole("button", { name: "Browse files on web" }));
     expect(onBrowse).toHaveBeenCalledWith(direct);
     fireEvent.click(screen.getByTestId("browse-files-j1"));
     expect(onBrowse).toHaveBeenCalledWith(jump);
-    expect(onSelect).not.toHaveBeenCalled();
+    expect(onConnect).not.toHaveBeenCalled();
   });
 
   it("is not offered on a forward", () => {

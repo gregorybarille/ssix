@@ -4,7 +4,6 @@ import { SnippetPalette } from "@/components/SnippetPalette";
 import { Terminal } from "@/components/Terminal";
 import {
   registerTerminalExtension,
-  terminalExtensions,
   type TerminalExtension,
   type TerminalExtensionContext,
 } from "@/components/terminal/extensions";
@@ -338,7 +337,7 @@ describe("Terminal extension hooks", () => {
     });
   });
 
-  it("runs onCreate with the terminal, session and connection, after open and before output", () => {
+  it("runs onCreate with the terminal and session, after open and before output", () => {
     let seen: TerminalExtensionContext | undefined;
     add({
       id: "probe",
@@ -351,7 +350,6 @@ describe("Terminal extension hooks", () => {
     expect(mocks.events).toEqual(["open", "create", "attach-output"]);
     expect(seen?.term).toBe(mocks.term);
     expect(seen?.sessionId).toBe("s1");
-    expect(seen?.connection).toBe(connection);
     expect(seen?.settings).toBe(settings);
   });
 
@@ -421,7 +419,6 @@ describe("Terminal extension hooks", () => {
   });
 
   it("registers auto-copy as a built-in extension and it reaches the clipboard", () => {
-    expect(terminalExtensions.map((e) => e.id)).toContain("auto-copy-selection");
     const writeText = vi.fn().mockResolvedValue(undefined);
     Object.defineProperty(navigator, "clipboard", {
       configurable: true,

@@ -231,9 +231,8 @@ describe("ConnectionList", () => {
     expect(screen.getByText("k8s")).toBeInTheDocument();
   });
 
-  it("calls onConnect when Connect is clicked in tile layout without triggering onSelect", () => {
+  it("connects once when Connect is clicked in tile layout, not again for the row", () => {
     const onConnect = vi.fn();
-    const onSelect = vi.fn();
     render(
       <ConnectionList
         connections={[mockConnections[0]]}
@@ -242,18 +241,16 @@ describe("ConnectionList", () => {
         onDelete={vi.fn()}
         onClone={vi.fn()}
         onConnect={onConnect}
-        onSelect={onSelect}
         layout="tile"
       />
     );
     fireEvent.click(screen.getByRole("button", { name: /^Connect to / }));
-    expect(onConnect).toHaveBeenCalledWith(mockConnections[0]);
-    expect(onSelect).not.toHaveBeenCalled();
+    expect(onConnect).toHaveBeenCalledExactlyOnceWith(mockConnections[0]);
   });
 
-  it("calls onClone when Clone is clicked in tile layout without triggering onSelect", () => {
+  it("calls onClone when Clone is clicked in tile layout without connecting", () => {
     const onClone = vi.fn();
-    const onSelect = vi.fn();
+    const onConnect = vi.fn();
     render(
       <ConnectionList
         connections={[mockConnections[0]]}
@@ -261,18 +258,18 @@ describe("ConnectionList", () => {
         onEdit={vi.fn()}
         onDelete={vi.fn()}
         onClone={onClone}
-        onSelect={onSelect}
+        onConnect={onConnect}
         layout="tile"
       />
     );
     fireEvent.click(screen.getByRole("button", { name: /^Clone / }));
     expect(onClone).toHaveBeenCalledWith(mockConnections[0]);
-    expect(onSelect).not.toHaveBeenCalled();
+    expect(onConnect).not.toHaveBeenCalled();
   });
 
-  it("calls onEdit when Edit is clicked in tile layout without triggering onSelect", () => {
+  it("calls onEdit when Edit is clicked in tile layout without connecting", () => {
     const onEdit = vi.fn();
-    const onSelect = vi.fn();
+    const onConnect = vi.fn();
     render(
       <ConnectionList
         connections={[mockConnections[0]]}
@@ -280,18 +277,18 @@ describe("ConnectionList", () => {
         onEdit={onEdit}
         onDelete={vi.fn()}
         onClone={vi.fn()}
-        onSelect={onSelect}
+        onConnect={onConnect}
         layout="tile"
       />
     );
     fireEvent.click(screen.getByRole("button", { name: /^Edit / }));
     expect(onEdit).toHaveBeenCalledWith(mockConnections[0]);
-    expect(onSelect).not.toHaveBeenCalled();
+    expect(onConnect).not.toHaveBeenCalled();
   });
 
-  it("calls onDelete when Delete is clicked in tile layout without triggering onSelect", () => {
+  it("calls onDelete when Delete is clicked in tile layout without connecting", () => {
     const onDelete = vi.fn();
-    const onSelect = vi.fn();
+    const onConnect = vi.fn();
     render(
       <ConnectionList
         connections={[mockConnections[0]]}
@@ -299,13 +296,13 @@ describe("ConnectionList", () => {
         onEdit={vi.fn()}
         onDelete={onDelete}
         onClone={vi.fn()}
-        onSelect={onSelect}
+        onConnect={onConnect}
         layout="tile"
       />
     );
     fireEvent.click(screen.getByRole("button", { name: /^Delete / }));
     expect(onDelete).toHaveBeenCalledWith(mockConnections[0].id);
-    expect(onSelect).not.toHaveBeenCalled();
+    expect(onConnect).not.toHaveBeenCalled();
   });
 
   // ─── Always-visible action cluster ────────────────────────────────────────

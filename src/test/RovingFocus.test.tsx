@@ -89,44 +89,8 @@ describe("ConnectionList keyboard navigation", () => {
     expect(document.activeElement).toBe(items[0]);
   });
 
-  it("Enter activates onSelect when provided, else onConnect", () => {
-    const onSelect = vi.fn();
+  it("Enter and Space on a row connect", () => {
     const onConnect = vi.fn();
-    const { rerender } = render(
-      <ConnectionList
-        connections={conns}
-        credentials={[cred]}
-        onEdit={vi.fn()}
-        onDelete={vi.fn()}
-        onClone={vi.fn()}
-        onSelect={onSelect}
-        onConnect={onConnect}
-      />,
-    );
-    let items = screen.getAllByRole("listitem");
-    items[1].focus();
-    fireEvent.keyDown(items[1], { key: "Enter" });
-    expect(onSelect).toHaveBeenCalledWith(conns[1]);
-    expect(onConnect).not.toHaveBeenCalled();
-
-    rerender(
-      <ConnectionList
-        connections={conns}
-        credentials={[cred]}
-        onEdit={vi.fn()}
-        onDelete={vi.fn()}
-        onClone={vi.fn()}
-        onConnect={onConnect}
-      />,
-    );
-    items = screen.getAllByRole("listitem");
-    items[2].focus();
-    fireEvent.keyDown(items[2], { key: " " });
-    expect(onConnect).toHaveBeenCalledWith(conns[2]);
-  });
-
-  it("does not intercept keys typed inside nested controls (action buttons)", () => {
-    const onSelect = vi.fn();
     render(
       <ConnectionList
         connections={conns}
@@ -134,8 +98,28 @@ describe("ConnectionList keyboard navigation", () => {
         onEdit={vi.fn()}
         onDelete={vi.fn()}
         onClone={vi.fn()}
-        onSelect={onSelect}
-        onConnect={vi.fn()}
+        onConnect={onConnect}
+      />,
+    );
+    const items = screen.getAllByRole("listitem");
+    items[1].focus();
+    fireEvent.keyDown(items[1], { key: "Enter" });
+    expect(onConnect).toHaveBeenCalledWith(conns[1]);
+    items[2].focus();
+    fireEvent.keyDown(items[2], { key: " " });
+    expect(onConnect).toHaveBeenCalledWith(conns[2]);
+  });
+
+  it("does not intercept keys typed inside nested controls (action buttons)", () => {
+    const onConnect = vi.fn();
+    render(
+      <ConnectionList
+        connections={conns}
+        credentials={[cred]}
+        onEdit={vi.fn()}
+        onDelete={vi.fn()}
+        onClone={vi.fn()}
+        onConnect={onConnect}
       />,
     );
     const items = screen.getAllByRole("listitem");
@@ -143,8 +127,8 @@ describe("ConnectionList keyboard navigation", () => {
     expect(editButton).toBeTruthy();
     editButton!.focus();
     fireEvent.keyDown(editButton!, { key: "Enter" });
-    // onSelect (row activation) MUST NOT fire — Enter on a button activates the button
-    expect(onSelect).not.toHaveBeenCalled();
+    // The row MUST NOT activate: Enter on a button activates the button
+    expect(onConnect).not.toHaveBeenCalled();
   });
 });
 

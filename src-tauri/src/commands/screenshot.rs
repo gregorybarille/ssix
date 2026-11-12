@@ -127,24 +127,6 @@ mod tests {
     }
 
     #[test]
-    fn test_decode_base64_and_write_png_bytes() {
-        let tmp = std::env::temp_dir().join("ssix_screenshot_test");
-        fs::create_dir_all(&tmp).unwrap();
-
-        let b64 = png_b64();
-
-        let path_str = tmp.join("test.png");
-
-        // Override dirs is not straightforward, so test the decode + write
-        // logic directly using a temp file rather than invoking the command.
-        let decoded = STANDARD.decode(&b64).unwrap();
-        fs::write(&path_str, &decoded).unwrap();
-        let on_disk = fs::read(&path_str).unwrap();
-        assert_eq!(on_disk, PNG_BYTES);
-        fs::remove_dir_all(tmp).unwrap();
-    }
-
-    #[test]
     fn test_format_timestamp_unix_epoch() {
         // Unix epoch (1970-01-01T00:00:00) → "19700101-000000"
         assert_eq!(format_timestamp(0), "19700101-000000");

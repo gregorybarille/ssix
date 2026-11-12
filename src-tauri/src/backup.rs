@@ -14,7 +14,9 @@ use std::fs;
 use std::io::{Cursor, Read, Write};
 use std::path::{Path, PathBuf};
 use std::thread;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, UNIX_EPOCH};
+
+use crate::logs::now_ms;
 
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -96,13 +98,6 @@ pub struct BackupList {
 
 pub fn backups_dir() -> PathBuf {
     crate::storage::data_dir().join("backups")
-}
-
-fn now_ms() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_millis() as u64)
-        .unwrap_or(0)
 }
 
 pub(crate) fn sha256_hex(bytes: &[u8]) -> String {

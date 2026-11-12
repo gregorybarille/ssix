@@ -5,7 +5,6 @@ import {
   runTerminalData,
   runTerminalKey,
   runTerminalOutput,
-  terminalExtensions,
   type TerminalExtension,
   type TerminalExtensionContext,
 } from "@/components/terminal/extensions";
@@ -171,14 +170,12 @@ describe("terminal extension registry", () => {
   });
 
   it("replaces an extension registered again under the same id, in place", () => {
-    const before = terminalExtensions.length;
-    add({ id: "a" });
-    add({ id: "b" });
-    const replacement: TerminalExtension = { id: "a" };
-    add(replacement);
-    expect(terminalExtensions.length).toBe(before + 2);
-    expect(terminalExtensions[before]).toBe(replacement);
-    expect(terminalExtensions[before + 1].id).toBe("b");
+    const ran: string[] = [];
+    add({ id: "a", onOutput: () => void ran.push("first a") });
+    add({ id: "b", onOutput: () => void ran.push("b") });
+    add({ id: "a", onOutput: () => void ran.push("second a") });
+    runTerminalOutput(ctx, new Uint8Array([1]));
+    expect(ran).toEqual(["second a", "b"]);
   });
 
   it("removes an extension through the returned function", () => {

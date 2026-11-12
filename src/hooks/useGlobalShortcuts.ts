@@ -130,8 +130,7 @@ export function normalizeEvent(e: KeyboardEvent): string | null {
   const parts = ["mod"];
   if (e.shiftKey) parts.push("shift");
   if (e.altKey) parts.push("alt");
-  const key = e.key.length === 1 ? e.key.toLowerCase() : e.key.toLowerCase();
-  parts.push(key);
+  parts.push(e.key.toLowerCase());
   return parts.join("+");
 }
 

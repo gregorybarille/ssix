@@ -8,7 +8,7 @@ const invokeMock = vi.mocked(invoke);
 const STATUS = { configured: true, has_local_changes: true, has_remote_changes: true, ahead: 0, behind: 1, changed_files: [] };
 const runResult = (at_risk: string[]) => ({
   steps: at_risk.length ? ["Fetched origin"] : ["Pulled 1 commit(s) from origin/main"],
-  output: { stdout: at_risk.length ? "" : "committed", stderr: "", status: 0 },
+  output: { stdout: at_risk.length ? "" : "committed", stderr: "" },
   at_risk,
 });
 const README = ".ssix-sync/README.md";
