@@ -210,16 +210,43 @@ pub(crate) fn move_inline_secrets(credentials: &mut [Credential]) -> Result<bool
     Ok(true)
 }
 
-/// Delete all secret entries associated with a credential ID.
+/// Delete all secret entries associated with a credential ID. A failure is
+/// logged, and `drop_orphan_secrets` removes what is left at the next launch.
 pub fn delete_all_for_credential(credential_id: &str) {
     let pk = password_key(credential_id);
     let ppk = passphrase_key(credential_id);
     let pkk = private_key_key(credential_id);
-    let _ = with_secrets_mut(|s| {
+    if let Err(e) = with_secrets_mut(|s| {
         s.remove(&pk);
         s.remove(&ppk);
         s.remove(&pkk);
+    }) {
+        crate::logs::log_local(
+            "warn",
+            "secrets",
+            format!("Could not delete the secrets of credential {credential_id}: {e}"),
+        );
+    }
+}
+
+/// Remove the entries of every credential `credentials` does not hold, and
+/// write the file only if one went. Call with the data file locked, so no
+/// save is between storing a new credential's secrets and its row.
+pub(crate) fn drop_orphan_secrets(credentials: &[Credential]) -> Result<(), String> {
+    let _guard = SECRETS_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let mut secrets = load_secrets()?;
+    let before = secrets.len();
+    secrets.retain(|key, _| {
+        let id = key
+            .strip_suffix(":passphrase")
+            .or_else(|| key.strip_suffix(":private_key"))
+            .unwrap_or(key);
+        credentials.iter().any(|c| c.id == id)
     });
+    if secrets.len() == before {
+        return Ok(());
+    }
+    save_secrets(&secrets)
 }
 
 fn enrich_from(cred: &mut Credential, secrets: &HashMap<String, String>) {

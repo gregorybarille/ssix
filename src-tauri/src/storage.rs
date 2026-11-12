@@ -221,7 +221,15 @@ pub fn persist_migrations() -> Result<bool, String> {
     // Secrets first: a crash before the save below leaves them in both files
     // and the next launch finishes the job; the other order would lose them.
     let moved = crate::keychain::move_inline_secrets(&mut data.credentials)?;
-    if !data.migrate_to_current() && !moved {
+    let migrated = data.migrate_to_current();
+    if let Err(e) = crate::keychain::drop_orphan_secrets(&data.credentials) {
+        crate::logs::log_local(
+            "warn",
+            "secrets",
+            format!("Could not remove the secrets of deleted credentials: {e}"),
+        );
+    }
+    if !migrated && !moved {
         return Ok(false);
     }
     save_data_unlocked(&data)?;
@@ -660,6 +668,34 @@ mod tests {
                 fs::read(crate::keychain::secrets_path()).unwrap(),
                 secrets_file
             );
+            assert_inline_rows_still_authenticate();
+        });
+    }
+
+    #[test]
+    fn secrets_of_no_credential_are_dropped_at_startup() {
+        test_support::with_isolated_data_dir(|| {
+            write_raw(&with_inline_secrets(crate::models::CURRENT_SCHEMA_VERSION));
+            assert!(persist_migrations().unwrap());
+            let mut secrets: std::collections::HashMap<String, String> =
+                serde_json::from_slice(&fs::read(crate::keychain::secrets_path()).unwrap())
+                    .unwrap();
+            let kept = secrets.clone();
+            // Left behind by a delete whose secrets write failed.
+            secrets.insert("gone".into(), "old-password".into());
+            secrets.insert("gone:passphrase".into(), "old-passphrase".into());
+            fs::write(
+                crate::keychain::secrets_path(),
+                serde_json::to_string(&secrets).unwrap(),
+            )
+            .unwrap();
+
+            persist_migrations().unwrap();
+
+            let after: std::collections::HashMap<String, String> =
+                serde_json::from_slice(&fs::read(crate::keychain::secrets_path()).unwrap())
+                    .unwrap();
+            assert_eq!(after, kept);
             assert_inline_rows_still_authenticate();
         });
     }

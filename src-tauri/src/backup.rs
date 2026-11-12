@@ -556,9 +556,19 @@ mod tests {
         fs::read_to_string(crate::storage::data_dir().join(name)).ok()
     }
 
+    /// Data holding credential `c1`, so its secrets are not orphans.
     fn data_json(font_size: u8) -> String {
         let mut data = crate::models::AppData::default();
         data.settings.font_size = font_size;
+        data.credentials.push(crate::models::Credential {
+            id: "c1".into(),
+            name: "c1".into(),
+            username: "u".into(),
+            kind: crate::models::CredentialKind::Password {
+                password: String::new(),
+            },
+            is_private: false,
+        });
         serde_json::to_string(&data).unwrap()
     }
 
