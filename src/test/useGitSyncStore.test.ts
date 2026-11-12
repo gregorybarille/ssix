@@ -60,6 +60,8 @@ describe("useGitSyncStore agreement", () => {
       answerRun([]);
       await start();
       expect(invokeMock).toHaveBeenCalledWith(command, { input: input([]) });
+      const statusCalls = invokeMock.mock.calls.filter(([name]) => name === "git_sync_status");
+      expect(statusCalls).toHaveLength(1);
     });
 
     // git_sync_diff exports the files not in question, and Cancel promises nothing changed.
