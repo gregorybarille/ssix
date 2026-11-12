@@ -1004,6 +1004,15 @@ pub struct OpenShell {
     keepalive_interval: u16,
 }
 
+impl crate::reconnect::Discard for OpenShell {
+    /// On its non-blocking session, the channel's free would stop at EAGAIN
+    /// waiting for the server and keep the whole session. With the socket shut
+    /// it gives up and frees, as for a shell the watchdog drops.
+    fn discard(self) {
+        wake::shutdown(wake::fd_of(&self.session));
+    }
+}
+
 /// Authenticate over `tcp` and start a shell.
 pub(crate) fn open_shell_over_stream(
     tcp: TcpStream,
