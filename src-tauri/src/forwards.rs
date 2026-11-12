@@ -28,7 +28,7 @@
 use std::io;
 use std::net::{IpAddr, Ipv4Addr, Shutdown, SocketAddr, TcpListener, TcpStream};
 use std::os::raw::{c_long, c_void};
-use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, Ordering};
 use std::sync::mpsc::TryRecvError;
 use std::sync::{Arc, Mutex, TryLockError};
 use std::thread;
@@ -288,6 +288,9 @@ struct Hub {
     session_readers: AtomicUsize,
     /// Client threads still running, whatever stage they are at.
     in_flight: AtomicUsize,
+    /// Channel opens in a row the server left unanswered. While a client
+    /// opens, the probe is `Busy`, so these count as missed probes.
+    timed_out_opens: AtomicU32,
     events: Box<dyn ForwardEvents>,
     listen_port: u16,
     destination: String,
@@ -308,6 +311,7 @@ impl Hub {
             active: AtomicUsize::new(0),
             session_readers: AtomicUsize::new(session_readers),
             in_flight: AtomicUsize::new(0),
+            timed_out_opens: AtomicU32::new(0),
             events,
             listen_port,
             destination,
@@ -361,19 +365,28 @@ impl Hub {
         });
     }
 
+    /// Whether the forward already serves its limit of clients, saying so
+    /// when it does.
+    fn turn_away(&self) -> bool {
+        if self.in_flight.load(Ordering::SeqCst) < MAX_CLIENTS {
+            return false;
+        }
+        self.status(
+            "client_error",
+            Some(format!(
+                "Closed a new client: this forward already serves {MAX_CLIENTS}, its limit"
+            )),
+        );
+        true
+    }
+
     fn start_client(
         self: &Arc<Self>,
         work: impl FnOnce(&Hub) + Send + 'static,
         spawn: impl FnOnce(Box<dyn FnOnce() + Send>) -> io::Result<()>,
     ) {
-        if self.in_flight.load(Ordering::SeqCst) >= MAX_CLIENTS {
+        if self.turn_away() {
             drop(work);
-            self.status(
-                "client_error",
-                Some(format!(
-                    "Closed a new client: this forward already serves {MAX_CLIENTS}, its limit"
-                )),
-            );
             return;
         }
         self.in_flight.fetch_add(1, Ordering::SeqCst);
@@ -641,7 +654,15 @@ impl SshUplink {
                     }
                     wake::wait_readable(&fds, Duration::from_millis(50));
                 }
-                result => return result,
+                Err(e) if e.code() == ErrorCode::Session(LIBSSH2_ERROR_TIMEOUT) => {
+                    hub.timed_out_opens.fetch_add(1, Ordering::SeqCst);
+                    return Err(e);
+                }
+                // Refused or not, the server answered.
+                result => {
+                    hub.timed_out_opens.store(0, Ordering::SeqCst);
+                    return result;
+                }
             }
         }
     }
@@ -787,10 +808,14 @@ impl Incoming {
                 serve,
             } => loop {
                 match listener.accept() {
+                    // Closed before it is freed, which a plain drop would not do.
+                    // Only this thread adds clients, so the check below agrees.
+                    Ok(channel) if hub.turn_away() => discard_channel(session, channel),
                     Ok(channel) => {
                         let serve = Arc::clone(serve);
-                        // A client turned away has its channel dropped in there,
-                        // which like any free has to happen under this lock.
+                        // A client that cannot get a thread has its channel
+                        // dropped in there, which like any free has to happen
+                        // under this lock.
                         let _locked = session.raw();
                         hub.spawn_client(move |hub| serve(hub, channel));
                     }
@@ -878,21 +903,24 @@ fn supervise<U: Uplink>(
             match answer {
                 Probe::Alive => {
                     missed_probes = 0;
+                    hub.timed_out_opens.store(0, Ordering::SeqCst);
                     next_probe = Instant::now() + timing.probe_interval;
                 }
                 Probe::NoReply => {
                     missed_probes += 1;
-                    if missed_probes >= timing.max_missed_probes {
-                        break Some(format!(
-                            "The SSH server {} stopped responding",
-                            uplink.server()
-                        ));
-                    }
                     next_probe = Instant::now();
                 }
                 Probe::Dead => break Some(lost()),
                 Probe::Busy => {}
                 Probe::Stopped => break None,
+            }
+            if missed_probes + hub.timed_out_opens.load(Ordering::SeqCst)
+                >= timing.max_missed_probes
+            {
+                break Some(format!(
+                    "The SSH server {} stopped responding",
+                    uplink.server()
+                ));
             }
             // The probe read the session, which can have queued a remote
             // forward's connection with nothing left on the socket to wake
@@ -1873,6 +1901,16 @@ mod tests {
         let _still_accepting = f.connected_client();
     }
 
+    /// Clients opening one after the other keep every probe `Busy`; their
+    /// opens running out of time is the server's silence all the same.
+    #[test]
+    fn opens_that_time_out_while_probes_are_busy_end_the_forward() {
+        let f = Fixture::start(timing(Duration::from_millis(5)), &[Probe::Busy; 1000]);
+        f.hub.timed_out_opens.store(3, Ordering::SeqCst);
+        let reason = f.wait_for_end().expect("a reason for the frontend");
+        assert!(reason.contains("stopped responding"), "{}", reason);
+    }
+
     #[test]
     fn a_stop_during_a_probe_is_not_a_failure() {
         let f = Fixture::start(timing(Duration::from_millis(5)), &[Probe::Stopped]);
@@ -2497,6 +2535,64 @@ mod live {
                     .iter()
                     .any(|s| s.bytes_received > 0 && s.bytes_sent >= hello.len() as u64)
             });
+            stop(&handle, &events);
+        });
+    }
+
+    /// A tunnel whose far side ends first still closes its channel. sshd sends
+    /// its close only once ours or our EOF arrives, and libssh2's free on a
+    /// non-blocking session gives up while waiting for it, leaking the
+    /// channel. A close that answers at once shows ours already went out.
+    #[test]
+    #[ignore]
+    fn live_a_tunnel_the_far_side_ends_closes_its_channel() {
+        with_isolated_data_dir(|| {
+            // Writes and hangs up, reached through a remote forward.
+            let destination = TcpListener::bind("127.0.0.1:0").unwrap();
+            let destination_port = destination.local_addr().unwrap().port();
+            thread::spawn(move || {
+                for mut stream in destination.incoming().flatten() {
+                    let _ = stream.write_all(b"bye");
+                }
+            });
+            let events = Arc::new(Recorder::default());
+            let remote_port = free_server_port();
+            let handle = start_remote_forward(
+                server(),
+                remote_port,
+                "127.0.0.1".to_string(),
+                destination_port,
+                0,
+                Arc::clone(&events),
+            )
+            .unwrap();
+
+            let uplink = SshUplink::connect(&server(), 0).unwrap();
+            uplink.session.set_blocking(false);
+            let hub = Hub::new(Box::new(Arc::new(Recorder::default())), 0, "test".into(), 0);
+            let peer = "127.0.0.1:1".parse().unwrap();
+            for round in 0..5 {
+                let channel = uplink
+                    .open_direct(&hub, "127.0.0.1", remote_port, peer)
+                    .unwrap();
+                let mut last_handle = channel.clone();
+                let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+                let mut client = connect(listener.local_addr().unwrap().port());
+                let (local, _) = listener.accept().unwrap();
+                forward_bidi(
+                    local,
+                    channel,
+                    &uplink.session,
+                    &AtomicUsize::new(1),
+                    &Traffic::default(),
+                );
+                let mut got = Vec::new();
+                client.read_to_end(&mut got).unwrap();
+                assert_eq!(got, b"bye");
+                let closed = last_handle.close();
+                assert!(closed.is_ok(), "round {round}: not closed yet: {closed:?}");
+                free_channel(&uplink.session, last_handle);
+            }
             stop(&handle, &events);
         });
     }

@@ -207,10 +207,28 @@ pub(crate) fn generate_ssh_key_sync(input: GenerateSshKeyInput) -> Result<Genera
     })
 }
 
+/// This machine's name. Not from `HOSTNAME`, which a shell sets but an app
+/// started from the desktop does not have.
+#[cfg(unix)]
 fn hostname() -> Option<String> {
-    std::env::var("HOSTNAME")
-        .ok()
-        .or_else(|| std::env::var("HOST").ok())
+    let mut buf = [0u8; 256];
+    // SAFETY: libc writes at most the length given, which leaves the last byte
+    // a NUL even when the name is cut short.
+    if unsafe { libc::gethostname(buf.as_mut_ptr().cast(), buf.len() - 1) } != 0 {
+        return None;
+    }
+    let name = std::ffi::CStr::from_bytes_until_nul(&buf)
+        .ok()?
+        .to_str()
+        .ok()?;
+    (!name.is_empty()).then(|| name.to_string())
+}
+
+#[cfg(not(unix))]
+fn hostname() -> Option<String> {
+    ["COMPUTERNAME", "HOSTNAME", "HOST"]
+        .iter()
+        .find_map(|name| std::env::var(name).ok())
 }
 
 // Audit-4 Phase 4: removed `InstallPublicKeyInput` and the
@@ -269,6 +287,15 @@ pub fn build_install_script(public_key: &str) -> String {
     )
 }
 
+/// The install script as a command for any login shell: a csh or fish one
+/// would stop at its `$(...)` or `[ ... ]`.
+fn install_command(public_key: &str) -> String {
+    format!(
+        "exec sh -c {}",
+        shell_single_quote(&build_install_script(public_key))
+    )
+}
+
 // Audit-4 Phase 4: this is the internal helper used by
 // ssh_install_public_key_by_credential. It is NOT exposed as a Tauri
 // command — the previous bare `ssh_install_public_key` command took a
@@ -298,9 +325,8 @@ fn install_public_key_with_password(
         .channel_session()
         .map_err(|e| format!("Channel open failed: {}", e))?;
 
-    let script = build_install_script(public_key);
     channel
-        .exec(&script)
+        .exec(&install_command(public_key))
         .map_err(|e| format!("exec failed: {}", e))?;
 
     let mut stdout = String::new();
@@ -438,6 +464,12 @@ mod tests {
         assert_eq!(sanitise_name("ok-name_1"), "ok-name_1");
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn the_hostname_comes_from_the_system() {
+        assert!(hostname().is_some_and(|name| !name.is_empty()));
+    }
+
     #[test]
     fn shell_single_quote_escapes_quotes() {
         assert_eq!(shell_single_quote("abc"), "'abc'");
@@ -464,6 +496,25 @@ mod tests {
         // The escaped form should appear; no unescaped single quote inside the
         // key literal.
         assert!(script.contains("user'\\''s@host"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn the_install_command_runs_under_sh_and_keeps_a_quoted_comment() {
+        let key = "ssh-ed25519 AAAA user's@host";
+        let command = install_command(key);
+        assert!(command.starts_with("exec sh -c '"), "{command}");
+        let home = temp_dir();
+        let status = std::process::Command::new("sh")
+            .arg("-c")
+            .arg(&command)
+            .env("HOME", &home)
+            .status()
+            .unwrap();
+        assert!(status.success());
+        let installed = std::fs::read_to_string(home.join(".ssh/authorized_keys")).unwrap();
+        let _ = std::fs::remove_dir_all(&home);
+        assert_eq!(installed, format!("{key}\n"));
     }
 
     #[test]

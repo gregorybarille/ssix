@@ -25,6 +25,9 @@ message say that opening the connection as a shell would help.
 
 Set the connection's verbosity to `-v` to see these steps in the Logs view.
 
+A key file path may start with `~/`, which stands for your home folder, as in
+`ssh -i ~/.ssh/id_ed25519`. The path is stored as typed and expanded at login.
+
 ## SSH agent
 
 Choose **SSH Agent** when creating a credential. It stores a username and

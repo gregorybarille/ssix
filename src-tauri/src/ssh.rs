@@ -1628,11 +1628,16 @@ fn run_io_loop<O: ShellOutput>(shell: OpenShell, io: &mut ShellIo<O>) -> ShellEn
             return ShellEnd::Closed;
         }
 
+        // Before giving up on the connection, end it: while the socket still
+        // counts as connected, the frees wait for a server reply and give up
+        // without freeing, as `SshUplink::close` explains for forwards.
         if watchdog.enabled() {
             if let Err(e) = send_due_keepalive(&session, fds[0]) {
+                wake::shutdown(fds[0]);
                 return ShellEnd::Dropped(format!("SSH keepalive failed: {}", e));
             }
             if let Some(silence) = watchdog.silence(Instant::now()) {
+                wake::shutdown(fds[0]);
                 return ShellEnd::Dropped(format!(
                     "The server did not answer for {} s. If it ignores keepalives, \
                      set this connection's keepalive to 0.",
@@ -1836,17 +1841,21 @@ pub(crate) fn forward_bidi(
             }
         }
 
-        // channel → local
+        // channel → local. The channel is closed even when the far side ended
+        // it: on a non-blocking session libssh2 frees nothing until our close
+        // has gone out, so a channel dropped without one leaks.
         if down.is_empty() {
             match channel.read(&mut buf) {
                 Ok(0) => {
                     let _ = local.shutdown(Shutdown::Both);
+                    close_channel(&mut channel);
                     return;
                 }
                 Ok(n) => down.push(&buf[..n]),
                 Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => {}
                 Err(_) => {
                     let _ = local.shutdown(Shutdown::Both);
+                    close_channel(&mut channel);
                     return;
                 }
             }
@@ -1865,6 +1874,7 @@ pub(crate) fn forward_bidi(
 
         if down.is_empty() && channel.eof() {
             let _ = local.shutdown(Shutdown::Both);
+            close_channel(&mut channel);
             return;
         }
 

@@ -111,6 +111,11 @@ watches its socket:
   not. Three requests in a row without an answer end the forward, each waiting
   up to 15 s, so a session that goes silent is given up on within about 75 s. A
   short outage does not end it.
+- A client's channel open that the server leaves unanswered for 15 s counts as
+  a missed request, since the request waits while a client opens. So does one
+  to a destination the server is still trying to reach: sshd answers only once
+  its own connection attempt ends. Any answer, a refusal included, resets the
+  count.
 
 The request opens a channel of a type no server implements
 (`ssix-probe@ssix.invalid`) and counts the refusal as an answer. `ssh2` offers
