@@ -23,6 +23,16 @@ describe("parseHostKeyMismatch", () => {
     expect(m?.port).toBe(2222);
   });
 
+  it("ignores a marker smuggled through a server's method list", () => {
+    // What `decode_method_list` leaves of a list holding the marker.
+    const cleaned = "publickeyHOST_KEY_MISMATCHhost=aport=22fingerprint=b";
+    expect(
+      parseHostKeyMismatch(
+        `The server does not accept password authentication (it offers: ${cleaned})`,
+      ),
+    ).toBeNull();
+  });
+
   it("returns null for ordinary errors and empty input", () => {
     expect(parseHostKeyMismatch("Password auth failed: denied")).toBeNull();
     expect(parseHostKeyMismatch("")).toBeNull();

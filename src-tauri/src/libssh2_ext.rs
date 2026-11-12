@@ -19,7 +19,6 @@
 //!   session is freed, whichever comes first, so whoever holds one must also
 //!   hold a clone of its `Session`.
 
-use std::borrow::Cow;
 #[cfg(unix)]
 use std::ffi::{c_char, c_int, c_uchar, c_ulong, c_void};
 use std::ffi::{c_uint, CStr, CString};
@@ -334,10 +333,16 @@ extern "C" fn on_sign<F: FnMut(&[u8]) -> Option<Vec<u8>>>(
     .unwrap_or(FAILED)
 }
 
-/// A method list as text. The list is whatever the server sent, and a name
-/// that is not UTF-8 cannot match a method anyway.
-fn decode_method_list(list: &CStr) -> Cow<'_, str> {
-    list.to_string_lossy()
+/// A method list as text, keeping only printable ASCII without spaces, which
+/// is all a method name holds. The list is whatever the server sent and ends
+/// up in error messages, so a space-free list cannot carry a marker such as
+/// `HOST_KEY_MISMATCH host=...` that the frontend would act on.
+fn decode_method_list(list: &CStr) -> String {
+    list.to_bytes()
+        .iter()
+        .filter(|b| b.is_ascii_graphic())
+        .map(|&b| b as char)
+        .collect()
 }
 
 /// The authentication methods the server still accepts for `username`, comma
@@ -367,7 +372,7 @@ pub(crate) fn userauth_list(session: &Session, username: &str) -> Result<String,
         // it until the next call, which the lock held here keeps away until
         // this copy is made.
         let list = unsafe { CStr::from_ptr(list) };
-        Ok(decode_method_list(list).into_owned())
+        Ok(decode_method_list(list))
     })
 }
 
@@ -432,9 +437,18 @@ mod tests {
     fn a_method_list_that_is_not_utf8_still_decodes() {
         let methods = decode_method_list(c"publickey,pass\xffword,keyboard-interactive");
         let names: Vec<&str> = methods.split(',').collect();
-        assert_eq!(names[0], "publickey");
-        assert_eq!(names[1], "pass\u{fffd}word");
-        assert_eq!(names[2], "keyboard-interactive");
+        assert_eq!(names, ["publickey", "password", "keyboard-interactive"]);
+    }
+
+    #[test]
+    fn a_method_list_cannot_carry_a_host_key_marker() {
+        let methods = decode_method_list(
+            c"publickey HOST_KEY_MISMATCH host=a port=22 fingerprint=b\nchanged",
+        );
+        assert_eq!(
+            methods,
+            "publickeyHOST_KEY_MISMATCHhost=aport=22fingerprint=bchanged"
+        );
     }
 
     #[test]
