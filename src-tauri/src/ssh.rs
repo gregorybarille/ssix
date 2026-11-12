@@ -1628,11 +1628,16 @@ fn run_io_loop<O: ShellOutput>(shell: OpenShell, io: &mut ShellIo<O>) -> ShellEn
             return ShellEnd::Closed;
         }
 
+        // Before giving up on the connection, end it: while the socket still
+        // counts as connected, the frees wait for a server reply and give up
+        // without freeing, as `SshUplink::close` explains for forwards.
         if watchdog.enabled() {
             if let Err(e) = send_due_keepalive(&session, fds[0]) {
+                wake::shutdown(fds[0]);
                 return ShellEnd::Dropped(format!("SSH keepalive failed: {}", e));
             }
             if let Some(silence) = watchdog.silence(Instant::now()) {
+                wake::shutdown(fds[0]);
                 return ShellEnd::Dropped(format!(
                     "The server did not answer for {} s. If it ignores keepalives, \
                      set this connection's keepalive to 0.",
