@@ -1314,7 +1314,18 @@ fn download_plan(
             copied
         },
         |path, source| seal_local_dir(path, source),
-    )
+    )?;
+    // Each folder once, not once per file: a rename survives a power cut only
+    // once its folder is synced. The root's own folder holds its name.
+    if let Some(parent) = target.parent() {
+        sync_folder(parent);
+    }
+    for item in &plan.items {
+        if let PlanItem::Dir { rel, .. } = item {
+            sync_folder(&local_under(target, rel));
+        }
+    }
+    Ok(())
 }
 
 /// Make sure a folder is there, and say whether it had to be created. One
@@ -1416,7 +1427,8 @@ impl Written {
             ));
             return Ok(false);
         }
-        write_partial(destination, mode, |file| {
+        // The download syncs its folders once it is complete.
+        stage_and_rename(destination, mode, |file| {
             copy_stream_growing(source, file, &mut |n| run.on_chunk(n))
         })?;
         if let Some(id) = file_id(destination) {
@@ -1470,6 +1482,29 @@ pub(crate) fn write_partial<F>(target: &Path, mode: Option<u32>, fill: F) -> Res
 where
     F: FnOnce(&mut fs::File) -> Result<(), Stop>,
 {
+    stage_and_rename(target, mode, fill)?;
+    if let Some(dir) = target.parent() {
+        sync_folder(dir);
+    }
+    Ok(())
+}
+
+/// The rename itself survives a power cut only once the folder is synced.
+fn sync_folder(dir: &Path) {
+    #[cfg(unix)]
+    if let Ok(folder) = fs::File::open(dir) {
+        let _ = folder.sync_all();
+    }
+    #[cfg(not(unix))]
+    let _ = dir;
+}
+
+/// [`write_partial`] without syncing the folder, for a caller that syncs it
+/// once for many files.
+fn stage_and_rename<F>(target: &Path, mode: Option<u32>, fill: F) -> Result<(), Stop>
+where
+    F: FnOnce(&mut fs::File) -> Result<(), Stop>,
+{
     let dir = target
         .parent()
         .ok_or_else(|| Stop::Failed(format!("{} has no folder", target.display())))?;
@@ -1504,11 +1539,6 @@ where
     fs::rename(&staged, target)
         .map_err(|e| format!("Could not write {}: {}", target.display(), e))?;
     guard.keep = true;
-    // The rename itself survives a power cut only once the folder is synced.
-    #[cfg(unix)]
-    if let Ok(folder) = fs::File::open(dir) {
-        let _ = folder.sync_all();
-    }
     Ok(())
 }
 

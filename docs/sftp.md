@@ -59,6 +59,9 @@ cancelled.
   cancelled copy removes that temporary file and leaves an existing target as it
   was. This applies to uploads as well as downloads. Quitting the app during a
   download removes its temporary file too.
+- **A downloaded file is flushed to disk before it takes its name**, and each
+  folder once the download is complete, so a power cut leaves either the old file
+  or the whole new one.
 - **Replacing asks first.** When the target exists, the transfer stops before
   writing anything and asks. For a folder, files with the same name are replaced
   and the others stay.
