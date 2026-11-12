@@ -207,10 +207,28 @@ pub(crate) fn generate_ssh_key_sync(input: GenerateSshKeyInput) -> Result<Genera
     })
 }
 
+/// This machine's name. Not from `HOSTNAME`, which a shell sets but an app
+/// started from the desktop does not have.
+#[cfg(unix)]
 fn hostname() -> Option<String> {
-    std::env::var("HOSTNAME")
-        .ok()
-        .or_else(|| std::env::var("HOST").ok())
+    let mut buf = [0u8; 256];
+    // SAFETY: libc writes at most the length given, which leaves the last byte
+    // a NUL even when the name is cut short.
+    if unsafe { libc::gethostname(buf.as_mut_ptr().cast(), buf.len() - 1) } != 0 {
+        return None;
+    }
+    let name = std::ffi::CStr::from_bytes_until_nul(&buf)
+        .ok()?
+        .to_str()
+        .ok()?;
+    (!name.is_empty()).then(|| name.to_string())
+}
+
+#[cfg(not(unix))]
+fn hostname() -> Option<String> {
+    ["COMPUTERNAME", "HOSTNAME", "HOST"]
+        .iter()
+        .find_map(|name| std::env::var(name).ok())
 }
 
 // Audit-4 Phase 4: removed `InstallPublicKeyInput` and the
@@ -444,6 +462,12 @@ mod tests {
         assert_eq!(sanitise_name("../etc/passwd"), "etc_passwd");
         assert_eq!(sanitise_name(""), "ssix");
         assert_eq!(sanitise_name("ok-name_1"), "ok-name_1");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn the_hostname_comes_from_the_system() {
+        assert!(hostname().is_some_and(|name| !name.is_empty()));
     }
 
     #[test]
