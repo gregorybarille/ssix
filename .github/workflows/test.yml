@@ -6,6 +6,10 @@ on:
   pull_request:
     branches: [main]
 
+# Jobs only read the repository; the audit job adds what it needs.
+permissions:
+  contents: read
+
 jobs:
   test-frontend:
     name: Frontend Tests
@@ -38,10 +42,7 @@ jobs:
             libxdo-dev \
             libssl-dev \
             libayatana-appindicator3-dev \
-            librsvg2-dev \
-            libsecret-1-dev \
-            dbus-x11 \
-            gnome-keyring
+            librsvg2-dev
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy, rustfmt
