@@ -142,6 +142,7 @@ export const sel = {
   scpDownloadButton: '[data-testid="scp-download"]',
   scpStop: '[data-testid="scp-stop"]',
   scpStatus: '[data-testid="scp-status"]',
+  scpError: '[data-testid="scp-error"]',
 
   // Port forwards
   // "Start" a forward = clicking Connect on its forward connection
