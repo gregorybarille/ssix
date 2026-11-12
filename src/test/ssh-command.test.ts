@@ -172,6 +172,52 @@ describe("buildSshCommand", () => {
     );
   });
 
+  it("brackets an IPv6 destination or jump host, as ssh needs to split off the port", () => {
+    const forward: Connection = {
+      id: "c6",
+      name: "fwd",
+      host: "",
+      port: 22,
+      type: "port_forward",
+      gateway_host: "bastion.example",
+      gateway_port: 22,
+      gateway_credential_id: passCred.id,
+      local_port: 8080,
+      destination_host: "::1",
+      destination_port: 80,
+    };
+    expect(buildSshCommand(forward, [passCred])).toBe(
+      "ssh -L '8080:[::1]:80' alice@bastion.example",
+    );
+    const remote: Connection = {
+      ...forward,
+      type: "remote_forward",
+      remote_port: 9000,
+    } as Connection;
+    expect(buildSshCommand(remote, [passCred])).toBe(
+      "ssh -R '9000:[::1]:80' alice@bastion.example",
+    );
+    const jump = (gateway_port: number): Connection => ({
+      id: "c7",
+      name: "jump",
+      host: "",
+      port: 22,
+      type: "jump_shell",
+      gateway_host: "fe80::1",
+      gateway_port,
+      gateway_credential_id: passCred.id,
+      destination_host: "internal.example",
+      destination_port: 22,
+      credential_id: keyCred.id,
+    });
+    expect(buildSshCommand(jump(2222), [passCred, keyCred])).toBe(
+      "ssh -J alice@'[fe80::1]:2222' -i /home/u/.ssh/id_ed25519 deploy@internal.example",
+    );
+    expect(buildSshCommand(jump(22), [passCred, keyCred])).toBe(
+      "ssh -J alice@'[fe80::1]' -i /home/u/.ssh/id_ed25519 deploy@internal.example",
+    );
+  });
+
   it("shell-quotes hosts containing unsafe characters", () => {
     const cmd = buildSshCommand(
       directConn({ host: "weird host with spaces" }),

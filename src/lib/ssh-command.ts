@@ -1,5 +1,5 @@
 import type { Connection, Credential } from "@/types";
-import { listenAddress } from "@/lib/bindAddress";
+import { hostPort, listenAddress } from "@/lib/bindAddress";
 import { isForwardConnection } from "@/lib/sshTerms";
 
 /**
@@ -64,10 +64,10 @@ export function buildSshCommand(
     // Every forward authenticates to its SSH server; only the flag differs.
     const gwCred = find(connection.gateway_credential_id);
     if (connection.type === "port_forward") {
-      const dest = `${connection.destination_host}:${connection.destination_port}`;
+      const dest = hostPort(connection.destination_host, connection.destination_port);
       push("-L", q(`${localListen(connection)}:${dest}`));
     } else if (connection.type === "remote_forward") {
-      const dest = `${connection.destination_host}:${connection.destination_port}`;
+      const dest = hostPort(connection.destination_host, connection.destination_port);
       push("-R", q(`${connection.remote_port}:${dest}`));
     } else {
       push("-D", q(localListen(connection)));
@@ -92,10 +92,7 @@ export function buildSshCommand(
       hop.push(userAt(gwCred?.username, connection.gateway_host));
       push("-o", q(`ProxyCommand=${hop.join(" ")}`));
     } else {
-      const jumpHost =
-        gwPort === 22
-          ? connection.gateway_host
-          : `${connection.gateway_host}:${gwPort}`;
+      const jumpHost = hostPort(connection.gateway_host, gwPort === 22 ? undefined : gwPort);
       push("-J", userAt(gwCred?.username, jumpHost));
     }
     const idFile = identity(destCred);

@@ -31,8 +31,13 @@ export function isLoopbackAddress(text: string): boolean {
   return !address || address.startsWith("127.") || normalizeIpv6(address) === "::1";
 }
 
+/** `host:port` as ssh reads it, with brackets around IPv6; just the host without a port. */
+export function hostPort(host: string, port?: number): string {
+  const bracketed = host.includes(":") ? `[${host}]` : host;
+  return port === undefined ? bracketed : `${bracketed}:${port}`;
+}
+
 /** Where a forward listens, as `host:port`, with brackets around IPv6. */
 export function listenAddress(conn: { bind_address?: string; local_port: number }): string {
-  const host = conn.bind_address || DEFAULT_BIND_ADDRESS;
-  return `${host.includes(":") ? `[${host}]` : host}:${conn.local_port}`;
+  return hostPort(conn.bind_address || DEFAULT_BIND_ADDRESS, conn.local_port);
 }

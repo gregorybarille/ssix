@@ -591,7 +591,8 @@ Wired surfaces today:
   (destructive). "Copy SSH command" builds a portable `ssh` invocation
   from the connection + selected credential via `buildSshCommand` in
   `src/lib/ssh-command.ts` and writes it to the clipboard. Agent forwarding
-  adds `-A`.
+  adds `-A`. An IPv6 address followed by a port, in `-L`, `-R` or `-J`, is
+  written in brackets, as `ssh` needs.
 - **Sidebar buttons** — Move up, Move down, Reset order (see
   [Sidebar](#sidebar)).
 - **Terminal tabs** — Browse files, which opens the tab's server in the
