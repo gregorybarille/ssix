@@ -165,7 +165,7 @@ fn git_sync_status_sync() -> Result<GitSyncStatus, String> {
 fn status_in(repo_path: &Path, settings: &AppSettings) -> Result<GitSyncStatus, String> {
     let branch = sync_branch(repo_path, settings)?;
     let remote = configured_remote(settings)?;
-    let porcelain = git(repo_path, &["status", "--short", "--", EXPORT_DIR])?;
+    let porcelain = git(repo_path, &["status", "--porcelain", "--", EXPORT_DIR])?;
     let changed_files = porcelain
         .stdout
         .lines()
@@ -277,7 +277,7 @@ fn commit_in(
     }
 
     git(repo_path, &["add", "--", EXPORT_DIR])?;
-    let status = git(repo_path, &["status", "--short", "--", EXPORT_DIR])?;
+    let status = git(repo_path, &["status", "--porcelain", "--", EXPORT_DIR])?;
     if status.stdout.trim().is_empty() {
         return Ok(result(
             GitSyncActionResult {
@@ -355,7 +355,7 @@ fn sync_in(
     export_snapshot(repo_path, &files, &[])?;
     steps.push("Exported sanitized snapshot".to_string());
 
-    let status = git(repo_path, &["status", "--short", "--", EXPORT_DIR])?;
+    let status = git(repo_path, &["status", "--porcelain", "--", EXPORT_DIR])?;
     let changed_files = status
         .stdout
         .lines()
@@ -1126,6 +1126,27 @@ mod tests {
         assert!(fx.remote_subjects("main").contains(DEFAULT_COMMIT_MESSAGE));
         assert!(fx.remote_has("main", ".ssix-sync/data.json"));
         assert_in_step(&fx, &data);
+    }
+
+    /// `status.branch` adds a `## main` line to `--short` and colour codes
+    /// change its lines; `--porcelain` ignores both.
+    #[test]
+    fn the_users_status_settings_do_not_count_as_changes() {
+        let Some(fx) = Fixture::new(true) else { return };
+        run(&fx.repo, &["config", "status.branch", "true"]);
+        run(&fx.repo, &["config", "color.status", "always"]);
+        let data = data_with("one", "origin", None);
+        sync_in(&fx.repo, &data, &[]).unwrap();
+
+        let status = status_in(&fx.repo, &data.settings).unwrap();
+        assert!(status.changed_files.is_empty(), "{status:?}");
+        assert!(!status.has_local_changes);
+        let commit = commit_in(&fx.repo, &data, "again", &[]).unwrap();
+        assert_eq!(commit.output.stdout, "No changes to commit.");
+        let again = sync_in(&fx.repo, &data, &[]).unwrap();
+        assert!(again
+            .steps
+            .contains(&"No local snapshot changes to commit".to_string()));
     }
 
     #[test]
