@@ -538,7 +538,7 @@ fn canonical_local(path: &Path) -> std::io::Result<PathBuf> {
     Ok(canonical)
 }
 
-fn expand_local(path: &str) -> Result<PathBuf, String> {
+pub(crate) fn expand_local(path: &str) -> Result<PathBuf, String> {
     let home = || dirs::home_dir().ok_or_else(|| "Could not find your home folder".to_string());
     if path.is_empty() || path == "~" {
         return home();
@@ -626,7 +626,7 @@ pub(super) fn list_local(path: &str) -> Result<FileListing, String> {
 
 /// A full path as a listing reports it, as `check_remote_path` is for the
 /// remote side.
-pub(super) fn check_local_path(path: &str) -> Result<(), String> {
+pub(crate) fn check_local_path(path: &str) -> Result<(), String> {
     let target = Path::new(path);
     let has_dots = target.components().any(|part| {
         matches!(
