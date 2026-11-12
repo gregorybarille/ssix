@@ -139,6 +139,8 @@ describe("Connections CRUD", () => {
       async () => !(await (await browser.$(sel.connectionRowByName("conn-a-other"))).isExisting()),
       { timeout: 5_000 },
     );
+    // An empty result says so, not that there are no connections at all.
+    await (await browser.$(sel.connectionsNoMatch)).waitForExist({ timeout: 5_000 });
 
     // Clearing restores the full list without a reload.
     await (await browser.$(sel.connectionSearchClear)).click();

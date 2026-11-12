@@ -1,5 +1,5 @@
 import React, { Suspense, lazy } from "react";
-import { Plus } from "lucide-react";
+import { Plus, Server } from "lucide-react";
 import { ConnectionList } from "../ConnectionList";
 import { ConnectionForm } from "../ConnectionForm";
 import { FolderTree } from "../FolderTree";
@@ -13,6 +13,7 @@ import { useDialogsStore } from "@/store/useDialogsStore";
 import { useConnectionsStore } from "@/store/useConnectionsStore";
 import { browseFiles } from "@/store/useSftpStore";
 import { ErrorBanner } from "../ui/error-banner";
+import { EmptyState } from "../ui/EmptyState";
 import { filterConnections } from "@/lib/search";
 import type { TagGroup } from "@/lib/tags";
 import type { AppSettings, Connection, ConnectionInput, ConnectionLayout, Credential } from "@/types";
@@ -154,6 +155,10 @@ export function ConnectionsView({
             query={listQuery}
             {...rowActions}
           />
+        ) : connections.length > 0 && visibleConnections.length === 0 ? (
+          <div data-testid="connections-no-match">
+            <EmptyState icon={Server} title="No matching connections" hint="Try another search" />
+          </div>
         ) : (
           <ConnectionList
             connections={visibleConnections}
