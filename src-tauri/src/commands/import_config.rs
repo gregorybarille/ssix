@@ -185,10 +185,17 @@ pub struct ImportApplyInput {
 }
 
 /// What the mapping needs from the machine it runs on.
+#[derive(Clone)]
 struct ImportEnv {
     home: PathBuf,
     /// What `ssh` uses when the config sets no `User`.
     local_user: Option<String>,
+    /// The file connecting reads, `~/.ssh/config` (`ssh_config::host_name_of`).
+    live_config: PathBuf,
+    /// Whether the file imported is `live_config`: hosts are then stored by
+    /// alias, so that `HostName` is applied once, when connecting, as `ssh`
+    /// does. Another file's names have to be stored as it expands them.
+    store_alias: bool,
 }
 
 impl ImportEnv {
@@ -200,7 +207,20 @@ impl ImportEnv {
             .filter_map(|name| std::env::var(name).ok())
             .map(|value| value.trim().to_string())
             .find(|value| !value.is_empty());
-        Ok(Self { home, local_user })
+        Ok(Self {
+            live_config: home.join(".ssh").join("config"),
+            home,
+            local_user,
+            store_alias: false,
+        })
+    }
+
+    /// This environment for importing the file at `path`.
+    fn for_file(&self, path: &Path) -> Self {
+        Self {
+            store_alias: path == self.live_config,
+            ..self.clone()
+        }
     }
 }
 
@@ -385,7 +405,10 @@ impl CredentialBook {
 /// One SSH server as the config describes it: a host, or a jump host.
 #[derive(Debug, Clone)]
 struct ServerPlan {
+    /// What the connection stores: see [`ImportEnv::store_alias`].
     host: String,
+    /// The `HostName` it stands for, as `ssh` would use it.
+    host_name: String,
     port: u16,
     credential: CredentialSpec,
     notes: Vec<String>,
@@ -393,7 +416,10 @@ struct ServerPlan {
 
 impl ServerPlan {
     fn address(&self) -> String {
-        format!("{}@{}:{}", self.credential.username, self.host, self.port)
+        format!(
+            "{}@{}:{}",
+            self.credential.username, self.host_name, self.port
+        )
     }
 }
 
@@ -536,7 +562,12 @@ fn server_plan(
     }
 
     Ok(ServerPlan {
-        host,
+        host: if env.store_alias {
+            alias.to_string()
+        } else {
+            host.clone()
+        },
+        host_name: host,
         port,
         credential: CredentialSpec { username, key_path },
         notes,
@@ -552,7 +583,8 @@ enum Route {
 
 fn proxy_is_none(proxy: &Proxy) -> bool {
     match proxy {
-        Proxy::Jump(value) => jump_value(&value.raw).eq_ignore_ascii_case("none"),
+        // Raw, as `apply` reads it: to `ssh`, `none # why` is a host called none.
+        Proxy::Jump(value) => value.raw.eq_ignore_ascii_case("none"),
         Proxy::Command(value) => value.raw.trim().eq_ignore_ascii_case("none"),
     }
 }
@@ -578,7 +610,7 @@ fn route(
             // refuses a host or user that is not safe in a command line.
             crate::proxy::expand(
                 command,
-                &server.host,
+                &server.host_name,
                 server.port,
                 &server.credential.username,
             )
@@ -1402,16 +1434,20 @@ fn build_plan(config: &ParsedConfig, data: &AppData, env: &ImportEnv) -> Plan {
     plan
 }
 
-fn read_config(path: Option<&str>, env: &ImportEnv) -> Result<(ParsedConfig, String), String> {
+/// The file, what it says, how to name it, and the environment for it.
+fn read_config(
+    path: Option<&str>,
+    env: &ImportEnv,
+) -> Result<(ParsedConfig, String, ImportEnv), String> {
     let path = config_path(path, &env.home)?;
     let config = ParsedConfig::read(&path, &env.home)?;
-    Ok((config, display_path(&path, &env.home)))
+    Ok((config, display_path(&path, &env.home), env.for_file(&path)))
 }
 
 fn preview_sync(path: Option<&str>, env: &ImportEnv) -> Result<ImportPreview, String> {
-    let (config, shown) = read_config(path, env)?;
+    let (config, shown, env) = read_config(path, env)?;
     let data = load_data()?;
-    Ok(build_plan(&config, &data, env).into_preview(&config, shown))
+    Ok(build_plan(&config, &data, &env).into_preview(&config, shown))
 }
 
 /// Store `items` in `data`, or say why one cannot be. The caller's transaction
@@ -1449,11 +1485,11 @@ fn apply_sync(input: &ImportApplyInput, env: &ImportEnv) -> Result<ImportResult,
         return Err("Choose at least one host to import".to_string());
     }
     // Read before taking the data lock: an include may be slow to open.
-    let (config, _) = read_config(input.path.as_deref(), env)?;
+    let (config, _, env) = read_config(input.path.as_deref(), env)?;
     let selected: HashSet<&str> = input.keys.iter().map(String::as_str).collect();
     // One transaction: anything refused below saves nothing at all.
     with_data_mut(|data| {
-        let plan = build_plan(&config, data, env);
+        let plan = build_plan(&config, data, &env);
         let planned: HashSet<&str> = plan.items.iter().map(|item| item.key.as_str()).collect();
         if !selected.is_subset(&planned) {
             return Err(STALE_PREVIEW.to_string());
@@ -1495,11 +1531,22 @@ mod tests {
     impl Fixture {
         fn new() -> Self {
             let home = TempHome::new();
+            // Another file than the one written below: most tests are about
+            // any config file, and `live` makes one the file connecting reads.
             let env = ImportEnv {
                 home: home.0.clone(),
                 local_user: Some("localme".to_string()),
+                live_config: home.0.join("not-the-imported-file"),
+                store_alias: false,
             };
             Self { home, env }
+        }
+
+        /// The file the fixture writes is the one connecting reads.
+        fn live() -> Self {
+            let mut fixture = Self::new();
+            fixture.env.live_config = fixture.home.0.join(".ssh/config");
+            fixture
         }
 
         fn write_config(&self, text: &str) -> String {
@@ -1916,6 +1963,14 @@ mod tests {
             );
             assert_eq!(item(&preview, "bastion").kind, "direct");
             assert_eq!(item(&preview, "inner").kind, "jump_shell");
+        });
+    }
+
+    #[test]
+    fn proxy_jump_none_with_a_comment_is_a_host_called_none() {
+        in_data_dir(|f| {
+            let preview = f.preview("Host a\n  User u\n  ProxyJump none # direct\n");
+            assert_ne!(item(&preview, "a").kind, "direct");
         });
     }
 
@@ -2354,6 +2409,8 @@ mod tests {
         let env = ImportEnv {
             home: PathBuf::from("/nonexistent-home"),
             local_user: Some("me".to_string()),
+            live_config: PathBuf::from("/nonexistent-home/.ssh/config"),
+            store_alias: false,
         };
         let data = AppData::default();
         for _ in 0..300 {
@@ -2581,6 +2638,91 @@ mod tests {
             assert_eq!(after.host, "original.example.com");
             assert_eq!(after.id, before.id);
             assert_eq!(load_data().unwrap().connections.len(), 1);
+        });
+    }
+
+    /// Where connecting takes a stored connection: `host_name_of`, reading the
+    /// fixture's file in place of the real `~/.ssh/config`.
+    fn connects_to(f: &Fixture, name: &str) -> String {
+        ParsedConfig::read(&f.env.live_config, &f.home.0)
+            .unwrap()
+            .host_name(&stored(name).host)
+    }
+
+    #[test]
+    fn a_host_from_the_live_config_goes_where_ssh_goes() {
+        with_isolated_data_dir(|| {
+            let f = Fixture::live();
+            f.import("Host web\n  User u\nHost *\n  HostName %h.corp.example.com\n");
+            assert_eq!(stored("web").host, "web");
+            assert_eq!(connects_to(&f, "web"), "web.corp.example.com");
+        });
+    }
+
+    #[test]
+    fn an_alias_of_a_host_with_a_host_name_of_its_own_goes_where_ssh_goes() {
+        with_isolated_data_dir(|| {
+            let f = Fixture::live();
+            f.import(concat!(
+                "Host github-work\n  HostName github.com\n  User git\n",
+                "Host github.com\n  HostName ssh.github.com\n  User git\n",
+            ));
+            assert_eq!(connects_to(&f, "github-work"), "github.com");
+            assert_eq!(connects_to(&f, "github.com"), "ssh.github.com");
+        });
+    }
+
+    #[test]
+    fn jump_hosts_and_forward_servers_are_stored_by_alias_too() {
+        with_isolated_data_dir(|| {
+            let f = Fixture::live();
+            f.import(concat!(
+                "Host target\n  HostName 10.1.0.5\n  User app\n  ProxyJump bastion\n",
+                "Host bastion\n  HostName jump.example.com\n  User ops\n",
+                "Host web\n  HostName 10.0.0.1\n  User u\n  LocalForward 8080 db:5432\n",
+            ));
+            match stored("target").kind {
+                ConnectionKind::JumpShell {
+                    gateway_host,
+                    destination_host,
+                    ..
+                } => assert_eq!(
+                    (gateway_host.as_str(), destination_host.as_str()),
+                    ("bastion", "target")
+                ),
+                other => panic!("{other:?}"),
+            }
+            match stored("web (-L 8080)").kind {
+                ConnectionKind::PortForward { gateway_host, .. } => assert_eq!(gateway_host, "web"),
+                other => panic!("{other:?}"),
+            }
+        });
+    }
+
+    #[test]
+    fn importing_the_live_config_again_finds_what_it_imported() {
+        with_isolated_data_dir(|| {
+            let f = Fixture::live();
+            f.import(BASIC);
+            let preview = f.preview(BASIC);
+            assert_eq!(
+                skip(&preview, "web").category,
+                ImportSkipCategory::AlreadyImported
+            );
+        });
+    }
+
+    /// Known side effect: a row stored with the expanded host before hosts
+    /// were stored by alias is another destination now, never a duplicate.
+    #[test]
+    fn a_row_imported_with_its_expanded_host_is_a_name_clash_for_the_live_config() {
+        with_isolated_data_dir(|| {
+            Fixture::new().import(BASIC);
+            let preview = Fixture::live().preview(BASIC);
+            assert_eq!(
+                skip(&preview, "web").category,
+                ImportSkipCategory::NameClash
+            );
         });
     }
 

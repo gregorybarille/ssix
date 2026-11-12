@@ -20,6 +20,9 @@ Files are written under:
 
 Passphrases are represented as redacted markers when present, not as the original values.
 
+A password or token inside a URL remote is also left out of what the Git Sync view
+shows: the remote in the status, the steps of a sync, and git's error messages.
+
 Scripts and snippets are exported exactly as written, so keep secrets out of them.
 
 For a full local copy that includes the secrets, use [Local Backups](features.md#local-backups) instead.

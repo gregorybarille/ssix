@@ -89,7 +89,8 @@ export const useGitSyncStore = create<GitSyncState>((set, get) => ({
       set({
         actionOutput: `Exported ${snapshot.exported_files.join(", ")} to ${snapshot.repo_path}`,
       });
-      await Promise.all([get().fetchStatus(), get().fetchDiff()]);
+      // fetchDiff ends by fetching the status.
+      await get().fetchDiff();
       return snapshot;
     }),
 
@@ -101,7 +102,8 @@ export const useGitSyncStore = create<GitSyncState>((set, get) => ({
       const rerun = (nowAgreed: string[]) => get().commitSnapshot(message, nowAgreed);
       if (await stoppedToAsk(result.at_risk, rerun)) return;
       set({ actionOutput: formatGitOutput(result.output, "Commit complete.") });
-      await Promise.all([get().fetchStatus(), get().fetchDiff()]);
+      // fetchDiff ends by fetching the status.
+      await get().fetchDiff();
     }),
 
   runSync: (agreed = []) =>
@@ -113,7 +115,8 @@ export const useGitSyncStore = create<GitSyncState>((set, get) => ({
       set({
         actionOutput: [...result.steps, result.output.stdout].filter(Boolean).join("\n"),
       });
-      await Promise.all([get().fetchStatus(), get().fetchDiff()]);
+      // fetchDiff ends by fetching the status.
+      await get().fetchDiff();
     }),
 
   confirmAtRisk: async () => {

@@ -31,10 +31,18 @@ target, because `ssh -L` does not read it for those either.
 
 ## What is read
 
+An import of `~/.ssh/config` stores each host, jump host and forward's SSH server
+by its alias. Connecting looks the alias up in that file, so `HostName` applies
+once, as with `ssh`. Storing the expanded name would apply it twice: with `Host *`
+and `HostName %h.corp.example.com`, `web` would go to
+`web.corp.example.com.corp.example.com`. Another file is not read when connecting,
+so its hosts are stored as it expands them. A later edit of `~/.ssh/config`
+therefore changes where an imported connection goes, as it does for `ssh`.
+
 | Directive | Result |
 |---|---|
 | `Host a b` | One connection per literal name, named after it |
-| `HostName` | The host; `%h` and `%%` are expanded. Without it, the name is the host |
+| `HostName` | From `~/.ssh/config`, the host stays the alias, and the `HostName` applies when connecting (see [Aliases when connecting](#aliases-when-connecting)). From any other file, the host is the `HostName`, with `%h` and `%%` expanded. Without one, the name is the host |
 | `Port` | The port, 22 by default |
 | `User` | The credential's username |
 | `IdentityFile` | An SSH key credential holding only the path |
@@ -66,7 +74,8 @@ does not make a host direct. `ProxyCommand none` does.
   goes through a `ProxyJump` or `ProxyCommand`.
 - **Forwards SSIX cannot represent**: a forward on a host that goes through a
   `ProxyJump`, a Unix socket, or a `RemoteForward` with no destination (a
-  reverse SOCKS proxy).
+  reverse SOCKS proxy). Any end holding a `/` is a socket path, as OpenSSH reads
+  it: `LocalForward 127.0.0.1/8081 db/5432` is skipped, not imported as TCP.
 - **A `ProxyCommand` that would fail on connect**: SSIX expands `%h`, `%p`, `%r`
   and `%%` and refuses any other token, as the connection form does. A token whose
   host or user holds characters that are not safe in a command line is refused too.
@@ -159,11 +168,15 @@ offered again.
 | A name and destination | The same name and destination | Skipped: already imported |
 | A name and destination | That destination under another name | Skipped: already imported as that name |
 | A name and destination | That name, with another destination or key | Skipped: **name clash**. The existing connection is left as it is |
-| Two aliases with one destination | | Both are offered. The first starts ticked and the second unticked, so you can pick either or both |
+| Two aliases with one destination | | Both are offered. The first starts ticked and the second unticked, so you can pick either or both. From `~/.ssh/config` each alias is stored as its host, so two aliases are two destinations and both start ticked |
 | Two aliases with one name | | The first is offered and the second skipped as a duplicate. Spaces around a name do not count, because they are not stored: `Host " web"` and `Host web` are one name |
 
 Importing the same file again therefore creates nothing. To import a host whose
 name clashes, rename the connection or the `Host`.
+
+Connections imported from `~/.ssh/config` before hosts were stored by alias hold
+the expanded name. They no longer match the file by destination, so they show as
+a name clash, never as a duplicate.
 
 ## Forwards and jump hosts
 
