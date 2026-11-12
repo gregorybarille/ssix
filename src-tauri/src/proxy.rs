@@ -215,11 +215,9 @@ fn pump(mut child: Child, far: TcpStream, addr: String) {
     // Child stderr → Logs view, where "connection refused" and the like
     // explain an otherwise bare handshake failure.
     thread::spawn(move || {
-        for line in BufReader::new(stderr).lines().map_while(Result::ok) {
-            if !line.trim().is_empty() {
-                crate::logs::log_local("warn", "proxy", format!("[{}] {}", addr, line));
-            }
-        }
+        for_each_line(BufReader::new(stderr), |line| {
+            crate::logs::log_local("warn", "proxy", format!("[{}] {}", addr, line));
+        });
     });
 
     // Socket → child stdin; owns the child and ends it once the SSH session
@@ -243,9 +241,31 @@ fn pump(mut child: Child, far: TcpStream, addr: String) {
     });
 }
 
+/// Calls `log` with each non-blank line of `reader`, trimmed. A line that is
+/// not UTF-8 is logged as best it can be rather than ending the reading.
+fn for_each_line(mut reader: impl BufRead, mut log: impl FnMut(&str)) {
+    let mut buf = Vec::new();
+    while matches!(reader.read_until(b'\n', &mut buf), Ok(n) if n > 0) {
+        let line = String::from_utf8_lossy(&buf);
+        if !line.trim().is_empty() {
+            log(line.trim());
+        }
+        buf.clear();
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_line_that_is_not_utf8_does_not_end_the_log() {
+        let mut lines = Vec::new();
+        for_each_line(&b"ok\n\xE9\x00bad\n\n last\n"[..], |line| {
+            lines.push(line.to_string())
+        });
+        assert_eq!(lines, ["ok", "\u{fffd}\0bad", "last"]);
+    }
 
     #[test]
     fn a_loopback_pair_is_connected_and_leaves_no_port_open() {
