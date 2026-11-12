@@ -178,7 +178,7 @@ fn status_in(repo_path: &Path, settings: &AppSettings) -> Result<GitSyncStatus, 
         configured: true,
         repo_path: Some(repo_path.display().to_string()),
         branch,
-        remote: Some(remote),
+        remote: Some(without_url_credentials(&remote)),
         has_local_changes,
         has_remote_changes: behind > 0,
         ahead,
@@ -315,7 +315,9 @@ fn sync_in(
 
     let fetch = fetch_remote(repo_path, &remote, &branch)?;
     append_output(&mut combined_output, &fetch);
-    steps.push(format!("Fetched {}", remote));
+    // What the screen shows of the remote: a URL's token stays out of it.
+    let shown = without_url_credentials(&remote);
+    steps.push(format!("Fetched {}", shown));
 
     let (ahead_before_pull, behind_before_pull) = ahead_behind(repo_path, &remote, Some(&branch))?;
     if behind_before_pull > 0 && ahead_before_pull > 0 {
@@ -323,7 +325,7 @@ fn sync_in(
             "This repository and branch {} of {} have diverged ({} local and {} remote commit(s)), and Sync only fast-forwards. \
              In the repository, rebase or merge onto the remote branch, then Sync again. \
              A conflict in {}/ can be resolved either way: Sync exports it again.",
-            branch, remote, ahead_before_pull, behind_before_pull, EXPORT_DIR
+            branch, shown, ahead_before_pull, behind_before_pull, EXPORT_DIR
         ));
     }
     let files = snapshot_files(data)?;
@@ -348,7 +350,7 @@ fn sync_in(
         append_output(&mut combined_output, &pull);
         steps.push(format!(
             "Pulled {} commit(s) from {}/{}",
-            behind_before_pull, remote, branch
+            behind_before_pull, shown, branch
         ));
     }
 
@@ -384,7 +386,7 @@ fn sync_in(
         }
         steps.push(format!(
             "Pushed {} commit(s) to {}/{}",
-            ahead_after_commit, remote, branch
+            ahead_after_commit, shown, branch
         ));
     } else {
         steps.push("Nothing to push".to_string());
@@ -754,11 +756,18 @@ struct GitOutput {
 }
 
 fn git(repo_path: &Path, args: &[&str]) -> Result<GitOutput, String> {
+    // For messages: an argument can be a remote URL holding a token.
+    let command = || {
+        args.iter()
+            .map(|arg| without_url_credentials(arg))
+            .collect::<Vec<_>>()
+            .join(" ")
+    };
     let output = Command::new("git")
         .args(args)
         .current_dir(repo_path)
         .output()
-        .map_err(|e| format!("Failed to run git {}: {}", args.join(" "), e))?;
+        .map_err(|e| format!("Failed to run git {}: {}", command(), e))?;
     let stdout = String::from_utf8_lossy(&output.stdout).to_string();
     let stderr = String::from_utf8_lossy(&output.stderr).to_string();
     let status = output.status.code().unwrap_or(-1);
@@ -769,7 +778,7 @@ fn git(repo_path: &Path, args: &[&str]) -> Result<GitOutput, String> {
             status,
         })
     } else {
-        Err(format!("git {} failed: {}", args.join(" "), stderr.trim()))
+        Err(format!("git {} failed: {}", command(), stderr.trim()))
     }
 }
 
@@ -1147,6 +1156,34 @@ mod tests {
         assert!(again
             .steps
             .contains(&"No local snapshot changes to commit".to_string()));
+    }
+
+    #[test]
+    fn a_token_in_the_remote_url_is_never_shown() {
+        let Some(fx) = Fixture::new(false) else {
+            return;
+        };
+        let secret_url = "https://me:secret@example.invalid/r.git";
+        // git goes to the bare remote instead, so the sync itself succeeds.
+        run(
+            &fx.repo,
+            &["config", &format!("url.{}.insteadOf", fx.url()), secret_url],
+        );
+        let data = data_with("one", secret_url, None);
+        let synced = sync_in(&fx.repo, &data, &[]).unwrap();
+        let status = status_in(&fx.repo, &data.settings).unwrap();
+        for shown in synced.steps.iter().chain([&synced.output.stdout]) {
+            assert!(!shown.contains("secret"), "{shown}");
+        }
+        assert_eq!(
+            status.remote.as_deref(),
+            Some("https://example.invalid/r.git")
+        );
+
+        let failing = data_with("two", "https://me:secret@127.0.0.1:1/r.git", None);
+        let error = sync_in(&fx.repo, &failing, &[]).unwrap_err();
+        assert!(error.contains("127.0.0.1:1"), "{error}");
+        assert!(!error.contains("secret"), "{error}");
     }
 
     #[test]
