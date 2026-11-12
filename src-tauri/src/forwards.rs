@@ -28,7 +28,7 @@
 use std::io;
 use std::net::{IpAddr, Ipv4Addr, Shutdown, SocketAddr, TcpListener, TcpStream};
 use std::os::raw::{c_long, c_void};
-use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::mpsc::TryRecvError;
 use std::sync::{Arc, Mutex, TryLockError};
 use std::thread;
@@ -288,9 +288,11 @@ struct Hub {
     session_readers: AtomicUsize,
     /// Client threads still running, whatever stage they are at.
     in_flight: AtomicUsize,
-    /// Channel opens in a row the server left unanswered. While a client
-    /// opens, the probe is `Busy`, so these count as missed probes.
-    timed_out_opens: AtomicU32,
+    /// A client's open timed out. That may only be a destination the server
+    /// cannot reach, so nothing is counted yet: new opens wait while the
+    /// probe asks the server itself, which a stream of opens would otherwise
+    /// keep `Busy`.
+    probe_first: AtomicBool,
     events: Box<dyn ForwardEvents>,
     listen_port: u16,
     destination: String,
@@ -311,7 +313,7 @@ impl Hub {
             active: AtomicUsize::new(0),
             session_readers: AtomicUsize::new(session_readers),
             in_flight: AtomicUsize::new(0),
-            timed_out_opens: AtomicU32::new(0),
+            probe_first: AtomicBool::new(false),
             events,
             listen_port,
             destination,
@@ -348,6 +350,14 @@ impl Hub {
         self.sent_per_second.store(sent, Ordering::Relaxed);
         self.received_per_second.store(received, Ordering::Relaxed);
         self.status("traffic", None);
+    }
+
+    /// Wait for the probe an open that timed out asked for. The supervisor
+    /// clears the flag after the probe, and when the forward ends.
+    fn wait_for_probe(&self) {
+        while self.probe_first.load(Ordering::SeqCst) {
+            thread::sleep(Duration::from_millis(10));
+        }
     }
 
     fn reading_session(&self) -> SessionReader<'_> {
@@ -633,6 +643,7 @@ impl SshUplink {
         destination_port: u16,
         peer: SocketAddr,
     ) -> Result<Channel, ssh2::Error> {
+        hub.wait_for_probe();
         let _open = self.opens.lock().unwrap_or_else(|e| e.into_inner());
         let _reading = hub.reading_session();
         let deadline = Instant::now() + OPEN_DEADLINE;
@@ -655,14 +666,10 @@ impl SshUplink {
                     wake::wait_readable(&fds, Duration::from_millis(50));
                 }
                 Err(e) if e.code() == ErrorCode::Session(LIBSSH2_ERROR_TIMEOUT) => {
-                    hub.timed_out_opens.fetch_add(1, Ordering::SeqCst);
+                    hub.probe_first.store(true, Ordering::SeqCst);
                     return Err(e);
                 }
-                // Refused or not, the server answered.
-                result => {
-                    hub.timed_out_opens.store(0, Ordering::SeqCst);
-                    return result;
-                }
+                result => return result,
             }
         }
     }
@@ -895,7 +902,8 @@ fn supervise<U: Uplink>(
         // wake this thread for every packet: look at the socket only without
         // them, and at intervals otherwise.
         let idle = hub.in_flight.load(Ordering::SeqCst) == 0;
-        if Instant::now() >= next_probe || (idle && uplink.has_input()) {
+        let probe_first = hub.probe_first.load(Ordering::SeqCst);
+        if probe_first || Instant::now() >= next_probe || (idle && uplink.has_input()) {
             let answer = {
                 let _reading = hub.reading_session();
                 uplink.probe(&control)
@@ -903,7 +911,7 @@ fn supervise<U: Uplink>(
             match answer {
                 Probe::Alive => {
                     missed_probes = 0;
-                    hub.timed_out_opens.store(0, Ordering::SeqCst);
+                    hub.probe_first.store(false, Ordering::SeqCst);
                     next_probe = Instant::now() + timing.probe_interval;
                 }
                 Probe::NoReply => {
@@ -914,9 +922,7 @@ fn supervise<U: Uplink>(
                 Probe::Busy => {}
                 Probe::Stopped => break None,
             }
-            if missed_probes + hub.timed_out_opens.load(Ordering::SeqCst)
-                >= timing.max_missed_probes
-            {
+            if missed_probes >= timing.max_missed_probes {
                 break Some(format!(
                     "The SSH server {} stopped responding",
                     uplink.server()
@@ -948,6 +954,8 @@ fn supervise<U: Uplink>(
         control.wake.drain();
     };
 
+    // Opens still waiting for a probe go on, and fail on the closing session.
+    hub.probe_first.store(false, Ordering::SeqCst);
     // The port first, so nobody new arrives. For a remote forward this tells
     // the server to stop listening.
     drop(incoming);
@@ -1901,14 +1909,60 @@ mod tests {
         let _still_accepting = f.connected_client();
     }
 
-    /// Clients opening one after the other keep every probe `Busy`; their
-    /// opens running out of time is the server's silence all the same.
+    /// A destination the server cannot reach times opens out on a server that
+    /// is fine: the probe asks the server itself before anything is counted.
     #[test]
-    fn opens_that_time_out_while_probes_are_busy_end_the_forward() {
-        let f = Fixture::start(timing(Duration::from_millis(5)), &[Probe::Busy; 1000]);
-        f.hub.timed_out_opens.store(3, Ordering::SeqCst);
+    fn an_open_that_timed_out_on_a_live_server_does_not_end_the_forward() {
+        let f = Fixture::start(timing(NEVER), &[]);
+        // The client whose open timed out is still around.
+        let _client = f.connected_client();
+        for _ in 0..5 {
+            f.hub.probe_first.store(true, Ordering::SeqCst);
+            wait_for("the probe", SOON, || {
+                !f.hub.probe_first.load(Ordering::SeqCst)
+            });
+        }
+        assert_eq!(f.uplink.probes.load(Ordering::SeqCst), 5);
+        assert_eq!(f.events.ended_with(), None);
+    }
+
+    /// Clients opening one after the other would keep every probe `Busy`; an
+    /// open that timed out makes the probe run before the next one.
+    #[test]
+    fn after_an_open_times_out_a_silent_server_ends_the_forward() {
+        let f = Fixture::start(
+            timing(NEVER),
+            &[
+                Probe::Busy,
+                Probe::Busy,
+                Probe::NoReply,
+                Probe::NoReply,
+                Probe::NoReply,
+            ],
+        );
+        let _client = f.connected_client();
+        f.hub.probe_first.store(true, Ordering::SeqCst);
         let reason = f.wait_for_end().expect("a reason for the frontend");
         assert!(reason.contains("stopped responding"), "{}", reason);
+    }
+
+    #[test]
+    fn an_open_waits_for_the_probe_an_earlier_timeout_asked_for() {
+        let hub = Arc::new(Hub::new(
+            Box::new(Arc::new(Recorder::default())),
+            0,
+            "test".into(),
+            0,
+        ));
+        hub.probe_first.store(true, Ordering::SeqCst);
+        let waited = {
+            let hub = Arc::clone(&hub);
+            thread::spawn(move || hub.wait_for_probe())
+        };
+        thread::sleep(Duration::from_millis(50));
+        assert!(!waited.is_finished());
+        hub.probe_first.store(false, Ordering::SeqCst);
+        waited.join().unwrap();
     }
 
     #[test]
