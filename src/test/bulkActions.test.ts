@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import {
+  connectMany,
   isBulkActionable,
   planBulkUpload,
   planBulkDownload,
@@ -7,6 +8,7 @@ import {
 } from "@/lib/bulk-actions";
 import type { Connection, ScpResult } from "@/types";
 import { invoke } from "@/lib/tauri";
+import { useTerminalsStore } from "@/store/useTerminalsStore";
 
 vi.mock("@/lib/tauri", () => ({ invoke: vi.fn() }));
 
@@ -208,5 +210,19 @@ describe("runBulkScp", () => {
     );
     await runBulkScp(steps, "upload", false, () => {});
     expect(vi.mocked(invoke)).not.toHaveBeenCalled();
+  });
+});
+
+describe("connectMany", () => {
+  it("opens every host without waiting for the first to log in", async () => {
+    const connect = vi.fn((conn: Connection) =>
+      conn.id === "1" ? new Promise<void>(() => {}) : Promise.resolve(),
+    );
+    useTerminalsStore.setState({ connect });
+
+    const result = await connectMany([direct("1", "a"), direct("2", "b"), portfwd("3", "tun")]);
+
+    expect(result).toEqual({ started: 2, skipped: 1 });
+    expect(connect.mock.calls.map(([conn]) => conn.id)).toEqual(["1", "2"]);
   });
 });

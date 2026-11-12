@@ -252,7 +252,7 @@ function App() {
    * Bulk actions on a tag group always go through a confirmation,
    * regardless of host count: "Connect all" can spawn dozens of SSH
    * sessions and bulk SCP is hard to interrupt cleanly. The confirm
-   * handler runs `connectMany` (sequential so tabs appear in order) or
+   * handler runs `connectMany` (every tab opens at once, in order) or
    * opens the bulk SCP dialog with the membership frozen at click time.
    */
   const handleConnectAllInTag = (group: TagGroup) => {
