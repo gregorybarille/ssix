@@ -336,6 +336,37 @@ pub(crate) fn check_connection(
     editing: Option<&str>,
 ) -> Result<(), String> {
     f.name = f.name.trim().to_string();
+    // A stray space in a host saves fine and then never resolves.
+    f.host = f.host.trim().to_string();
+    match &mut f.kind {
+        ConnectionKind::Direct => {}
+        ConnectionKind::DynamicForward { gateway_host, .. } => {
+            *gateway_host = gateway_host.trim().to_string();
+        }
+        ConnectionKind::PortForward {
+            gateway_host,
+            destination_host,
+            ..
+        }
+        | ConnectionKind::JumpShell {
+            gateway_host,
+            destination_host,
+            ..
+        }
+        | ConnectionKind::RemoteForward {
+            gateway_host,
+            destination_host,
+            ..
+        }
+        | ConnectionKind::LegacyTunnel {
+            gateway_host,
+            destination_host,
+            ..
+        } => {
+            *gateway_host = gateway_host.trim().to_string();
+            *destination_host = destination_host.trim().to_string();
+        }
+    }
     validate_connection_fields(&f.name, &f.host, f.port)?;
     validate_connection_kind(&f.kind)?;
     f.advanced.validate()?;
@@ -1124,6 +1155,39 @@ mod tests {
             })
             .unwrap();
             assert_eq!(updated.name, "web");
+        });
+    }
+
+    #[test]
+    fn test_connection_hosts_are_trimmed() {
+        with_isolated_data_dir(|| {
+            let cred = password_credential("a");
+            store_credential(&cred);
+            let mut fields = direct_fields(Some(cred.id.clone()));
+            fields.host = " 10.0.0.1\t".to_string();
+            fields.kind = port_forward_kind(&cred.id);
+            if let ConnectionKind::PortForward {
+                gateway_host,
+                destination_host,
+                ..
+            } = &mut fields.kind
+            {
+                *gateway_host = "gw ".to_string();
+                *destination_host = " db".to_string();
+            }
+            let conn = add_connection_sync(AddConnectionInput { fields }).unwrap();
+            assert_eq!(conn.host, "10.0.0.1");
+            match conn.kind {
+                ConnectionKind::PortForward {
+                    gateway_host,
+                    destination_host,
+                    ..
+                } => assert_eq!(
+                    (gateway_host.as_str(), destination_host.as_str()),
+                    ("gw", "db")
+                ),
+                other => panic!("expected a port forward, got {other:?}"),
+            }
         });
     }
 

@@ -10,7 +10,8 @@
  *   - a clone keeps every field of its form;
  *   - a refused clone deletes the inline credential its form created;
  *   - deleting a connection with an inline credential asks once, not twice;
- *   - a credential that connections use cannot be deleted.
+ *   - a credential that connections use cannot be deleted;
+ *   - spaces around a host are not saved.
  */
 import { waitForAppReady } from "../helpers/app.js";
 import { TARGETS } from "../helpers/docker.js";
@@ -22,6 +23,7 @@ import {
   createDirectConnection,
   ensureConnectionRowsLayout,
   fill,
+  openConnectionEditor,
   pickOption,
   saveConnectionForm,
   textContentOf,
@@ -94,6 +96,19 @@ describe("Connections CRUD", () => {
     const row = await browser.$(sel.connectionRowByName("conn-a"));
     await row.waitForExist({ timeout: 10_000 });
     expect(await row.isExisting()).toBe(true);
+  });
+
+  it("saves a host without the spaces typed around it", async () => {
+    await createDirectConnection({
+      name: "conn-padded-host",
+      host: `  ${TARGETS.a.host} `,
+      port: TARGETS.a.sshPort,
+      credentialName: "cred-a",
+    });
+    await openConnectionEditor("conn-padded-host");
+    expect(await (await browser.$(sel.connectionFormHost)).getValue()).toBe(TARGETS.a.host);
+    await clickDialogFooterButton(sel.connectionFormCancel);
+    await (await browser.$(sel.connectionForm)).waitForExist({ reverse: true, timeout: 10_000 });
   });
 
   it("opens the connection form in the side panel, beside the list", async () => {

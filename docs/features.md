@@ -75,6 +75,7 @@ The connection form can create inline credentials and optionally save them as na
 An inline credential that is not saved under a name belongs to its connection: deleting the connection deletes it too, with its secrets.
 
 Spaces around a credential's name and username are removed when it is saved.
+Spaces around a connection's name and hosts are removed the same way.
 
 **Clone** opens the connection form prefilled from a connection, and
 everything in it (kind, jump host or SSH server, tags, colour, options) is saved as the

@@ -37,6 +37,7 @@ Older builds showed this as `TypeError: ... window.__TAURI_INTERNALS__ is undefi
 
 - A restore that is refused leaves every file as it was; the message names the file that failed its check.
 - To undo a restore, restore the "Before restore" backup it created.
+- A file in `~/.ssix` that is a link to a missing target (say, on a volume that is not mounted) stops a restore and a backup: nothing can be backed up first, so the link is left alone. Mount the volume or remove the link.
 - Backups live in `~/.ssix/backups` (or `$SSIX_DATA_DIR/backups`). Copy one elsewhere to keep it safe from a lost disk, and remember that it contains your secrets.
 
 ## "Saved By A Newer Version Of SSIX"
