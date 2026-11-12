@@ -38,8 +38,11 @@ pub(crate) fn resolve_credential(
                 private_key: pk.to_string(),
                 passphrase: passphrase.clone(),
             },
+            // Saved as typed, so `~/` is only expanded here, as `ssh` does.
             (None, Some(path)) => AuthMethod::Key {
-                path: path.to_string(),
+                path: dirs::home_dir()
+                    .and_then(|home| crate::ssh_config::expand_tilde(path, &home))
+                    .map_or_else(|| path.to_string(), |p| p.to_string_lossy().into_owned()),
                 passphrase: passphrase.clone(),
             },
             (None, None) => {
@@ -496,6 +499,31 @@ mod tests {
         };
         assert!(reconnect_policy(&forced(true), &off).enabled);
         assert!(!reconnect_policy(&forced(false), &on).enabled);
+    }
+
+    #[test]
+    fn a_key_path_under_home_is_expanded_and_an_absolute_one_kept() {
+        crate::storage::test_support::with_isolated_data_dir(|| {
+            let key_path = |path: &str| {
+                let cred = Credential::new(
+                    "key".to_string(),
+                    "me".to_string(),
+                    CredentialKind::SshKey {
+                        private_key_path: Some(path.to_string()),
+                        private_key: None,
+                        passphrase: None,
+                    },
+                );
+                let id = cred.id.clone();
+                match resolve_credential(&[cred], &id).unwrap().1 {
+                    AuthMethod::Key { path, .. } => path,
+                    _ => panic!("not a key file"),
+                }
+            };
+            let home = dirs::home_dir().unwrap();
+            assert_eq!(key_path("~/x"), home.join("x").to_string_lossy());
+            assert_eq!(key_path("/keys/id_ed25519"), "/keys/id_ed25519");
+        });
     }
 
     #[test]
