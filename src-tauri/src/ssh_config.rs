@@ -333,7 +333,7 @@ impl ParsedConfig {
     /// The address `ssh <alias>` connects to: the `HostName` that applies to
     /// `alias`, or `alias` itself. One `ssh` would refuse is left out too, so
     /// a name from the file can never reach a proxy command unchecked.
-    fn host_name(&self, alias: &str) -> String {
+    pub(crate) fn host_name(&self, alias: &str) -> String {
         self.resolve(alias)
             .host_name
             .and_then(|value| expand_host_name(value.single().ok()?, alias).ok())
