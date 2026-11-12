@@ -532,13 +532,38 @@ describe("transfers", () => {
   it("says what was left out of a finished folder", async () => {
     await uploading();
     act(() =>
-      onEvent()({ type: "done", id: "t1", bytes: 2048, files: 3, skipped: 1, target: "/home/me/a" }),
+      onEvent()({
+        type: "done",
+        id: "t1",
+        bytes: 2048,
+        files: 3,
+        skipped: 1,
+        notes: [],
+        target: "/home/me/a",
+      }),
     );
     expect(screen.getByTestId("files-transfer-status")).toHaveTextContent(
       "3 files, 2.0 KB, 1 skipped",
     );
     fireEvent.click(screen.getByTestId("files-transfers-clear"));
     expect(screen.queryByTestId("files-transfers")).not.toBeInTheDocument();
+  });
+
+  it("names a file left out for differing from another only by case", async () => {
+    await uploading();
+    const note = "makefile was skipped: it differs from Makefile only by case here";
+    act(() =>
+      onEvent()({
+        type: "done",
+        id: "t1",
+        bytes: 10,
+        files: 1,
+        skipped: 1,
+        notes: [note],
+        target: "/home/me/a",
+      }),
+    );
+    expect(screen.getByTestId("files-transfer-status")).toHaveTextContent(`1 file, 10 B. ${note}`);
   });
 
   it("shows why one failed", async () => {

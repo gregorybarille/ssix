@@ -30,7 +30,7 @@ use crate::logs::log_local;
 use dashmap::DashMap;
 use serde::{Deserialize, Serialize};
 use ssh2::{FileStat, OpenFlags, OpenType, Session, Sftp};
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 use std::fs;
 use std::io::{ErrorKind, Read, Write};
 use std::path::{Path, PathBuf};
@@ -117,9 +117,12 @@ pub enum TransferEvent {
         bytes: u64,
         #[cfg_attr(test, ts(type = "number"))]
         files: u64,
-        /// Entries left out of a folder: symlinks, sockets, unusable names.
+        /// Entries left out of a folder: symlinks, sockets, unusable names,
+        /// and files a disk that folds case cannot hold beside their twin.
         #[cfg_attr(test, ts(type = "number"))]
         skipped: u64,
+        /// One line for each skipped entry that needs explaining.
+        notes: Vec<String>,
         target: String,
     },
     Cancelled {
@@ -387,6 +390,7 @@ fn run_transfer(item: Queued, session: Option<TransferSession>) -> Option<Transf
     let mut run = Run::new(&id, &cancel, emit.clone());
     let (outcome, session) = copy_on_a_session(&input, &mut run, session);
     let (bytes, files, skipped) = (run.bytes_done, run.files_done, run.skipped);
+    let notes = std::mem::take(&mut run.notes);
     TRANSFERS.remove(&id);
     let event = match outcome {
         Ok(target) => {
@@ -403,6 +407,7 @@ fn run_transfer(item: Queued, session: Option<TransferSession>) -> Option<Transf
                 bytes,
                 files,
                 skipped,
+                notes,
                 target,
             }
         }
@@ -466,6 +471,7 @@ struct Run<'a> {
     files_done: u64,
     files_total: u64,
     skipped: u64,
+    notes: Vec<String>,
     current: String,
     last_report: Option<Instant>,
 }
@@ -481,6 +487,7 @@ impl<'a> Run<'a> {
             files_done: 0,
             files_total: 0,
             skipped: 0,
+            notes: Vec::new(),
             current: String::new(),
             last_report: None,
         }
@@ -818,13 +825,14 @@ fn walk_remote(
 }
 
 /// Go through a plan in order on either side: `ensure_dir` says where a folder
-/// is and whether it had to be created, and `seal` gives a created folder its
-/// final mode once everything is in.
+/// is and whether it had to be created, `copy_file` whether it copied the file
+/// or left it out, and `seal` gives a created folder its final mode once
+/// everything is in.
 fn carry_out<'a, P>(
     run: &mut Run<'a>,
     plan: &Plan,
     ensure_dir: impl Fn(&str, Option<u32>) -> Result<(P, bool), String>,
-    mut copy_file: impl FnMut(&mut Run<'a>, &str, Option<u32>) -> Result<(), Stop>,
+    mut copy_file: impl FnMut(&mut Run<'a>, &str, Option<u32>) -> Result<bool, Stop>,
     seal: impl Fn(&P, u32) -> Result<(), String>,
 ) -> Result<(), Stop> {
     run.begin(plan);
@@ -840,8 +848,9 @@ fn carry_out<'a, P>(
             }
             PlanItem::File { rel, mode } => {
                 run.start_file(rel);
-                copy_file(run, rel, *mode)?;
-                run.finish_file();
+                if copy_file(run, rel, *mode)? {
+                    run.finish_file();
+                }
             }
         }
     }
@@ -906,7 +915,7 @@ fn upload_plan(
             let staged = stage_upload(session, sftp, &mut file, &destination, mode, &mut |n| {
                 run.on_chunk(n)
             })?;
-            commit_upload(session, sftp, &staged, &destination)
+            commit_upload(session, sftp, &staged, &destination).map(|()| true)
         },
         |path, source| seal_remote_dir(sftp, path, source),
     )
@@ -927,6 +936,9 @@ fn unattended(
 ) -> (Copied, Result<(), Stop>) {
     let mut run = Run::new("", cancel, Arc::new(|_| {}));
     let ended = copy(&mut run);
+    for note in &run.notes {
+        log_local("info", "scp", note.clone());
+    }
     if run.skipped > 0 {
         log_local(
             "info",
@@ -1282,6 +1294,7 @@ fn download_plan(
     target: &Path,
     run: &mut Run<'_>,
 ) -> Result<(), Stop> {
+    let mut written = Written::default();
     carry_out(
         run,
         plan,
@@ -1296,14 +1309,12 @@ fn download_plan(
                 .open(Path::new(&remote_path))
                 .map_err(|e| call_error("Could not read", &remote_path, &e))?;
             let destination = local_target(&local_under(target, rel))?;
-            let written = write_partial(&destination, mode, |file| {
-                copy_stream_growing(&mut remote, file, &mut |n| run.on_chunk(n))
-            });
+            let copied = written.download(run, rel, &destination, mode, &mut remote);
             // Closing `remote` is the tidying here.
-            if written.is_err() {
+            if copied.is_err() {
                 limit_tidying(session);
             }
-            written
+            copied
         },
         |path, source| seal_local_dir(path, source),
     )
@@ -1365,6 +1376,57 @@ pub(crate) fn local_target(path: &Path) -> Result<PathBuf, String> {
             .map_err(|e| format!("Could not follow {}: {}", path.display(), e));
     }
     Ok(path.to_path_buf())
+}
+
+/// What tells two files apart on this disk. Two names of one file give the
+/// same answer, as `Makefile` and `makefile` do on a disk that folds case.
+#[cfg(unix)]
+type FileId = (u64, u64);
+#[cfg(not(unix))]
+type FileId = String;
+
+#[cfg(unix)]
+fn file_id(path: &Path) -> Option<FileId> {
+    use std::os::unix::fs::MetadataExt;
+    fs::metadata(path).ok().map(|meta| (meta.dev(), meta.ino()))
+}
+
+#[cfg(not(unix))]
+fn file_id(path: &Path) -> Option<FileId> {
+    path.exists().then(|| path.to_string_lossy().to_lowercase())
+}
+
+/// The files a download has written so far, and the name each came from.
+#[derive(Default)]
+struct Written(HashMap<FileId, String>);
+
+impl Written {
+    /// Copy `source` to `destination`, unless this download already wrote that
+    /// very file under another name: replacing it would lose the first one, so
+    /// it is skipped and said why. Returns whether it copied.
+    fn download(
+        &mut self,
+        run: &mut Run<'_>,
+        rel: &str,
+        destination: &Path,
+        mode: Option<u32>,
+        source: &mut dyn Read,
+    ) -> Result<bool, Stop> {
+        if let Some(first) = file_id(destination).and_then(|id| self.0.get(&id)) {
+            run.skipped += 1;
+            run.notes.push(format!(
+                "{rel} was skipped: it differs from {first} only by case here"
+            ));
+            return Ok(false);
+        }
+        write_partial(destination, mode, |file| {
+            copy_stream_growing(source, file, &mut |n| run.on_chunk(n))
+        })?;
+        if let Some(id) = file_id(destination) {
+            self.0.insert(id, rel.to_string());
+        }
+        Ok(true)
+    }
 }
 
 /// Removes the file unless told the file has reached its final name.
@@ -1536,6 +1598,35 @@ mod tests {
         assert_eq!(fs::read(&target).unwrap(), data);
         assert_eq!(chunks, 3, "the file must go through in chunks");
         assert_eq!(entries_of(&tmp.0), ["out.bin"]);
+    }
+
+    /// Only a disk that folds case, like the default on macOS and Windows,
+    /// can show it; elsewhere the test has nothing to check.
+    #[test]
+    fn a_case_twin_is_skipped_where_the_disk_folds_case() {
+        let tmp = TempDir::new("case");
+        fs::write(tmp.0.join("a"), "").unwrap();
+        let folds_case = tmp.0.join("A").exists();
+        fs::remove_file(tmp.0.join("a")).unwrap();
+        if !folds_case {
+            return;
+        }
+        let cancel = AtomicBool::new(false);
+        let mut run = Run::new("t", &cancel, Arc::new(|_| {}));
+        let mut written = Written::default();
+        for (rel, body) in [("Makefile", "first"), ("makefile", "second")] {
+            let destination = local_target(&tmp.0.join(rel)).unwrap();
+            written
+                .download(&mut run, rel, &destination, None, &mut body.as_bytes())
+                .unwrap();
+        }
+        assert_eq!(entries_of(&tmp.0), ["Makefile"]);
+        assert_eq!(fs::read_to_string(tmp.0.join("Makefile")).unwrap(), "first");
+        assert_eq!(run.skipped, 1);
+        assert_eq!(
+            run.notes,
+            ["makefile was skipped: it differs from Makefile only by case here"]
+        );
     }
 
     #[test]

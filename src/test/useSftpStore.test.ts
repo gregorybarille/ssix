@@ -538,7 +538,15 @@ describe("transfers", () => {
       .transfer("local", [file("/work/a"), file("/work/b"), file("/work/c")]);
     const [first, second, third] = started().map((s) => s.onEvent);
     const done = (id: string) =>
-      ({ type: "done", id, bytes: 1, files: 1, skipped: 0, target: "/home/me/x" }) as const;
+      ({
+        type: "done",
+        id,
+        bytes: 1,
+        files: 1,
+        skipped: 0,
+        notes: [] as string[],
+        target: "/home/me/x",
+      }) as const;
 
     let answerList: (value: unknown) => void = () => {};
     invokeMock.mockReset();
@@ -578,7 +586,15 @@ describe("transfers", () => {
     expect(row()).toMatchObject({ bytesDone: 5, bytesTotal: 10, filesTotal: 1, current: "a" });
 
     invokeMock.mockClear();
-    event(onEvent, { type: "done", id: "t1", bytes: 10, files: 1, skipped: 2, target: "/home/me/a" });
+    event(onEvent, {
+      type: "done",
+      id: "t1",
+      bytes: 10,
+      files: 1,
+      skipped: 2,
+      notes: [],
+      target: "/home/me/a",
+    });
     await flush();
     expect(row()).toMatchObject({ status: "done", bytesDone: 10, skipped: 2 });
     expect(calls("sftp_list")).toEqual([{ target: { side: "remote", session_id: "s1" }, path: "/home/me" }]);
@@ -687,6 +703,7 @@ describe("transfers", () => {
     filesTotal: 0,
     current: "",
     skipped: 0,
+    notes: [],
     error: null,
     conflict: null,
   };

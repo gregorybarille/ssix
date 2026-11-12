@@ -70,7 +70,7 @@ const genEvents: GenTransferEvent[] = [
     files_total: 0,
     current: "",
   },
-  { type: "done", id: "", bytes: 0, files: 0, skipped: 0, target: "" },
+  { type: "done", id: "", bytes: 0, files: 0, skipped: 0, notes: [], target: "" },
   { type: "cancelled", id: "" },
   { type: "conflict", id: "", target: "", target_is_dir: false },
   { type: "failed", id: "", error: "" },

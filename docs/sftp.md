@@ -69,6 +69,10 @@ cancelled.
   names where the old file and the new copy are, and neither is removed.
 - **A target that is a symlink is written through**, so the link stays and the
   file it points to changes.
+- **Names that differ only by case are kept apart.** A server folder can hold
+  `Makefile` and `makefile`, which a Mac or Windows disk takes for one file. A
+  folder download writes the first and skips the second, counting it in the
+  result and naming both, rather than replacing one with the other.
 - **Folders keep their permissions**, as files do and as `scp -r` does, so a `0700`
   folder stays private on the other side. A read-only source folder stays writable
   until its contents are in, and if the transfer stops first it keeps its owner's

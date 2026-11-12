@@ -53,6 +53,7 @@ export interface Transfer {
   filesTotal: number;
   current: string;
   skipped: number;
+  notes: string[];
   error: string | null;
   conflict: { target: string; targetIsDir: boolean } | null;
 }
@@ -272,6 +273,7 @@ export const useSftpStore = create<SftpState>((set, get) => {
           bytesDone: event.bytes,
           filesDone: event.files,
           skipped: event.skipped,
+          notes: event.notes,
         });
         break;
       case "cancelled":
@@ -298,6 +300,7 @@ export const useSftpStore = create<SftpState>((set, get) => {
       filesTotal: 0,
       current: "",
       skipped: 0,
+      notes: [],
       error: null,
       conflict: null,
     };

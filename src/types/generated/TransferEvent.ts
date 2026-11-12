@@ -6,6 +6,11 @@ export type TransferEvent = { "type": "progress", id: string, bytes_done: number
  */
 current: string, } | { "type": "done", id: string, bytes: number, files: number, 
 /**
- * Entries left out of a folder: symlinks, sockets, unusable names.
+ * Entries left out of a folder: symlinks, sockets, unusable names,
+ * and files a disk that folds case cannot hold beside their twin.
  */
-skipped: number, target: string, } | { "type": "cancelled", id: string, } | { "type": "conflict", id: string, target: string, target_is_dir: boolean, } | { "type": "failed", id: string, error: string, };
+skipped: number, 
+/**
+ * One line for each skipped entry that needs explaining.
+ */
+notes: Array<string>, target: string, } | { "type": "cancelled", id: string, } | { "type": "conflict", id: string, target: string, target_is_dir: boolean, } | { "type": "failed", id: string, error: string, };
