@@ -243,7 +243,6 @@ export function Terminal({ sessionId, isVisible, onDisconnect, settings, connect
     const extensionContext: TerminalExtensionContext = {
       term,
       sessionId,
-      connection,
       get settings() {
         return settingsRef.current;
       },

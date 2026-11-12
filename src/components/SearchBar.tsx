@@ -7,8 +7,6 @@ import { cn } from "@/lib/utils";
 interface SearchBarProps {
   value: string;
   onChange: (value: string) => void;
-  /** Optional extra callback fired alongside `onChange` (same value). */
-  onSearch?: (query: string) => void;
   placeholder?: string;
   className?: string;
 }
@@ -16,20 +14,11 @@ interface SearchBarProps {
 export function SearchBar({
   value,
   onChange,
-  onSearch,
   placeholder = "Search connections...",
   className,
 }: SearchBarProps) {
-  const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const v = e.target.value;
-    onChange(v);
-    onSearch?.(v);
-  };
-
-  const handleClear = () => {
-    onChange("");
-    onSearch?.("");
-  };
+  const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => onChange(e.target.value);
+  const handleClear = () => onChange("");
 
   return (
     <div className={cn("relative", className)}>

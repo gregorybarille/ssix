@@ -14,8 +14,6 @@ import { EmptyState } from "./ui/EmptyState";
 interface ConnectionListProps extends ConnectionRowActions {
   connections: Connection[];
   credentials: Credential[];
-  onSelect?: (connection: Connection) => void;
-  selectedId?: string;
   /** "tile" renders a grid of cards; "list" (default) renders rows. */
   layout?: LayoutMode;
 }
@@ -26,23 +24,17 @@ export const ConnectionList = memo(function ConnectionList({
   onEdit,
   onDelete,
   onClone,
-  onSelect,
   onConnect,
   onScp,
   onBrowse,
-  selectedId,
   layout = "list",
 }: ConnectionListProps) {
   const isTile = layout === "tile";
 
   // Roving tabindex + activation for the list / grid. Click, Enter and
-  // Space on a row prefer onSelect (caller-controlled selection); if no
-  // onSelect is wired, fall back to onConnect (the primary action). Action
-  // buttons inside the row stop propagation and keep their own behaviour.
-  const activateRow = useLatestCallback((conn: Connection) => {
-    if (onSelect) onSelect(conn);
-    else if (onConnect) onConnect(conn);
-  });
+  // Space on a row connect. Action buttons inside the row stop propagation
+  // and keep their own behaviour.
+  const activateRow = useLatestCallback((conn: Connection) => onConnect?.(conn));
   const roving = useRovingFocus({
     itemCount: connections.length,
     onActivate: (index) => {
@@ -83,7 +75,6 @@ export const ConnectionList = memo(function ConnectionList({
             conn={conn}
             credentials={credentials}
             tile={isTile}
-            selected={selectedId === conn.id}
             actions={actions}
             onActivate={activateRow}
           />

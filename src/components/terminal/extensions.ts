@@ -1,15 +1,13 @@
 import type { Terminal as XTerm } from "@xterm/xterm";
 import { errorMessage } from "@/lib/errors";
 import { log as appLog } from "@/lib/log";
-import type { AppSettings, Connection } from "@/types";
+import type { AppSettings } from "@/types";
 
 /** What a terminal hands to every extension. The same object for the terminal's whole life. */
 export interface TerminalExtensionContext {
   /** The xterm instance, already opened and fitted. */
   term: XTerm;
   sessionId: string;
-  /** The saved connection behind this terminal, when the pane knows it. */
-  connection?: Connection;
   /** The terminal's current settings. Read it when needed: it follows live changes. */
   readonly settings: AppSettings | undefined;
 }
@@ -45,10 +43,8 @@ export interface TerminalExtension {
   onKey?(ctx: TerminalExtensionContext, event: KeyboardEvent): boolean | void;
 }
 
-const extensions: TerminalExtension[] = [];
-
 /** The registered extensions, in the order their hooks run. */
-export const terminalExtensions: readonly TerminalExtension[] = extensions;
+const extensions: TerminalExtension[] = [];
 
 /**
  * Add an extension at the end of the list. Registering an id again replaces
