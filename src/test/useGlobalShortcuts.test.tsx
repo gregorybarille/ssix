@@ -191,6 +191,15 @@ describe("shortcut table", () => {
     useDialogsStore.getState().setPickerOpen(false);
   });
 
+  it("mod+k opens the picker in tab mode after a split opened it", () => {
+    renderHook(() => useGlobalShortcuts(TABLE_SHORTCUTS));
+    useDialogsStore.getState().openPicker("split_right");
+    useDialogsStore.getState().setPickerOpen(false);
+    dispatch({ key: "k", [MOD]: true });
+    expect(useDialogsStore.getState().pickerMode).toBe("tab");
+    useDialogsStore.getState().setPickerOpen(false);
+  });
+
   it("mod+comma opens settings", () => {
     renderHook(() => useGlobalShortcuts(TABLE_SHORTCUTS));
     useViewStore.setState({ view: "connections", leaveGuard: null });

@@ -67,7 +67,7 @@ export const SHORTCUTS: readonly ShortcutEntry[] = [
   {
     combo: "mod+k",
     description: "Quick connect",
-    handler: () => useDialogsStore.getState().setPickerOpen(true),
+    handler: () => useDialogsStore.getState().openPicker(),
   },
   {
     combo: "mod+,",
