@@ -60,7 +60,6 @@ pub struct GitSyncSnapshot {
 pub struct GitSyncActionResult {
     pub stdout: String,
     pub stderr: String,
-    pub status: i32,
 }
 
 #[derive(Debug, Serialize)]
@@ -283,7 +282,6 @@ fn commit_in(
             GitSyncActionResult {
                 stdout: "No changes to commit.".to_string(),
                 stderr: String::new(),
-                status: 0,
             },
             Vec::new(),
         ));
@@ -339,7 +337,6 @@ fn sync_in(
             output: GitSyncActionResult {
                 stdout: combined_output.trim().to_string(),
                 stderr: String::new(),
-                status: 0,
             },
             at_risk,
         });
@@ -401,7 +398,6 @@ fn sync_in(
                 combined_output.trim().to_string()
             },
             stderr: String::new(),
-            status: 0,
         },
         at_risk: Vec::new(),
     })
@@ -748,7 +744,6 @@ fn render_summary(data: &AppData) -> String {
 struct GitOutput {
     stdout: String,
     stderr: String,
-    status: i32,
 }
 
 fn git(repo_path: &Path, args: &[&str]) -> Result<GitOutput, String> {
@@ -766,13 +761,8 @@ fn git(repo_path: &Path, args: &[&str]) -> Result<GitOutput, String> {
         .map_err(|e| format!("Failed to run git {}: {}", command(), e))?;
     let stdout = String::from_utf8_lossy(&output.stdout).to_string();
     let stderr = String::from_utf8_lossy(&output.stderr).to_string();
-    let status = output.status.code().unwrap_or(-1);
     if output.status.success() {
-        Ok(GitOutput {
-            stdout,
-            stderr,
-            status,
-        })
+        Ok(GitOutput { stdout, stderr })
     } else {
         Err(format!("git {} failed: {}", command(), stderr.trim()))
     }
@@ -799,7 +789,6 @@ fn to_action_result(result: GitOutput) -> GitSyncActionResult {
     GitSyncActionResult {
         stdout: result.stdout,
         stderr: result.stderr,
-        status: result.status,
     }
 }
 
@@ -922,7 +911,6 @@ mod tests {
             &GitOutput {
                 stdout: "ok".into(),
                 stderr: "warn".into(),
-                status: 0,
             },
         );
         assert_eq!(output, "ok\nwarn");

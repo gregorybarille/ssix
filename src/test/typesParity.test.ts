@@ -343,7 +343,7 @@ describe("Phase 6a — ts-rs parity (Rust models <-> TS index.ts)", () => {
   it("Git Sync run: the generated and hand-written shapes accept each other", () => {
     const genResult: GenGitSyncRunResult = {
       steps: [],
-      output: { stdout: "", stderr: "", status: 0 },
+      output: { stdout: "", stderr: "" },
       at_risk: [],
     };
     const handResult: HandGitSyncRunResult = genResult;

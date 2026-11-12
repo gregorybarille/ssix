@@ -513,7 +513,6 @@ export interface GitSyncSnapshot {
 export interface GitSyncActionResult {
   stdout: string;
   stderr: string;
-  status: number;
 }
 
 export interface GitSyncRunResult {
