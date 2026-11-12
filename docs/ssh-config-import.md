@@ -66,7 +66,8 @@ does not make a host direct. `ProxyCommand none` does.
   goes through a `ProxyJump` or `ProxyCommand`.
 - **Forwards SSIX cannot represent**: a forward on a host that goes through a
   `ProxyJump`, a Unix socket, or a `RemoteForward` with no destination (a
-  reverse SOCKS proxy).
+  reverse SOCKS proxy). Any end holding a `/` is a socket path, as OpenSSH reads
+  it: `LocalForward 127.0.0.1/8081 db/5432` is skipped, not imported as TCP.
 - **A `ProxyCommand` that would fail on connect**: SSIX expands `%h`, `%p`, `%r`
   and `%%` and refuses any other token, as the connection form does. A token whose
   host or user holds characters that are not safe in a command line is refused too.

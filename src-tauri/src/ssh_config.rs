@@ -943,12 +943,12 @@ pub struct ForwardEnd {
 }
 
 /// Whether a forward's end names a Unix socket, which SSIX cannot forward.
+/// OpenSSH 10.5 takes any end with a `/` for a socket path, `db/5432` too.
 pub fn is_unix_socket(text: &str) -> bool {
-    text.starts_with('/') || text.starts_with('~')
+    text.contains('/') || text.starts_with('~')
 }
 
-/// Read one end of a forward. IPv6 addresses take brackets or `/` for the
-/// port, as in `[::1]:80` or `::1/80`.
+/// Read one end of a forward. IPv6 addresses take brackets, as in `[::1]:80`.
 pub fn parse_forward_end(text: &str) -> Result<ForwardEnd, String> {
     if is_unix_socket(text) {
         return Err(format!(
@@ -963,7 +963,7 @@ pub fn parse_forward_end(text: &str) -> Result<ForwardEnd, String> {
     })
 }
 
-/// `host:port`, `[v6]`, `[v6]:port`, `host/port`, or one bare word, which
+/// `host:port`, `[v6]`, `[v6]:port`, or one bare word, which
 /// comes back as the second half: a forward reads it as a port and a jump
 /// hop as a host.
 fn split_host_port(text: &str) -> Option<(Option<&str>, Option<&str>)> {
@@ -974,9 +974,6 @@ fn split_host_port(text: &str) -> Option<(Option<&str>, Option<&str>)> {
             None if after.is_empty() => Some((Some(host), None)),
             None => None,
         };
-    }
-    if let Some((host, port)) = text.rsplit_once('/') {
-        return Some((Some(host), Some(port)));
     }
     match text.split_once(':') {
         None => Some((None, Some(text))),
@@ -1822,9 +1819,13 @@ mod tests {
         assert_eq!(parse_forward_end("*:80"), Ok(end(Some("*"), 80)));
         assert_eq!(parse_forward_end(":80"), Ok(end(None, 80)));
         assert_eq!(parse_forward_end("[::1]:80"), Ok(end(Some("::1"), 80)));
-        assert_eq!(parse_forward_end("[::1]/80"), Ok(end(Some("::1"), 80)));
-        assert_eq!(parse_forward_end("::1/80"), Ok(end(Some("::1"), 80)));
         assert!(parse_forward_end("/tmp/sock").unwrap_err().contains("Unix"));
+        for slashed in ["db/5432", "127.0.0.1/8081", "::1/80", "[::1]/80"] {
+            assert!(
+                parse_forward_end(slashed).unwrap_err().contains("Unix"),
+                "{slashed}"
+            );
+        }
         assert!(parse_forward_end("~/sock").unwrap_err().contains("Unix"));
         for bad in [
             "", "db", "db:", "db:abc", "db:0", "db:70000", "::1", "[::1]", "[::1", "[::1]x",
