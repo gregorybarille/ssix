@@ -361,19 +361,28 @@ impl Hub {
         });
     }
 
+    /// Whether the forward already serves its limit of clients, saying so
+    /// when it does.
+    fn turn_away(&self) -> bool {
+        if self.in_flight.load(Ordering::SeqCst) < MAX_CLIENTS {
+            return false;
+        }
+        self.status(
+            "client_error",
+            Some(format!(
+                "Closed a new client: this forward already serves {MAX_CLIENTS}, its limit"
+            )),
+        );
+        true
+    }
+
     fn start_client(
         self: &Arc<Self>,
         work: impl FnOnce(&Hub) + Send + 'static,
         spawn: impl FnOnce(Box<dyn FnOnce() + Send>) -> io::Result<()>,
     ) {
-        if self.in_flight.load(Ordering::SeqCst) >= MAX_CLIENTS {
+        if self.turn_away() {
             drop(work);
-            self.status(
-                "client_error",
-                Some(format!(
-                    "Closed a new client: this forward already serves {MAX_CLIENTS}, its limit"
-                )),
-            );
             return;
         }
         self.in_flight.fetch_add(1, Ordering::SeqCst);
@@ -787,10 +796,14 @@ impl Incoming {
                 serve,
             } => loop {
                 match listener.accept() {
+                    // Closed before it is freed, which a plain drop would not do.
+                    // Only this thread adds clients, so the check below agrees.
+                    Ok(channel) if hub.turn_away() => discard_channel(session, channel),
                     Ok(channel) => {
                         let serve = Arc::clone(serve);
-                        // A client turned away has its channel dropped in there,
-                        // which like any free has to happen under this lock.
+                        // A client that cannot get a thread has its channel
+                        // dropped in there, which like any free has to happen
+                        // under this lock.
                         let _locked = session.raw();
                         hub.spawn_client(move |hub| serve(hub, channel));
                     }
@@ -2497,6 +2510,64 @@ mod live {
                     .iter()
                     .any(|s| s.bytes_received > 0 && s.bytes_sent >= hello.len() as u64)
             });
+            stop(&handle, &events);
+        });
+    }
+
+    /// A tunnel whose far side ends first still closes its channel. sshd sends
+    /// its close only once ours or our EOF arrives, and libssh2's free on a
+    /// non-blocking session gives up while waiting for it, leaking the
+    /// channel. A close that answers at once shows ours already went out.
+    #[test]
+    #[ignore]
+    fn live_a_tunnel_the_far_side_ends_closes_its_channel() {
+        with_isolated_data_dir(|| {
+            // Writes and hangs up, reached through a remote forward.
+            let destination = TcpListener::bind("127.0.0.1:0").unwrap();
+            let destination_port = destination.local_addr().unwrap().port();
+            thread::spawn(move || {
+                for mut stream in destination.incoming().flatten() {
+                    let _ = stream.write_all(b"bye");
+                }
+            });
+            let events = Arc::new(Recorder::default());
+            let remote_port = free_server_port();
+            let handle = start_remote_forward(
+                server(),
+                remote_port,
+                "127.0.0.1".to_string(),
+                destination_port,
+                0,
+                Arc::clone(&events),
+            )
+            .unwrap();
+
+            let uplink = SshUplink::connect(&server(), 0).unwrap();
+            uplink.session.set_blocking(false);
+            let hub = Hub::new(Box::new(Arc::new(Recorder::default())), 0, "test".into(), 0);
+            let peer = "127.0.0.1:1".parse().unwrap();
+            for round in 0..5 {
+                let channel = uplink
+                    .open_direct(&hub, "127.0.0.1", remote_port, peer)
+                    .unwrap();
+                let mut last_handle = channel.clone();
+                let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+                let mut client = connect(listener.local_addr().unwrap().port());
+                let (local, _) = listener.accept().unwrap();
+                forward_bidi(
+                    local,
+                    channel,
+                    &uplink.session,
+                    &AtomicUsize::new(1),
+                    &Traffic::default(),
+                );
+                let mut got = Vec::new();
+                client.read_to_end(&mut got).unwrap();
+                assert_eq!(got, b"bye");
+                let closed = last_handle.close();
+                assert!(closed.is_ok(), "round {round}: not closed yet: {closed:?}");
+                free_channel(&uplink.session, last_handle);
+            }
             stop(&handle, &events);
         });
     }

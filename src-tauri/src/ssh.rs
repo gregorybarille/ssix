@@ -1836,17 +1836,21 @@ pub(crate) fn forward_bidi(
             }
         }
 
-        // channel → local
+        // channel → local. The channel is closed even when the far side ended
+        // it: on a non-blocking session libssh2 frees nothing until our close
+        // has gone out, so a channel dropped without one leaks.
         if down.is_empty() {
             match channel.read(&mut buf) {
                 Ok(0) => {
                     let _ = local.shutdown(Shutdown::Both);
+                    close_channel(&mut channel);
                     return;
                 }
                 Ok(n) => down.push(&buf[..n]),
                 Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => {}
                 Err(_) => {
                     let _ = local.shutdown(Shutdown::Both);
+                    close_channel(&mut channel);
                     return;
                 }
             }
@@ -1865,6 +1869,7 @@ pub(crate) fn forward_bidi(
 
         if down.is_empty() && channel.eof() {
             let _ = local.shutdown(Shutdown::Both);
+            close_channel(&mut channel);
             return;
         }
 
