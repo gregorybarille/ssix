@@ -1,9 +1,9 @@
+use crate::backup::sha256_hex;
 use crate::commands::blocking;
 use crate::keychain;
 use crate::models::{AppData, AppSettings, CredentialKind};
 use crate::storage;
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -471,10 +471,6 @@ fn needing_agreement(at_risk: Vec<String>, agreed: &[String]) -> Vec<String> {
     } else {
         at_risk
     }
-}
-
-fn sha256_hex(bytes: &[u8]) -> String {
-    format!("{:x}", Sha256::digest(bytes))
 }
 
 fn last_export_path(repo_path: &Path) -> Result<PathBuf, String> {

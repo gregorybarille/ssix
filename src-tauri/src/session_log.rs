@@ -11,7 +11,8 @@
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
-use std::time::{SystemTime, UNIX_EPOCH};
+
+use crate::logs::now_ms;
 
 /// Default log folder, under `storage::data_dir()`.
 const DEFAULT_DIR_NAME: &str = "session-logs";
@@ -82,13 +83,6 @@ fn safe_file_stem(connection_name: &str) -> String {
     } else {
         trimmed.to_string()
     }
-}
-
-fn now_ms() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_millis() as u64)
-        .unwrap_or(0)
 }
 
 /// Create `dir` and its missing parents, readable only by this user.

@@ -30,6 +30,7 @@ use std::time::{Duration, Instant};
 
 use ssh2::Session;
 
+use crate::commands::ssh_keygen::shell_single_quote;
 use crate::reconnect::{reconnect_delay, AttemptCount, OpenAttempt, ReconnectPolicy, Recovery};
 use crate::session_log::{SessionLog, SessionLogPlan};
 use crate::ssh_debug::{host_key_type_name, SshDebug};
@@ -507,7 +508,7 @@ pub(crate) fn build_startup_command(
 ) -> Option<String> {
     let mut parts = Vec::new();
     if let Some(path) = remote_path.map(str::trim).filter(|path| !path.is_empty()) {
-        parts.push(format!("cd {}", shell_quote(path)));
+        parts.push(format!("cd {}", shell_single_quote(path)));
     }
     if let Some(command) = login_command
         .map(str::trim)
@@ -521,10 +522,6 @@ pub(crate) fn build_startup_command(
     } else {
         Some(parts.join(" && "))
     }
-}
-
-fn shell_quote(value: &str) -> String {
-    format!("'{}'", value.replace('\'', r#"'\''"#))
 }
 
 fn write_startup_command(channel: &mut ssh2::Channel, startup_command: Option<&str>) {

@@ -150,6 +150,9 @@ pub fn get_connections() -> Result<Vec<Connection>, String> {
     Ok(data.connections)
 }
 
+/// The longest connection name, in characters.
+pub(crate) const MAX_NAME_CHARS: usize = 128;
+
 /// Audit-4 H6: validate user-provided connection fields BEFORE we mutate
 /// state. Without this, the frontend was the only line of defence — a
 /// hand-crafted IPC call (or a future programmatic caller) could persist
@@ -160,8 +163,10 @@ fn validate_connection_fields(name: &str, host: &str, port: u16) -> Result<(), S
     if trimmed_name.is_empty() {
         return Err("Connection name is required".to_string());
     }
-    if trimmed_name.chars().count() > 128 {
-        return Err("Connection name must be 128 characters or fewer".to_string());
+    if trimmed_name.chars().count() > MAX_NAME_CHARS {
+        return Err(format!(
+            "Connection name must be {MAX_NAME_CHARS} characters or fewer"
+        ));
     }
     if host.trim().is_empty() {
         return Err("Host is required".to_string());

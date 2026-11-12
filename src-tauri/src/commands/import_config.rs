@@ -37,7 +37,7 @@ use uuid::Uuid;
 
 use crate::commands::blocking;
 use crate::commands::connections::{
-    check_connection, insert_new_connection, ConnectionAdvanced, ConnectionFields,
+    check_connection, insert_new_connection, ConnectionAdvanced, ConnectionFields, MAX_NAME_CHARS,
 };
 use crate::commands::credentials::validate_credential_fields;
 use crate::forwards::listen_addr;
@@ -67,7 +67,6 @@ const MAX_ROWS: usize = 2000;
 const MAX_SKIPS: usize = 2000;
 /// `check_connection`'s limit, tested first so an absurdly long name is not
 /// matched against every pattern in the file.
-const MAX_NAME_CHARS: usize = 128;
 const UNAPPLIED_NOTE: &str = "Part of this config was not applied (see Passed over), so this may not be what ssh does for this host. Check it before ticking it";
 const PROXY_COMMAND_NOTE: &str =
     "This command runs on your computer every time you connect, so this row starts unticked. Read it before ticking it";
@@ -788,14 +787,10 @@ fn connection_signature(connection: &Connection, credentials: &[Credential]) -> 
             None => json!({ "username": credential.username, "by_hand": true }),
         }
     };
-    let gateway = serde_json::to_value(&connection.kind)
-        .ok()
-        .and_then(|kind| {
-            kind.get("gateway_credential_id")
-                .and_then(Json::as_str)
-                .map(str::to_string)
-        })
-        .map_or(Json::Null, |id| identity(&id));
+    let gateway = connection
+        .kind
+        .gateway_credential_id()
+        .map_or(Json::Null, identity);
     // A forward only signs in to its SSH server; its `credential_id` is unused.
     let target = if connection.kind.is_forward() {
         Json::Null

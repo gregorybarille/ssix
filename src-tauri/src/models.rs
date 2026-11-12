@@ -284,7 +284,7 @@ impl ConnectionKind {
     /// The gateway's credential id, for the kinds that go through one.
     /// This match and `gateway_credential_id_mut`'s are exhaustive on
     /// purpose: a new kind must say whether it has a gateway credential.
-    fn gateway_credential_id(&self) -> Option<&str> {
+    pub(crate) fn gateway_credential_id(&self) -> Option<&str> {
         match self {
             ConnectionKind::PortForward {
                 gateway_credential_id,
