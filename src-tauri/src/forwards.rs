@@ -28,7 +28,7 @@
 use std::io;
 use std::net::{IpAddr, Ipv4Addr, Shutdown, SocketAddr, TcpListener, TcpStream};
 use std::os::raw::{c_long, c_void};
-use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, Ordering};
 use std::sync::mpsc::TryRecvError;
 use std::sync::{Arc, Mutex, TryLockError};
 use std::thread;
@@ -288,6 +288,9 @@ struct Hub {
     session_readers: AtomicUsize,
     /// Client threads still running, whatever stage they are at.
     in_flight: AtomicUsize,
+    /// Channel opens in a row the server left unanswered. While a client
+    /// opens, the probe is `Busy`, so these count as missed probes.
+    timed_out_opens: AtomicU32,
     events: Box<dyn ForwardEvents>,
     listen_port: u16,
     destination: String,
@@ -308,6 +311,7 @@ impl Hub {
             active: AtomicUsize::new(0),
             session_readers: AtomicUsize::new(session_readers),
             in_flight: AtomicUsize::new(0),
+            timed_out_opens: AtomicU32::new(0),
             events,
             listen_port,
             destination,
@@ -650,7 +654,15 @@ impl SshUplink {
                     }
                     wake::wait_readable(&fds, Duration::from_millis(50));
                 }
-                result => return result,
+                Err(e) if e.code() == ErrorCode::Session(LIBSSH2_ERROR_TIMEOUT) => {
+                    hub.timed_out_opens.fetch_add(1, Ordering::SeqCst);
+                    return Err(e);
+                }
+                // Refused or not, the server answered.
+                result => {
+                    hub.timed_out_opens.store(0, Ordering::SeqCst);
+                    return result;
+                }
             }
         }
     }
@@ -891,21 +903,24 @@ fn supervise<U: Uplink>(
             match answer {
                 Probe::Alive => {
                     missed_probes = 0;
+                    hub.timed_out_opens.store(0, Ordering::SeqCst);
                     next_probe = Instant::now() + timing.probe_interval;
                 }
                 Probe::NoReply => {
                     missed_probes += 1;
-                    if missed_probes >= timing.max_missed_probes {
-                        break Some(format!(
-                            "The SSH server {} stopped responding",
-                            uplink.server()
-                        ));
-                    }
                     next_probe = Instant::now();
                 }
                 Probe::Dead => break Some(lost()),
                 Probe::Busy => {}
                 Probe::Stopped => break None,
+            }
+            if missed_probes + hub.timed_out_opens.load(Ordering::SeqCst)
+                >= timing.max_missed_probes
+            {
+                break Some(format!(
+                    "The SSH server {} stopped responding",
+                    uplink.server()
+                ));
             }
             // The probe read the session, which can have queued a remote
             // forward's connection with nothing left on the socket to wake
@@ -1884,6 +1899,16 @@ mod tests {
         });
         assert_eq!(f.events.ended_with(), None);
         let _still_accepting = f.connected_client();
+    }
+
+    /// Clients opening one after the other keep every probe `Busy`; their
+    /// opens running out of time is the server's silence all the same.
+    #[test]
+    fn opens_that_time_out_while_probes_are_busy_end_the_forward() {
+        let f = Fixture::start(timing(Duration::from_millis(5)), &[Probe::Busy; 1000]);
+        f.hub.timed_out_opens.store(3, Ordering::SeqCst);
+        let reason = f.wait_for_end().expect("a reason for the frontend");
+        assert!(reason.contains("stopped responding"), "{}", reason);
     }
 
     #[test]
