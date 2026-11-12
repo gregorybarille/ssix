@@ -49,6 +49,19 @@ describe("InstallKeyDialog", () => {
     });
   });
 
+  it("forgets the password when it closes", () => {
+    const props = { onOpenChange: () => {}, credentialId: "cred-1", defaultHost: "h" };
+    const { rerender, container } = render(<InstallKeyDialog open={true} {...props} />);
+    fireEvent.change(screen.getByLabelText(/One-time Password/i), {
+      target: { value: "one-time-secret" },
+    });
+
+    rerender(<InstallKeyDialog open={false} {...props} />);
+
+    // Closed, nothing is on screen: the secret could only stay in its state.
+    expect(hookStatesOf(container, InstallKeyDialog)).not.toContain("one-time-secret");
+  });
+
   it("surfaces backend error", async () => {
     vi.mocked(invoke).mockRejectedValueOnce("auth failed");
     render(
@@ -325,3 +338,27 @@ describe("InstallKeyDialog", () => {
     expect(host).toHaveAttribute("aria-invalid", "false");
   });
 });
+
+/**
+ * The `useState` values of every mounted `component` under `container`. Reads
+ * React's fiber tree, which is internal: kept to this file's one test.
+ */
+function hookStatesOf(container: HTMLElement, component: unknown): unknown[] {
+  type Fiber = { type: unknown; memoizedState: unknown; child: Fiber | null; sibling: Fiber | null };
+  type Hook = { memoizedState: unknown; next: Hook | null };
+  const key = Object.keys(container).find((k) => k.startsWith("__reactContainer$"));
+  const values: unknown[] = [];
+  const visit = (fiber: Fiber | null) => {
+    for (; fiber; fiber = fiber.sibling) {
+      if (fiber.type === component) {
+        for (let hook = fiber.memoizedState as Hook | null; hook; hook = hook.next) {
+          values.push(hook.memoizedState);
+        }
+      }
+      visit(fiber.child);
+    }
+  };
+  visit(key ? (container as unknown as Record<string, Fiber>)[key] : null);
+  expect(values.length).toBeGreaterThan(0);
+  return values;
+}
