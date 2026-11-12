@@ -152,6 +152,8 @@ const emptyPane = (): PaneState => ({
 // A newer request replaces an older one: an answer that arrives after it is
 // about a folder or connection the user has left.
 const paneRequests: Record<PaneSide, number> = { local: 0, remote: 0 };
+/** The folder each pane's latest request is for, until it settles. */
+const pendingPaths: Record<PaneSide, string | null> = { local: null, remote: null };
 let connectRequests = 0;
 /** The session was replaced and no folder has been listed on the new one yet. */
 let justReconnected = false;
@@ -345,6 +347,7 @@ export const useSftpStore = create<SftpState>((set, get) => {
     connect: async (connectionId, path) => {
       const request = ++connectRequests;
       paneRequests.remote += 1;
+      pendingPaths.remote = null;
       const previous = get().sessionId;
       if (previous) invoke("sftp_disconnect", { sessionId: previous }).catch(() => {});
       set({
@@ -377,6 +380,7 @@ export const useSftpStore = create<SftpState>((set, get) => {
     disconnect: () => {
       connectRequests += 1;
       paneRequests.remote += 1;
+      pendingPaths.remote = null;
       const { sessionId } = get();
       if (sessionId) invoke("sftp_disconnect", { sessionId }).catch(() => {});
       set({
@@ -411,6 +415,7 @@ export const useSftpStore = create<SftpState>((set, get) => {
     navigate: async (side, path) => {
       if (side === "remote" && !get().sessionId) return;
       const request = ++paneRequests[side];
+      pendingPaths[side] = path;
       patchPane(side, { loading: true, error: null });
       try {
         const listing = await invoke<FileListing>("sftp_list", {
@@ -418,6 +423,7 @@ export const useSftpStore = create<SftpState>((set, get) => {
           path,
         });
         if (request !== paneRequests[side]) return;
+        pendingPaths[side] = null;
         if (side === "remote") justReconnected = false;
         const pane = get()[side];
         const stay = listing.path === pane.path;
@@ -434,13 +440,15 @@ export const useSftpStore = create<SftpState>((set, get) => {
         });
       } catch (err) {
         if (request !== paneRequests[side]) return;
+        pendingPaths[side] = null;
         const message = errorMessage(err);
         patchPane(side, { loading: false, error: readableSftpError(message) });
         if (side === "remote") reconnectIfLost(message);
       }
     },
 
-    refresh: (side) => get().navigate(side, get()[side].path),
+    // A folder still loading is the one to show again, not the one it replaces.
+    refresh: (side) => get().navigate(side, pendingPaths[side] ?? get()[side].path),
 
     select: (side, path, mode) => {
       const pane = get()[side];

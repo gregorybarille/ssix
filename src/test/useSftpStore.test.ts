@@ -600,6 +600,33 @@ describe("transfers", () => {
     expect(calls("sftp_list")).toEqual([{ target: { side: "remote", session_id: "s1" }, path: "/home/me" }]);
   });
 
+  it("a transfer ending while another folder loads leaves that folder to load", async () => {
+    await ready();
+    await useSftpStore.getState().transfer("local", [file("/work/a")]);
+    const { onEvent } = started()[0];
+    const held: (() => void)[] = [];
+    invokeMock.mockImplementation(async (command: string, args?: unknown) => {
+      if (command !== "sftp_list") return undefined as never;
+      const { path } = args as { path: string };
+      return new Promise((resolve) => held.push(() => resolve(listing(path)))) as never;
+    });
+    const opening = useSftpStore.getState().navigate("remote", "/home/me/sub");
+    event(onEvent, {
+      type: "done",
+      id: "t1",
+      bytes: 1,
+      files: 1,
+      skipped: 0,
+      notes: [],
+      target: "/home/me/a",
+    });
+    await flush();
+    held.forEach((answer) => answer());
+    await opening;
+    await flush();
+    expect(useSftpStore.getState().remote.path).toBe("/home/me/sub");
+  });
+
   it("keeps a row whose events arrive before the start call answers", async () => {
     let answer: (id: string) => void = () => {};
     await ready();
