@@ -305,7 +305,9 @@ function App() {
   const handleCloseTabRequest = (tabId: string) => {
     const tab = tabs.find((t) => t.id === tabId);
     if (!tab) return;
-    const liveCount = tab.panes.filter((p) => !p.error).length;
+    // As for one pane: a pane still connecting has no shell yet. One whose
+    // worker is reconnecting keeps its shell, so it still counts.
+    const liveCount = tab.panes.filter((p) => !p.error && !(p.retrying && !p.reconnect)).length;
     if (liveCount === 0) {
       void closeTab(tabId);
       return;
