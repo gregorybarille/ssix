@@ -634,7 +634,6 @@ export type TransferEvent =
       bytes_total: number;
       files_done: number;
       files_total: number;
-      current: string;
     }
   | {
       type: "done";

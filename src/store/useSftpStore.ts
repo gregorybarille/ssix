@@ -51,7 +51,6 @@ export interface Transfer {
   bytesTotal: number;
   filesDone: number;
   filesTotal: number;
-  current: string;
   skipped: number;
   notes: string[];
   error: string | null;
@@ -260,7 +259,6 @@ export const useSftpStore = create<SftpState>((set, get) => {
           bytesTotal: event.bytes_total,
           filesDone: event.files_done,
           filesTotal: event.files_total,
-          current: event.current,
         });
         return;
       case "conflict":
@@ -300,7 +298,6 @@ export const useSftpStore = create<SftpState>((set, get) => {
       bytesTotal: 0,
       filesDone: 0,
       filesTotal: 0,
-      current: "",
       skipped: 0,
       notes: [],
       error: null,

@@ -110,8 +110,6 @@ pub enum TransferEvent {
         files_done: u64,
         #[cfg_attr(test, ts(type = "number"))]
         files_total: u64,
-        /// The file being copied, relative to the transferred entry.
-        current: String,
     },
     Done {
         id: String,
@@ -474,7 +472,6 @@ struct Run<'a> {
     files_total: u64,
     skipped: u64,
     notes: Vec<String>,
-    current: String,
     last_report: Option<Instant>,
 }
 
@@ -490,7 +487,6 @@ impl<'a> Run<'a> {
             files_total: 0,
             skipped: 0,
             notes: Vec::new(),
-            current: String::new(),
             last_report: None,
         }
     }
@@ -518,29 +514,29 @@ impl<'a> Run<'a> {
             bytes_total: self.bytes_total,
             files_done: self.files_done,
             files_total: self.files_total,
-            current: self.current.clone(),
         });
     }
 
-    fn on_chunk(&mut self, bytes: usize) -> Result<(), Stop> {
-        self.bytes_done += bytes as u64;
+    /// Report unless the last report was too recent. `Done` carries the final
+    /// counts, so a change that goes unreported here is never lost.
+    fn report_when_due(&mut self) {
         let due = self
             .last_report
             .is_none_or(|last| last.elapsed() >= PROGRESS_INTERVAL);
         if due {
             self.report();
         }
-        self.check()
     }
 
-    fn start_file(&mut self, rel: &str) {
-        self.current = rel.to_string();
-        self.report();
+    fn on_chunk(&mut self, bytes: usize) -> Result<(), Stop> {
+        self.bytes_done += bytes as u64;
+        self.report_when_due();
+        self.check()
     }
 
     fn finish_file(&mut self) {
         self.files_done += 1;
-        self.report();
+        self.report_when_due();
     }
 }
 
@@ -849,7 +845,6 @@ fn carry_out<'a, P>(
                 }
             }
             PlanItem::File { rel, mode } => {
-                run.start_file(rel);
                 if copy_file(run, rel, *mode)? {
                     run.finish_file();
                 }
@@ -1977,26 +1972,20 @@ mod tests {
         let mut run = Run::new("t", &cancel, emit);
         run.begin(&Plan {
             bytes: 100,
-            files: 1,
+            files: 1_000,
             ..Plan::default()
         });
         for _ in 0..50 {
             run.on_chunk(1).unwrap();
         }
-        assert_eq!(run.bytes_done, 50);
+        for _ in 0..1_000 {
+            run.finish_file();
+        }
+        assert_eq!((run.bytes_done, run.files_done), (50, 1_000));
         let reports = events.lock().unwrap().len();
-        assert!(reports < 10, "{} reports for 50 quick chunks", reports);
-        run.finish_file();
-        assert_eq!(
-            events.lock().unwrap().last(),
-            Some(&TransferEvent::Progress {
-                id: "t".to_string(),
-                bytes_done: 50,
-                bytes_total: 100,
-                files_done: 1,
-                files_total: 1,
-                current: String::new(),
-            })
+        assert!(
+            reports < 10,
+            "{reports} reports for 50 chunks and 1,000 files"
         );
     }
 

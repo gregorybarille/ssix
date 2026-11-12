@@ -581,9 +581,8 @@ describe("transfers", () => {
       bytes_total: 10,
       files_done: 0,
       files_total: 1,
-      current: "a",
     });
-    expect(row()).toMatchObject({ bytesDone: 5, bytesTotal: 10, filesTotal: 1, current: "a" });
+    expect(row()).toMatchObject({ bytesDone: 5, bytesTotal: 10, filesTotal: 1 });
 
     invokeMock.mockClear();
     event(onEvent, {
@@ -728,7 +727,6 @@ describe("transfers", () => {
     bytesTotal: 0,
     filesDone: 0,
     filesTotal: 0,
-    current: "",
     skipped: 0,
     notes: [],
     error: null,

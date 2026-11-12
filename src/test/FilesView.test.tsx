@@ -512,7 +512,6 @@ describe("transfers", () => {
         bytes_total: 4096,
         files_done: 0,
         files_total: 1,
-        current: "a.txt",
       }),
     );
     expect(screen.getByRole("progressbar")).toHaveAttribute("aria-valuenow", "25");

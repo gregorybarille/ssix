@@ -68,7 +68,6 @@ const genEvents: GenTransferEvent[] = [
     bytes_total: 0,
     files_done: 0,
     files_total: 0,
-    current: "",
   },
   { type: "done", id: "", bytes: 0, files: 0, skipped: 0, notes: [], target: "" },
   { type: "cancelled", id: "" },
