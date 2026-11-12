@@ -387,17 +387,34 @@ pub(crate) fn check_connection(
 /// Store `f`, already checked, as a new connection: shared by add and
 /// clone, so a clone gets exactly the normalization a new connection gets.
 pub(crate) fn insert_new_connection(data: &mut AppData, f: ConnectionFields) -> Connection {
-    let mut connection = Connection::new(f.name, f.host, f.port, f.credential_id, f.kind);
-    connection.verbosity = f.verbosity;
-    connection.extra_args = f.extra_args;
-    connection.proxy_command = f.proxy_command;
-    connection.login_command = normalize_optional_text(f.login_command);
-    connection.remote_path = normalize_remote_path(f.remote_path);
-    connection.tags = normalize_tags(f.tags);
-    connection.color = f.color;
-    f.advanced.apply_to(&mut connection);
+    let mut connection = Connection::new(
+        String::new(),
+        String::new(),
+        0,
+        None,
+        ConnectionKind::Direct,
+    );
+    apply_fields(f, &mut connection);
     data.connections.push(connection.clone());
     connection
+}
+
+/// Copy checked fields onto `c`, the same way for a new connection and an
+/// updated one. Leaves the id and the folder alone.
+fn apply_fields(f: ConnectionFields, c: &mut Connection) {
+    c.name = f.name;
+    c.host = f.host;
+    c.port = f.port;
+    c.credential_id = f.credential_id;
+    c.kind = f.kind;
+    c.verbosity = f.verbosity;
+    c.extra_args = f.extra_args;
+    c.proxy_command = f.proxy_command;
+    c.login_command = normalize_optional_text(f.login_command);
+    c.remote_path = normalize_remote_path(f.remote_path);
+    c.tags = normalize_tags(f.tags);
+    c.color = f.color;
+    f.advanced.apply_to(c);
 }
 
 #[tauri::command]
@@ -436,27 +453,15 @@ fn apply_update(
     // Capture the old credential_id before overwriting so we can clean up
     // an orphaned private credential if the auth method changes.
     let old_cred_id = data.connections[idx].credential_id.clone();
-
-    data.connections[idx].name = f.name;
-    data.connections[idx].host = f.host;
-    data.connections[idx].port = f.port;
-    data.connections[idx].credential_id = f.credential_id.clone();
-    data.connections[idx].kind = f.kind;
-    data.connections[idx].verbosity = f.verbosity;
-    data.connections[idx].extra_args = f.extra_args;
-    data.connections[idx].proxy_command = f.proxy_command;
-    data.connections[idx].login_command = normalize_optional_text(f.login_command);
-    data.connections[idx].remote_path = normalize_remote_path(f.remote_path);
-    data.connections[idx].tags = normalize_tags(f.tags);
-    data.connections[idx].color = f.color;
-    f.advanced.apply_to(&mut data.connections[idx]);
+    let new_cred_id = f.credential_id.clone();
+    apply_fields(f, &mut data.connections[idx]);
     let updated = data.connections[idx].clone();
 
     // If the credential changed and the old one was private, check whether it
     // is still referenced by another connection. If not, delete it so it
     // doesn't become an invisible orphan.
     if let Some(ref old_id) = old_cred_id {
-        if f.credential_id.as_deref() != Some(old_id.as_str()) {
+        if new_cred_id.as_deref() != Some(old_id.as_str()) {
             orphaned_private = take_orphaned_private(data, old_id);
         }
     }
