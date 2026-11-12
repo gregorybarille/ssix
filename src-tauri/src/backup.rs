@@ -165,9 +165,10 @@ fn read_live_files() -> Result<Files, String> {
     let dir = crate::storage::data_dir();
     let mut files = Vec::new();
     for name in FILES {
-        match fs::read(dir.join(name)) {
+        let path = dir.join(name);
+        match fs::read(&path) {
             Ok(bytes) => files.push((name.to_string(), bytes)),
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) if crate::storage::is_no_file(&path, &e) => {}
             Err(e) => return Err(format!("Could not read {}: {}", name, e)),
         }
     }
@@ -673,6 +674,26 @@ mod tests {
             let mode = |p: &Path| fs::metadata(p).unwrap().permissions().mode() & 0o777;
             assert_eq!(mode(&backups_dir().join(&backup.name)), 0o600);
             assert_eq!(mode(&backups_dir()), 0o700);
+        });
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_restore_over_a_dangling_link_is_refused() {
+        with_isolated_data_dir(|| {
+            write_live("data.json", &data_json(14));
+            let backup = create(BackupReason::Manual).unwrap();
+            let link = crate::storage::data_dir().join("data.json");
+            fs::remove_file(&link).unwrap();
+            // The target may be on a volume that is not mounted: no safety
+            // backup can be taken, so the restore must not replace the link.
+            std::os::unix::fs::symlink("/nonexistent/ssix/data.json", &link).unwrap();
+
+            assert!(restore(&backup.name).is_err());
+            assert!(fs::symlink_metadata(&link)
+                .unwrap()
+                .file_type()
+                .is_symlink());
         });
     }
 
