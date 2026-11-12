@@ -27,7 +27,7 @@ use crate::commands::scripts::connect_unless_cancelled;
 use crate::commands::ssh::{find_connection, ConnectedSession};
 use crate::login_wait::connection_failed;
 use crate::logs::log_local;
-use dashmap::DashMap;
+use dashmap::{DashMap, DashSet};
 use serde::{Deserialize, Serialize};
 use ssh2::{FileStat, OpenFlags, OpenType, Session, Sftp};
 use std::collections::{HashMap, VecDeque};
@@ -68,6 +68,8 @@ const FINISH_TIMEOUT_MS: u32 = 60_000;
 const TIDY_TIMEOUT_MS: u32 = 2_000;
 
 static TRANSFERS: LazyLock<DashMap<String, Arc<AtomicBool>>> = LazyLock::new(DashMap::new);
+/// Temporary files of downloads being written, for the exit hook to remove.
+static STAGED: LazyLock<DashSet<PathBuf>> = LazyLock::new(DashSet::new);
 static QUEUE: LazyLock<Mutex<WorkQueue<Queued>>> = LazyLock::new(|| Mutex::new(WorkQueue::new()));
 /// Logins made for transfers, for the test that queued ones share them.
 #[cfg(test)]
@@ -1429,10 +1431,18 @@ impl Written {
     }
 }
 
-/// Removes the file unless told the file has reached its final name.
+/// Removes the file unless told the file has reached its final name, and
+/// counts it in [`STAGED`] meanwhile.
 struct RemoveUnlessKept<'a> {
     path: &'a Path,
     keep: bool,
+}
+
+impl<'a> RemoveUnlessKept<'a> {
+    fn new(path: &'a Path) -> Self {
+        STAGED.insert(path.to_path_buf());
+        Self { path, keep: false }
+    }
 }
 
 impl Drop for RemoveUnlessKept<'_> {
@@ -1440,7 +1450,21 @@ impl Drop for RemoveUnlessKept<'_> {
         if !self.keep {
             let _ = fs::remove_file(self.path);
         }
+        STAGED.remove(self.path);
     }
+}
+
+/// Remove the temporary files of downloads that quitting cut short: their
+/// threads do not get to. Run at exit. A crash still leaves them.
+pub fn remove_staged_downloads() {
+    remove_all(&STAGED);
+}
+
+fn remove_all(staged: &DashSet<PathBuf>) {
+    for path in staged.iter() {
+        let _ = fs::remove_file(path.key());
+    }
+    staged.clear();
 }
 
 /// Fill a temporary file beside `target` through `fill`, then rename it into
@@ -1467,10 +1491,7 @@ where
     let mut file = options
         .open(&staged)
         .map_err(|e| format!("Could not write in {}: {}", dir.display(), e))?;
-    let mut guard = RemoveUnlessKept {
-        path: &staged,
-        keep: false,
-    };
+    let mut guard = RemoveUnlessKept::new(&staged);
 
     if let Ok(existing) = fs::metadata(target) {
         fs::set_permissions(&staged, existing.permissions()).map_err(|e| {
@@ -1627,6 +1648,26 @@ mod tests {
             run.notes,
             ["makefile was skipped: it differs from Makefile only by case here"]
         );
+    }
+
+    #[test]
+    fn a_download_being_written_is_known_until_it_ends() {
+        let tmp = TempDir::new("staged");
+        let staged_here = || super::STAGED.iter().any(|path| path.starts_with(&tmp.0));
+        write_partial(&tmp.0.join("f"), None, |_| {
+            assert!(staged_here());
+            Ok(())
+        })
+        .unwrap();
+        assert!(!staged_here());
+
+        let left = tmp.0.join(".ssix-part-left");
+        fs::write(&left, "").unwrap();
+        let staged = DashSet::new();
+        staged.insert(left.clone());
+        remove_all(&staged);
+        assert!(!left.exists());
+        assert!(staged.is_empty());
     }
 
     #[test]

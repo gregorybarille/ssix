@@ -57,7 +57,8 @@ cancelled.
 - **Nothing partial under the real name.** A file is written to a hidden
   `.ssix-part-<id>` beside its target and renamed when complete. A failed or
   cancelled copy removes that temporary file and leaves an existing target as it
-  was. This applies to uploads as well as downloads.
+  was. This applies to uploads as well as downloads. Quitting the app during a
+  download removes its temporary file too.
 - **Replacing asks first.** When the target exists, the transfer stops before
   writing anything and asks. For a folder, files with the same name are replaced
   and the others stay.
@@ -153,7 +154,8 @@ off, which the Files view cannot browse. Folders need SFTP.
 - **Windows** clients and servers are untested. The live tests run only against POSIX
   servers, and the Windows-only code paths are not compiled on other systems.
 - **A connection cut during an upload** can leave a hidden `.ssix-part-*` file on the
-  server, since nothing is left to remove it.
+  server, since nothing is left to remove it. A crash of the app during a download
+  leaves one on this computer.
 - **Uploads need write permission on the target folder** for the temporary file, so
   they fail where only the file itself is writable.
 - **After a crash**, a leftover edit copy is removed at a later launch, once it is
