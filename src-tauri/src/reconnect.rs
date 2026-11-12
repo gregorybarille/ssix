@@ -130,6 +130,13 @@ fn wait_for_user(
     }
 }
 
+/// A shell an attempt opened that nobody wants any more, as when the user
+/// cancelled or closed while it was opening. Dropping it is not enough: see
+/// `OpenShell`'s implementation.
+pub(crate) trait Discard {
+    fn discard(self);
+}
+
 enum Attempt<S> {
     Opened(S),
     Failed(String),
@@ -137,7 +144,7 @@ enum Attempt<S> {
 }
 
 /// Run `open` once on a helper thread, staying responsive to the user.
-fn run_attempt<S: Send + 'static>(
+fn run_attempt<S: Discard + Send + 'static>(
     open: &OpenAttempt<S>,
     control: &ControlRx,
     pty_size: &mut Option<(u32, u32)>,
@@ -147,8 +154,10 @@ fn run_attempt<S: Send + 'static>(
     let cancelled = Arc::new(AtomicBool::new(false));
     let flag = Arc::clone(&cancelled);
     thread::spawn(move || {
-        // The worker is gone when it cancelled; the result is dropped here.
-        let _ = tx.send(open(flag));
+        // The worker is gone when it cancelled or closed: nobody takes the shell.
+        if let Err(mpsc::SendError(Ok(shell))) = tx.send(open(flag)) {
+            shell.discard();
+        }
     });
     loop {
         match rx.try_recv() {
@@ -157,6 +166,7 @@ fn run_attempt<S: Send + 'static>(
                 // keystroke cannot reach the new shell.
                 return match wait_for_user(control, Some(Duration::ZERO), pty_size) {
                     Some(action @ (UserAction::Close | UserAction::Cancel)) => {
+                        shell.discard();
                         Attempt::Interrupted(action)
                     }
                     Some(UserAction::RetryNow) | None => Attempt::Opened(shell),
@@ -190,7 +200,7 @@ pub(crate) struct Recovery<'a, S> {
     pub emit: &'a dyn Fn(OutputEvent),
 }
 
-impl<S: Send + 'static> Recovery<'_, S> {
+impl<S: Discard + Send + 'static> Recovery<'_, S> {
     /// Returns the new shell, or `None` once the user closed the session.
     /// When attempts run out, are cancelled or fail for good, this reports it
     /// and waits for the user: Retry tries once more, closing the pane ends.
@@ -271,6 +281,19 @@ mod tests {
     const HOST_KEY_FAILURE: &str =
         "HOST_KEY_MISMATCH host=h port=22 fingerprint=SHA256:x\nThe host key has changed.";
     const NETWORK_FAILURE: &str = "TCP connect to h:22 failed: Connection refused";
+
+    /// Shells given up on, named after what each test's attempt returned.
+    static DISCARDED: Mutex<Vec<&'static str>> = Mutex::new(Vec::new());
+
+    impl Discard for &'static str {
+        fn discard(self) {
+            DISCARDED.lock().unwrap().push(self);
+        }
+    }
+
+    fn discarded(shell: &str) -> bool {
+        DISCARDED.lock().unwrap().contains(&shell)
+    }
 
     fn instantly(_attempt: u8) -> Duration {
         Duration::ZERO
@@ -647,16 +670,18 @@ mod tests {
         let h = Harness::start(FIVE_TRIES, instantly, move |_| {
             // A connect stuck on a dead network.
             let _ = released.lock().unwrap().recv();
-            Ok("late")
+            Ok("late after cancel")
         });
         eventually("the attempt to start", || h.opens() == 1);
 
         h.handle.send(SessionMsg::CancelReconnect).unwrap();
         h.wait_for_event("reconnect_stopped");
 
-        // The attempt finishing late changes nothing: its shell is dropped.
+        // The attempt finishing late changes nothing: its shell is given up.
         release.send(()).unwrap();
-        thread::sleep(Duration::from_millis(100));
+        eventually("the late shell to be given up", || {
+            discarded("late after cancel")
+        });
         assert!(h.finished.try_recv().is_err(), "still parked");
         h.close();
     }
@@ -705,11 +730,14 @@ mod tests {
         let released = Mutex::new(released);
         let h = Harness::start(FIVE_TRIES, instantly, move |_| {
             let _ = released.lock().unwrap().recv();
-            Ok("late")
+            Ok("late after close")
         });
         eventually("the attempt to start", || h.opens() == 1);
         h.close();
         release.send(()).unwrap();
+        eventually("the late shell to be given up", || {
+            discarded("late after close")
+        });
     }
 
     #[test]
