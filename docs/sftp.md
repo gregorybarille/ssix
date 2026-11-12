@@ -52,12 +52,17 @@ or is cancelled gives up its session, and the next one logs in again.
 ## Transfers
 
 Files stream in chunks with progress shown as they go, and any transfer can be
-cancelled.
+cancelled. The list keeps the last 200 finished transfers, dropping the oldest as
+new ones finish; failed and cancelled ones stay until you dismiss or clear them.
 
 - **Nothing partial under the real name.** A file is written to a hidden
   `.ssix-part-<id>` beside its target and renamed when complete. A failed or
   cancelled copy removes that temporary file and leaves an existing target as it
-  was. This applies to uploads as well as downloads.
+  was. This applies to uploads as well as downloads. Quitting the app during a
+  download removes its temporary file too.
+- **A downloaded file is flushed to disk before it takes its name**, and each
+  folder once the download is complete, so a power cut leaves either the old file
+  or the whole new one.
 - **Replacing asks first.** When the target exists, the transfer stops before
   writing anything and asks. For a folder, files with the same name are replaced
   and the others stay.
@@ -69,6 +74,10 @@ cancelled.
   names where the old file and the new copy are, and neither is removed.
 - **A target that is a symlink is written through**, so the link stays and the
   file it points to changes.
+- **Names that differ only by case are kept apart.** A server folder can hold
+  `Makefile` and `makefile`, which a Mac or Windows disk takes for one file. A
+  folder download writes the first and skips the second, counting it in the
+  result and naming both, rather than replacing one with the other.
 - **Folders keep their permissions**, as files do and as `scp -r` does, so a `0700`
   folder stays private on the other side. A read-only source folder stays writable
   until its contents are in, and if the transfer stops first it keeps its owner's
@@ -107,6 +116,9 @@ until you press **Upload changes**.
 - If the server's file changed since the copy was made, or was deleted, the upload
   stops and asks. **Keep editing** leaves everything as it is; **Overwrite** replaces
   the server's version. Size and time are compared first, then the content.
+- If you save in the editor while the upload runs, the upload stops before it
+  replaces anything and says to upload again: what was sent could be part old,
+  part new.
 - The copy lives in `<data dir>/edit-cache/<id>/`, readable only by you (`0700` on
   the folder, `0600` on the file). Closing the panel removes it, and first looks at
   the copy again and asks if it holds changes that were not uploaded, or if it cannot
@@ -146,7 +158,8 @@ off, which the Files view cannot browse. Folders need SFTP.
 - **Windows** clients and servers are untested. The live tests run only against POSIX
   servers, and the Windows-only code paths are not compiled on other systems.
 - **A connection cut during an upload** can leave a hidden `.ssix-part-*` file on the
-  server, since nothing is left to remove it.
+  server, since nothing is left to remove it. A crash of the app during a download
+  leaves one on this computer.
 - **Uploads need write permission on the target folder** for the temporary file, so
   they fail where only the file itself is writable.
 - **After a crash**, a leftover edit copy is removed at a later launch, once it is

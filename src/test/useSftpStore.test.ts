@@ -538,7 +538,15 @@ describe("transfers", () => {
       .transfer("local", [file("/work/a"), file("/work/b"), file("/work/c")]);
     const [first, second, third] = started().map((s) => s.onEvent);
     const done = (id: string) =>
-      ({ type: "done", id, bytes: 1, files: 1, skipped: 0, target: "/home/me/x" }) as const;
+      ({
+        type: "done",
+        id,
+        bytes: 1,
+        files: 1,
+        skipped: 0,
+        notes: [] as string[],
+        target: "/home/me/x",
+      }) as const;
 
     let answerList: (value: unknown) => void = () => {};
     invokeMock.mockReset();
@@ -573,15 +581,74 @@ describe("transfers", () => {
       bytes_total: 10,
       files_done: 0,
       files_total: 1,
-      current: "a",
     });
-    expect(row()).toMatchObject({ bytesDone: 5, bytesTotal: 10, filesTotal: 1, current: "a" });
+    expect(row()).toMatchObject({ bytesDone: 5, bytesTotal: 10, filesTotal: 1 });
 
     invokeMock.mockClear();
-    event(onEvent, { type: "done", id: "t1", bytes: 10, files: 1, skipped: 2, target: "/home/me/a" });
+    event(onEvent, {
+      type: "done",
+      id: "t1",
+      bytes: 10,
+      files: 1,
+      skipped: 2,
+      notes: [],
+      target: "/home/me/a",
+    });
     await flush();
     expect(row()).toMatchObject({ status: "done", bytesDone: 10, skipped: 2 });
     expect(calls("sftp_list")).toEqual([{ target: { side: "remote", session_id: "s1" }, path: "/home/me" }]);
+  });
+
+  it("a transfer ending while another folder loads leaves that folder to load", async () => {
+    await ready();
+    await useSftpStore.getState().transfer("local", [file("/work/a")]);
+    const { onEvent } = started()[0];
+    const held: (() => void)[] = [];
+    invokeMock.mockImplementation(async (command: string, args?: unknown) => {
+      if (command !== "sftp_list") return undefined as never;
+      const { path } = args as { path: string };
+      return new Promise((resolve) => held.push(() => resolve(listing(path)))) as never;
+    });
+    const opening = useSftpStore.getState().navigate("remote", "/home/me/sub");
+    event(onEvent, {
+      type: "done",
+      id: "t1",
+      bytes: 1,
+      files: 1,
+      skipped: 0,
+      notes: [],
+      target: "/home/me/a",
+    });
+    await flush();
+    held.forEach((answer) => answer());
+    await opening;
+    await flush();
+    expect(useSftpStore.getState().remote.path).toBe("/home/me/sub");
+  });
+
+  it("keeps the last 200 finished rows, and every failed one", async () => {
+    await ready();
+    await useSftpStore.getState().transfer("local", [file("/work/a")]);
+    const old = Array.from({ length: 250 }, (_, i) => ({
+      ...baseTransfer,
+      id: `old${i}`,
+      status: i === 10 ? ("failed" as const) : ("done" as const),
+    }));
+    useSftpStore.setState((s) => ({ transfers: [...old, ...s.transfers] }));
+    event(started()[0].onEvent, {
+      type: "done",
+      id: "t1",
+      bytes: 1,
+      files: 1,
+      skipped: 0,
+      notes: [],
+      target: "/home/me/a",
+    });
+    const { transfers } = useSftpStore.getState();
+    expect(transfers.filter((t) => t.status === "done")).toHaveLength(200);
+    expect(transfers.map((t) => t.id)).toContain("old10");
+    expect(transfers.at(-1)?.id).toBe("t1");
+    expect(transfers.map((t) => t.id)).not.toContain("old0");
   });
 
   it("keeps a row whose events arrive before the start call answers", async () => {
@@ -685,8 +752,8 @@ describe("transfers", () => {
     bytesTotal: 0,
     filesDone: 0,
     filesTotal: 0,
-    current: "",
     skipped: 0,
+    notes: [],
     error: null,
     conflict: null,
   };

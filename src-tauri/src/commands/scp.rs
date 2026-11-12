@@ -18,7 +18,7 @@
 
 use crate::commands::blocking;
 use crate::commands::scripts::connect_unless_cancelled;
-use crate::commands::sftp::browse::absolute_remote;
+use crate::commands::sftp::browse::{absolute_remote, check_local_path, expand_local};
 use crate::commands::sftp::transfer::{
     copy_stream, download_unattended, file_mode, limit_tidying, local_target, upload_unattended,
     with_finish_limit, write_partial, Copied, Stop, CALL_TIMEOUT_MS,
@@ -266,7 +266,20 @@ pub async fn scp_upload(input: ScpUploadInput) -> Result<ScpResult, String> {
     blocking(move || scp_upload_sync(input, copy)).await
 }
 
-fn scp_upload_sync(input: ScpUploadInput, copy: RunningCopy) -> Result<ScpResult, String> {
+/// A local path as the Files view takes it: `~/` for the home folder, and
+/// otherwise a full path, which cannot land in the folder the app runs in.
+fn full_local_path(path: &str) -> Result<String, String> {
+    let path = if path.starts_with('~') {
+        expand_local(path)?.to_string_lossy().into_owned()
+    } else {
+        path.to_string()
+    };
+    check_local_path(&path)?;
+    Ok(path)
+}
+
+fn scp_upload_sync(mut input: ScpUploadInput, copy: RunningCopy) -> Result<ScpResult, String> {
+    input.local_path = full_local_path(&input.local_path)?;
     let requested = input.remote_path.clone().unwrap_or_default();
     let Some((ssh, conn)) = connect_for_copy(&copy)? else {
         let ended = Err(Stop::Cancelled);
@@ -343,7 +356,8 @@ pub async fn scp_download(input: ScpDownloadInput) -> Result<ScpResult, String> 
     blocking(move || scp_download_sync(input, copy)).await
 }
 
-fn scp_download_sync(input: ScpDownloadInput, copy: RunningCopy) -> Result<ScpResult, String> {
+fn scp_download_sync(mut input: ScpDownloadInput, copy: RunningCopy) -> Result<ScpResult, String> {
+    input.local_path = full_local_path(&input.local_path)?;
     let Some((ssh, conn)) = connect_for_copy(&copy)? else {
         let ended = Err(Stop::Cancelled);
         return copy_ended(
@@ -680,10 +694,18 @@ mod scp_tests {
     use std::thread;
     use std::time::{Duration, Instant};
 
+    /// A full path on any system.
+    fn temp_path(name: &str) -> String {
+        std::env::temp_dir()
+            .join(name)
+            .to_string_lossy()
+            .into_owned()
+    }
+
     fn upload_input(connection_id: &str) -> ScpUploadInput {
         ScpUploadInput {
             connection_id: connection_id.to_string(),
-            local_path: "some-file".to_string(),
+            local_path: temp_path("some-file"),
             remote_path: Some("/tmp".to_string()),
             recursive: false,
         }
@@ -718,6 +740,18 @@ mod scp_tests {
     }
 
     #[test]
+    fn a_local_path_is_full_or_under_home() {
+        let home = dirs::home_dir().unwrap();
+        assert_eq!(
+            full_local_path("~/x").unwrap(),
+            home.join("x").to_string_lossy()
+        );
+        assert_eq!(full_local_path(&temp_path("x")).unwrap(), temp_path("x"));
+        assert_eq!(full_local_path("x").unwrap_err(), "x is not a full path");
+        assert!(full_local_path("~other/x").is_err());
+    }
+
+    #[test]
     fn a_stop_needs_a_connection_id() {
         assert!(scp_stop(String::new()).is_err());
         assert!(scp_stop("  ".to_string()).is_err());
@@ -736,7 +770,7 @@ mod scp_tests {
             let input = ScpDownloadInput {
                 connection_id: id.to_string(),
                 remote_path: "/tmp/f".to_string(),
-                local_path: "some-file".to_string(),
+                local_path: temp_path("some-file"),
                 recursive: false,
             };
             scp_download_sync(input, copy).unwrap_err();

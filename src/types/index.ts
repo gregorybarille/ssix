@@ -634,9 +634,17 @@ export type TransferEvent =
       bytes_total: number;
       files_done: number;
       files_total: number;
-      current: string;
     }
-  | { type: "done"; id: string; bytes: number; files: number; skipped: number; target: string }
+  | {
+      type: "done";
+      id: string;
+      bytes: number;
+      files: number;
+      skipped: number;
+      /** One line for each skipped entry that needs explaining. */
+      notes: string[];
+      target: string;
+    }
   | { type: "cancelled"; id: string }
   | { type: "conflict"; id: string; target: string; target_is_dir: boolean }
   | { type: "failed"; id: string; error: string };

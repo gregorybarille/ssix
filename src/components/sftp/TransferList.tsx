@@ -29,9 +29,14 @@ function statusText(transfer: Transfer): string {
       return transfer.error ?? "Failed";
     case "done": {
       const copied = `${plural(transfer.filesDone, "file")}, ${formatSize(transfer.bytesDone)}`;
-      return transfer.skipped > 0
-        ? `${copied}, ${transfer.skipped} skipped (symbolic links and special files)`
-        : copied;
+      // Notes explain their own skips; the rest are links and special files.
+      const unexplained = transfer.skipped - transfer.notes.length;
+      return [
+        unexplained > 0
+          ? `${copied}, ${unexplained} skipped (symbolic links and special files)`
+          : copied,
+        ...transfer.notes,
+      ].join(". ");
     }
   }
 }

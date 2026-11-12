@@ -27,10 +27,10 @@ use crate::commands::scripts::connect_unless_cancelled;
 use crate::commands::ssh::{find_connection, ConnectedSession};
 use crate::login_wait::connection_failed;
 use crate::logs::log_local;
-use dashmap::DashMap;
+use dashmap::{DashMap, DashSet};
 use serde::{Deserialize, Serialize};
 use ssh2::{FileStat, OpenFlags, OpenType, Session, Sftp};
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 use std::fs;
 use std::io::{ErrorKind, Read, Write};
 use std::path::{Path, PathBuf};
@@ -68,6 +68,8 @@ const FINISH_TIMEOUT_MS: u32 = 60_000;
 const TIDY_TIMEOUT_MS: u32 = 2_000;
 
 static TRANSFERS: LazyLock<DashMap<String, Arc<AtomicBool>>> = LazyLock::new(DashMap::new);
+/// Temporary files of downloads being written, for the exit hook to remove.
+static STAGED: LazyLock<DashSet<PathBuf>> = LazyLock::new(DashSet::new);
 static QUEUE: LazyLock<Mutex<WorkQueue<Queued>>> = LazyLock::new(|| Mutex::new(WorkQueue::new()));
 /// Logins made for transfers, for the test that queued ones share them.
 #[cfg(test)]
@@ -108,8 +110,6 @@ pub enum TransferEvent {
         files_done: u64,
         #[cfg_attr(test, ts(type = "number"))]
         files_total: u64,
-        /// The file being copied, relative to the transferred entry.
-        current: String,
     },
     Done {
         id: String,
@@ -117,9 +117,12 @@ pub enum TransferEvent {
         bytes: u64,
         #[cfg_attr(test, ts(type = "number"))]
         files: u64,
-        /// Entries left out of a folder: symlinks, sockets, unusable names.
+        /// Entries left out of a folder: symlinks, sockets, unusable names,
+        /// and files a disk that folds case cannot hold beside their twin.
         #[cfg_attr(test, ts(type = "number"))]
         skipped: u64,
+        /// One line for each skipped entry that needs explaining.
+        notes: Vec<String>,
         target: String,
     },
     Cancelled {
@@ -387,6 +390,7 @@ fn run_transfer(item: Queued, session: Option<TransferSession>) -> Option<Transf
     let mut run = Run::new(&id, &cancel, emit.clone());
     let (outcome, session) = copy_on_a_session(&input, &mut run, session);
     let (bytes, files, skipped) = (run.bytes_done, run.files_done, run.skipped);
+    let notes = std::mem::take(&mut run.notes);
     TRANSFERS.remove(&id);
     let event = match outcome {
         Ok(target) => {
@@ -403,6 +407,7 @@ fn run_transfer(item: Queued, session: Option<TransferSession>) -> Option<Transf
                 bytes,
                 files,
                 skipped,
+                notes,
                 target,
             }
         }
@@ -466,7 +471,7 @@ struct Run<'a> {
     files_done: u64,
     files_total: u64,
     skipped: u64,
-    current: String,
+    notes: Vec<String>,
     last_report: Option<Instant>,
 }
 
@@ -481,7 +486,7 @@ impl<'a> Run<'a> {
             files_done: 0,
             files_total: 0,
             skipped: 0,
-            current: String::new(),
+            notes: Vec::new(),
             last_report: None,
         }
     }
@@ -509,29 +514,29 @@ impl<'a> Run<'a> {
             bytes_total: self.bytes_total,
             files_done: self.files_done,
             files_total: self.files_total,
-            current: self.current.clone(),
         });
     }
 
-    fn on_chunk(&mut self, bytes: usize) -> Result<(), Stop> {
-        self.bytes_done += bytes as u64;
+    /// Report unless the last report was too recent. `Done` carries the final
+    /// counts, so a change that goes unreported here is never lost.
+    fn report_when_due(&mut self) {
         let due = self
             .last_report
             .is_none_or(|last| last.elapsed() >= PROGRESS_INTERVAL);
         if due {
             self.report();
         }
-        self.check()
     }
 
-    fn start_file(&mut self, rel: &str) {
-        self.current = rel.to_string();
-        self.report();
+    fn on_chunk(&mut self, bytes: usize) -> Result<(), Stop> {
+        self.bytes_done += bytes as u64;
+        self.report_when_due();
+        self.check()
     }
 
     fn finish_file(&mut self) {
         self.files_done += 1;
-        self.report();
+        self.report_when_due();
     }
 }
 
@@ -818,13 +823,14 @@ fn walk_remote(
 }
 
 /// Go through a plan in order on either side: `ensure_dir` says where a folder
-/// is and whether it had to be created, and `seal` gives a created folder its
-/// final mode once everything is in.
+/// is and whether it had to be created, `copy_file` whether it copied the file
+/// or left it out, and `seal` gives a created folder its final mode once
+/// everything is in.
 fn carry_out<'a, P>(
     run: &mut Run<'a>,
     plan: &Plan,
     ensure_dir: impl Fn(&str, Option<u32>) -> Result<(P, bool), String>,
-    mut copy_file: impl FnMut(&mut Run<'a>, &str, Option<u32>) -> Result<(), Stop>,
+    mut copy_file: impl FnMut(&mut Run<'a>, &str, Option<u32>) -> Result<bool, Stop>,
     seal: impl Fn(&P, u32) -> Result<(), String>,
 ) -> Result<(), Stop> {
     run.begin(plan);
@@ -839,9 +845,9 @@ fn carry_out<'a, P>(
                 }
             }
             PlanItem::File { rel, mode } => {
-                run.start_file(rel);
-                copy_file(run, rel, *mode)?;
-                run.finish_file();
+                if copy_file(run, rel, *mode)? {
+                    run.finish_file();
+                }
             }
         }
     }
@@ -906,7 +912,7 @@ fn upload_plan(
             let staged = stage_upload(session, sftp, &mut file, &destination, mode, &mut |n| {
                 run.on_chunk(n)
             })?;
-            commit_upload(session, sftp, &staged, &destination)
+            commit_upload(session, sftp, &staged, &destination).map(|()| true)
         },
         |path, source| seal_remote_dir(sftp, path, source),
     )
@@ -927,6 +933,9 @@ fn unattended(
 ) -> (Copied, Result<(), Stop>) {
     let mut run = Run::new("", cancel, Arc::new(|_| {}));
     let ended = copy(&mut run);
+    for note in &run.notes {
+        log_local("info", "scp", note.clone());
+    }
     if run.skipped > 0 {
         log_local(
             "info",
@@ -1282,6 +1291,7 @@ fn download_plan(
     target: &Path,
     run: &mut Run<'_>,
 ) -> Result<(), Stop> {
+    let mut written = Written::default();
     carry_out(
         run,
         plan,
@@ -1296,17 +1306,26 @@ fn download_plan(
                 .open(Path::new(&remote_path))
                 .map_err(|e| call_error("Could not read", &remote_path, &e))?;
             let destination = local_target(&local_under(target, rel))?;
-            let written = write_partial(&destination, mode, |file| {
-                copy_stream_growing(&mut remote, file, &mut |n| run.on_chunk(n))
-            });
+            let copied = written.download(run, rel, &destination, mode, &mut remote);
             // Closing `remote` is the tidying here.
-            if written.is_err() {
+            if copied.is_err() {
                 limit_tidying(session);
             }
-            written
+            copied
         },
         |path, source| seal_local_dir(path, source),
-    )
+    )?;
+    // Each folder once, not once per file: a rename survives a power cut only
+    // once its folder is synced. The root's own folder holds its name.
+    if let Some(parent) = target.parent() {
+        sync_folder(parent);
+    }
+    for item in &plan.items {
+        if let PlanItem::Dir { rel, .. } = item {
+            sync_folder(&local_under(target, rel));
+        }
+    }
+    Ok(())
 }
 
 /// Make sure a folder is there, and say whether it had to be created. One
@@ -1367,10 +1386,70 @@ pub(crate) fn local_target(path: &Path) -> Result<PathBuf, String> {
     Ok(path.to_path_buf())
 }
 
-/// Removes the file unless told the file has reached its final name.
+/// What tells two files apart on this disk. Two names of one file give the
+/// same answer, as `Makefile` and `makefile` do on a disk that folds case.
+#[cfg(unix)]
+type FileId = (u64, u64);
+#[cfg(not(unix))]
+type FileId = String;
+
+#[cfg(unix)]
+fn file_id(path: &Path) -> Option<FileId> {
+    use std::os::unix::fs::MetadataExt;
+    fs::metadata(path).ok().map(|meta| (meta.dev(), meta.ino()))
+}
+
+#[cfg(not(unix))]
+fn file_id(path: &Path) -> Option<FileId> {
+    path.exists().then(|| path.to_string_lossy().to_lowercase())
+}
+
+/// The files a download has written so far, and the name each came from.
+#[derive(Default)]
+struct Written(HashMap<FileId, String>);
+
+impl Written {
+    /// Copy `source` to `destination`, unless this download already wrote that
+    /// very file under another name: replacing it would lose the first one, so
+    /// it is skipped and said why. Returns whether it copied.
+    fn download(
+        &mut self,
+        run: &mut Run<'_>,
+        rel: &str,
+        destination: &Path,
+        mode: Option<u32>,
+        source: &mut dyn Read,
+    ) -> Result<bool, Stop> {
+        if let Some(first) = file_id(destination).and_then(|id| self.0.get(&id)) {
+            run.skipped += 1;
+            run.notes.push(format!(
+                "{rel} was skipped: it differs from {first} only by case here"
+            ));
+            return Ok(false);
+        }
+        // The download syncs its folders once it is complete.
+        stage_and_rename(destination, mode, |file| {
+            copy_stream_growing(source, file, &mut |n| run.on_chunk(n))
+        })?;
+        if let Some(id) = file_id(destination) {
+            self.0.insert(id, rel.to_string());
+        }
+        Ok(true)
+    }
+}
+
+/// Removes the file unless told the file has reached its final name, and
+/// counts it in [`STAGED`] meanwhile.
 struct RemoveUnlessKept<'a> {
     path: &'a Path,
     keep: bool,
+}
+
+impl<'a> RemoveUnlessKept<'a> {
+    fn new(path: &'a Path) -> Self {
+        STAGED.insert(path.to_path_buf());
+        Self { path, keep: false }
+    }
 }
 
 impl Drop for RemoveUnlessKept<'_> {
@@ -1378,7 +1457,21 @@ impl Drop for RemoveUnlessKept<'_> {
         if !self.keep {
             let _ = fs::remove_file(self.path);
         }
+        STAGED.remove(self.path);
     }
+}
+
+/// Remove the temporary files of downloads that quitting cut short: their
+/// threads do not get to. Run at exit. A crash still leaves them.
+pub fn remove_staged_downloads() {
+    remove_all(&STAGED);
+}
+
+fn remove_all(staged: &DashSet<PathBuf>) {
+    for path in staged.iter() {
+        let _ = fs::remove_file(path.key());
+    }
+    staged.clear();
 }
 
 /// Fill a temporary file beside `target` through `fill`, then rename it into
@@ -1386,6 +1479,29 @@ impl Drop for RemoveUnlessKept<'_> {
 /// of one. `mode` applies to a new file; one being replaced keeps its own,
 /// so a private file stays private.
 pub(crate) fn write_partial<F>(target: &Path, mode: Option<u32>, fill: F) -> Result<(), Stop>
+where
+    F: FnOnce(&mut fs::File) -> Result<(), Stop>,
+{
+    stage_and_rename(target, mode, fill)?;
+    if let Some(dir) = target.parent() {
+        sync_folder(dir);
+    }
+    Ok(())
+}
+
+/// The rename itself survives a power cut only once the folder is synced.
+fn sync_folder(dir: &Path) {
+    #[cfg(unix)]
+    if let Ok(folder) = fs::File::open(dir) {
+        let _ = folder.sync_all();
+    }
+    #[cfg(not(unix))]
+    let _ = dir;
+}
+
+/// [`write_partial`] without syncing the folder, for a caller that syncs it
+/// once for many files.
+fn stage_and_rename<F>(target: &Path, mode: Option<u32>, fill: F) -> Result<(), Stop>
 where
     F: FnOnce(&mut fs::File) -> Result<(), Stop>,
 {
@@ -1405,10 +1521,7 @@ where
     let mut file = options
         .open(&staged)
         .map_err(|e| format!("Could not write in {}: {}", dir.display(), e))?;
-    let mut guard = RemoveUnlessKept {
-        path: &staged,
-        keep: false,
-    };
+    let mut guard = RemoveUnlessKept::new(&staged);
 
     if let Ok(existing) = fs::metadata(target) {
         fs::set_permissions(&staged, existing.permissions()).map_err(|e| {
@@ -1426,11 +1539,6 @@ where
     fs::rename(&staged, target)
         .map_err(|e| format!("Could not write {}: {}", target.display(), e))?;
     guard.keep = true;
-    // The rename itself survives a power cut only once the folder is synced.
-    #[cfg(unix)]
-    if let Ok(folder) = fs::File::open(dir) {
-        let _ = folder.sync_all();
-    }
     Ok(())
 }
 
@@ -1536,6 +1644,55 @@ mod tests {
         assert_eq!(fs::read(&target).unwrap(), data);
         assert_eq!(chunks, 3, "the file must go through in chunks");
         assert_eq!(entries_of(&tmp.0), ["out.bin"]);
+    }
+
+    /// Only a disk that folds case, like the default on macOS and Windows,
+    /// can show it; elsewhere the test has nothing to check.
+    #[test]
+    fn a_case_twin_is_skipped_where_the_disk_folds_case() {
+        let tmp = TempDir::new("case");
+        fs::write(tmp.0.join("a"), "").unwrap();
+        let folds_case = tmp.0.join("A").exists();
+        fs::remove_file(tmp.0.join("a")).unwrap();
+        if !folds_case {
+            return;
+        }
+        let cancel = AtomicBool::new(false);
+        let mut run = Run::new("t", &cancel, Arc::new(|_| {}));
+        let mut written = Written::default();
+        for (rel, body) in [("Makefile", "first"), ("makefile", "second")] {
+            let destination = local_target(&tmp.0.join(rel)).unwrap();
+            written
+                .download(&mut run, rel, &destination, None, &mut body.as_bytes())
+                .unwrap();
+        }
+        assert_eq!(entries_of(&tmp.0), ["Makefile"]);
+        assert_eq!(fs::read_to_string(tmp.0.join("Makefile")).unwrap(), "first");
+        assert_eq!(run.skipped, 1);
+        assert_eq!(
+            run.notes,
+            ["makefile was skipped: it differs from Makefile only by case here"]
+        );
+    }
+
+    #[test]
+    fn a_download_being_written_is_known_until_it_ends() {
+        let tmp = TempDir::new("staged");
+        let staged_here = || super::STAGED.iter().any(|path| path.starts_with(&tmp.0));
+        write_partial(&tmp.0.join("f"), None, |_| {
+            assert!(staged_here());
+            Ok(())
+        })
+        .unwrap();
+        assert!(!staged_here());
+
+        let left = tmp.0.join(".ssix-part-left");
+        fs::write(&left, "").unwrap();
+        let staged = DashSet::new();
+        staged.insert(left.clone());
+        remove_all(&staged);
+        assert!(!left.exists());
+        assert!(staged.is_empty());
     }
 
     #[test]
@@ -1845,26 +2002,20 @@ mod tests {
         let mut run = Run::new("t", &cancel, emit);
         run.begin(&Plan {
             bytes: 100,
-            files: 1,
+            files: 1_000,
             ..Plan::default()
         });
         for _ in 0..50 {
             run.on_chunk(1).unwrap();
         }
-        assert_eq!(run.bytes_done, 50);
+        for _ in 0..1_000 {
+            run.finish_file();
+        }
+        assert_eq!((run.bytes_done, run.files_done), (50, 1_000));
         let reports = events.lock().unwrap().len();
-        assert!(reports < 10, "{} reports for 50 quick chunks", reports);
-        run.finish_file();
-        assert_eq!(
-            events.lock().unwrap().last(),
-            Some(&TransferEvent::Progress {
-                id: "t".to_string(),
-                bytes_done: 50,
-                bytes_total: 100,
-                files_done: 1,
-                files_total: 1,
-                current: String::new(),
-            })
+        assert!(
+            reports < 10,
+            "{reports} reports for 50 chunks and 1,000 files"
         );
     }
 

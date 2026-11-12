@@ -45,6 +45,14 @@ describe("FilePane renders", () => {
     expect(rowRenders.mock.calls.length).toBe(rendered);
   });
 
+  it("redraws only the row a selection changes", () => {
+    render(<FilePane side="local" title="This computer" />);
+    const rendered = rowRenders.mock.calls.length;
+    act(() => useSftpStore.getState().select("local", "/work/b.txt", "replace"));
+    expect(screen.getAllByTestId("file-row")[1]).toHaveAttribute("aria-current", "true");
+    expect(rowRenders.mock.calls.length).toBe(rendered + 1);
+  });
+
   it("shows the folder the pane moves to, over what was typed", () => {
     render(<FilePane side="local" title="This computer" />);
     const field = screen.getByTestId("files-path-local");

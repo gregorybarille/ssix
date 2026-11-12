@@ -6,7 +6,8 @@
  * equality and that the mode survived both directions. Then stops a transfer
  * of a big sparse file each way: what was at the target stays. A temporary file
  * left on the server is not visible from here; the live tests in
- * src-tauri/src/commands/scp/live_tests.rs cover that.
+ * src-tauri/src/commands/scp/live_tests.rs cover that. A relative local path
+ * is refused.
  */
 import {
   writeFileSync,
@@ -118,6 +119,14 @@ describe("SCP upload + download", () => {
     await waitForScpStatusOrFail("download", tildeDownload);
 
     expect(readFileSync(tildeDownload).equals(PAYLOAD)).toBe(true);
+
+    // A relative local path would land in the folder the app runs in.
+    await (await browser.$(sel.scpLocalPath)).setValue("relative.bin");
+    await (await browser.$(sel.scpRemotePath)).setValue(`/tmp/${REMOTE_NAME}`);
+    await (await browser.$(sel.scpDownloadButton)).click();
+    const refused = await browser.$(sel.scpError);
+    await refused.waitForExist({ timeout: 10_000 });
+    expect(await refused.getText()).toContain("relative.bin is not a full path");
   });
 
   it("stops an upload and a download midway and keeps what was at the target", async () => {

@@ -22,6 +22,9 @@ The [Files view](sftp.md) is the alternative for browsing a server, with progres
 - Relative download paths resolve against the connection `remote_path` when set.
 - Uploads can target an explicit remote path or fall back to the configured connection base path.
 - `~` and `~/...` mean your login folder, in the path you type and in a connection's `remote_path`.
+- The local path must be a full path, or start with `~/` for your home folder on this
+  computer. A relative one is refused, as in the Files view, rather than landing in
+  whatever folder the app runs in.
 
 ## How Files Are Copied
 

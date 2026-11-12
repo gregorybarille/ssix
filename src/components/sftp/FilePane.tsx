@@ -1,4 +1,12 @@
-import { useEffect, useMemo, useState, type KeyboardEvent, type MouseEvent } from "react";
+import {
+  memo,
+  useEffect,
+  useMemo,
+  useState,
+  type KeyboardEvent,
+  type MouseEvent,
+  type PointerEvent,
+} from "react";
 import { useShallow } from "zustand/react/shallow";
 import {
   ArrowDown,
@@ -22,7 +30,8 @@ import { Input } from "../ui/input";
 import { ContextMenu, useContextMenu, type ContextMenuItem } from "../ContextMenu";
 import { DragChip } from "../ui/drag-chip";
 import { useFileDrag } from "./useFileDrag";
-import { useRovingFocus } from "@/hooks/useRovingFocus";
+import { useLatestCallback } from "@/hooks/useLatestCallback";
+import { useRovingFocus, type RovingFocusItemProps } from "@/hooks/useRovingFocus";
 import {
   formatModeOctal,
   formatModeSymbolic,
@@ -47,6 +56,69 @@ function editable(entry: FileEntry): boolean {
 function chmodAllowed(entry: FileEntry): boolean {
   return entry.kind !== "symlink" && entry.mode !== null;
 }
+
+interface FileRowProps extends RovingFocusItemProps {
+  entry: FileEntry;
+  selected: boolean;
+  onRowClick: (event: MouseEvent, entry: FileEntry) => void;
+  onOpen: (entry: FileEntry) => void;
+  onPress: (event: PointerEvent, entry: FileEntry) => void;
+  onMenu: (event: MouseEvent, entry: FileEntry) => void;
+  onRowKeyDown: (event: KeyboardEvent<HTMLDivElement>, entry: FileEntry) => void;
+}
+
+// Memoized: with thousands of rows, a selection or focus move redraws only
+// the rows it changes. Every handler keeps its identity across renders.
+const FileRow = memo(function FileRow({
+  entry,
+  selected,
+  onRowClick,
+  onOpen,
+  onPress,
+  onMenu,
+  onRowKeyDown,
+  ...itemProps
+}: FileRowProps) {
+  const Icon = entryIcon(entry);
+  return (
+    <div
+      {...itemProps}
+      role="listitem"
+      aria-label={entry.name}
+      aria-current={selected || undefined}
+      className={cn(
+        "flex cursor-default select-none items-center gap-2 rounded px-2 py-1 text-xs",
+        "[content-visibility:auto] [contain-intrinsic-size:auto_26px]",
+        "hover:bg-accent/50 focus:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+        selected && "bg-accent",
+      )}
+      data-testid="file-row"
+      data-name={entry.name}
+      data-kind={entry.kind}
+      data-mode={formatModeOctal(entry.mode)}
+      data-drop-dir={opensAsFolder(entry) ? entry.path : undefined}
+      onClick={(e) => onRowClick(e, entry)}
+      onDoubleClick={() => onOpen(entry)}
+      onPointerDown={(e) => onPress(e, entry)}
+      onContextMenu={(e) => onMenu(e, entry)}
+      onKeyDown={(e) => onRowKeyDown(e, entry)}
+    >
+      <Icon className="h-3.5 w-3.5 shrink-0 text-muted-foreground" aria-hidden="true" />
+      <span className="min-w-0 flex-1 truncate" title={entry.name}>
+        {entry.name}
+      </span>
+      <span className="hidden font-mono text-muted-foreground-soft xl:inline">
+        {formatModeSymbolic(entry.mode)}
+      </span>
+      <span className="hidden whitespace-nowrap text-muted-foreground-soft lg:inline">
+        {formatModified(entry.modified)}
+      </span>
+      <span className="w-16 shrink-0 text-right text-muted-foreground">
+        {entry.kind === "file" && entry.size !== null ? formatSize(entry.size) : ""}
+      </span>
+    </div>
+  );
+});
 
 interface ToolButtonProps {
   label: string;
@@ -230,27 +302,44 @@ export function FilePane({ side, title, placeholder }: FilePaneProps) {
     return items;
   };
 
-  const onRowClick = (event: MouseEvent, entry: FileEntry) => {
+  const onRowClick = useLatestCallback((event: MouseEvent, entry: FileEntry) => {
     const mode: SelectMode = event.shiftKey
       ? "range"
       : event.metaKey || event.ctrlKey
         ? "toggle"
         : "replace";
     select(side, entry.path, mode);
-  };
-  const onRowKeyDown = (event: KeyboardEvent<HTMLDivElement>, entry: FileEntry) => {
-    if ((event.shiftKey && event.key === "F10") || event.key === "ContextMenu") {
-      event.preventDefault();
-      event.stopPropagation();
-      openMenuFor(entry);
-      ctx.openAt(event.currentTarget);
-    } else if (event.key === " ") {
-      // Enter opens; Space picks, without leaving the folder.
-      event.preventDefault();
-      event.stopPropagation();
-      select(side, entry.path, "toggle");
-    }
-  };
+  });
+  const openRow = useLatestCallback(openEntry);
+  const pressRow = useLatestCallback((event: PointerEvent, entry: FileEntry) =>
+    drag.startPress(
+      event,
+      () => dragPaths(entry),
+      () => {
+        const count = dragPaths(entry).length;
+        return count === 1 ? entry.name : `${count} items`;
+      },
+    ),
+  );
+  const menuRow = useLatestCallback((event: MouseEvent, entry: FileEntry) => {
+    openMenuFor(entry);
+    ctx.open(event);
+  });
+  const onRowKeyDown = useLatestCallback(
+    (event: KeyboardEvent<HTMLDivElement>, entry: FileEntry) => {
+      if ((event.shiftKey && event.key === "F10") || event.key === "ContextMenu") {
+        event.preventDefault();
+        event.stopPropagation();
+        openMenuFor(entry);
+        ctx.openAt(event.currentTarget);
+      } else if (event.key === " ") {
+        // Enter opens; Space picks, without leaving the folder.
+        event.preventDefault();
+        event.stopPropagation();
+        select(side, entry.path, "toggle");
+      }
+    },
+  );
 
   return (
     <section
@@ -361,61 +450,19 @@ export function FilePane({ side, title, placeholder }: FilePaneProps) {
           onKeyDown={roving.onKeyDown}
           data-testid={`files-list-${side}`}
         >
-          {entries.map((entry, index) => {
-            const Icon = entryIcon(entry);
-            const isSelected = selectedPaths.has(entry.path);
-            return (
-              <div
-                key={entry.path}
-                {...roving.getItemProps(index)}
-                role="listitem"
-                aria-label={entry.name}
-                aria-current={isSelected || undefined}
-                className={cn(
-                  "flex cursor-default select-none items-center gap-2 rounded px-2 py-1 text-xs",
-                  "[content-visibility:auto] [contain-intrinsic-size:auto_26px]",
-                  "hover:bg-accent/50 focus:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-                  isSelected && "bg-accent",
-                )}
-                data-testid="file-row"
-                data-name={entry.name}
-                data-kind={entry.kind}
-                data-mode={formatModeOctal(entry.mode)}
-                data-drop-dir={opensAsFolder(entry) ? entry.path : undefined}
-                onClick={(e) => onRowClick(e, entry)}
-                onDoubleClick={() => openEntry(entry)}
-                onPointerDown={(e) =>
-                  drag.startPress(
-                    e,
-                    () => dragPaths(entry),
-                    () => {
-                      const count = dragPaths(entry).length;
-                      return count === 1 ? entry.name : `${count} items`;
-                    },
-                  )
-                }
-                onContextMenu={(e) => {
-                  openMenuFor(entry);
-                  ctx.open(e);
-                }}
-                onKeyDown={(e) => onRowKeyDown(e, entry)}
-              >
-                <Icon className="h-3.5 w-3.5 shrink-0 text-muted-foreground" aria-hidden="true" />
-                <span className="min-w-0 flex-1 truncate" title={entry.name}>
-                  {entry.name}
-                </span>
-                <span className="hidden font-mono text-muted-foreground-soft xl:inline">
-                  {formatModeSymbolic(entry.mode)}
-                </span>
-                <span className="hidden whitespace-nowrap text-muted-foreground-soft lg:inline">
-                  {formatModified(entry.modified)}
-                </span>
-                <span className="w-16 shrink-0 text-right text-muted-foreground">
-                  {entry.kind === "file" && entry.size !== null ? formatSize(entry.size) : ""}
-                </span>
-              </div>
-            );
-          })}
+          {entries.map((entry, index) => (
+            <FileRow
+              key={entry.path}
+              {...roving.getItemProps(index)}
+              entry={entry}
+              selected={selectedPaths.has(entry.path)}
+              onRowClick={onRowClick}
+              onOpen={openRow}
+              onPress={pressRow}
+              onMenu={menuRow}
+              onRowKeyDown={onRowKeyDown}
+            />
+          ))}
           {entries.length === 0 && !loading && !error && (
             <p className="p-3 text-center text-xs text-muted-foreground" data-testid={`files-empty-${side}`}>
               This folder is empty.

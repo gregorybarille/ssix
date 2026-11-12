@@ -389,6 +389,32 @@ fn live_sftp_writes_through_a_symlink_instead_of_replacing_it() {
     });
 }
 
+/// Folders are synced once at the end rather than after each file.
+#[test]
+#[ignore]
+fn live_sftp_a_folder_download_ends_with_every_file() {
+    with_connection(|id| {
+        let dir = RemoteDir::new(id);
+        let tree = dir.child("many");
+        sh(
+            id,
+            &format!(
+                "for d in a a/b c; do mkdir -p {tree}/$d; \
+                 for f in 1 2 3 4 5; do echo $d$f > {tree}/$d/$f; done; done"
+            ),
+        );
+        let down = TempDir::new("live-many-down");
+        let (_, files, _) = assert_done(download(id, &tree, &down.0, false));
+        assert_eq!(files, 15);
+        for d in ["a", "a/b", "c"] {
+            for f in 1..=5 {
+                let path = down.0.join("many").join(d).join(f.to_string());
+                assert_eq!(fs::read_to_string(&path).unwrap(), format!("{d}{f}\n"));
+            }
+        }
+    });
+}
+
 #[test]
 #[ignore]
 fn live_sftp_round_trips_a_folder_without_following_links() {
