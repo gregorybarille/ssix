@@ -52,7 +52,8 @@ or is cancelled gives up its session, and the next one logs in again.
 ## Transfers
 
 Files stream in chunks with progress shown as they go, and any transfer can be
-cancelled.
+cancelled. The list keeps the last 200 finished transfers, dropping the oldest as
+new ones finish; failed and cancelled ones stay until you dismiss or clear them.
 
 - **Nothing partial under the real name.** A file is written to a hidden
   `.ssix-part-<id>` beside its target and renamed when complete. A failed or

@@ -156,6 +156,8 @@ const pendingPaths: Record<PaneSide, string | null> = { local: null, remote: nul
 let connectRequests = 0;
 /** The session was replaced and no folder has been listed on the new one yet. */
 let justReconnected = false;
+/** Finished rows kept; the oldest go as new ones finish. Failed and cancelled ones stay. */
+const MAX_DONE_ROWS = 200;
 /** Numbers rows for transfers the backend refused, which have no id from it. */
 let refusedTransfers = 0;
 /** Transfers ending together share a listing, and one more if any ended during it. */
@@ -227,6 +229,13 @@ export const useSftpStore = create<SftpState>((set, get) => {
         : { transfers: [...state.transfers, { ...base, id, ...patch }] },
     );
 
+  const pruneDone = () =>
+    set((state) => {
+      let extra = state.transfers.filter((t) => t.status === "done").length - MAX_DONE_ROWS;
+      if (extra <= 0) return {};
+      return { transfers: state.transfers.filter((t) => t.status !== "done" || extra-- <= 0) };
+    });
+
   const refreshAfterTransfer = async (side: PaneSide) => {
     const state = targetRefresh[side];
     if (state.running) {
@@ -275,6 +284,7 @@ export const useSftpStore = create<SftpState>((set, get) => {
           skipped: event.skipped,
           notes: event.notes,
         });
+        pruneDone();
         break;
       case "cancelled":
         patchTransfer(id, base, { status: "cancelled" });

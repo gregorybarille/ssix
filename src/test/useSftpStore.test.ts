@@ -626,6 +626,31 @@ describe("transfers", () => {
     expect(useSftpStore.getState().remote.path).toBe("/home/me/sub");
   });
 
+  it("keeps the last 200 finished rows, and every failed one", async () => {
+    await ready();
+    await useSftpStore.getState().transfer("local", [file("/work/a")]);
+    const old = Array.from({ length: 250 }, (_, i) => ({
+      ...baseTransfer,
+      id: `old${i}`,
+      status: i === 10 ? ("failed" as const) : ("done" as const),
+    }));
+    useSftpStore.setState((s) => ({ transfers: [...old, ...s.transfers] }));
+    event(started()[0].onEvent, {
+      type: "done",
+      id: "t1",
+      bytes: 1,
+      files: 1,
+      skipped: 0,
+      notes: [],
+      target: "/home/me/a",
+    });
+    const { transfers } = useSftpStore.getState();
+    expect(transfers.filter((t) => t.status === "done")).toHaveLength(200);
+    expect(transfers.map((t) => t.id)).toContain("old10");
+    expect(transfers.at(-1)?.id).toBe("t1");
+    expect(transfers.map((t) => t.id)).not.toContain("old0");
+  });
+
   it("keeps a row whose events arrive before the start call answers", async () => {
     let answer: (id: string) => void = () => {};
     await ready();
