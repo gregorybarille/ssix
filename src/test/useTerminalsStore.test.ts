@@ -131,6 +131,12 @@ describe("a shell that lost its connection", () => {
     expect(hasOutputSink("session-2")).toBe(true);
   });
 
+  it("opens nothing when its pane closed before the retry", async () => {
+    await useTerminalsStore.getState().connect(conn, { replaceSessionId: "closed-pane" });
+    expect(calls("ssh_connect")).toHaveLength(0);
+    expect(useTerminalsStore.getState().tabs).toHaveLength(0);
+  });
+
   it("cancels through the worker, which then reports the stop", async () => {
     await connectLive();
     deliverChannelMessage(lastSink(), reconnecting());

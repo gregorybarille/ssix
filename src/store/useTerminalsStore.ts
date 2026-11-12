@@ -153,6 +153,8 @@ export const useTerminalsStore = create<TerminalsState>((set, get) => {
       const settings = useSettingsStore.getState().settings;
       const mode: OpenMode = options?.mode ?? settings.default_open_mode ?? "tab";
       const replaceSessionId = options?.replaceSessionId;
+      // A retry from a pane closed since would open a session with no pane.
+      if (replaceSessionId && !findPane(replaceSessionId)) return;
       const placeholderId =
         replaceSessionId ?? `failed-${conn.id}-${Date.now()}`;
       const placeholder: TerminalSession = {
