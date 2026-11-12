@@ -111,6 +111,9 @@ until you press **Upload changes**.
 - If the server's file changed since the copy was made, or was deleted, the upload
   stops and asks. **Keep editing** leaves everything as it is; **Overwrite** replaces
   the server's version. Size and time are compared first, then the content.
+- If you save in the editor while the upload runs, the upload stops before it
+  replaces anything and says to upload again: what was sent could be part old,
+  part new.
 - The copy lives in `<data dir>/edit-cache/<id>/`, readable only by you (`0700` on
   the folder, `0600` on the file). Closing the panel removes it, and first looks at
   the copy again and asks if it holds changes that were not uploaded, or if it cannot

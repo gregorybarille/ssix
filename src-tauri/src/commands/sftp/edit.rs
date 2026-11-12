@@ -104,7 +104,7 @@ struct EditRecord {
     remote_digest: Digest256,
     /// The copy's size and time when `copy_differs` was worked out, so an
     /// unchanged copy is not hashed again on every poll.
-    seen: Option<(u64, Option<SystemTime>)>,
+    seen: Option<CopyStamp>,
     copy_differs: bool,
 }
 
@@ -318,15 +318,23 @@ pub async fn sftp_edit_status(edit_id: String) -> Result<EditStatus, String> {
     blocking(move || edit_status(&edit_id)).await
 }
 
+/// A copy's size and modification time: what changes when anything writes it.
+type CopyStamp = (u64, Option<SystemTime>);
+
+fn copy_stamp(copy: &Path) -> Option<CopyStamp> {
+    fs::metadata(copy)
+        .ok()
+        .map(|meta| (meta.len(), meta.modified().ok()))
+}
+
 pub(super) fn edit_status(edit_id: &str) -> Result<EditStatus, String> {
     let rec = record(edit_id)?;
-    let Ok(meta) = fs::metadata(&rec.copy) else {
+    let Some(stamp) = copy_stamp(&rec.copy) else {
         return Ok(EditStatus {
             modified: false,
             missing: true,
         });
     };
-    let stamp = (meta.len(), meta.modified().ok());
     if rec.seen == Some(stamp) {
         return Ok(EditStatus {
             modified: rec.copy_differs,
@@ -437,6 +445,8 @@ fn remote_differs(sftp: &Sftp, rec: &EditRecord, current: &FileStat) -> Result<b
     Ok(digest != rec.remote_digest)
 }
 
+const COPY_CHANGED: &str = "The copy changed while it was uploading. Upload again.";
+
 pub(super) fn edit_save(edit_id: &str, force: bool) -> Result<EditSaveOutcome, String> {
     let rec = record(edit_id)?;
     let (session, sftp) = open_sftp(&rec.connection_id)?;
@@ -461,6 +471,7 @@ pub(super) fn edit_save(edit_id: &str, force: bool) -> Result<EditSaveOutcome, S
         // A file deleted meanwhile comes back with the mode it had.
         existing: current.clone().or_else(|| Some(rec.remote_stat.clone())),
     };
+    let before = copy_stamp(&rec.copy);
     let mut file =
         fs::File::open(&rec.copy).map_err(|e| format!("Could not read the copy: {}", e))?;
     let mut hashing = HashingReader {
@@ -477,6 +488,11 @@ pub(super) fn edit_save(edit_id: &str, force: bool) -> Result<EditSaveOutcome, S
     )
     .map_err(Stop::into_message)?;
     let digest: Digest256 = hashing.hasher.finalize().into();
+    // An editor saving meanwhile would have sent part old, part new.
+    if copy_stamp(&rec.copy) != before {
+        discard_upload(&sftp, &staged);
+        return Err(COPY_CHANGED.to_string());
+    }
 
     // The upload took a while; look once more just before replacing. A
     // change after this instant is the one window SFTP leaves open.
@@ -605,6 +621,42 @@ mod tests {
             },
         );
         edit_id
+    }
+
+    /// Rewrites the file it reads after the first chunk, as an editor saving
+    /// during an upload would.
+    struct SavedMidway<'a> {
+        file: fs::File,
+        path: &'a Path,
+        reads: usize,
+    }
+
+    impl Read for SavedMidway<'_> {
+        fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+            self.reads += 1;
+            if self.reads == 2 {
+                fs::write(self.path, "saved in the editor meanwhile\n")?;
+            }
+            let chunk = buf.len().min(4);
+            self.file.read(&mut buf[..chunk])
+        }
+    }
+
+    #[test]
+    fn a_copy_saved_during_its_upload_changes_its_stamp() {
+        with_isolated_data_dir(|| {
+            let id = open_record("old contents\n");
+            let copy = record(&id).unwrap().copy;
+            let before = copy_stamp(&copy);
+            let mut reader = SavedMidway {
+                file: fs::File::open(&copy).unwrap(),
+                path: &copy,
+                reads: 0,
+            };
+            std::io::copy(&mut reader, &mut std::io::sink()).unwrap();
+            assert_ne!(copy_stamp(&copy), before);
+            edit_close(&id).unwrap();
+        });
     }
 
     #[test]
