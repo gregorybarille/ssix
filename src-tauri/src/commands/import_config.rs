@@ -552,7 +552,8 @@ enum Route {
 
 fn proxy_is_none(proxy: &Proxy) -> bool {
     match proxy {
-        Proxy::Jump(value) => jump_value(&value.raw).eq_ignore_ascii_case("none"),
+        // Raw, as `apply` reads it: to `ssh`, `none # why` is a host called none.
+        Proxy::Jump(value) => value.raw.eq_ignore_ascii_case("none"),
         Proxy::Command(value) => value.raw.trim().eq_ignore_ascii_case("none"),
     }
 }
@@ -1916,6 +1917,14 @@ mod tests {
             );
             assert_eq!(item(&preview, "bastion").kind, "direct");
             assert_eq!(item(&preview, "inner").kind, "jump_shell");
+        });
+    }
+
+    #[test]
+    fn proxy_jump_none_with_a_comment_is_a_host_called_none() {
+        in_data_dir(|f| {
+            let preview = f.preview("Host a\n  User u\n  ProxyJump none # direct\n");
+            assert_ne!(item(&preview, "a").kind, "direct");
         });
     }
 
