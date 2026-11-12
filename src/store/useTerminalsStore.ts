@@ -215,6 +215,8 @@ export const useTerminalsStore = create<TerminalsState>((set, get) => {
           return;
         }
         registerOutputSink(sessionId, sink);
+        // A retry after a lost worker gets a new id; the old one's sink is dead.
+        if (replaceSessionId && replaceSessionId !== sessionId) disposeOutput(replaceSessionId);
         paneId = sessionId;
         // Replace placeholder identity in-place so the pane keeps its slot.
         set((state) => ({
