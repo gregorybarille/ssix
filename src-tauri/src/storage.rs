@@ -164,6 +164,34 @@ pub fn restrict_data_dir() {
     for problem in restrict_dir_and_files(&data_dir(), close_dir) {
         crate::logs::log_local("warn", "storage", problem);
     }
+    remove_stale_temp_files(&data_dir());
+    remove_stale_temp_files(&crate::backup::backups_dir());
+}
+
+/// Remove the temp files of `atomic_write` saves a crash cut short. One
+/// modified in the last hour may be a save still under way in another SSIX,
+/// so it stays.
+fn remove_stale_temp_files(dir: &Path) {
+    let Ok(entries) = fs::read_dir(dir) else {
+        return;
+    };
+    let cutoff = SystemTime::now() - std::time::Duration::from_secs(3600);
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        let name = name.to_string_lossy();
+        let stale = entry
+            .metadata()
+            .is_ok_and(|m| m.is_file() && m.modified().is_ok_and(|t| t < cutoff));
+        if name.starts_with('.') && name.contains(".tmp.") && stale {
+            if let Err(e) = fs::remove_file(entry.path()) {
+                crate::logs::log_local(
+                    "warn",
+                    "storage",
+                    format!("Could not remove {}: {}", entry.path().display(), e),
+                );
+            }
+        }
+    }
 }
 
 /// Returns what could not be restricted. A symlink is not followed: it leads
@@ -254,11 +282,10 @@ pub fn persist_migrations() -> Result<bool, String> {
 /// strands one before the rename.
 ///
 /// On any error before the rename, the original `path` is untouched.
-/// The temp file is best-effort cleaned up on the error path; if the
-/// process dies before that, the next successful `atomic_write` will
-/// overwrite the same temp filename (per-call randomness from the
-/// process id + nanosecond timestamp keeps collisions vanishingly
-/// rare).
+/// The temp file is best-effort cleaned up on the error path; one a crash
+/// strands in the data folder or `backups/` is removed at the next launch
+/// (`remove_stale_temp_files`). The process id, nanosecond timestamp and a
+/// counter in its name keep two saves from colliding.
 ///
 /// `mode` is the Unix file mode (e.g. `0o600` for secrets); ignored
 /// on Windows.
@@ -1056,6 +1083,38 @@ mod tests {
             restrict_data_dir();
             assert_eq!(mode(&dir), 0o755);
             assert_eq!(mode(&get_data_path()), 0o600);
+        });
+    }
+
+    #[test]
+    fn temp_files_a_crash_left_are_removed_at_startup() {
+        test_support::with_isolated_data_dir(|| {
+            let dir = data_dir();
+            let backups = crate::backup::backups_dir();
+            fs::create_dir_all(&backups).unwrap();
+            let hour_ago = SystemTime::now() - std::time::Duration::from_secs(3600);
+            let write = |path: PathBuf, modified: SystemTime| {
+                fs::File::create(&path)
+                    .unwrap()
+                    .set_modified(modified)
+                    .unwrap();
+                path
+            };
+            let stale = [
+                write(dir.join(".data.json.tmp.1.2.3"), hour_ago),
+                write(backups.join(".ssix-backup-x.zip.tmp.1.2.3"), hour_ago),
+            ];
+            let kept = [
+                write(dir.join("data.json"), hour_ago),
+                write(backups.join("ssix-backup-x.zip"), hour_ago),
+                // Another SSIX may be in the middle of this save.
+                write(dir.join(".secrets.json.tmp.1.2.3"), SystemTime::now()),
+            ];
+
+            restrict_data_dir();
+
+            assert!(stale.iter().all(|p| !p.exists()));
+            assert!(kept.iter().all(|p| p.exists()));
         });
     }
 
