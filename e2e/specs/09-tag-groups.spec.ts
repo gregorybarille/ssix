@@ -8,7 +8,7 @@
  *     untagged hosts exist).
  *   - Connect-all on a tag group goes through the confirm dialog;
  *     cancelling does NOT spawn sessions; confirming opens one
- *     terminal tab per host (sequentially).
+ *     terminal tab per host at once, without waiting for each login.
  *   - SCP-all on a tag group goes through the confirm dialog and
  *     opens the BulkScpDialog with one progress row per host. We
  *     run a real upload against the dockerized servers and verify
@@ -24,6 +24,7 @@ import { waitForAppReady } from "../helpers/app.js";
 import { TARGETS, waitForServers } from "../helpers/docker.js";
 import {
   clickDialogFooterButton,
+  closeAllTabs,
   createPasswordCredential,
   createDirectConnection,
   ensureConnectionRowsLayout,
@@ -230,5 +231,20 @@ describe("Tag-group view + bulk actions", () => {
       '[data-testid^="bulk-scp-row-"][data-status="skipped"]',
     );
     expect(await skipped.getText()).toContain("Not started");
+  });
+
+  it("connect all opens one tab per host", async () => {
+    await navigateTo("connections");
+    const before = await browser.$$(sel.terminalTabCloseAny).length;
+    await (await browser.$(sel.tagConnectAll(TAG))).click();
+    const confirm = await browser.$(sel.confirmTagAction);
+    await confirm.waitForExist({ timeout: 10_000 });
+    await clickDialogFooterButton(sel.confirmTagActionConfirm);
+    // Both tabs open right away, not one per finished login.
+    for (const name of ["conn-09-a", "conn-09-b"]) {
+      await (await browser.$(sel.terminalTabByName(name))).waitForExist({ timeout: 10_000 });
+    }
+    expect(await browser.$$(sel.terminalTabCloseAny).length).toBe(before + 2);
+    await closeAllTabs();
   });
 });

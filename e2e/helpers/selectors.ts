@@ -54,6 +54,7 @@ export const sel = {
   connectionRowCloneButton: '[data-testid^="clone-connection-"]',
   connectionRowDeleteButton: '[data-testid^="delete-connection-"]',
   connectionSearchInput: '[data-testid="connection-search-input"]',
+  connectionsNoMatch: '[data-testid="connections-no-match"]',
   connectionSearchClear: '[data-testid="connection-search-clear"]',
 
   // Connection form

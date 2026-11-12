@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { ConnectionsView } from "@/components/views/ConnectionsView";
 import { CredentialsView } from "@/components/views/CredentialsView";
 import { useConnectionsStore } from "@/store/useConnectionsStore";
@@ -60,6 +60,15 @@ describe("the Connections view's layouts", () => {
     renderView(layout);
     expect(screen.getByTestId("connect-button-a").tabIndex).toBe(0);
     expect(screen.getByTestId("edit-connection-a").tabIndex).toBe(0);
+  });
+
+  it.each(["list", "tile"] as const)("says a search found nothing for %s", async (layout) => {
+    renderView(layout);
+    fireEvent.change(screen.getByTestId("connection-search-input"), {
+      target: { value: "nothing-matches" },
+    });
+    expect(await screen.findByText("No matching connections")).toBeInTheDocument();
+    expect(screen.queryByText("No connections yet")).not.toBeInTheDocument();
   });
 
   it("still shows every row for a layout it does not know", () => {

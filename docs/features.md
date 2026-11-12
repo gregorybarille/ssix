@@ -428,9 +428,9 @@ its close button dismiss it; a click outside does nothing, so a stray one cannot
 answer it.
 
 Confirmations default focus to the **Cancel** button so an
-accidental Enter press never destroys data. Failed/never-opened
-sessions can be dismissed without confirmation since there is nothing
-to lose.
+accidental Enter press never destroys data. Failed sessions, and ones
+still connecting, can be dismissed without confirmation, as a pane or
+as a whole tab, since there is nothing to lose.
 
 When a panel or confirmation closes — whether through Cancel, Confirm or the
 Escape key — focus returns to the control that opened it. This holds even when the panel is opened from React state rather
@@ -592,7 +592,8 @@ Wired surfaces today:
   (destructive). "Copy SSH command" builds a portable `ssh` invocation
   from the connection + selected credential via `buildSshCommand` in
   `src/lib/ssh-command.ts` and writes it to the clipboard. Agent forwarding
-  adds `-A`.
+  adds `-A`. An IPv6 address followed by a port, in `-L`, `-R` or `-J`, is
+  written in brackets, as `ssh` needs.
 - **Sidebar buttons** — Move up, Move down, Reset order (see
   [Sidebar](#sidebar)).
 - **Terminal tabs** — Browse files, which opens the tab's server in the

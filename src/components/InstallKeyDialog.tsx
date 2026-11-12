@@ -148,6 +148,9 @@ export function InstallKeyDialog({
       // Dismiss any stale success from a previous session so the dialog
       // opens clean even though useActionState state persists.
       setDismissedEpoch(successEpochRef.current);
+    } else {
+      // A closed dialog keeps no one-time password in memory.
+      setPassword("");
     }
   }, [open, defaultHost, defaultPort, defaultUsername]);
 

@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { invoke } from "@/lib/tauri";
-import { deliverChannelMessage, OutputSink } from "@/lib/terminalOutput";
+import { deliverChannelMessage, hasOutputSink, OutputSink } from "@/lib/terminalOutput";
 import { useTerminalsStore } from "@/store/useTerminalsStore";
 import type { Connection } from "@/types";
 
@@ -121,8 +121,20 @@ describe("a shell that lost its connection", () => {
     expect(pane()).toMatchObject({ retrying: false, error: "Session not found" });
     expect(pane()?.reconnect).toBeUndefined();
 
+    invokeMock.mockImplementation(async (command: string) =>
+      command === "ssh_connect" ? "session-2" : undefined,
+    );
     await useTerminalsStore.getState().connect(conn, { replaceSessionId: "session-1" });
     expect(calls("ssh_connect")).toHaveLength(2);
+    expect(pane()?.sessionId).toBe("session-2");
+    expect(hasOutputSink("session-1")).toBe(false);
+    expect(hasOutputSink("session-2")).toBe(true);
+  });
+
+  it("opens nothing when its pane closed before the retry", async () => {
+    await useTerminalsStore.getState().connect(conn, { replaceSessionId: "closed-pane" });
+    expect(calls("ssh_connect")).toHaveLength(0);
+    expect(useTerminalsStore.getState().tabs).toHaveLength(0);
   });
 
   it("cancels through the worker, which then reports the stop", async () => {

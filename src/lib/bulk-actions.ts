@@ -16,40 +16,27 @@ export function isBulkActionable(conn: Connection): boolean {
 }
 
 /**
- * Fire `connect()` once per actionable connection, sequentially.
+ * Fire `connect()` once per actionable connection, without awaiting it.
  *
- * "Sequentially" here means we await each call before starting the
- * next: each `connect()` resolves as soon as the placeholder pane
- * is in the store, well before the SSH handshake completes — the
- * actual handshakes still run in parallel server-side. The
- * sequential awaiting just guarantees deterministic tab order
- * (`prod` group → tabs appear in `connections` array order rather
- * than in handshake-completion order).
+ * `connect()` resolves only after the host has logged in, so awaiting each
+ * call would hold "Connect all" until every host had. Its placeholder tab is
+ * added before its first await, so the tabs still open in `connections`
+ * order while the handshakes run side by side.
  *
- * Failures during the placeholder phase are swallowed and counted;
- * SSH errors that surface later show up on the affected pane via
- * the session's output channel (`error` notification), exactly the same
- * way single-connection failures do today.
+ * `connect()` reports its own failures on the affected pane, through the
+ * session's output channel (`error` notification), exactly as a single
+ * connection does. A rejection left over is swallowed so it is not unhandled.
  */
 export async function connectMany(
   connections: Connection[],
 ): Promise<{ started: number; skipped: number }> {
   const targets = connections.filter(isBulkActionable);
   const skipped = connections.length - targets.length;
-  let started = 0;
   const connect = useTerminalsStore.getState().connect;
   for (const conn of targets) {
-    try {
-      await connect(conn, { mode: "tab" });
-      started += 1;
-    } catch {
-      // Swallow per-connection placeholder errors so one bad
-      // entry doesn't abort the whole batch. Errors that occur
-      // during the actual SSH handshake surface on the pane via
-      // the standard event channel, so they're still visible.
-    }
+    void connect(conn, { mode: "tab" }).catch(() => {});
   }
-  return { started, skipped };
+  return { started: targets.length, skipped };
 }
 
 /** Progress of one host in a batch operation (bulk SCP, script runs). */
