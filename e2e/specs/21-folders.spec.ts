@@ -290,9 +290,10 @@ describe("Folders", () => {
       await waitForExpanded(EU, false);
       await waitForNoRow(WEB);
 
+      // The layout saves after the UI switches, so a reload can land before it does.
       await browser.refresh();
       await waitForAppReady();
-      await navigateTo("connections");
+      await showTree();
       await waitForExpanded(EU, false);
 
       await click(sel.folderRow(EU));
