@@ -171,7 +171,7 @@ Continuous integration (`.github/workflows/test.yml`, required on PRs):
 - Scripts on Windows: the unit tests, then the script tests on a `windows-2022` runner against the
   `docker/windows-sshd` container, once with cmd and once with PowerShell as
   the server's default shell
-- `cargo audit` via `rustsec/audit-check` for advisories in `src-tauri/Cargo.lock`. `.cargo/audit.toml` (at the repo root, where the action runs) ignores advisories for optional crates that are in the lockfile but never compiled, with the reason for each
+- `cargo audit --file src-tauri/Cargo.lock`, run from the repo root, for advisories in the lockfile. `.cargo/audit.toml` (at the repo root, where the audit runs) ignores advisories for optional crates that are in the lockfile but never compiled, with the reason for each
 
 End-to-end:
 
