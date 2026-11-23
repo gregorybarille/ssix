@@ -1,0 +1,20 @@
+# Repackages the .deb from the GitHub release; bump pkgver and the .deb checksum on each release.
+pkgname=ssix-bin
+pkgver=1.0.5
+pkgrel=1
+pkgdesc="SSIX SSH Client"
+arch=('x86_64')
+url="https://github.com/gregorybarille/ssix"
+license=('MIT')
+depends=('webkit2gtk-4.1' 'gtk3')
+provides=('ssix')
+conflicts=('ssix')
+source=("ssix_${pkgver}_amd64.deb::${url}/releases/download/v${pkgver}/ssix_${pkgver}_amd64.deb"
+        "LICENSE::https://raw.githubusercontent.com/gregorybarille/ssix/v${pkgver}/LICENSE")
+sha256sums=('7f4cfc740b0bb0c1c2b72e87ef8340da78d2f46df72d29f0b23e5a09d796919d'
+            '5f44cf5f951038eb76facffc1624261268608b776150ce27b12fbd51ad713a1f')
+
+package() {
+  bsdtar -xf data.tar.gz -C "${pkgdir}"
+  install -Dm644 LICENSE "${pkgdir}/usr/share/licenses/${pkgname}/LICENSE"
+}
