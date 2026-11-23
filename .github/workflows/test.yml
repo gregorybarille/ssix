@@ -130,15 +130,9 @@ jobs:
   audit-backend:
     name: Backend Dependency Audit
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      checks: write
     steps:
       - uses: actions/checkout@v5
-      - uses: rustsec/audit-check@v2.0.0
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
-          # The action runs `cargo audit --file src-tauri/Cargo.lock` from the
-          # repo root, which is where it reads the ignore list
-          # (.cargo/audit.toml).
-          working-directory: src-tauri
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo install cargo-audit --locked
+      # From the repo root, where cargo audit reads the ignore list (.cargo/audit.toml).
+      - run: cargo audit --file src-tauri/Cargo.lock
