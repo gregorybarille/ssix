@@ -45,11 +45,12 @@ not exist. Only the publishing job can write to the repository:
 |---|---|---|
 | Windows | `windows-latest` | portable `ssix.exe` (`npm run tauri build -- --no-bundle`), for users who cannot install MSI packages |
 | macOS, Apple Silicon | `macos-15` | `.dmg` |
-| Linux, x86_64 | `ubuntu-22.04` | `.deb`, `.rpm` and AppImage (`--bundles deb,rpm,appimage`) |
+| Linux, x86_64 | `ubuntu-22.04` | `.deb`, `.rpm` and AppImage (`--bundles deb,rpm,appimage`), plus an Arch `PKGBUILD` |
 
 Arch-based distributions (Arch, CachyOS, Manjaro) install the release
-`.deb` through `packaging/arch/PKGBUILD`: run `makepkg -si` in that folder.
-Bump `pkgver` and the `.deb` checksum there after each release.
+`.deb` through the `PKGBUILD` attached to each release: download it into an
+empty folder and run `makepkg -si` there. The publish job writes it from the
+template in `packaging/arch/PKGBUILD`, filling in the version and checksums.
 
 Windows and macOS tests run in their own jobs alongside the builds (Linux
 tests run on every push and pull request in `test.yml`). A small publish job
