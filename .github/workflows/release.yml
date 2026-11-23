@@ -210,7 +210,7 @@ jobs:
 
   publish-release:
     name: Publish Release
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     permissions:
       contents: write
     needs:
@@ -248,6 +248,19 @@ jobs:
           name: linux-x86_64-packages
           path: release-assets
 
+      # The repo PKGBUILD is the template; the release gets one pinned to its own .deb.
+      - name: Write the Arch PKGBUILD
+        run: |
+          deb_sum=$(sha256sum release-assets/deb/*.deb | cut -d' ' -f1)
+          license_sum=$(sha256sum LICENSE | cut -d' ' -f1)
+          sed -e "s/^pkgver=.*/pkgver=${RELEASE_TAG#v}/" \
+              -e "s/^sha256sums=('[0-9a-f]*'/sha256sums=('$deb_sum'/" \
+              -e "s/^            '[0-9a-f]*')/            '$license_sum')/" \
+              packaging/arch/PKGBUILD > release-assets/PKGBUILD
+          grep -q "^pkgver=${RELEASE_TAG#v}$" release-assets/PKGBUILD
+          grep -q "$deb_sum" release-assets/PKGBUILD
+          grep -q "$license_sum" release-assets/PKGBUILD
+
       - name: Write release notes
         run: node scripts/release-notes.mjs "$RELEASE_TAG" > release-notes.md
 
@@ -261,4 +274,5 @@ jobs:
           --title "SSIX $RELEASE_TAG"
           --notes-file release-notes.md
           && gh release upload "$RELEASE_TAG" release-assets/ssix.exe release-assets/*.dmg
-          release-assets/deb/*.deb release-assets/rpm/*.rpm release-assets/appimage/*.AppImage --clobber
+          release-assets/deb/*.deb release-assets/rpm/*.rpm release-assets/appimage/*.AppImage
+          release-assets/PKGBUILD --clobber

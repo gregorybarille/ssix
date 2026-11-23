@@ -1,4 +1,5 @@
-# Repackages the .deb from the GitHub release; bump pkgver and the .deb checksum on each release.
+# Repackages the .deb from the GitHub release. The release workflow fills in pkgver and the
+# checksums and attaches the result to each release; this copy is the template.
 pkgname=ssix-bin
 pkgver=1.0.5
 pkgrel=1

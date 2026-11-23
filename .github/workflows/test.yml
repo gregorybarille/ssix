@@ -13,7 +13,7 @@ permissions:
 jobs:
   test-frontend:
     name: Frontend Tests
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-node@v5
@@ -27,7 +27,7 @@ jobs:
 
   test-backend:
     name: Backend Tests
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     steps:
       - uses: actions/checkout@v5
       - name: Install Tauri system dependencies
@@ -129,7 +129,7 @@ jobs:
 
   audit-backend:
     name: Backend Dependency Audit
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     steps:
       - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
