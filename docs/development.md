@@ -47,6 +47,10 @@ not exist. Only the publishing job can write to the repository:
 | macOS, Apple Silicon | `macos-15` | `.dmg` |
 | Linux, x86_64 | `ubuntu-22.04` | `.deb`, `.rpm` and AppImage (`--bundles deb,rpm,appimage`) |
 
+Arch-based distributions (Arch, CachyOS, Manjaro) install the release
+`.deb` through `packaging/arch/PKGBUILD`: run `makepkg -si` in that folder.
+Bump `pkgver` and the `.deb` checksum there after each release.
+
 Windows and macOS tests run in their own jobs alongside the builds (Linux
 tests run on every push and pull request in `test.yml`). A small publish job
 uploads the assets only after every job succeeds.
