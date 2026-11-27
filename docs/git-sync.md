@@ -83,7 +83,7 @@ An edit is only noticed in the working tree: a hand edit that is staged while th
 - The configured remote defaults to `origin`. It is either the name of a remote of that repository or a URL or path; anything else fails when Sync tries to reach it.
 - Branch override is optional; otherwise the current branch is used. The status and Sync use the same branch.
 - Empty commits are not created.
-- Your own git settings do not change what SSIX sees: the status lists untracked files even with `status.showUntrackedFiles=no`, and the diff is plain text whatever `color.ui` or `diff.external` say.
+- Your own git settings do not change what SSIX sees: the status lists untracked files even with `status.showUntrackedFiles=no`, and the diff is plain text with `a/` and `b/` prefixes whatever `color.ui`, `diff.external`, `diff.noprefix`, `diff.mnemonicPrefix`, `diff.relative` or a textconv driver say.
 - On Windows, git runs without opening a console window.
 
 ## First Sync And New Branches

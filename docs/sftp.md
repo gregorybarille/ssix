@@ -80,8 +80,9 @@ new ones finish; failed and cancelled ones stay until you dismiss or clear them.
   `Makefile` and `makefile`, which a Mac or Windows disk takes for one file. A
   folder download writes the first and skips the second, counting it in the
   result and naming both, rather than replacing one with the other. A folder upload
-  to a server on such a disk does the same: SFTP gives no file ids, so a file found
-  at the second name with the size and time of the first is taken for it.
+  to a server on such a disk does the same: SFTP gives no file ids, so when something
+  is found at the second name, the folder's listing decides; a server that folds case
+  lists only the first spelling.
 - **Folders keep their permissions**, as files do and as `scp -r` does, so a `0700`
   folder stays private on the other side. A read-only source folder stays writable
   until its contents are in, and if the transfer stops first it keeps its owner's
@@ -105,7 +106,7 @@ new ones finish; failed and cancelled ones stay until you dismiss or clear them.
 | You picked a symlink to copy | Followed, as `scp` does |
 | A symlink inside a folder being copied | Skipped and counted in the result. Following it could leave the tree or go round in a loop |
 | A symlink inside a folder being deleted | The link is removed; what it points to is untouched |
-| A server folder holding more than 100 symlinks | Where they lead is not looked up, one round trip each, so they show a plain link icon and sort with the files. Opening one tries it as a folder; on a file that fails and says so |
+| A server folder holding more than 100 symlinks | Where they lead is not looked up, one round trip each, so they show a plain link icon and sort with the files. Opening one tries it as a folder; on a file that fails and says so. Lookups also stop after 5 s in all, or at the first that times out (a link into a mount that does not answer), and the links left show the same way |
 
 Deleting the root, your home or login folder, or any folder that holds it, is
 refused on both panes, however the path reaches it through symlinks. Names a server

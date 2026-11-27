@@ -21,7 +21,7 @@ use std::path::{Path, PathBuf};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
 use std::sync::LazyLock;
 use std::thread;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 #[cfg(test)]
 use ts_rs::TS;
 
@@ -30,6 +30,9 @@ pub const LISTING_LIMIT: usize = 10_000;
 /// Most symlinks in one remote folder whose targets a listing looks up, one
 /// round trip each: about 4 s at 40 ms. Beyond it none are looked up.
 const LINK_LOOKUP_LIMIT: usize = 100;
+/// Longest the lookups of one listing take together. A link into a mount that
+/// does not answer would otherwise cost a whole call timeout each.
+const LINK_LOOKUP_BUDGET: Duration = Duration::from_secs(5);
 /// How long one SFTP call may take on a browsing session.
 const CALL_TIMEOUT_MS: u32 = 30_000;
 /// `LIBSSH2_ERROR_FILE`: ssh2's "no more entries" from `File::readdir`.
@@ -390,23 +393,37 @@ pub(super) fn list_remote(sftp: &Sftp, home: &str, path: &str) -> Result<FileLis
             mode: stat.perm.map(permission_bits),
         });
     }
+    let started = Instant::now();
     look_up_link_targets(&mut entries, |path| {
-        sftp.stat(Path::new(path))
-            .is_ok_and(|target| target.is_dir())
+        if started.elapsed() > LINK_LOOKUP_BUDGET {
+            return None;
+        }
+        match sftp.stat(Path::new(path)) {
+            Ok(target) => Some(target.is_dir()),
+            // One that timed out says the rest may too.
+            Err(e) if e.code() == ssh2::ErrorCode::Session(libssh2_sys::LIBSSH2_ERROR_TIMEOUT) => {
+                None
+            }
+            Err(_) => Some(false),
+        }
     });
     let parent = remote_parent(&dir);
     Ok(finish_listing(dir, parent, entries, omitted))
 }
 
 /// Fill in where the symlinks lead, unless there are more than
-/// `LINK_LOOKUP_LIMIT`: then they all stay unknown, never some of each.
-fn look_up_link_targets(entries: &mut [FileEntry], is_dir: impl Fn(&str) -> bool) {
+/// `LINK_LOOKUP_LIMIT`: then they all stay unknown. `is_dir` returning `None`
+/// gives up, leaving that link and the rest unknown.
+fn look_up_link_targets(entries: &mut [FileEntry], is_dir: impl Fn(&str) -> Option<bool>) {
     let links = entries.iter().filter(|e| e.target_is_dir.is_none()).count();
     if links > LINK_LOOKUP_LIMIT {
         return;
     }
     for entry in entries.iter_mut().filter(|e| e.target_is_dir.is_none()) {
-        entry.target_is_dir = Some(is_dir(&entry.path));
+        match is_dir(&entry.path) {
+            Some(found) => entry.target_is_dir = Some(found),
+            None => return,
+        }
     }
 }
 
@@ -892,7 +909,7 @@ mod tests {
     #[test]
     fn link_targets_are_looked_up_only_up_to_the_limit() {
         let mut few: Vec<FileEntry> = vec![link("to-dir"), link("to-file")];
-        look_up_link_targets(&mut few, |path| path.ends_with("dir"));
+        look_up_link_targets(&mut few, |path| Some(path.ends_with("dir")));
         assert_eq!(few[0].target_is_dir, Some(true));
         assert_eq!(few[1].target_is_dir, Some(false));
 
@@ -901,6 +918,12 @@ mod tests {
             .collect();
         look_up_link_targets(&mut many, |_| panic!("one round trip per link"));
         assert!(many.iter().all(|e| e.target_is_dir.is_none()));
+
+        // A lookup that gives up (a timeout, the time budget) ends them all.
+        let mut stuck: Vec<FileEntry> = vec![link("a"), link("b"), link("c")];
+        look_up_link_targets(&mut stuck, |path| (path == "/d/a").then_some(true));
+        let found: Vec<_> = stuck.iter().map(|e| e.target_is_dir).collect();
+        assert_eq!(found, [Some(true), None, None]);
     }
 
     #[test]
