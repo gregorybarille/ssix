@@ -1,6 +1,4 @@
 import { isTypingSurface } from "@/lib/focus";
-
-export { isTypingSurface };
 import { useEffect, useRef } from "react";
 import { useDialogsStore } from "@/store/useDialogsStore";
 import { useTerminalsStore } from "@/store/useTerminalsStore";

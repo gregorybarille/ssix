@@ -29,17 +29,22 @@ function collector() {
   };
 }
 
+/** What `sink` holds, as a terminal attaching now would get it. */
+function replayedBytes(sink: OutputSink): number {
+  const { got, handler } = collector();
+  sink.attach(handler);
+  return got.reduce((total, chunk) => total + chunk.byteLength, 0);
+}
+
 describe("OutputSink", () => {
   it("buffers chunks until a handler attaches, then replays them in order", () => {
     const sink = new OutputSink();
     sink.push(bytes("hel"));
     sink.push(bytes("lo"));
-    expect(sink.pendingBytes).toBe(5);
 
     const { got, handler } = collector();
     sink.attach(handler);
     expect(text(got)).toBe("hello");
-    expect(sink.pendingBytes).toBe(0);
 
     sink.push(bytes("!"));
     expect(text(got)).toBe("hello!");
@@ -63,7 +68,7 @@ describe("OutputSink", () => {
     const big = new Uint8Array(3 * 1024 * 1024);
     sink.push(big);
     sink.push(big); // 6 MB queued → oldest evicted
-    expect(sink.pendingBytes).toBe(big.byteLength);
+    expect(replayedBytes(sink)).toBe(big.byteLength);
   });
 
   it("keeps control events in order with the bytes and never evicts them", () => {
@@ -190,7 +195,7 @@ describe("output flow control", () => {
     for (let sent = 0; sent < size; sent += 1024 * 1024) sink.push(new Uint8Array(1024 * 1024));
 
     expect(size - acked()).toBeLessThan(BATCH);
-    expect(sink.pendingBytes).toBeLessThanOrEqual(4 * 1024 * 1024);
+    expect(replayedBytes(sink)).toBeLessThanOrEqual(4 * 1024 * 1024);
   });
 
   it("replays what it buffered without counting it twice", () => {

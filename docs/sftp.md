@@ -72,12 +72,16 @@ new ones finish; failed and cancelled ones stay until you dismiss or clear them.
   removed. A rename that fails puts the old file back, but there is a brief
   moment when the name does not exist. If putting it back fails too, the error
   names where the old file and the new copy are, and neither is removed.
+  A folder found at the name by then (one put there during the transfer, or
+  where an edited file was) is never moved aside: the upload stops and says so.
 - **A target that is a symlink is written through**, so the link stays and the
   file it points to changes.
 - **Names that differ only by case are kept apart.** A server folder can hold
   `Makefile` and `makefile`, which a Mac or Windows disk takes for one file. A
   folder download writes the first and skips the second, counting it in the
-  result and naming both, rather than replacing one with the other.
+  result and naming both, rather than replacing one with the other. A folder upload
+  to a server on such a disk does the same: SFTP gives no file ids, so a file found
+  at the second name with the size and time of the first is taken for it.
 - **Folders keep their permissions**, as files do and as `scp -r` does, so a `0700`
   folder stays private on the other side. A read-only source folder stays writable
   until its contents are in, and if the transfer stops first it keeps its owner's
@@ -101,6 +105,7 @@ new ones finish; failed and cancelled ones stay until you dismiss or clear them.
 | You picked a symlink to copy | Followed, as `scp` does |
 | A symlink inside a folder being copied | Skipped and counted in the result. Following it could leave the tree or go round in a loop |
 | A symlink inside a folder being deleted | The link is removed; what it points to is untouched |
+| A server folder holding more than 100 symlinks | Where they lead is not looked up, one round trip each, so they show a plain link icon and sort with the files. Opening one tries it as a folder; on a file that fails and says so |
 
 Deleting the root, your home or login folder, or any folder that holds it, is
 refused on both panes, however the path reaches it through symlinks. Names a server
@@ -119,6 +124,8 @@ until you press **Upload changes**.
 - If you save in the editor while the upload runs, the upload stops before it
   replaces anything and says to upload again: what was sent could be part old,
   part new.
+- The copy takes the name you picked, also through a symlink, so a link's target
+  name cannot choose the program that opens it. Uploads go to the real file.
 - The copy lives in `<data dir>/edit-cache/<id>/`, readable only by you (`0700` on
   the folder, `0600` on the file). Closing the panel removes it, and first looks at
   the copy again and asks if it holds changes that were not uploaded, or if it cannot

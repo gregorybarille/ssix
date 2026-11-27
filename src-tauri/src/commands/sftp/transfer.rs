@@ -872,8 +872,8 @@ fn run_upload(
     let name = local_entry_name(source)?;
     validate_name(name)?;
     let target = join_remote(&input.target_dir, name);
-    let plan = plan_local(source, run.cancel)?;
 
+    // Before the plan: asking costs one call, a folder's plan may cost minutes.
     if let Some(existing) = missing_or(sftp.lstat(Path::new(&target)))
         .map_err(|e| call_error("Could not read", &target, &e))?
     {
@@ -884,6 +884,7 @@ fn run_upload(
             });
         }
     }
+    let plan = plan_local(source, run.cancel)?;
 
     upload_plan(session, sftp, source, &plan, &target, run)?;
     Ok(target)
@@ -897,6 +898,7 @@ fn upload_plan(
     target: &str,
     run: &mut Run<'_>,
 ) -> Result<(), Stop> {
+    let mut clashes = CaseClashes::new(plan);
     carry_out(
         run,
         plan,
@@ -909,13 +911,71 @@ fn upload_plan(
             let mut file = fs::File::open(local_under(source, rel))
                 .map_err(|e| format!("Could not read {}: {}", source.display(), e))?;
             let destination = RemoteTarget::resolve(sftp, &remote_under(target, rel))?;
+            if let Some(first) = clashes.written_as(rel, destination.existing.as_ref()) {
+                run.skipped += 1;
+                run.notes.push(format!(
+                    "{rel} was skipped: the server took it for {first}, which differs only by case"
+                ));
+                return Ok(false);
+            }
             let staged = stage_upload(session, sftp, &mut file, &destination, mode, &mut |n| {
                 run.on_chunk(n)
             })?;
-            commit_upload(session, sftp, &staged, &destination).map(|()| true)
+            commit_upload(session, sftp, &staged, &destination)?;
+            if clashes.watches(rel) {
+                if let Ok(stat) = sftp.stat(Path::new(&destination.path)) {
+                    clashes.record(rel, &stat);
+                }
+            }
+            Ok(true)
         },
         |path, source| seal_remote_dir(sftp, path, source),
     )
+}
+
+/// Files of an upload whose names differ only by case, which a server on a Mac
+/// or Windows disk takes for one file. SFTP gives no inode to tell, so a file
+/// found where such a name was just written, with its size and time, is taken
+/// for it. Only those names cost a lookup.
+struct CaseClashes {
+    watched: std::collections::HashSet<String>,
+    written: HashMap<String, (String, Option<u64>, Option<u64>)>,
+}
+
+impl CaseClashes {
+    fn new(plan: &Plan) -> Self {
+        let mut seen = std::collections::HashSet::new();
+        let mut watched = std::collections::HashSet::new();
+        for item in &plan.items {
+            if let PlanItem::File { rel, .. } = item {
+                let folded = rel.to_lowercase();
+                if !seen.insert(folded.clone()) {
+                    watched.insert(folded);
+                }
+            }
+        }
+        Self {
+            watched,
+            written: HashMap::new(),
+        }
+    }
+
+    fn watches(&self, rel: &str) -> bool {
+        self.watched.contains(&rel.to_lowercase())
+    }
+
+    /// The name this upload wrote that `existing`, found at `rel`, really is.
+    fn written_as(&self, rel: &str, existing: Option<&FileStat>) -> Option<&str> {
+        let existing = existing?;
+        let (first, size, mtime) = self.written.get(&rel.to_lowercase())?;
+        (first != rel && existing.size == *size && existing.mtime == *mtime)
+            .then_some(first.as_str())
+    }
+
+    fn record(&mut self, rel: &str, stat: &FileStat) {
+        self.written
+            .insert(rel.to_lowercase(), (rel.to_string(), stat.size, stat.mtime));
+    }
 }
 
 /// How far a copy got, whether or not it reached its end. `bytes` includes a
@@ -1175,7 +1235,8 @@ enum ReplaceFailure {
 /// The calls a replace makes, so a test can refuse any of them.
 trait ReplaceCalls {
     fn rename(&self, from: &str, to: &str) -> Result<(), ssh2::Error>;
-    fn exists(&self, path: &str) -> Result<bool, ssh2::Error>;
+    /// `None` when nothing is there, else whether it is a folder (not followed).
+    fn existing(&self, path: &str) -> Result<Option<bool>, ssh2::Error>;
     fn unlink(&self, path: &str) -> Result<(), ssh2::Error>;
 }
 
@@ -1194,8 +1255,8 @@ impl ReplaceCalls for SessionCalls<'_> {
         renamed
     }
 
-    fn exists(&self, path: &str) -> Result<bool, ssh2::Error> {
-        missing_or(self.sftp.lstat(Path::new(path))).map(|stat| stat.is_some())
+    fn existing(&self, path: &str) -> Result<Option<bool>, ssh2::Error> {
+        missing_or(self.sftp.lstat(Path::new(path))).map(|stat| stat.map(|s| s.is_dir()))
     }
 
     fn unlink(&self, path: &str) -> Result<(), ssh2::Error> {
@@ -1217,11 +1278,19 @@ fn replace_remote(
         Ok(()) => return Ok(()),
         Err(e) => e,
     };
-    let exists = calls
-        .exists(target)
-        .map_err(|e| untouched("Could not read", &e))?;
-    if !exists {
-        return Err(untouched("Could not write", &first_try));
+    match calls
+        .existing(target)
+        .map_err(|e| untouched("Could not read", &e))?
+    {
+        None => return Err(untouched("Could not write", &first_try)),
+        // Moved aside, a folder could not be removed and would vanish from view.
+        Some(true) => {
+            return Err(ReplaceFailure::Untouched(format!(
+                "{} is now a folder, so it was not replaced",
+                target
+            )))
+        }
+        Some(false) => {}
     }
     let dir = remote_parent(target)
         .ok_or_else(|| ReplaceFailure::Untouched(format!("{} has no folder", target)))?;
@@ -1270,14 +1339,15 @@ fn run_download(
     }
     let target = Path::new(&input.target_dir).join(name);
     let target_text = local_path_string(&target)?;
-    let plan = plan_remote(sftp, &input.source, run.cancel)?;
 
+    // Before the plan, which walks the whole remote folder.
     if fs::symlink_metadata(&target).is_ok() && !input.overwrite {
         return Err(Stop::Conflict {
             target_is_dir: target.is_dir(),
             target: target_text,
         });
     }
+    let plan = plan_remote(sftp, &input.source, run.cancel)?;
 
     download_plan(session, sftp, &input.source, &plan, &target, run)?;
     Ok(target_text)
@@ -1768,6 +1838,7 @@ mod tests {
     /// refuse the calls a test lists, counted from zero.
     struct ScriptedServer {
         files: RefCell<BTreeSet<String>>,
+        folders: Vec<String>,
         refused_renames: Vec<usize>,
         renames: Cell<usize>,
     }
@@ -1776,6 +1847,7 @@ mod tests {
         fn new(files: &[&str], refused_renames: &[usize]) -> Self {
             Self {
                 files: RefCell::new(files.iter().map(|f| f.to_string()).collect()),
+                folders: Vec::new(),
                 refused_renames: refused_renames.to_vec(),
                 renames: Cell::new(0),
             }
@@ -1801,8 +1873,9 @@ mod tests {
             Ok(())
         }
 
-        fn exists(&self, path: &str) -> Result<bool, ssh2::Error> {
-            Ok(self.files.borrow().contains(path))
+        fn existing(&self, path: &str) -> Result<Option<bool>, ssh2::Error> {
+            let is_dir = self.folders.iter().any(|f| f == path);
+            Ok(self.files.borrow().contains(path).then_some(is_dir))
         }
 
         fn unlink(&self, path: &str) -> Result<(), ssh2::Error> {
@@ -1818,6 +1891,15 @@ mod tests {
     fn replacing_moves_the_old_file_aside_and_removes_it() {
         let server = ScriptedServer::new(&[STAGED, TARGET], &[]);
         place_staged(&server, STAGED, TARGET).unwrap();
+        assert_eq!(server.files(), [TARGET]);
+    }
+
+    #[test]
+    fn a_folder_now_at_the_target_is_left_where_it_is() {
+        let mut server = ScriptedServer::new(&[STAGED, TARGET], &[]);
+        server.folders.push(TARGET.to_string());
+        let err = place_staged(&server, STAGED, TARGET).unwrap_err();
+        assert!(err.contains("is now a folder"), "{}", err);
         assert_eq!(server.files(), [TARGET]);
     }
 
@@ -1860,6 +1942,42 @@ mod tests {
         assert!(err.contains("failed too"), "{}", err);
         assert!(err.contains(aside.as_str()), "{}", err);
         assert!(err.contains(STAGED), "{}", err);
+    }
+
+    fn stat(size: u64, mtime: u64) -> FileStat {
+        FileStat {
+            size: Some(size),
+            uid: None,
+            gid: None,
+            perm: Some(0o100644),
+            atime: None,
+            mtime: Some(mtime),
+        }
+    }
+
+    #[test]
+    fn an_upload_skips_a_name_the_server_took_for_one_it_wrote() {
+        let file = |rel: &str| PlanItem::File {
+            rel: rel.to_string(),
+            mode: None,
+        };
+        let plan = Plan {
+            items: vec![file("README"), file("readme"), file("other")],
+            ..Plan::default()
+        };
+        let mut clashes = CaseClashes::new(&plan);
+        assert!(clashes.watches("readme") && !clashes.watches("other"));
+
+        // A server that keeps case apart: nothing at the second name yet.
+        assert_eq!(clashes.written_as("readme", None), None);
+        clashes.record("README", &stat(3, 100));
+        // One that does not: the second name finds the first file.
+        assert_eq!(
+            clashes.written_as("readme", Some(&stat(3, 100))),
+            Some("README")
+        );
+        // A different file already there is replaced as usual.
+        assert_eq!(clashes.written_as("readme", Some(&stat(9, 100))), None);
     }
 
     #[test]

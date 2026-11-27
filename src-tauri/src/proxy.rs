@@ -18,8 +18,9 @@ use crate::ssh::Endpoint;
 use crate::ssh_config::expand_tokens;
 use crate::ssh_debug::SshDebug;
 
+/// Keeps a console program from flashing a window of its own.
 #[cfg(windows)]
-const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+pub(crate) const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
 /// Characters a host or user name may contain to be put in a command line
 /// as-is. Anything else (spaces, quotes, `;`, `$`…) is refused rather than

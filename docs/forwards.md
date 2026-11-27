@@ -137,10 +137,12 @@ it does not read the connection's keepalive setting.
 - **Open files.** Each client uses two file descriptors. At startup on macOS and
   Linux SSIX raises its soft limit to 10240, or the hard limit if that is lower, and
   programs it starts inherit that. If the raise is refused, the Logs view says so.
-  If descriptors still run out, the forward keeps running and its current clients
-  are not touched: the row's details show "Could not accept a new client", and new
-  clients are served again once a descriptor is free. A client arriving meanwhile
-  waits on Linux and is closed by the system on macOS.
+  If descriptors (or the system's socket buffers) still run out, the forward keeps
+  running and its current clients are not touched: the row's details show "Could not
+  accept a new client", and new clients are served again once a descriptor is free.
+  A client arriving meanwhile waits on Linux and is closed by the system on macOS.
+  A client that fails on its own while it is accepted (it reset while queued, or a
+  firewall refused it) is dropped, and the forward goes on.
 - **One channel open at a time per session.** libssh2 keeps the state of an open
   on the session, so concurrent opens would get each other's replies. They are
   queued, which means a destination the server takes long to answer holds up
@@ -148,6 +150,8 @@ it does not read the connection's keepalive setting.
   destinations can therefore delay the others by several times 15 s, and a
   confirmation that arrives after its 15 s leaves a channel open on the server
   until the session ends.
+  An open waiting for its reply looks again every 10 ms, as a busy client does: a
+  client reading the same socket usually takes the reply in first, without waking it.
 - **Closing is not half-closing.** When a client closes its side, the channel
   closes in both directions, so a protocol that keeps reading after sending EOF
   loses the rest. This is how `forward_bidi` has always worked.
@@ -168,7 +172,8 @@ it does not read the connection's keepalive setting.
   server that speaks first after 10 s of silence, by up to that wait, in a forward
   with 16 or more clients. Measured with 300 idle clients in a debug build on a busy
   machine: from about 250% of a core to 5 to 10%, and a request and answer through
-  one of them still takes about 11 ms at the median.
+  one of them still takes about 11 ms at the median. On macOS and Linux only: on
+  Windows a session's sleep is at most 5 ms whatever the count.
 - **A remote forward polls while it has clients.** New connections arrive over
   the session itself, and reading one client's data can pull in the next one
   without the socket waking anyone, so the supervisor looks every 20 ms instead

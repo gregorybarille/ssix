@@ -222,7 +222,9 @@ pub(super) fn edit_open(connection_id: &str, remote_path: &str) -> Result<EditSe
         return Err(too_large(remote_path));
     }
 
-    let name = remote_name(&real)
+    // Named as picked: a link's target name, `x.exe` say, would choose the
+    // program that opens it.
+    let name = remote_name(remote_path)
         .filter(|name| safe_local_name(name))
         .unwrap_or("file")
         .to_string();

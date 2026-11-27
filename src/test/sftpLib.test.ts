@@ -7,6 +7,7 @@ import {
   formatModified,
   formatSize,
   isSessionLost,
+  mayOpenAsFolder,
   opensAsFolder,
   parseMode,
   readableSftpError,
@@ -126,6 +127,14 @@ describe("opensAsFolder", () => {
     expect(opensAsFolder(entry({ kind: "symlink" }))).toBe(false);
     expect(opensAsFolder(entry({ kind: "file" }))).toBe(false);
     expect(opensAsFolder(entry({ kind: "other" }))).toBe(false);
+    expect(opensAsFolder(entry({ kind: "symlink", target_is_dir: null }))).toBe(false);
+  });
+
+  it("tries a link not looked up as a folder, but no known file", () => {
+    expect(mayOpenAsFolder(entry({ kind: "symlink", target_is_dir: null }))).toBe(true);
+    expect(mayOpenAsFolder(entry({ kind: "symlink", target_is_dir: true }))).toBe(true);
+    expect(mayOpenAsFolder(entry({ kind: "symlink" }))).toBe(false);
+    expect(mayOpenAsFolder(entry({ kind: "file" }))).toBe(false);
   });
 });
 

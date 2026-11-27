@@ -11,7 +11,8 @@
  *   - a refused clone deletes the inline credential its form created;
  *   - deleting a connection with an inline credential asks once, not twice;
  *   - a credential that connections use cannot be deleted;
- *   - spaces around a host are not saved.
+ *   - spaces around a host are not saved;
+ *   - after a save, the next connection edited still asks before discarding.
  */
 import { waitForAppReady } from "../helpers/app.js";
 import { TARGETS } from "../helpers/docker.js";
@@ -109,6 +110,18 @@ describe("Connections CRUD", () => {
     expect(await (await browser.$(sel.connectionFormHost)).getValue()).toBe(TARGETS.a.host);
     await clickDialogFooterButton(sel.connectionFormCancel);
     await (await browser.$(sel.connectionForm)).waitForExist({ reverse: true, timeout: 10_000 });
+  });
+
+  it("still asks before discarding edits in the next connection after a save", async () => {
+    await openConnectionEditor("conn-padded-host");
+    await saveConnectionForm();
+    await openConnectionEditor("conn-a");
+    await fill(sel.connectionFormName, "conn-a-unsaved");
+    await clickDialogFooterButton(sel.connectionFormCancel);
+    await (await browser.$(sel.connectionDiscard)).waitForExist({ timeout: 5_000 });
+    await click(sel.connectionDiscardConfirm);
+    await (await browser.$(sel.connectionForm)).waitForExist({ reverse: true, timeout: 10_000 });
+    await (await browser.$(sel.connectionRowByName("conn-a"))).waitForExist({ timeout: 10_000 });
   });
 
   it("opens the connection form in the side panel, beside the list", async () => {

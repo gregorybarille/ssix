@@ -299,7 +299,6 @@ export function CredentialForm({
         } else {
           await onSubmit(data);
         }
-        guard.markSaved();
         onOpenChange(false);
         return { error: null };
       } catch (err) {

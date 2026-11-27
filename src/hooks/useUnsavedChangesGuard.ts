@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 
 /**
  * Generic unsaved-changes guard for dialog-style forms.
@@ -16,9 +16,8 @@ import { useCallback, useEffect, useRef, useState } from "react";
  * - `confirmOpen` / `setConfirmOpen` — wire into a `<ConfirmDialog>`.
  * - `confirmDiscard()` — call from the dialog's `onConfirm`.
  *
- * The guard automatically suppresses itself for one tick after a
- * successful save (call `markSaved()` from your submit handler before
- * closing the dialog) so saving doesn't trigger the discard prompt.
+ * A successful save closes the form directly, not through `requestClose`,
+ * so it never asks.
  *
  * Window-level beforeunload protection is intentionally not added: this
  * runs inside Tauri (no browser tab to close) and the in-app guard is
@@ -27,14 +26,10 @@ import { useCallback, useEffect, useRef, useState } from "react";
 export function useUnsavedChangesGuard(dirty: boolean) {
   const [confirmOpen, setConfirmOpen] = useState(false);
   const pendingCloseRef = useRef<(() => void) | null>(null);
-  // After a save we want the next close to be silent. We don't read
-  // `dirty` because the parent may not have re-rendered yet.
-  const skipNextRef = useRef(false);
 
   const requestClose = useCallback(
     (close: () => void) => {
-      if (skipNextRef.current || !dirty) {
-        skipNextRef.current = false;
+      if (!dirty) {
         close();
         return;
       }
@@ -56,24 +51,10 @@ export function useUnsavedChangesGuard(dirty: boolean) {
     pendingCloseRef.current = null;
   }, []);
 
-  const markSaved = useCallback(() => {
-    skipNextRef.current = true;
-  }, []);
-
-  // Reset internal state when the consuming dialog unmounts so a future
-  // open starts clean.
-  useEffect(() => {
-    return () => {
-      skipNextRef.current = false;
-      pendingCloseRef.current = null;
-    };
-  }, []);
-
   return {
     requestClose,
     confirmOpen,
     confirmDiscard,
     cancelDiscard,
-    markSaved,
   };
 }

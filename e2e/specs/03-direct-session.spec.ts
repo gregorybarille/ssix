@@ -4,11 +4,12 @@
  * Full lifecycle: create credential + Direct connection, click connect,
  * wait for shell prompt, run `whoami`, assert output is `usera`. A second
  * connection at verbosity -vv must write `ssh -vv` style lines to the
- * Logs view, and a third reaches server-a only through its proxy command.
+ * Logs view, a third reaches server-a only through its proxy command, and a
+ * fourth starts in `~` and still runs its login command.
  * Then the same session under load: a paste bigger than the server holds, and
  * output faster than the terminal can take.
  *
- * Exercises `start_ssh_session` + the OS-thread / mpsc plumbing in
+ * Exercises `start_shell_session` + the OS-thread / mpsc plumbing in
  * `src-tauri/src/ssh.rs` against a real OpenSSH server.
  */
 import { waitForAppReady } from "../helpers/app.js";
@@ -17,6 +18,7 @@ import { sel } from "../helpers/selectors.js";
 import {
   click,
   closeAllTabs,
+  fill,
   connectToConnection,
   createPasswordCredential,
   createDirectConnection,
@@ -137,6 +139,23 @@ describe("Direct SSH session", () => {
     // Every open terminal is searched; the -v banner names this host and
     // is only written once the proxied login has opened a shell.
     await waitForTerminalContains("Connected to proxied-a.invalid:22", 30_000);
+  });
+
+  it("starts in a ~ remote path and runs the login command after it", async () => {
+    await createDirectConnection({
+      name: "conn-03-tilde",
+      host: TARGETS.a.host,
+      port: TARGETS.a.sshPort,
+      credentialName: "cred-03-a",
+      beforeSave: async () => {
+        await (await browser.$(sel.connectionFormRemotePath)).scrollIntoView({ block: "center" });
+        await fill(sel.connectionFormRemotePath, "~/");
+        await fill(sel.connectionFormLoginCommand, "echo TILDE-$((40+2))");
+      },
+    });
+    await connectToConnection("conn-03-tilde");
+    // Only the shell's arithmetic writes 42: the echoed command line says 40+2.
+    await waitForTerminalContains("TILDE-42", 30_000);
   });
 
   it("takes a paste bigger than the server holds, under a program not reading it", async () => {

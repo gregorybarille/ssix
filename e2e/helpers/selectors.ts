@@ -225,6 +225,9 @@ export const sel = {
   scriptFormBody: '[data-testid="script-form-body"]',
   scriptFormSubmit: '[data-testid="script-form-submit"]',
   scriptFormCancel: '[data-testid="script-form-cancel"]',
+  // "Discard unsaved changes?" for the connection form.
+  connectionDiscard: '[data-testid="connection-discard"]',
+  connectionDiscardConfirm: '[data-testid="connection-discard-confirm"]',
   // "Discard unsaved changes?" for the script editor.
   scriptDiscard: '[data-testid="script-discard"]',
   scriptDiscardConfirm: '[data-testid="script-discard-confirm"]',
@@ -334,6 +337,8 @@ export const sel = {
   connectionFormKindRemoteForward: 'Remote forward (-R)',
   connectionFormKindDynamicForward: 'Dynamic forward (-D)',
   connectionFormRemotePort: '[data-testid="connection-form-remote-port"]',
+  connectionFormLoginCommand: '[data-testid="connection-form-login-command"]',
+  connectionFormRemotePath: '[data-testid="connection-form-remote-path"]',
   connectionFormSocksPort: '[data-testid="connection-form-socks-port"]',
   confirmStopForwardConfirm: '[data-testid="confirm-stop-forward-confirm"]',
   confirmDeleteConnectionConfirm: '[data-testid="confirm-delete-connection-confirm"]',

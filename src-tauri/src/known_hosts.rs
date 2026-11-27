@@ -183,6 +183,18 @@ pub(crate) fn check_and_record(
     let mut hosts = load(session, path)?;
     let refusal = match (lookup(&hosts, &name, key)?, trusted) {
         (Lookup::Match, _) => return Ok(()),
+        // Trusting replaces entries by name, which a hashed line hides, so
+        // the user is told how to remove it instead.
+        (Lookup::HashedDiffers, _) => {
+            return Err(format!(
+                "The host key for {host}:{port} does not match a hashed entry for it in {path}. \
+                 This happens when a server is reinstalled or re-keyed, but it can also mean \
+                 the connection is being intercepted. New key: {fingerprint}. If you expect \
+                 this change, remove the old entry with ssh-keygen -R '{name}' -f '{path}' \
+                 and connect again.",
+                path = path.display(),
+            ))
+        }
         (_, Some(trusted)) if trusted == fingerprint => {
             remove_entries(&hosts, &name)?;
             crate::logs::log_local(
@@ -237,6 +249,9 @@ enum Lookup {
     /// gained a key type, but an attacker with a fresh key looks the same, and
     /// accepting it would hand them the saved password.
     NewKeyType { offered: String, recorded: String },
+    /// No plain entry has this name, a hashed one (`ssh-keygen -H`) does, and
+    /// none of those holds this key.
+    HashedDiffers,
 }
 
 /// The key blobs of the entries named exactly `name`. libssh2's own check would
@@ -265,7 +280,17 @@ fn recorded_keys(hosts: &ssh2::KnownHosts, name: &str) -> Result<Vec<Vec<u8>>, S
 fn lookup(hosts: &ssh2::KnownHosts, name: &str, key: &[u8]) -> Result<Lookup, String> {
     let recorded = recorded_keys(hosts, name)?;
     if recorded.is_empty() {
-        return Ok(Lookup::Unknown);
+        // libssh2 reads hashed names, and without a port compares this exact
+        // name only. A name holding NUL cannot be in the file, nor passed.
+        if name.contains('\0') {
+            return Ok(Lookup::Unknown);
+        }
+        return match hosts.check(name, key) {
+            ssh2::CheckResult::Match => Ok(Lookup::Match),
+            ssh2::CheckResult::Mismatch => Ok(Lookup::HashedDiffers),
+            ssh2::CheckResult::NotFound => Ok(Lookup::Unknown),
+            ssh2::CheckResult::Failure => Err(format!("Checking {} in known_hosts failed", name)),
+        };
     }
     if recorded.iter().any(|stored| stored == key) {
         return Ok(Lookup::Match);
@@ -403,6 +428,32 @@ mod tests {
         // The stored key is left untouched so the user keeps the evidence.
         let content = fs::read_to_string(&path).unwrap();
         assert_eq!(content.lines().count(), 1);
+    }
+
+    /// `ssh-keygen -H` lines name no host; their keys still count.
+    #[test]
+    fn hashed_entries_are_checked_too() {
+        const SALT: &str = "|1|AAECAwQFBgcICQoLDA0ODxAREhM=|";
+        let path = temp_path("hashed");
+        fs::write(
+            &path,
+            format!(
+                "{SALT}nnUK16ANsXd3hL31YfAkGOluSjU= ssh-ed25519 a2V5LW9uZQ==\n\
+                 {SALT}Wgcx+Fm+LmaWwC7rQ80eIf2uHe0= ssh-ed25519 a2V5LW9uZQ==\n"
+            ),
+        )
+        .unwrap();
+
+        check(&path, "example.com", 22, b"key-one").unwrap();
+        check(&path, "example.com", 2222, b"key-one").unwrap();
+        let err = check(&path, "example.com", 22, b"key-two").unwrap_err();
+        assert!(err.contains("ssh-keygen -R 'example.com'"), "{err}");
+        assert!(!err.starts_with(MISMATCH_PREFIX), "{err}");
+        // Nothing was recorded over it, and a host it does not name is new.
+        check(&path, "other.example", 22, b"key-two").unwrap();
+        assert_eq!(fs::read_to_string(&path).unwrap().lines().count(), 3);
+        // Saving that kept the hashed lines working.
+        check(&path, "example.com", 22, b"key-one").unwrap();
     }
 
     #[test]

@@ -164,7 +164,7 @@ fn git_sync_status_sync() -> Result<GitSyncStatus, String> {
 fn status_in(repo_path: &Path, settings: &AppSettings) -> Result<GitSyncStatus, String> {
     let branch = sync_branch(repo_path, settings)?;
     let remote = configured_remote(settings)?;
-    let porcelain = git(repo_path, &["status", "--porcelain", "--", EXPORT_DIR])?;
+    let porcelain = snapshot_status(repo_path)?;
     let changed_files = porcelain
         .stdout
         .lines()
@@ -233,8 +233,23 @@ fn diff_in(repo_path: &Path, data: &AppData) -> Result<GitSyncDiff, String> {
     let at_risk = files_at_risk(repo_path, &files, false)?;
     export_snapshot(repo_path, &files, &at_risk)?;
 
-    let unstaged = git(repo_path, &["diff", "--", EXPORT_DIR])?.stdout;
-    let staged = git(repo_path, &["diff", "--cached", "--", EXPORT_DIR])?.stdout;
+    let unstaged = git(
+        repo_path,
+        &["diff", "--no-ext-diff", "--no-color", "--", EXPORT_DIR],
+    )?
+    .stdout;
+    let staged = git(
+        repo_path,
+        &[
+            "diff",
+            "--cached",
+            "--no-ext-diff",
+            "--no-color",
+            "--",
+            EXPORT_DIR,
+        ],
+    )?
+    .stdout;
     Ok(GitSyncDiff {
         staged,
         unstaged,
@@ -276,7 +291,7 @@ fn commit_in(
     }
 
     git(repo_path, &["add", "--", EXPORT_DIR])?;
-    let status = git(repo_path, &["status", "--porcelain", "--", EXPORT_DIR])?;
+    let status = snapshot_status(repo_path)?;
     if status.stdout.trim().is_empty() {
         return Ok(result(
             GitSyncActionResult {
@@ -354,7 +369,7 @@ fn sync_in(
     export_snapshot(repo_path, &files, &[])?;
     steps.push("Exported sanitized snapshot".to_string());
 
-    let status = git(repo_path, &["status", "--porcelain", "--", EXPORT_DIR])?;
+    let status = snapshot_status(repo_path)?;
     let changed_files = status
         .stdout
         .lines()
@@ -482,6 +497,21 @@ fn read_last_export(repo_path: &Path) -> HashMap<String, String> {
         .and_then(|path| fs::read(path).ok())
         .and_then(|bytes| serde_json::from_slice(&bytes).ok())
         .unwrap_or_default()
+}
+
+/// `git status` of the snapshot folder. `--untracked-files=all` overrides a
+/// `status.showUntrackedFiles=no`, which would hide a first export.
+fn snapshot_status(repo_path: &Path) -> Result<GitOutput, String> {
+    git(
+        repo_path,
+        &[
+            "status",
+            "--porcelain",
+            "--untracked-files=all",
+            "--",
+            EXPORT_DIR,
+        ],
+    )
 }
 
 /// Puts the snapshot back as HEAD has it, so a pull is not refused over it. Sync
@@ -754,9 +784,14 @@ fn git(repo_path: &Path, args: &[&str]) -> Result<GitOutput, String> {
             .collect::<Vec<_>>()
             .join(" ")
     };
-    let output = Command::new("git")
-        .args(args)
-        .current_dir(repo_path)
+    let mut cmd = Command::new("git");
+    cmd.args(args).current_dir(repo_path);
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(crate::proxy::CREATE_NO_WINDOW);
+    }
+    let output = cmd
         .output()
         .map_err(|e| format!("Failed to run git {}: {}", command(), e))?;
     let stdout = String::from_utf8_lossy(&output.stdout).to_string();
@@ -1140,6 +1175,37 @@ mod tests {
         assert!(again
             .steps
             .contains(&"No local snapshot changes to commit".to_string()));
+    }
+
+    /// Plain `git diff` follows `color.ui` and `diff.external`; the panel
+    /// shows text, so neither may reach it.
+    #[test]
+    fn the_users_diff_settings_do_not_reach_the_diff() {
+        let Some(fx) = Fixture::new(true) else { return };
+        run(&fx.repo, &["config", "color.ui", "always"]);
+        run(&fx.repo, &["config", "diff.external", "false"]);
+        sync_in(&fx.repo, &data_with("one", "origin", None), &[]).unwrap();
+
+        let diff = diff_in(&fx.repo, &data_with("two", "origin", None)).unwrap();
+        assert!(
+            diff.unstaged.starts_with("diff --git"),
+            "{:?}",
+            diff.unstaged
+        );
+        assert!(!diff.unstaged.contains('\u{1b}'));
+    }
+
+    #[test]
+    fn hidden_untracked_files_still_get_synced() {
+        let Some(fx) = Fixture::new(true) else { return };
+        run(&fx.repo, &["config", "status.showUntrackedFiles", "no"]);
+        let data = data_with("one", "origin", None);
+        export_all(&fx.repo, &data);
+        let status = status_in(&fx.repo, &data.settings).unwrap();
+        assert!(status.has_local_changes, "{status:?}");
+
+        sync_in(&fx.repo, &data, &[]).unwrap();
+        assert!(fx.remote_has("main", DATA));
     }
 
     #[test]

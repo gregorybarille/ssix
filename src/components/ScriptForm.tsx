@@ -51,7 +51,6 @@ export function ScriptForm({ script, onSubmit, onClose, onGuardChange }: ScriptF
     },
     setFieldErrors,
     save: () => onSubmit({ name, platform, interpreter, body }),
-    guard,
     onClose,
   });
 

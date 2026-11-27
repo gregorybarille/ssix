@@ -164,7 +164,7 @@ describe("Unsaved-changes guard — CredentialForm", () => {
     });
   });
 
-  it("does NOT prompt after a successful save (markSaved suppresses the next close)", async () => {
+  it("does NOT prompt after a successful save", async () => {
     const user = userEvent.setup();
     const onSubmit = vi.fn().mockResolvedValue(undefined);
     const onOpenChange = vi.fn();
@@ -191,6 +191,36 @@ describe("Unsaved-changes guard — CredentialForm", () => {
     expect(
       screen.queryByRole("dialog", { name: /discard unsaved changes/i }),
     ).not.toBeInTheDocument();
+  });
+
+  it("still prompts in the next form opened after a save", async () => {
+    // Regression: a save used to leave a "skip the next close" flag set
+    // while the form stayed mounted, so the next edited form closed silently.
+    const user = userEvent.setup();
+    const onSubmit = vi.fn().mockResolvedValue(undefined);
+    const onOpenChange = vi.fn();
+    const props = { onOpenChange, credential: null, onSubmit };
+    const { rerender } = render(<CredentialForm open {...props} />);
+    await waitFor(() =>
+      expect(screen.getByLabelText(/credential name/i)).toBeInTheDocument(),
+    );
+    await user.type(screen.getByLabelText(/credential name/i), "prod");
+    await user.type(screen.getByLabelText(/^username/i), "alice");
+    await user.type(
+      screen.getByLabelText(/^password$/i, { selector: "input" }),
+      "hunter2",
+    );
+    fireEvent.click(screen.getByRole("button", { name: /create/i }));
+    await waitFor(() => expect(onOpenChange).toHaveBeenCalledWith(false));
+
+    rerender(<CredentialForm open={false} {...props} />);
+    rerender(<CredentialForm open {...props} />);
+    await waitFor(() =>
+      expect(screen.getByLabelText(/credential name/i)).toBeInTheDocument(),
+    );
+    await user.type(screen.getByLabelText(/credential name/i), "x");
+    fireEvent.click(screen.getByRole("button", { name: /cancel/i }));
+    await screen.findByRole("dialog", { name: /discard unsaved changes/i });
   });
 });
 

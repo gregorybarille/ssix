@@ -22,7 +22,7 @@ maps each kind to the words the UI shows.
 Each shell-capable connection can also define:
 
 - `login_command`
-- `remote_path`
+- `remote_path`, the folder a shell starts in (`~` and `~/...` are the login folder) before `login_command` runs
 - tags
 - color accent
 - verbosity level (see [Diagnostics](#diagnostics))
@@ -647,10 +647,9 @@ view, from the sidebar, a shortcut or a store, runs it first. A clean
 form closes and the view changes at once; on **Keep editing** the app
 stays on the form's view.
 
-The guard self-disables for the close that immediately follows a
-successful save: submit handlers call `guard.markSaved()` before
-`onOpenChange(false)` so users never see the discard prompt after
-clicking Create/Update.
+A successful save closes the form directly (`onOpenChange(false)`),
+not through the guard, so users never see the discard prompt after
+clicking Create/Update, and the next form opened still asks.
 
 The dirty check uses a stable `JSON.stringify` of every tracked field
 (including inline auth secrets in `ConnectionForm`), so typing a

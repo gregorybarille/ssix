@@ -663,9 +663,6 @@ export function ConnectionForm({
           }
           throw err;
         }
-        // Suppress the unsaved-changes guard for the close that follows
-        // a successful save.
-        guard.markSaved();
         onOpenChange(false);
         return { error: null };
       } catch (err) {
@@ -1204,6 +1201,7 @@ export function ConnectionForm({
         <Label htmlFor="login_command">Login Command</Label>
         <Input
           id="login_command"
+          data-testid="connection-form-login-command"
           placeholder="sudo su - deploy"
           value={form.login_command ?? ""}
           onChange={(e) => setForm({ ...form, login_command: e.target.value })}
@@ -1218,6 +1216,7 @@ export function ConnectionForm({
         <Label htmlFor="remote_path">Remote Path</Label>
         <Input
           id="remote_path"
+          data-testid="connection-form-remote-path"
           placeholder="/srv/app"
           value={form.remote_path ?? ""}
           onChange={(e) => setForm({ ...form, remote_path: e.target.value })}
@@ -1359,6 +1358,7 @@ export function ConnectionForm({
         cancelLabel="Keep editing"
         variant="destructive"
         onConfirm={guard.confirmDiscard}
+        testId="connection-discard"
       />
     </>
   );

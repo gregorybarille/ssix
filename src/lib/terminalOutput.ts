@@ -161,10 +161,6 @@ export class OutputSink {
     this.ack(this.writing);
     this.writing = 0;
   }
-
-  get pendingBytes(): number {
-    return this.bufferedBytes;
-  }
 }
 
 const sinks = new Map<string, OutputSink>();

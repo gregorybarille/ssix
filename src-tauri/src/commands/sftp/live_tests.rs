@@ -222,7 +222,7 @@ fn live_sftp_browses_and_changes_files() {
         assert_eq!(find("a.txt").kind, FileKind::File);
         assert_eq!(find("a.txt").size, Some(5));
         assert_eq!(find("link").kind, FileKind::Symlink);
-        assert!(find("link").target_is_dir);
+        assert_eq!(find("link").target_is_dir, Some(true));
 
         let renamed =
             block_on(sftp_rename(sid(), dir.child("a.txt"), "b.txt".to_string())).unwrap();
@@ -815,6 +815,9 @@ fn live_sftp_edit_refuses_folders_and_a_missing_file_and_saves_through_a_link() 
         );
         let edit = edit_open(id, &dir.child("link")).unwrap();
         assert_eq!(edit.remote_path, dir.child("real"));
+        // Named as picked, not after the link's target.
+        let copy_name = Path::new(&edit.temp_path).file_name().unwrap();
+        assert_eq!(copy_name, "link");
         let mut file = fs::OpenOptions::new()
             .append(true)
             .open(&edit.temp_path)

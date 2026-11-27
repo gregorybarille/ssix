@@ -42,7 +42,7 @@ use tauri::Emitter;
 use crate::ssh::{
     close_channel, connect_endpoint, connect_tcp, control_channel, forward_bidi, is_eagain,
     open_authenticated_session_over_stream, wake, ControlRx, Endpoint, SessionContext,
-    SessionHandle, SessionMsg, Traffic, SESSION_TIMEOUT_MS,
+    SessionHandle, SessionMsg, Traffic, SESSION_TIMEOUT_MS, SHARED_WAIT_STEP,
 };
 use crate::ssh_debug::SshDebug;
 
@@ -140,19 +140,16 @@ const TIMING: Timing = Timing {
     client_drain: Duration::from_secs(3),
 };
 
-/// Status payload a forward emits on `ssix:forward:status:{id}`. `listen_port`
-/// is on this machine for a local or dynamic forward, on the SSH server for a
-/// remote one. Mirrored by `ForwardStatus` in `src/store/usePortForwardsStore.ts`.
+/// Status payload a forward emits on `ssix:forward:status:{id}`. Mirrored by
+/// `ForwardStatus` in `src/store/usePortForwardsStore.ts`.
 #[derive(Serialize, Clone)]
 pub struct ForwardStatus {
-    /// "listening" | "client_connected" | "client_closed" | "client_error"
+    /// "client_connected" | "client_closed" | "client_error"
     /// (one client could not be served; the forward goes on) | "traffic" (about
     /// once a second while clients are connected, and once more when the last
     /// has left) | "error" (the forward ended; the same message follows on the
     /// output channel).
     pub state: &'static str,
-    pub listen_port: u16,
-    pub destination: String,
     pub message: Option<String>,
     pub active_clients: usize,
     /// Since this forward started: to the SSH server and from it.
@@ -228,10 +225,9 @@ impl Drop for ClientSlot<'_> {
 }
 
 impl ClientSet {
-    /// Add a client's socket. `None` means the forward is ending, or the
-    /// socket could not be duplicated: the caller drops the client.
-    fn register(&self, stream: &TcpStream) -> Option<ClientSlot<'_>> {
-        let clone = stream.try_clone().ok()?;
+    /// Add a duplicate of a client's socket. `None` means the forward is
+    /// ending: the caller drops the client.
+    fn register(&self, clone: TcpStream) -> Option<ClientSlot<'_>> {
         let id = self.next_id.fetch_add(1, Ordering::SeqCst);
         self.sockets.insert(id, clone);
         // Checked after the insert: `close_all` sets the flag before walking
@@ -294,20 +290,13 @@ struct Hub {
     /// keep `Busy`.
     probe_first: AtomicBool,
     events: Box<dyn ForwardEvents>,
-    listen_port: u16,
-    destination: String,
     traffic: Traffic,
     sent_per_second: AtomicU64,
     received_per_second: AtomicU64,
 }
 
 impl Hub {
-    fn new(
-        events: Box<dyn ForwardEvents>,
-        listen_port: u16,
-        destination: String,
-        session_readers: usize,
-    ) -> Self {
+    fn new(events: Box<dyn ForwardEvents>, session_readers: usize) -> Self {
         Self {
             clients: ClientSet::default(),
             active: AtomicUsize::new(0),
@@ -315,19 +304,30 @@ impl Hub {
             in_flight: AtomicUsize::new(0),
             probe_first: AtomicBool::new(false),
             events,
-            listen_port,
-            destination,
             traffic: Traffic::default(),
             sent_per_second: AtomicU64::new(0),
             received_per_second: AtomicU64::new(0),
         }
     }
 
+    /// A client's place, or `None` to drop it: the forward is ending, or the
+    /// socket could not be duplicated (no descriptor free), which is reported.
+    fn admit(&self, stream: &TcpStream) -> Option<ClientSlot<'_>> {
+        match stream.try_clone() {
+            Ok(clone) => self.clients.register(clone),
+            Err(e) => {
+                self.status(
+                    "client_error",
+                    Some(format!("Could not accept a new client: {}", e)),
+                );
+                None
+            }
+        }
+    }
+
     fn status(&self, state: &'static str, message: Option<String>) {
         self.events.status(ForwardStatus {
             state,
-            listen_port: self.listen_port,
-            destination: self.destination.clone(),
             message,
             active_clients: self.active.load(Ordering::SeqCst),
             bytes_sent: self.traffic.sent.load(Ordering::Relaxed),
@@ -482,14 +482,44 @@ impl TrafficMeter {
 }
 
 /// Whether an `accept` failed only because this process or the system has no
-/// descriptor free right now.
+/// descriptor or buffer memory free right now.
 fn out_of_descriptors(error: &io::Error) -> bool {
     #[cfg(unix)]
-    let codes = [libc::EMFILE, libc::ENFILE];
-    // WSAEMFILE; Winsock has no separate system-wide code.
+    let codes = [libc::EMFILE, libc::ENFILE, libc::ENOBUFS, libc::ENOMEM];
+    // WSAEMFILE and WSAENOBUFS; Winsock has no separate system-wide code.
     #[cfg(windows)]
-    let codes = [10024];
+    let codes = [10024, 10055];
     error
+        .raw_os_error()
+        .is_some_and(|code| codes.contains(&code))
+}
+
+/// Whether an `accept` failed for the one client it was taking, which the
+/// listener drops before trying the next. Winsock reports a client that reset
+/// while queued, and Linux a client a firewall refused or one whose network
+/// went away (accept(2) says to retry on those).
+fn one_client_failed(error: &io::Error) -> bool {
+    use io::ErrorKind::{ConnectionAborted, ConnectionReset, Interrupted};
+    #[cfg(target_os = "linux")]
+    let codes = [
+        libc::EPROTO,
+        libc::EPERM,
+        libc::ENETDOWN,
+        libc::ENOPROTOOPT,
+        libc::EHOSTDOWN,
+        libc::ENONET,
+        libc::EHOSTUNREACH,
+        libc::EOPNOTSUPP,
+        libc::ENETUNREACH,
+    ];
+    #[cfg(all(unix, not(target_os = "linux")))]
+    let codes = [libc::EPROTO, libc::EPERM];
+    #[cfg(windows)]
+    let codes: [i32; 0] = [];
+    matches!(
+        error.kind(),
+        Interrupted | ConnectionAborted | ConnectionReset
+    ) || error
         .raw_os_error()
         .is_some_and(|code| codes.contains(&code))
 }
@@ -663,7 +693,9 @@ impl SshUplink {
                             "timed out",
                         ));
                     }
-                    wake::wait_readable(&fds, Duration::from_millis(50));
+                    // Short: tunnel threads read the same socket and usually
+                    // take the reply first, which this wait would then sleep out.
+                    wake::wait_readable(&fds, SHARED_WAIT_STEP);
                 }
                 Err(e) if e.code() == ErrorCode::Session(LIBSSH2_ERROR_TIMEOUT) => {
                     hub.probe_first.store(true, Ordering::SeqCst);
@@ -726,7 +758,8 @@ impl Uplink for SshUplink {
             if Instant::now() >= deadline {
                 return Probe::Dead;
             }
-            wake::wait_readable(&fds, Duration::from_millis(50));
+            // As short as an open's wait, for the same reason.
+            wake::wait_readable(&fds, SHARED_WAIT_STEP);
             // In this order: a stop that lands after the drain leaves its wake
             // for the next wait, and one before it is seen by the check.
             control.wake.drain();
@@ -793,11 +826,7 @@ impl Incoming {
                         hub.spawn_client(move |hub| serve(hub, stream, peer));
                     }
                     Err(e) if e.kind() == io::ErrorKind::WouldBlock => return Ok(()),
-                    Err(e)
-                        if matches!(
-                            e.kind(),
-                            io::ErrorKind::Interrupted | io::ErrorKind::ConnectionAborted
-                        ) => {}
+                    Err(e) if one_client_failed(&e) => {}
                     Err(e) if out_of_descriptors(&e) => {
                         hub.status(
                             "client_error",
@@ -881,7 +910,6 @@ fn supervise<U: Uplink>(
     control: ControlRx,
     timing: Timing,
 ) {
-    hub.status("listening", None);
     let lost = || format!("Lost the connection to the SSH server {}", uplink.server());
     let mut next_probe = Instant::now() + timing.probe_interval;
     let mut missed_probes = 0;
@@ -977,8 +1005,6 @@ fn supervise<U: Uplink>(
 fn launch<E: ForwardEvents>(
     uplink: Arc<SshUplink>,
     incoming: Incoming,
-    listen_port: u16,
-    destination: String,
     session_readers: usize,
     events: E,
 ) -> Result<SessionHandle, String> {
@@ -987,12 +1013,7 @@ fn launch<E: ForwardEvents>(
     // Non-blocking so one slow client can never stall the others: libssh2
     // serialises every call made on a session.
     uplink.session.set_blocking(false);
-    let hub = Arc::new(Hub::new(
-        Box::new(events),
-        listen_port,
-        destination,
-        session_readers,
-    ));
+    let hub = Arc::new(Hub::new(Box::new(events), session_readers));
     thread::spawn(move || supervise(hub, uplink, incoming, control, TIMING));
     Ok(handle)
 }
@@ -1033,11 +1054,10 @@ pub(crate) fn start_port_forward<E: ForwardEvents>(
     let uplink = Arc::new(SshUplink::connect(&gateway, verbosity)?);
     let debug = SshDebug::new(verbosity, gateway.addr());
     debug.at(1, || format!("Local forwarding listening on {listen}."));
-    let destination = format!("{}:{}", destination_host, destination_port);
     let serve: ServeTcp = {
         let uplink = Arc::clone(&uplink);
         Arc::new(move |hub, stream, peer| {
-            let Some(_slot) = hub.clients.register(&stream) else {
+            let Some(_slot) = hub.admit(&stream) else {
                 return;
             };
             debug.at(1, || {
@@ -1065,7 +1085,7 @@ pub(crate) fn start_port_forward<E: ForwardEvents>(
         })
     };
     let incoming = Incoming::Tcp { listener, serve };
-    launch(uplink, incoming, listen.port(), destination, 0, events)
+    launch(uplink, incoming, 0, events)
 }
 
 /// Run a SOCKS5 proxy on `listen` (`ssh -D`): each client names
@@ -1088,14 +1108,7 @@ pub(crate) fn start_dynamic_forward<E: ForwardEvents>(
         Arc::new(move |hub, stream, peer| serve_socks_client(hub, &uplink, stream, peer, &debug))
     };
     let incoming = Incoming::Tcp { listener, serve };
-    launch(
-        uplink,
-        incoming,
-        listen.port(),
-        "SOCKS".to_string(),
-        0,
-        events,
-    )
+    launch(uplink, incoming, 0, events)
 }
 
 fn serve_socks_client(
@@ -1105,7 +1118,7 @@ fn serve_socks_client(
     peer: SocketAddr,
     debug: &SshDebug,
 ) {
-    let Some(_slot) = hub.clients.register(&stream) else {
+    let Some(_slot) = hub.admit(&stream) else {
         return;
     };
     // An accepted socket inherits a non-blocking listener's mode on BSD and
@@ -1184,7 +1197,6 @@ pub(crate) fn start_remote_forward<E: ForwardEvents>(
     let destination = format!("{}:{}", destination_host, destination_port);
     let serve: ServeChannel = {
         let uplink = Arc::clone(&uplink);
-        let destination = destination.clone();
         Arc::new(move |hub, channel| {
             debug.at(1, || {
                 format!(
@@ -1200,7 +1212,7 @@ pub(crate) fn start_remote_forward<E: ForwardEvents>(
                     return;
                 }
             };
-            let Some(_slot) = hub.clients.register(&local) else {
+            let Some(_slot) = hub.admit(&local) else {
                 discard_channel(&uplink.session, channel);
                 return;
             };
@@ -1217,7 +1229,7 @@ pub(crate) fn start_remote_forward<E: ForwardEvents>(
         serve,
     };
     // The supervisor reads the session to accept, even with no client on it.
-    launch(uplink, incoming, remote_port, destination, 1, events)
+    launch(uplink, incoming, 1, events)
 }
 
 /// A recorder in place of the app, for the tests here.
@@ -1338,12 +1350,7 @@ mod tests {
         timing: Timing,
     ) -> (Arc<Hub>, Arc<Recorder>, SessionHandle) {
         let events = Arc::new(Recorder::default());
-        let hub = Arc::new(Hub::new(
-            Box::new(Arc::clone(&events)),
-            0,
-            "test".to_string(),
-            0,
-        ));
+        let hub = Arc::new(Hub::new(Box::new(Arc::clone(&events)), 0));
         let (handle, control) = control_channel().unwrap();
         {
             let hub = Arc::clone(&hub);
@@ -1402,7 +1409,7 @@ mod tests {
             let serve: ServeTcp = {
                 let clients_served = Arc::clone(&clients_served);
                 Arc::new(move |hub, mut stream, _peer| {
-                    let Some(_slot) = hub.clients.register(&stream) else {
+                    let Some(_slot) = hub.admit(&stream) else {
                         return;
                     };
                     stream.set_nonblocking(false).unwrap();
@@ -1412,12 +1419,7 @@ mod tests {
                 })
             };
             let events = Arc::new(Recorder::default());
-            let hub = Arc::new(Hub::new(
-                Box::new(Arc::clone(&events)),
-                port,
-                "test".to_string(),
-                0,
-            ));
+            let hub = Arc::new(Hub::new(Box::new(Arc::clone(&events)), 0));
             let (handle, control) = control_channel().unwrap();
             {
                 let hub = Arc::clone(&hub);
@@ -1571,11 +1573,11 @@ mod tests {
     fn only_a_shortage_of_descriptors_counts_as_one() {
         #[cfg(unix)]
         let (short, other) = (
-            vec![libc::EMFILE, libc::ENFILE],
+            vec![libc::EMFILE, libc::ENFILE, libc::ENOBUFS, libc::ENOMEM],
             [libc::EBADF, libc::EINVAL, libc::ENOTSOCK],
         );
         #[cfg(windows)]
-        let (short, other) = (vec![10024], [10004, 10009, 10038]);
+        let (short, other) = (vec![10024, 10055], [10004, 10009, 10038]);
         for code in short {
             assert!(out_of_descriptors(&io::Error::from_raw_os_error(code)));
         }
@@ -1583,6 +1585,27 @@ mod tests {
             assert!(!out_of_descriptors(&io::Error::from_raw_os_error(code)));
         }
         assert!(!out_of_descriptors(&io::Error::other("no OS code")));
+    }
+
+    /// A client that reset while queued must not end the forward: Winsock
+    /// reports it from `accept`. A broken listener still does.
+    #[test]
+    fn only_a_failed_client_is_skipped_by_accept() {
+        let reset = io::Error::from(io::ErrorKind::ConnectionReset);
+        assert!(one_client_failed(&reset));
+        #[cfg(unix)]
+        {
+            assert!(one_client_failed(&io::Error::from_raw_os_error(
+                libc::EPROTO
+            )));
+            for code in [libc::EBADF, libc::EINVAL, libc::ENOTSOCK] {
+                assert!(!one_client_failed(&io::Error::from_raw_os_error(code)));
+            }
+        }
+        #[cfg(windows)]
+        for code in [10009, 10022, 10038] {
+            assert!(!one_client_failed(&io::Error::from_raw_os_error(code)));
+        }
     }
 
     #[test]
@@ -1616,12 +1639,7 @@ mod tests {
     #[test]
     fn a_client_whose_thread_cannot_start_is_closed_and_not_counted() {
         let events = Arc::new(Recorder::default());
-        let hub = Arc::new(Hub::new(
-            Box::new(Arc::clone(&events)),
-            0,
-            "test".to_string(),
-            0,
-        ));
+        let hub = Arc::new(Hub::new(Box::new(Arc::clone(&events)), 0));
         let (stream, mut peer) = socket_pair();
         peer.set_read_timeout(Some(SOON)).unwrap();
 
@@ -1948,12 +1966,7 @@ mod tests {
 
     #[test]
     fn an_open_waits_for_the_probe_an_earlier_timeout_asked_for() {
-        let hub = Arc::new(Hub::new(
-            Box::new(Arc::new(Recorder::default())),
-            0,
-            "test".into(),
-            0,
-        ));
+        let hub = Arc::new(Hub::new(Box::new(Arc::new(Recorder::default())), 0));
         hub.probe_first.store(true, Ordering::SeqCst);
         let waited = {
             let hub = Arc::clone(&hub);
@@ -1979,10 +1992,10 @@ mod tests {
         let (b, mut b_peer) = socket_pair();
         b_peer.set_read_timeout(Some(SOON)).unwrap();
 
-        let slot = set.register(&b).expect("still open");
+        let slot = set.register(b.try_clone().unwrap()).expect("still open");
         set.close_all();
         assert_dropped(&mut b_peer);
-        assert!(set.register(&a).is_none());
+        assert!(set.register(a.try_clone().unwrap()).is_none());
         assert_eq!(set.sockets.len(), 1);
         drop(slot);
         assert!(set.sockets.is_empty());
@@ -2246,12 +2259,7 @@ mod live {
             for _ in 0..3 {
                 assert_eq!(uplink.probe(&control), Probe::Alive);
             }
-            let hub = Hub::new(
-                Box::new(Arc::new(Recorder::default())),
-                0,
-                "test".to_string(),
-                0,
-            );
+            let hub = Hub::new(Box::new(Arc::new(Recorder::default())), 0);
             let peer = "127.0.0.1:1".parse().unwrap();
             let channel = uplink.open_direct(&hub, SSHD.0, SSHD.1, peer);
             assert!(channel.is_ok());
@@ -2623,7 +2631,7 @@ mod live {
 
             let uplink = SshUplink::connect(&server(), 0).unwrap();
             uplink.session.set_blocking(false);
-            let hub = Hub::new(Box::new(Arc::new(Recorder::default())), 0, "test".into(), 0);
+            let hub = Hub::new(Box::new(Arc::new(Recorder::default())), 0);
             let peer = "127.0.0.1:1".parse().unwrap();
             for round in 0..5 {
                 let channel = uplink

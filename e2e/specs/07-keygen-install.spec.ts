@@ -14,12 +14,16 @@
  * 4. Create a connection that uses the key credential and confirm the
  *    shell opens (key auth works without prompting).
  *
+ * The first test saves the key path as `~/...`, as a user would type it: both
+ * Install and the login must read it from the home folder.
+ *
  * The second test does steps 2-4 with a key generated with a passphrase:
  * the credential has to keep it for the login to work.
  *
  * The third checks the Custom path field: `~/...` is refused with the form still
  * open, and an absolute path in a new folder is taken.
  */
+import { homedir } from "node:os";
 import { waitForAppReady } from "../helpers/app.js";
 import { TARGETS, waitForServers } from "../helpers/docker.js";
 import {
@@ -37,6 +41,8 @@ async function generateInstallAndConnect(input: {
   credentialName: string;
   connectionName: string;
   passphrase?: string;
+  /** Save the generated path as `~/...`. */
+  tildePath?: boolean;
 }): Promise<void> {
   // Step 2 — open Add Credential form, switch to SSH-key, generate.
   await navigateTo("credentials");
@@ -66,6 +72,12 @@ async function generateInstallAndConnect(input: {
     async () => (await pathInput.getValue()).length > 0,
     { timeout: 10_000, timeoutMsg: "Generated key path was not populated" },
   );
+  if (input.tildePath) {
+    const generated = await pathInput.getValue();
+    const home = `${homedir()}/`;
+    expect(generated.startsWith(home)).toBe(true);
+    await pathInput.setValue(`~/${generated.slice(home.length)}`);
+  }
   await (await browser.$(sel.credentialFormSubmit)).click();
   await (await browser.$(sel.credentialForm)).waitForExist({
     reverse: true,
@@ -134,6 +146,7 @@ describe("SSH keygen + install_public_key", () => {
     await generateInstallAndConnect({
       credentialName: "cred-07-key",
       connectionName: "conn-07-key",
+      tildePath: true,
     });
   });
 

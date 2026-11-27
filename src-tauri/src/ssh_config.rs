@@ -637,6 +637,14 @@ pub fn expand_tilde(path: &str, home: &Path) -> Option<PathBuf> {
     }
 }
 
+/// A local key path as the user typed it, with `~` and `~/` read as the home
+/// folder, as `ssh` does. Anything else, `~user` included, is left as typed.
+pub fn expand_home(path: &str) -> String {
+    dirs::home_dir()
+        .and_then(|home| expand_tilde(path, &home))
+        .map_or_else(|| path.to_string(), |p| p.to_string_lossy().into_owned())
+}
+
 /// The file names `arg` of an `Include` line stands for, in glob(3) order.
 /// `*` and `?` work in any path component and skip dotfiles unless the
 /// component starts with a dot; character classes are refused, not guessed.
