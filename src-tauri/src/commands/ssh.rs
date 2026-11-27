@@ -7,9 +7,9 @@ use crate::reconnect::ReconnectPolicy;
 use crate::session_log::SessionLogPlan;
 use crate::ssh::{
     bridge_via_jump_host, build_startup_command, open_authenticated_session,
-    open_authenticated_session_over_stream, open_jump_shell, open_shell, start_jump_shell,
-    start_ssh_session, AuthMethod, Endpoint, OpenShell, SessionContext, SessionMsg, ShellOptions,
-    ShellResilience, SshState,
+    open_authenticated_session_over_stream, open_jump_shell, open_shell, start_shell_session,
+    AuthMethod, Endpoint, OpenShell, SessionContext, SessionMsg, ShellOptions, ShellResilience,
+    SshState,
 };
 use crate::storage;
 use tauri::ipc::{Channel, InvokeResponseBody};
@@ -40,9 +40,7 @@ pub(crate) fn resolve_credential(
             },
             // Saved as typed, so `~/` is only expanded here, as `ssh` does.
             (None, Some(path)) => AuthMethod::Key {
-                path: dirs::home_dir()
-                    .and_then(|home| crate::ssh_config::expand_tilde(path, &home))
-                    .map_or_else(|| path.to_string(), |p| p.to_string_lossy().into_owned()),
+                path: crate::ssh_config::expand_home(path),
                 passphrase: passphrase.clone(),
             },
             (None, None) => {
@@ -307,7 +305,7 @@ pub async fn ssh_connect(
     // its worker thread starts, so nothing is inserted here.
     blocking(move || match &conn.kind {
         ConnectionKind::Direct => {
-            start_ssh_session(direct_target(&data, &conn)?, opts, ctx, resilience)
+            start_shell_session(None, direct_target(&data, &conn)?, opts, ctx, resilience)
         }
         ConnectionKind::PortForward {
             gateway_host,
@@ -336,7 +334,7 @@ pub async fn ssh_connect(
         }
         ConnectionKind::JumpShell { .. } => {
             let (gateway, destination) = jump_endpoints(&data, &conn)?;
-            start_jump_shell(gateway, destination, opts, ctx, resilience)
+            start_shell_session(Some(gateway), destination, opts, ctx, resilience)
         }
         ConnectionKind::RemoteForward {
             gateway_host,

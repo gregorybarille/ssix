@@ -3,7 +3,7 @@
  *
  * server-c is only on `private_a`, unreachable from the host. SSIX
  * must connect through server-a as a jump host. Validates the two-hop
- * worker in `src-tauri/src/ssh.rs` (`start_jump_shell`).
+ * worker in `src-tauri/src/ssh.rs` (`start_shell_session`).
  *
  * Form selector cheat-sheet for `jump_shell` mode:
  *   • `connection-form-hop-host`       — jump host

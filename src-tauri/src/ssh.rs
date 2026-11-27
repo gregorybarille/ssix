@@ -42,7 +42,7 @@ const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 /// libssh2 timeout for blocking calls during setup (handshake, auth, channel open).
 pub(crate) const SESSION_TIMEOUT_MS: u32 = 15_000;
 /// Idle wait per [`SHARED_WAIT_READERS`] threads reading the same session.
-const SHARED_WAIT_STEP: Duration = Duration::from_millis(10);
+pub(crate) const SHARED_WAIT_STEP: Duration = Duration::from_millis(10);
 const SHARED_WAIT_READERS: usize = 8;
 /// How long after its last byte a tunnel still counts as in use.
 const TUNNEL_IN_USE_FOR: Duration = Duration::from_secs(10);
@@ -508,7 +508,14 @@ pub(crate) fn build_startup_command(
 ) -> Option<String> {
     let mut parts = Vec::new();
     if let Some(path) = remote_path.map(str::trim).filter(|path| !path.is_empty()) {
-        parts.push(format!("cd {}", shell_single_quote(path)));
+        // `~` only expands outside quotes; SCP and SFTP read it the same way.
+        parts.push(match path.strip_prefix("~") {
+            Some("") => "cd".to_string(),
+            Some(rest) if rest.starts_with('/') => {
+                format!("cd ~/{}", shell_single_quote(&rest[1..]))
+            }
+            _ => format!("cd {}", shell_single_quote(path)),
+        });
     }
     if let Some(command) = login_command
         .map(str::trim)
@@ -957,41 +964,11 @@ fn authenticate_with_credential(
         AuthMethod::KeyMemory {
             private_key,
             passphrase,
-        } => authenticate_pubkey_memory(session, username, private_key, passphrase.as_deref())
+        } => session
+            .userauth_pubkey_memory(username, None, private_key, passphrase.as_deref())
             .map_err(key_failure),
         AuthMethod::Agent => crate::agent::authenticate(session, username, debug),
     }
-}
-
-#[cfg(not(windows))]
-fn authenticate_pubkey_memory(
-    session: &Session,
-    username: &str,
-    private_key: &str,
-    passphrase: Option<&str>,
-) -> Result<(), ssh2::Error> {
-    session.userauth_pubkey_memory(username, None, private_key, passphrase)
-}
-
-/// libssh2's WinCNG backend has no in-memory key auth, so stage the key in
-/// a 0600 temp file for the duration of the call.
-#[cfg(windows)]
-fn authenticate_pubkey_memory(
-    session: &Session,
-    username: &str,
-    private_key: &str,
-    passphrase: Option<&str>,
-) -> Result<(), ssh2::Error> {
-    let path = std::env::temp_dir().join(format!("ssix-key-{}.tmp", uuid::Uuid::new_v4()));
-    crate::storage::atomic_write(&path, private_key.as_bytes(), Some(0o600)).map_err(|_| {
-        ssh2::Error::new(
-            ssh2::ErrorCode::Session(-1),
-            "failed to write temporary SSH key",
-        )
-    })?;
-    let result = session.userauth_pubkey_file(username, None, &path, passphrase);
-    let _ = std::fs::remove_file(&path);
-    result
 }
 
 /// A shell ready for [`run_io_loop`].
@@ -1114,36 +1091,48 @@ pub struct ShellResilience {
     pub log: Option<SessionLogPlan>,
 }
 
-pub fn start_ssh_session(
+/// Open an interactive shell on `target`, through the jump host `gateway`
+/// when there is one (`ssh -J`), and start its worker.
+pub fn start_shell_session(
+    gateway: Option<Endpoint>,
     target: Endpoint,
     opts: ShellOptions,
     ctx: SessionContext,
     resilience: ShellResilience,
 ) -> Result<SessionHandle, String> {
     let _prompts = crate::auth_prompt::PromptScope::enter(&ctx.output, None);
-    let shell = open_shell(&target, &opts)?;
+    let shell = match &gateway {
+        Some(gateway) => open_jump_shell(gateway, &target, &opts)?,
+        None => open_shell(&target, &opts)?,
+    };
     let (handle, control) = control_channel()?;
     ctx.register(handle.clone())?;
+    let (source, via) = match &gateway {
+        Some(gateway) => ("jump_host", format!(" via jump host {}", gateway.addr())),
+        None => ("ssh", String::new()),
+    };
     ctx.log(
         "info",
-        "ssh",
+        source,
         format!(
-            "session {} opened to {}@{}",
+            "session {} opened to {}@{}{}",
             ctx.session_id,
             target.username,
-            target.addr()
+            target.addr(),
+            via
         ),
     );
     let banner = if opts.verbosity >= 1 {
         format!(
-            "\x1b[2m[SSIX] Connected to {} as {}\x1b[0m\r\n",
+            "\x1b[2m[SSIX] Connected to {}{} as {}\x1b[0m\r\n",
             target.addr(),
+            via,
             target.username
         )
     } else {
         String::new()
     };
-    spawn_shell_worker(shell, ctx, control, banner, "ssh", resilience);
+    spawn_shell_worker(shell, ctx, control, banner, source, resilience);
     Ok(handle)
 }
 
@@ -2029,44 +2018,6 @@ fn bridge_unless_cancelled(
     }
 }
 
-/// Open an interactive shell on `destination`, reached through the jump host
-/// `gateway` (`ssh -J`).
-pub fn start_jump_shell(
-    gateway: Endpoint,
-    destination: Endpoint,
-    opts: ShellOptions,
-    ctx: SessionContext,
-    resilience: ShellResilience,
-) -> Result<SessionHandle, String> {
-    let _prompts = crate::auth_prompt::PromptScope::enter(&ctx.output, None);
-    let shell = open_jump_shell(&gateway, &destination, &opts)?;
-    let (handle, control) = control_channel()?;
-    ctx.register(handle.clone())?;
-    ctx.log(
-        "info",
-        "jump_host",
-        format!(
-            "session {} opened: {}@{} via {}",
-            ctx.session_id,
-            destination.username,
-            destination.addr(),
-            gateway.addr()
-        ),
-    );
-    let banner = if opts.verbosity >= 1 {
-        format!(
-            "\x1b[2m[SSIX] Connected to {} via jump host {} as {}\x1b[0m\r\n",
-            destination.addr(),
-            gateway.addr(),
-            destination.username
-        )
-    } else {
-        String::new()
-    };
-    spawn_shell_worker(shell, ctx, control, banner, "jump_host", resilience);
-    Ok(handle)
-}
-
 #[cfg(test)]
 mod idle_wait_tests {
     use super::*;
@@ -2127,7 +2078,6 @@ mod credential_failure_tests {
             (-19, "Waiting for USERAUTH response"),
             (-19, "Callback returned error"),
             (-19, "Invalid public key, too short"),
-            (-1, "failed to write temporary SSH key"),
         ] {
             assert!(
                 matches!(failure(code, reason), CredentialFailure::Local(_)),
@@ -2493,6 +2443,20 @@ mod tests {
         assert_eq!(
             build_startup_command(Some("/srv/app"), Some("sudo su - deploy")),
             Some("cd '/srv/app' && sudo su - deploy".into())
+        );
+    }
+
+    #[test]
+    fn test_build_startup_command_expands_a_leading_tilde() {
+        assert_eq!(
+            build_startup_command(Some("~/my app"), Some("tmux attach")),
+            Some("cd ~/'my app' && tmux attach".into())
+        );
+        assert_eq!(build_startup_command(Some("~"), None), Some("cd".into()));
+        // `~user` is not the login folder, so it stays quoted.
+        assert_eq!(
+            build_startup_command(Some("~bob/x"), None),
+            Some("cd '~bob/x'".into())
         );
     }
 

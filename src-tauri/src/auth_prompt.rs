@@ -6,11 +6,10 @@
 //! by `AuthEvent` in `src/lib/authPrompt.ts`), and waits for `ssh_auth_answer`
 //! or `ssh_auth_cancel`.
 //!
-//! Only a shell has a pane to ask in. `start_ssh_session`, `start_jump_shell`
-//! and a reconnect attempt (`reopen_shell`) enter a [`PromptScope`] for the
-//! thread doing the connecting, which is why `authenticate` needs no extra
-//! parameter and why SCP, script runs and forwards refuse such a server with a
-//! clear message.
+//! Only a shell has a pane to ask in. `start_shell_session` and a reconnect
+//! attempt (`reopen_shell`) enter a [`PromptScope`] for the thread doing the
+//! connecting, which is why `authenticate` needs no extra parameter and why
+//! SCP, script runs and forwards refuse such a server with a clear message.
 //!
 //! A reconnect attempt can be abandoned while a prompt waits: closing the pane
 //! or cancelling the reconnect sets its flag, which ends the wait as Cancel

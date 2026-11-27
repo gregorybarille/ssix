@@ -55,19 +55,18 @@ interface EditorSubmitOptions<K extends string> {
   validate: () => Partial<Record<K, string>>;
   setFieldErrors: (errors: Partial<Record<K, string>>) => void;
   save: () => Promise<unknown>;
-  guard: EditorFormGuard;
   onClose: () => void;
 }
 
 /**
  * The form's save, as the `useActionState` triple: stop at inline errors, save,
- * and close without the discard prompt, or stay open with the reason it failed.
+ * and close directly (so without the discard prompt), or stay open with the
+ * reason it failed.
  */
 export function useEditorSubmit<K extends string>({
   validate,
   setFieldErrors,
   save,
-  guard,
   onClose,
 }: EditorSubmitOptions<K>) {
   return useActionState<{ error: string | null }>(
@@ -79,7 +78,6 @@ export function useEditorSubmit<K extends string>({
       }
       try {
         await save();
-        guard.markSaved();
         onClose();
         return { error: null };
       } catch (err) {

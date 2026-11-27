@@ -410,6 +410,8 @@ fn derive_public_key_for_credential(credential_id: &str) -> Result<String, Strin
             if let Some(pk) = private_key.as_deref() {
                 public_key_from_private_text(pk, passphrase.as_deref())
             } else if let Some(path) = private_key_path.as_deref() {
+                // Saved as typed, as for logging in (`resolve_credential`).
+                let path = &crate::ssh_config::expand_home(path);
                 let pub_path = format!("{}.pub", path);
                 if let Ok(contents) = std::fs::read_to_string(&pub_path) {
                     let line = contents.lines().next().unwrap_or("").trim().to_string();
@@ -693,6 +695,37 @@ mod tests {
         assert_eq!(std::fs::read_to_string(&public).unwrap(), "other key");
         assert!(!path.exists());
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_key_path_under_home_is_read_from_home() {
+        crate::storage::test_support::with_isolated_data_dir(|| {
+            let typed = format!("~/.ssix-missing-test-key-{}", uuid::Uuid::new_v4());
+            let cred = crate::models::Credential::new(
+                "key".to_string(),
+                "me".to_string(),
+                crate::models::CredentialKind::SshKey {
+                    private_key_path: Some(typed.clone()),
+                    private_key: None,
+                    passphrase: None,
+                },
+            );
+            let id = cred.id.clone();
+            crate::storage::with_data_mut(|data| {
+                data.credentials.push(cred);
+                Ok(())
+            })
+            .unwrap();
+
+            let err = derive_public_key_for_credential(&id).unwrap_err();
+            let home = dirs::home_dir().unwrap();
+            let expanded = home.join(&typed[2..]);
+            assert!(
+                err.contains(&*expanded.to_string_lossy()),
+                "{err} should name {}",
+                expanded.display()
+            );
+        });
     }
 
     #[test]

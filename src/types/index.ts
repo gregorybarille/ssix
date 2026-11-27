@@ -584,8 +584,11 @@ export interface FileEntry {
   name: string;
   path: string;
   kind: FileKind;
-  /** A symlink to a folder, which opens like a folder. */
-  target_is_dir: boolean;
+  /**
+   * A symlink to a folder, which opens like a folder. `null` for a remote link
+   * not looked up, in a folder holding many.
+   */
+  target_is_dir: boolean | null;
   size: number | null;
   /** Seconds since the Unix epoch. */
   modified: number | null;

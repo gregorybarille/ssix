@@ -43,7 +43,6 @@ export function SnippetForm({ snippet, onSubmit, onClose, onGuardChange }: Snipp
     },
     setFieldErrors,
     save: () => onSubmit({ name, command, tags }),
-    guard,
     onClose,
   });
 

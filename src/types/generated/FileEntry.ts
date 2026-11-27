@@ -6,9 +6,10 @@ import type { FileKind } from "./FileKind";
  */
 export type FileEntry = { name: string, path: string, kind: FileKind, 
 /**
- * A symlink to a folder, which opens like a folder.
+ * A symlink to a folder, which opens like a folder. `None` for a remote
+ * link not looked up: a folder with many links would cost a round trip each.
  */
-target_is_dir: boolean, size: number | null, 
+target_is_dir: boolean | null, size: number | null, 
 /**
  * Seconds since the Unix epoch.
  */

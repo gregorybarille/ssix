@@ -2,9 +2,9 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { renderHook } from "@testing-library/react";
+import { isTypingSurface } from "@/lib/focus";
 import {
   useGlobalShortcuts,
-  isTypingSurface,
   blockedByTypingSurface,
   SHORTCUTS,
   FIND_COMBO,

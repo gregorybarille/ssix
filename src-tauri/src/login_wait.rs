@@ -288,7 +288,6 @@ mod tests {
             (-18, "Username/PublicKey combination invalid"),
             (-19, "Invalid signature for supplied public key"),
             (-16, "Unable to extract public key from private key file"),
-            (-1, "failed to write temporary SSH key"),
         ] {
             assert!(!failed(code, reason), "{reason}");
         }

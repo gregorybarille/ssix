@@ -27,6 +27,9 @@ use ts_rs::TS;
 
 /// Rows one pane shows; a folder with more says so.
 pub const LISTING_LIMIT: usize = 10_000;
+/// Most symlinks in one remote folder whose targets a listing looks up, one
+/// round trip each: about 4 s at 40 ms. Beyond it none are looked up.
+const LINK_LOOKUP_LIMIT: usize = 100;
 /// How long one SFTP call may take on a browsing session.
 const CALL_TIMEOUT_MS: u32 = 30_000;
 /// `LIBSSH2_ERROR_FILE`: ssh2's "no more entries" from `File::readdir`.
@@ -279,7 +282,7 @@ fn validate_mode(mode: u32) -> Result<(), String> {
 }
 
 fn sort_entries(entries: &mut [FileEntry]) {
-    let folder_first = |e: &FileEntry| !(e.kind == FileKind::Dir || e.target_is_dir);
+    let folder_first = |e: &FileEntry| !(e.kind == FileKind::Dir || e.target_is_dir == Some(true));
     entries.sort_by(|a, b| {
         folder_first(a)
             .cmp(&folder_first(b))
@@ -377,23 +380,34 @@ pub(super) fn list_remote(sftp: &Sftp, home: &str, path: &str) -> Result<FileLis
         };
         let path = join_remote(&dir, name);
         let kind = remote_kind(&stat);
-        let target_is_dir = kind == FileKind::Symlink
-            && sftp
-                .stat(Path::new(&path))
-                .map(|target| target.is_dir())
-                .unwrap_or(false);
         entries.push(FileEntry {
             name: name.to_string(),
             path,
             kind,
-            target_is_dir,
+            target_is_dir: (kind != FileKind::Symlink).then_some(false),
             size: stat.size,
             modified: stat.mtime,
             mode: stat.perm.map(permission_bits),
         });
     }
+    look_up_link_targets(&mut entries, |path| {
+        sftp.stat(Path::new(path))
+            .is_ok_and(|target| target.is_dir())
+    });
     let parent = remote_parent(&dir);
     Ok(finish_listing(dir, parent, entries, omitted))
+}
+
+/// Fill in where the symlinks lead, unless there are more than
+/// `LINK_LOOKUP_LIMIT`: then they all stay unknown, never some of each.
+fn look_up_link_targets(entries: &mut [FileEntry], is_dir: impl Fn(&str) -> bool) {
+    let links = entries.iter().filter(|e| e.target_is_dir.is_none()).count();
+    if links > LINK_LOOKUP_LIMIT {
+        return;
+    }
+    for entry in entries.iter_mut().filter(|e| e.target_is_dir.is_none()) {
+        entry.target_is_dir = Some(is_dir(&entry.path));
+    }
 }
 
 fn mkdir_remote(sftp: &Sftp, dir: &str, name: &str) -> Result<String, String> {
@@ -609,7 +623,7 @@ pub(super) fn list_local(path: &str) -> Result<FileListing, String> {
             name,
             path,
             kind,
-            target_is_dir: kind == FileKind::Symlink && child.is_dir(),
+            target_is_dir: Some(kind == FileKind::Symlink && child.is_dir()),
             size: Some(meta.len()),
             modified: local_mtime(&meta),
             mode: local_mode(&meta),
@@ -858,9 +872,35 @@ mod tests {
         let listing = list_local(tmp.0.to_str().unwrap()).unwrap();
         let find = |name: &str| listing.entries.iter().find(|e| e.name == name).unwrap();
         assert_eq!(find("to-dir").kind, FileKind::Symlink);
-        assert!(find("to-dir").target_is_dir);
+        assert_eq!(find("to-dir").target_is_dir, Some(true));
         assert_eq!(find("dangling").kind, FileKind::Symlink);
-        assert!(!find("dangling").target_is_dir);
+        assert_eq!(find("dangling").target_is_dir, Some(false));
+    }
+
+    fn link(name: &str) -> FileEntry {
+        FileEntry {
+            name: name.to_string(),
+            path: format!("/d/{name}"),
+            kind: FileKind::Symlink,
+            target_is_dir: None,
+            size: None,
+            modified: None,
+            mode: None,
+        }
+    }
+
+    #[test]
+    fn link_targets_are_looked_up_only_up_to_the_limit() {
+        let mut few: Vec<FileEntry> = vec![link("to-dir"), link("to-file")];
+        look_up_link_targets(&mut few, |path| path.ends_with("dir"));
+        assert_eq!(few[0].target_is_dir, Some(true));
+        assert_eq!(few[1].target_is_dir, Some(false));
+
+        let mut many: Vec<FileEntry> = (0..=LINK_LOOKUP_LIMIT)
+            .map(|i| link(&format!("l{i}")))
+            .collect();
+        look_up_link_targets(&mut many, |_| panic!("one round trip per link"));
+        assert!(many.iter().all(|e| e.target_is_dir.is_none()));
     }
 
     #[test]
@@ -870,7 +910,7 @@ mod tests {
                 name: format!("f{:06}", i),
                 path: format!("/f{:06}", i),
                 kind: FileKind::File,
-                target_is_dir: false,
+                target_is_dir: Some(false),
                 size: None,
                 modified: None,
                 mode: None,

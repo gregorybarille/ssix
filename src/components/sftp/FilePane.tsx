@@ -18,6 +18,7 @@ import {
   FolderPlus,
   FolderSymlink,
   KeyRound,
+  Link,
   Pencil,
   RefreshCw,
   SquarePen,
@@ -37,6 +38,7 @@ import {
   formatModeSymbolic,
   formatModified,
   formatSize,
+  mayOpenAsFolder,
   opensAsFolder,
 } from "@/lib/sftp";
 import { cn } from "@/lib/utils";
@@ -45,12 +47,15 @@ import type { FileEntry } from "@/types";
 
 function entryIcon(entry: FileEntry): LucideIcon {
   if (entry.kind === "dir") return Folder;
-  if (entry.kind === "symlink") return entry.target_is_dir ? FolderSymlink : FileSymlink;
+  if (entry.kind === "symlink") {
+    if (entry.target_is_dir === null) return Link;
+    return entry.target_is_dir ? FolderSymlink : FileSymlink;
+  }
   return File;
 }
 
 function editable(entry: FileEntry): boolean {
-  return entry.kind === "file" || (entry.kind === "symlink" && !entry.target_is_dir);
+  return entry.kind === "file" || (entry.kind === "symlink" && entry.target_is_dir !== true);
 }
 
 function chmodAllowed(entry: FileEntry): boolean {
@@ -222,14 +227,14 @@ export function FilePane({ side, title, placeholder }: FilePaneProps) {
   const canCopy = connected && otherPath !== "" && chosen.length > 0;
 
   const openEntry = (entry: FileEntry) => {
-    if (opensAsFolder(entry)) void navigate(side, entry.path);
+    if (mayOpenAsFolder(entry)) void navigate(side, entry.path);
   };
   const roving = useRovingFocus({
     itemCount: entries.length,
     onActivate: (index) => {
       const entry = entries[index];
       if (!entry) return;
-      if (opensAsFolder(entry)) openEntry(entry);
+      if (mayOpenAsFolder(entry)) openEntry(entry);
       else select(side, entry.path, "replace");
     },
   });
@@ -258,7 +263,7 @@ export function FilePane({ side, title, placeholder }: FilePaneProps) {
     selectedPaths.has(entry.path) ? chosen : [entry];
   const buildItems = (entry: FileEntry): ContextMenuItem[] => {
     const items: ContextMenuItem[] = [];
-    if (opensAsFolder(entry)) {
+    if (mayOpenAsFolder(entry)) {
       items.push({
         label: "Open",
         icon: <Folder className="h-3.5 w-3.5" />,

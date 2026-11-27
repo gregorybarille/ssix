@@ -72,9 +72,14 @@ export function formatModeSymbolic(mode: number | null): string {
   return triad(6, 0o4000, "s") + triad(3, 0o2000, "s") + triad(0, 0o1000, "t");
 }
 
-/** Whether a row opens as a folder. */
+/** Whether a row is known to be a folder, or a link to one. */
 export function opensAsFolder(entry: FileEntry): boolean {
-  return entry.kind === "dir" || entry.target_is_dir;
+  return entry.kind === "dir" || entry.target_is_dir === true;
+}
+
+/** Whether opening a row tries it as a folder: also a link not looked up. */
+export function mayOpenAsFolder(entry: FileEntry): boolean {
+  return opensAsFolder(entry) || entry.target_is_dir === null;
 }
 
 /** The last component of a path from either side, for showing a name. */

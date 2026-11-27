@@ -47,9 +47,7 @@ const connectCalls = () => invokeMock.mock.calls.filter(([cmd]) => cmd === "ssh_
 function emitStatus(sessionId: string, status: Partial<ForwardStatus>) {
   handlers.get(forwardStatusEvent(sessionId))?.({
     payload: {
-      state: "listening",
-      listen_port: 1080,
-      destination: "SOCKS clients",
+      state: "traffic",
       message: null,
       active_clients: 0,
       bytes_sent: 0,

@@ -61,8 +61,9 @@ pub struct FileEntry {
     pub name: String,
     pub path: String,
     pub kind: FileKind,
-    /// A symlink to a folder, which opens like a folder.
-    pub target_is_dir: bool,
+    /// A symlink to a folder, which opens like a folder. `None` for a remote
+    /// link not looked up: a folder with many links would cost a round trip each.
+    pub target_is_dir: Option<bool>,
     #[cfg_attr(test, ts(type = "number | null"))]
     pub size: Option<u64>,
     /// Seconds since the Unix epoch.
