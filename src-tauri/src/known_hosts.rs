@@ -85,7 +85,7 @@ fn prefer_recorded_key_types_in(
 ) -> Result<Option<String>, String> {
     let recorded = {
         let _guard = KNOWN_HOSTS_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        recorded_keys(&load(session, path)?, &entry_name(host, port))?
+        recorded_keys(&load(session, path)?, &entry_name(host, port))?.keys
     };
     let supported = session
         .supported_algs(MethodType::HostKey)
@@ -190,9 +190,11 @@ pub(crate) fn check_and_record(
                 "The host key for {host}:{port} does not match a hashed entry for it in {path}. \
                  This happens when a server is reinstalled or re-keyed, but it can also mean \
                  the connection is being intercepted. New key: {fingerprint}. If you expect \
-                 this change, remove the old entry with ssh-keygen -R '{name}' -f '{path}' \
+                 this change, remove the old entry with ssh-keygen -R {quoted_name} -f {quoted_path} \
                  and connect again.",
                 path = path.display(),
+                quoted_name = quote_arg(&name),
+                quoted_path = quote_arg(&path.display().to_string()),
             ))
         }
         (_, Some(trusted)) if trusted == fingerprint => {
@@ -249,51 +251,74 @@ enum Lookup {
     /// gained a key type, but an attacker with a fresh key looks the same, and
     /// accepting it would hand them the saved password.
     NewKeyType { offered: String, recorded: String },
-    /// No plain entry has this name, a hashed one (`ssh-keygen -H`) does, and
-    /// none of those holds this key.
+    /// Entries of this name hold other keys, and one of them is a hashed line
+    /// (`ssh-keygen -H`), which trusting a key cannot replace.
     HashedDiffers,
 }
 
-/// The key blobs of the entries named exactly `name`. libssh2's own check would
-/// fall back from `[host]:port` to the plain host entry, and trusting a key
+/// The keys recorded for exactly `name`, and whether a hashed line holds one.
+struct Recorded {
+    keys: Vec<Vec<u8>>,
+    hashed: bool,
+}
+
+/// The key blobs of the entries named exactly `name`. libssh2's own check
+/// would fall back from `[host]:port` to the plain host entry, and trusting a key
 /// replaces exact names only, so it could report a change that never clears.
-fn recorded_keys(hosts: &ssh2::KnownHosts, name: &str) -> Result<Vec<Vec<u8>>, String> {
-    let mut keys = Vec::new();
-    for entry in hosts
+/// A hashed line names no host, so its key counts when libssh2, which reads
+/// hashed names and without a port compares this exact name only, finds it
+/// recorded for `name`.
+fn recorded_keys(hosts: &ssh2::KnownHosts, name: &str) -> Result<Recorded, String> {
+    let decode = |entry: &ssh2::Host| {
+        base64::engine::general_purpose::STANDARD
+            .decode(entry.key())
+            .map_err(|e| format!("known_hosts entry for {} is not base64: {}", name, e))
+    };
+    let entries = hosts
         .hosts()
-        .map_err(|e| format!("known_hosts iteration failed: {}", e))?
-    {
-        if entry.name() == Some(name) {
-            keys.push(
-                base64::engine::general_purpose::STANDARD
-                    .decode(entry.key())
-                    .map_err(|e| format!("known_hosts entry for {} is not base64: {}", name, e))?,
-            );
+        .map_err(|e| format!("known_hosts iteration failed: {}", e))?;
+    // One pass first: most hosts have no hashed line, and each check hashes
+    // the name once per hashed line. A NUL cannot be in the file, nor passed.
+    let named_hashed = !name.contains('\0')
+        && entries.iter().any(|entry| entry.name().is_none())
+        // No recorded key is one byte long: this only asks whether `name` is there.
+        && !matches!(hosts.check(name, &[0]), ssh2::CheckResult::NotFound);
+    let mut recorded = Recorded {
+        keys: Vec::new(),
+        hashed: false,
+    };
+    for entry in &entries {
+        match entry.name() {
+            Some(entry_name) if entry_name == name => recorded.keys.push(decode(entry)?),
+            None if named_hashed => {
+                let key = decode(entry)?;
+                if matches!(hosts.check(name, &key), ssh2::CheckResult::Match) {
+                    recorded.keys.push(key);
+                    recorded.hashed = true;
+                }
+            }
+            _ => {}
         }
     }
-    Ok(keys)
+    Ok(recorded)
 }
 
 /// Compare `key` against the entries named exactly `name`. libssh2's own check
 /// compares raw bytes against whatever key is stored, which tells nothing about
 /// the key's type, so the type is read from the key itself.
 fn lookup(hosts: &ssh2::KnownHosts, name: &str, key: &[u8]) -> Result<Lookup, String> {
-    let recorded = recorded_keys(hosts, name)?;
+    let Recorded {
+        keys: recorded,
+        hashed,
+    } = recorded_keys(hosts, name)?;
     if recorded.is_empty() {
-        // libssh2 reads hashed names, and without a port compares this exact
-        // name only. A name holding NUL cannot be in the file, nor passed.
-        if name.contains('\0') {
-            return Ok(Lookup::Unknown);
-        }
-        return match hosts.check(name, key) {
-            ssh2::CheckResult::Match => Ok(Lookup::Match),
-            ssh2::CheckResult::Mismatch => Ok(Lookup::HashedDiffers),
-            ssh2::CheckResult::NotFound => Ok(Lookup::Unknown),
-            ssh2::CheckResult::Failure => Err(format!("Checking {} in known_hosts failed", name)),
-        };
+        return Ok(Lookup::Unknown);
     }
     if recorded.iter().any(|stored| stored == key) {
         return Ok(Lookup::Match);
+    }
+    if hashed {
+        return Ok(Lookup::HashedDiffers);
     }
     if recorded
         .iter()
@@ -308,6 +333,15 @@ fn lookup(hosts: &ssh2::KnownHosts, name: &str, key: &[u8]) -> Result<Lookup, St
         offered: key_type_name(key),
         recorded: types.join(" and "),
     })
+}
+
+/// `arg` quoted for the shell the user would paste a command into.
+fn quote_arg(arg: &str) -> String {
+    if cfg!(windows) {
+        format!("\"{}\"", arg)
+    } else {
+        crate::commands::ssh_keygen::shell_single_quote(arg)
+    }
 }
 
 fn key_type_name(blob: &[u8]) -> String {
@@ -454,6 +488,24 @@ mod tests {
         assert_eq!(fs::read_to_string(&path).unwrap().lines().count(), 3);
         // Saving that kept the hashed lines working.
         check(&path, "example.com", 22, b"key-one").unwrap();
+    }
+
+    /// A server asked for a hashed line's key type first presents the key
+    /// that line holds, not one libssh2 happens to prefer.
+    #[test]
+    fn a_hashed_entry_puts_its_key_type_first() {
+        let path = temp_path("hashed-order");
+        fs::write(&path, "|1|AAECAwQFBgcICQoLDA0ODxAREhM=|nnUK16ANsXd3hL31YfAkGOluSjU= ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAABAgMEBQYHCAkKCwwNDg8QERITFBUWFxgZGhscHR4f\n").unwrap();
+        let session = Session::new().unwrap();
+        let recorded = recorded_keys(&load(&session, &path).unwrap(), "example.com").unwrap();
+        assert!(recorded.hashed);
+        assert_eq!(recorded.keys.len(), 1);
+        assert_eq!(
+            host_key_order(&recorded.keys, &["ecdsa-sha2-nistp256", "ssh-ed25519"]).as_deref(),
+            Some("ssh-ed25519,ecdsa-sha2-nistp256")
+        );
+        let other = recorded_keys(&load(&session, &path).unwrap(), "other.example").unwrap();
+        assert!(other.keys.is_empty() && !other.hashed);
     }
 
     #[test]

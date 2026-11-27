@@ -233,23 +233,12 @@ fn diff_in(repo_path: &Path, data: &AppData) -> Result<GitSyncDiff, String> {
     let at_risk = files_at_risk(repo_path, &files, false)?;
     export_snapshot(repo_path, &files, &at_risk)?;
 
-    let unstaged = git(
-        repo_path,
-        &["diff", "--no-ext-diff", "--no-color", "--", EXPORT_DIR],
-    )?
-    .stdout;
-    let staged = git(
-        repo_path,
-        &[
-            "diff",
-            "--cached",
-            "--no-ext-diff",
-            "--no-color",
-            "--",
-            EXPORT_DIR,
-        ],
-    )?
-    .stdout;
+    let diff = |extra: &[&str]| {
+        let args = [&["diff"], extra, PLAIN_DIFF, &["--", EXPORT_DIR]].concat();
+        git(repo_path, &args).map(|output| output.stdout)
+    };
+    let unstaged = diff(&[])?;
+    let staged = diff(&["--cached"])?;
     Ok(GitSyncDiff {
         staged,
         unstaged,
@@ -498,6 +487,17 @@ fn read_last_export(repo_path: &Path) -> HashMap<String, String> {
         .and_then(|bytes| serde_json::from_slice(&bytes).ok())
         .unwrap_or_default()
 }
+
+/// Keep the user's diff settings (`color.ui`, `diff.external`, `diff.noprefix`,
+/// `diff.mnemonicPrefix`, `diff.relative`, textconv drivers) out of the panel.
+const PLAIN_DIFF: &[&str] = &[
+    "--no-color",
+    "--no-ext-diff",
+    "--no-textconv",
+    "--no-relative",
+    "--src-prefix=a/",
+    "--dst-prefix=b/",
+];
 
 /// `git status` of the snapshot folder. `--untracked-files=all` overrides a
 /// `status.showUntrackedFiles=no`, which would hide a first export.
@@ -1184,11 +1184,12 @@ mod tests {
         let Some(fx) = Fixture::new(true) else { return };
         run(&fx.repo, &["config", "color.ui", "always"]);
         run(&fx.repo, &["config", "diff.external", "false"]);
+        run(&fx.repo, &["config", "diff.noprefix", "true"]);
         sync_in(&fx.repo, &data_with("one", "origin", None), &[]).unwrap();
 
         let diff = diff_in(&fx.repo, &data_with("two", "origin", None)).unwrap();
         assert!(
-            diff.unstaged.starts_with("diff --git"),
+            diff.unstaged.starts_with("diff --git a/"),
             "{:?}",
             diff.unstaged
         );

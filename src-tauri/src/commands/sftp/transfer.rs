@@ -702,6 +702,25 @@ fn enter_folder(
 /// The entry the user picked is followed if it is a symlink, as `scp` does.
 /// Inside a folder symlinks are skipped: following them could leave the
 /// tree or go round in a loop.
+/// Fail now for a source the plan could not read, rather than after asking
+/// whether to replace the target.
+fn readable_local(source: &Path) -> Result<(), String> {
+    let unreadable = |e: std::io::Error| format!("Could not read {}: {}", source.display(), e);
+    if fs::metadata(source).map_err(unreadable)?.is_dir() {
+        fs::read_dir(source).map_err(unreadable)?;
+    }
+    Ok(())
+}
+
+/// [`readable_local`] for a server path.
+fn readable_remote(sftp: &Sftp, source: &str) -> Result<(), String> {
+    let unreadable = |e: ssh2::Error| call_error("Could not read", source, &e);
+    if sftp.stat(Path::new(source)).map_err(unreadable)?.is_dir() {
+        sftp.opendir(Path::new(source)).map_err(unreadable)?;
+    }
+    Ok(())
+}
+
 fn plan_local(root: &Path, cancel: &AtomicBool) -> Result<Plan, Stop> {
     let meta =
         fs::metadata(root).map_err(|e| format!("Could not read {}: {}", root.display(), e))?;
@@ -872,6 +891,7 @@ fn run_upload(
     let name = local_entry_name(source)?;
     validate_name(name)?;
     let target = join_remote(&input.target_dir, name);
+    readable_local(source)?;
 
     // Before the plan: asking costs one call, a folder's plan may cost minutes.
     if let Some(existing) = missing_or(sftp.lstat(Path::new(&target)))
@@ -910,23 +930,22 @@ fn upload_plan(
         |run, rel, mode| {
             let mut file = fs::File::open(local_under(source, rel))
                 .map_err(|e| format!("Could not read {}: {}", source.display(), e))?;
-            let destination = RemoteTarget::resolve(sftp, &remote_under(target, rel))?;
-            if let Some(first) = clashes.written_as(rel, destination.existing.as_ref()) {
-                run.skipped += 1;
-                run.notes.push(format!(
-                    "{rel} was skipped: the server took it for {first}, which differs only by case"
-                ));
-                return Ok(false);
+            let path = remote_under(target, rel);
+            let destination = RemoteTarget::resolve(sftp, &path)?;
+            if let Some(first) = clashes.written_as(rel, destination.existing.is_some()) {
+                if !listed_exactly(sftp, &path)? {
+                    run.skipped += 1;
+                    run.notes.push(format!(
+                        "{rel} was skipped: the server took it for {first}, which differs only by case"
+                    ));
+                    return Ok(false);
+                }
             }
             let staged = stage_upload(session, sftp, &mut file, &destination, mode, &mut |n| {
                 run.on_chunk(n)
             })?;
             commit_upload(session, sftp, &staged, &destination)?;
-            if clashes.watches(rel) {
-                if let Ok(stat) = sftp.stat(Path::new(&destination.path)) {
-                    clashes.record(rel, &stat);
-                }
-            }
+            clashes.record(rel);
             Ok(true)
         },
         |path, source| seal_remote_dir(sftp, path, source),
@@ -934,12 +953,14 @@ fn upload_plan(
 }
 
 /// Files of an upload whose names differ only by case, which a server on a Mac
-/// or Windows disk takes for one file. SFTP gives no inode to tell, so a file
-/// found where such a name was just written, with its size and time, is taken
-/// for it. Only those names cost a lookup.
+/// or Windows disk takes for one file. SFTP gives no inode to tell, so when
+/// something is found at such a name after the other was written, the folder's
+/// listing decides: a server that folds case lists only the first spelling.
+/// Only those names cost a listing.
 struct CaseClashes {
     watched: std::collections::HashSet<String>,
-    written: HashMap<String, (String, Option<u64>, Option<u64>)>,
+    /// The spelling written, by its lowercase form.
+    written: HashMap<String, String>,
 }
 
 impl CaseClashes {
@@ -960,22 +981,28 @@ impl CaseClashes {
         }
     }
 
-    fn watches(&self, rel: &str) -> bool {
-        self.watched.contains(&rel.to_lowercase())
+    /// The other spelling this upload wrote, when something `exists` at `rel`
+    /// and may be that file.
+    fn written_as(&self, rel: &str, exists: bool) -> Option<&str> {
+        let first = self.written.get(&rel.to_lowercase())?;
+        (exists && first != rel).then_some(first.as_str())
     }
 
-    /// The name this upload wrote that `existing`, found at `rel`, really is.
-    fn written_as(&self, rel: &str, existing: Option<&FileStat>) -> Option<&str> {
-        let existing = existing?;
-        let (first, size, mtime) = self.written.get(&rel.to_lowercase())?;
-        (first != rel && existing.size == *size && existing.mtime == *mtime)
-            .then_some(first.as_str())
+    fn record(&mut self, rel: &str) {
+        let folded = rel.to_lowercase();
+        if self.watched.contains(&folded) {
+            self.written.insert(folded, rel.to_string());
+        }
     }
+}
 
-    fn record(&mut self, rel: &str, stat: &FileStat) {
-        self.written
-            .insert(rel.to_lowercase(), (rel.to_string(), stat.size, stat.mtime));
-    }
+/// Whether the listing of `path`'s folder holds that exact name.
+fn listed_exactly(sftp: &Sftp, path: &str) -> Result<bool, String> {
+    let dir = remote_parent(path).ok_or_else(|| format!("{} has no folder", path))?;
+    let name = remote_entry_name(path)?;
+    let entries =
+        read_remote_dir(sftp, &dir).map_err(|e| call_error("Could not read", &dir, &e))?;
+    Ok(entries.iter().any(|(entry, _)| entry.as_os_str() == name))
 }
 
 /// How far a copy got, whether or not it reached its end. `bytes` includes a
@@ -1339,6 +1366,7 @@ fn run_download(
     }
     let target = Path::new(&input.target_dir).join(name);
     let target_text = local_path_string(&target)?;
+    readable_remote(sftp, &input.source)?;
 
     // Before the plan, which walks the whole remote folder.
     if fs::symlink_metadata(&target).is_ok() && !input.overwrite {
@@ -1944,19 +1972,24 @@ mod tests {
         assert!(err.contains(STAGED), "{}", err);
     }
 
-    fn stat(size: u64, mtime: u64) -> FileStat {
-        FileStat {
-            size: Some(size),
-            uid: None,
-            gid: None,
-            perm: Some(0o100644),
-            atime: None,
-            mtime: Some(mtime),
-        }
+    #[cfg(unix)]
+    #[test]
+    fn an_unreadable_source_fails_before_any_question() {
+        use std::os::unix::fs::PermissionsExt;
+        let tmp = TempDir::new("unreadable");
+        assert!(readable_local(&tmp.0.join("missing")).is_err());
+        let dir = tmp.0.join("closed");
+        fs::create_dir(&dir).unwrap();
+        fs::set_permissions(&dir, fs::Permissions::from_mode(0o000)).unwrap();
+        // Root reads anything, so only check where the mode holds.
+        let refused = fs::read_dir(&dir).is_err();
+        assert_eq!(readable_local(&dir).is_err(), refused);
+        fs::set_permissions(&dir, fs::Permissions::from_mode(0o700)).unwrap();
+        assert!(readable_local(&dir).is_ok());
     }
 
     #[test]
-    fn an_upload_skips_a_name_the_server_took_for_one_it_wrote() {
+    fn an_upload_checks_a_name_that_may_be_one_it_wrote() {
         let file = |rel: &str| PlanItem::File {
             rel: rel.to_string(),
             mode: None,
@@ -1966,18 +1999,15 @@ mod tests {
             ..Plan::default()
         };
         let mut clashes = CaseClashes::new(&plan);
-        assert!(clashes.watches("readme") && !clashes.watches("other"));
-
-        // A server that keeps case apart: nothing at the second name yet.
-        assert_eq!(clashes.written_as("readme", None), None);
-        clashes.record("README", &stat(3, 100));
-        // One that does not: the second name finds the first file.
-        assert_eq!(
-            clashes.written_as("readme", Some(&stat(3, 100))),
-            Some("README")
-        );
-        // A different file already there is replaced as usual.
-        assert_eq!(clashes.written_as("readme", Some(&stat(9, 100))), None);
+        assert_eq!(clashes.written_as("readme", true), None);
+        clashes.record("other");
+        clashes.record("README");
+        assert!(!clashes.written.contains_key("other"));
+        // Nothing at the second name: a server that keeps case apart.
+        assert_eq!(clashes.written_as("readme", false), None);
+        // Something there: the listing decides whether it is README.
+        assert_eq!(clashes.written_as("readme", true), Some("README"));
+        assert_eq!(clashes.written_as("README", true), None);
     }
 
     #[test]
