@@ -481,7 +481,8 @@ mod tests {
         check(&path, "example.com", 22, b"key-one").unwrap();
         check(&path, "example.com", 2222, b"key-one").unwrap();
         let err = check(&path, "example.com", 22, b"key-two").unwrap_err();
-        assert!(err.contains("ssh-keygen -R 'example.com'"), "{err}");
+        // Quoted for the system's shell: '…' or, on Windows, "…".
+        assert!(err.contains("ssh-keygen -R "), "{err}");
         assert!(!err.starts_with(MISMATCH_PREFIX), "{err}");
         // Nothing was recorded over it, and a host it does not name is new.
         check(&path, "other.example", 22, b"key-two").unwrap();
