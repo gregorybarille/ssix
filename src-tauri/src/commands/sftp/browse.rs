@@ -7,8 +7,8 @@
 
 use super::{
     call_error, check_remote_path, is_local_root, is_not_found, join_remote, path_string,
-    permission_bits, refuse_forward, remote_name, remote_parent, validate_name, FileEntry,
-    FileKind, FileListing, MAX_DEPTH, SESSION_LOST,
+    permission_bits, refuse_forward, remote_name, remote_parent, transport_failed, validate_name,
+    FileEntry, FileKind, FileListing, MAX_DEPTH, SESSION_LOST,
 };
 use crate::commands::blocking;
 use crate::commands::ssh::{connect_session, find_connection};
@@ -16,6 +16,7 @@ use crate::logs::log_local;
 use dashmap::DashMap;
 use serde::{Deserialize, Serialize};
 use ssh2::{ErrorCode, FileStat, Session, Sftp};
+use std::cell::Cell;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
@@ -66,6 +67,10 @@ struct Browser {
     sftp: Sftp,
     /// The login folder, which `~` and relative paths resolve against.
     home: String,
+    /// Set when a call's timeout was passed over. libssh2 then hands that
+    /// call's late reply to the next `stat`, so `sftp` must not be used
+    /// again: the worker opens a new SFTP channel after the job that set it.
+    stale_reply: Cell<bool>,
 }
 
 /// Returns whether the session is gone, which ends the worker.
@@ -98,7 +103,7 @@ where
     answer.recv().map_err(|_| lost())?
 }
 
-fn run_worker(browser: Browser, jobs: Receiver<Job>, session_id: String, keepalive: u16) {
+fn run_worker(mut browser: Browser, jobs: Receiver<Job>, session_id: String, keepalive: u16) {
     browser.session.set_keepalive(false, u32::from(keepalive));
     let tick = (keepalive > 0).then(|| Duration::from_secs(u64::from(keepalive)));
     loop {
@@ -120,6 +125,14 @@ fn run_worker(browser: Browser, jobs: Receiver<Job>, session_id: String, keepali
         };
         if job(&browser) {
             break;
+        }
+        if browser.stale_reply.take() {
+            // The session is sound, and ending it would only bring the user
+            // back to the folder whose link timed out.
+            match browser.session.sftp() {
+                Ok(fresh) => browser.sftp = fresh,
+                Err(_) => break,
+            }
         }
     }
     SESSIONS.remove(&session_id);
@@ -153,7 +166,7 @@ pub(super) fn sftp_connect_sync(connection_id: &str) -> Result<SftpSessionInfo, 
             )
         })
         .and_then(path_string)?;
-    let start_path = start_folder(&sftp, &home, conn.remote_path.as_deref());
+    let start_path = start_folder(&sftp, &home, conn.remote_path.as_deref())?;
 
     let session_id = uuid::Uuid::new_v4().to_string();
     let (sender, jobs) = mpsc::channel();
@@ -165,6 +178,7 @@ pub(super) fn sftp_connect_sync(connection_id: &str) -> Result<SftpSessionInfo, 
         session: ssh.session,
         sftp,
         home,
+        stale_reply: Cell::new(false),
     };
     {
         let session_id = session_id.clone();
@@ -183,18 +197,22 @@ pub(super) fn sftp_connect_sync(connection_id: &str) -> Result<SftpSessionInfo, 
 }
 
 /// A stored `remote_path` that is not a folder (any more) is no reason to
-/// refuse the session: the pane opens on the login folder instead.
-fn start_folder(sftp: &Sftp, home: &str, remote_path: Option<&str>) -> String {
-    remote_path
-        .map(str::trim)
-        .filter(|path| !path.is_empty())
-        .map(|path| absolute_remote(home, path))
-        .and_then(|path| {
-            let is_dir = sftp.stat(Path::new(&path)).ok()?.is_dir();
-            let real = sftp.realpath(Path::new(&path)).ok()?;
-            is_dir.then(|| path_string(real).ok()).flatten()
-        })
-        .unwrap_or_else(|| home.to_string())
+/// refuse the session: the pane opens on the login folder instead. A call
+/// the connection failed under is: the session is not usable after it.
+fn start_folder(sftp: &Sftp, home: &str, remote_path: Option<&str>) -> Result<String, String> {
+    let Some(path) = remote_path.map(str::trim).filter(|path| !path.is_empty()) else {
+        return Ok(home.to_string());
+    };
+    let path = absolute_remote(home, path);
+    let found = sftp
+        .stat(Path::new(&path))
+        .and_then(|stat| Ok((stat.is_dir(), sftp.realpath(Path::new(&path))?)));
+    match found {
+        Ok((true, real)) => Ok(path_string(real).unwrap_or_else(|_| home.to_string())),
+        Ok((false, _)) => Ok(home.to_string()),
+        Err(e) if transport_failed(&e) => Err(call_error("Could not open", &path, &e)),
+        Err(_) => Ok(home.to_string()),
+    }
 }
 
 /// End a remote pane's session. Transfers have their own and carry on.
@@ -215,9 +233,9 @@ pub fn sftp_local_home() -> Result<String, String> {
 #[tauri::command]
 pub async fn sftp_list(target: PaneTarget, path: String) -> Result<FileListing, String> {
     blocking(move || match target {
-        PaneTarget::Remote { session_id } => {
-            with_browser(&session_id, move |b| list_remote(&b.sftp, &b.home, &path))
-        }
+        PaneTarget::Remote { session_id } => with_browser(&session_id, move |b| {
+            list_remote(&b.sftp, &b.home, &path, &b.stale_reply)
+        }),
         PaneTarget::Local => list_local(&path),
     })
     .await
@@ -364,7 +382,14 @@ fn remote_kind(stat: &FileStat) -> FileKind {
     }
 }
 
-pub(super) fn list_remote(sftp: &Sftp, home: &str, path: &str) -> Result<FileListing, String> {
+/// A link lookup that times out sets `stale_reply`: the listing still shows,
+/// and the caller must not use `sftp` again.
+pub(super) fn list_remote(
+    sftp: &Sftp,
+    home: &str,
+    path: &str,
+    stale_reply: &Cell<bool>,
+) -> Result<FileListing, String> {
     let requested = absolute_remote(home, path);
     let dir = sftp
         .realpath(Path::new(&requested))
@@ -401,7 +426,8 @@ pub(super) fn list_remote(sftp: &Sftp, home: &str, path: &str) -> Result<FileLis
         match sftp.stat(Path::new(path)) {
             Ok(target) => Some(target.is_dir()),
             // One that timed out says the rest may too.
-            Err(e) if e.code() == ssh2::ErrorCode::Session(libssh2_sys::LIBSSH2_ERROR_TIMEOUT) => {
+            Err(e) if transport_failed(&e) => {
+                stale_reply.set(true);
                 None
             }
             Err(_) => Some(false),
@@ -427,11 +453,21 @@ fn look_up_link_targets(entries: &mut [FileEntry], is_dir: impl Fn(&str) -> Opti
     }
 }
 
+/// Whether something has this name. A failed connection is an error, not a
+/// "no": passing it over would leave libssh2 with a stale reply.
+fn remote_exists(sftp: &Sftp, path: &str) -> Result<bool, String> {
+    match sftp.lstat(Path::new(path)) {
+        Ok(_) => Ok(true),
+        Err(e) if transport_failed(&e) => Err(call_error("Could not read", path, &e)),
+        Err(_) => Ok(false),
+    }
+}
+
 fn mkdir_remote(sftp: &Sftp, dir: &str, name: &str) -> Result<String, String> {
     check_remote_path(dir)?;
     validate_name(name)?;
     let path = join_remote(dir, name);
-    if sftp.lstat(Path::new(&path)).is_ok() {
+    if remote_exists(sftp, &path)? {
         return Err(format!("{} already exists", name));
     }
     sftp.mkdir(Path::new(&path), 0o755)
@@ -444,7 +480,7 @@ fn rename_remote(sftp: &Sftp, path: &str, new_name: &str) -> Result<String, Stri
     validate_name(new_name)?;
     let dir = remote_parent(path).ok_or_else(|| "The root cannot be renamed".to_string())?;
     let target = join_remote(&dir, new_name);
-    if sftp.lstat(Path::new(&target)).is_ok() {
+    if remote_exists(sftp, &target)? {
         return Err(format!("{} already exists", new_name));
     }
     sftp.rename(Path::new(path), Path::new(&target), None)

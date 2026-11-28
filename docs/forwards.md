@@ -129,8 +129,8 @@ it does not read the connection's keepalive setting.
 ## Limits
 
 - **1024 clients per forward at once.** The count starts when a client is accepted,
-  so it includes clients still in their SOCKS handshake or waiting for a channel,
-  which the row's client count does not. A client above it is closed straight away
+  so it includes clients still in their SOCKS handshake (10 s for the whole of it)
+  or waiting for a channel, which the row's client count does not. A client above it is closed straight away
   with no SOCKS reply, the forward stays up, and the row's details show "Closed a new
   client: this forward already serves 1024, its limit" as the last client error. A
   client the system will not give a thread to is treated the same way.

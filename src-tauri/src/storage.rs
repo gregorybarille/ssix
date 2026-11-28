@@ -164,14 +164,29 @@ pub fn restrict_data_dir() {
     for problem in restrict_dir_and_files(&data_dir(), close_dir) {
         crate::logs::log_local("warn", "storage", problem);
     }
-    remove_stale_temp_files(&data_dir());
-    remove_stale_temp_files(&crate::backup::backups_dir());
+    // By SSIX's own names only: the folder may hold other programs' files.
+    remove_stale_temp_files(&data_dir(), |name| {
+        crate::backup::FILES
+            .iter()
+            .any(|file| is_temp_of(name, file))
+    });
+    remove_stale_temp_files(&crate::backup::backups_dir(), |name| {
+        is_temp_of(name, crate::backup::PREFIX)
+    });
+}
+
+/// Whether `name` is an `atomic_write` temp file of a file whose name starts
+/// with `target`.
+fn is_temp_of(name: &str, target: &str) -> bool {
+    name.strip_prefix('.')
+        .and_then(|rest| rest.strip_prefix(target))
+        .is_some_and(|rest| rest.contains(".tmp."))
 }
 
 /// Remove the temp files of `atomic_write` saves a crash cut short. One
 /// modified in the last hour may be a save still under way in another SSIX,
 /// so it stays.
-fn remove_stale_temp_files(dir: &Path) {
+fn remove_stale_temp_files(dir: &Path, ours: impl Fn(&str) -> bool) {
     let Ok(entries) = fs::read_dir(dir) else {
         return;
     };
@@ -182,7 +197,7 @@ fn remove_stale_temp_files(dir: &Path) {
         let stale = entry
             .metadata()
             .is_ok_and(|m| m.is_file() && m.modified().is_ok_and(|t| t < cutoff));
-        if name.starts_with('.') && name.contains(".tmp.") && stale {
+        if ours(&name) && stale {
             if let Err(e) = fs::remove_file(entry.path()) {
                 crate::logs::log_local(
                     "warn",
@@ -330,14 +345,21 @@ pub(crate) fn atomic_write(path: &Path, content: &[u8], mode: Option<u32>) -> Re
     let mut guard = TmpGuard(&tmp_path, false);
 
     {
-        let mut f = fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
+        let mut options = fs::OpenOptions::new();
+        options.write(true).create_new(true);
+        // Private from the start: a file opened by someone else before the
+        // chmod below would stay readable to them.
+        #[cfg(unix)]
+        if let Some(m) = mode {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.mode(m);
+        }
+        let mut f = options
             .open(&tmp_path)
             .map_err(|e| format!("open temp file {}: {}", tmp_path.display(), e))?;
 
-        // Apply the Unix mode BEFORE writing secrets so even a partially
-        // written temp file isn't world-readable.
+        // The umask can only take bits away from the mode asked for at
+        // open, so set it again to get it exact (0644 under a 077 umask).
         #[cfg(unix)]
         if let Some(m) = mode {
             use std::os::unix::fs::PermissionsExt;
@@ -1107,6 +1129,8 @@ mod tests {
             let kept = [
                 write(dir.join("data.json"), hour_ago),
                 write(backups.join("ssix-backup-x.zip"), hour_ago),
+                // Not SSIX's, however much it looks like a temp file.
+                write(dir.join(".notes.tmp.1.2.3"), hour_ago),
                 // Another SSIX may be in the middle of this save.
                 write(dir.join(".secrets.json.tmp.1.2.3"), SystemTime::now()),
             ];

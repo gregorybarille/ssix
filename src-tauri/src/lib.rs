@@ -134,6 +134,7 @@ pub fn run() {
             if matches!(event, tauri::RunEvent::Exit) {
                 commands::sftp::edit::remove_open_copies();
                 commands::sftp::transfer::remove_staged_downloads();
+                proxy::stop_all();
             }
         });
 }

@@ -286,14 +286,15 @@ function App() {
 
   /**
    * Show a confirmation before closing a live (non-failed) pane.
-   * Failed/retrying panes never opened a real shell, so they close
-   * immediately without prompting.
+   * A failed pane, or one still connecting, has no shell, so it closes
+   * without prompting. One whose worker is reconnecting keeps its shell
+   * and asks, as closing its tab does.
    */
   const handleClosePaneRequest = (sessionId: string) => {
     for (const tab of tabs) {
       const pane = tab.panes.find((p) => p.sessionId === sessionId);
       if (!pane) continue;
-      if (pane.error || pane.retrying) {
+      if (pane.error || (pane.retrying && !pane.reconnect)) {
         void closePane(sessionId);
         return;
       }

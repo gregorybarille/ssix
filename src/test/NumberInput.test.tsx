@@ -54,6 +54,14 @@ describe("NumberInput", () => {
     expect(onCommit).toHaveBeenCalledExactlyOnceWith(10);
   });
 
+  it("commits what was typed when it leaves the screen without a blur", () => {
+    const onCommit = vi.fn();
+    const { unmount } = render(<Harness onCommit={onCommit} />);
+    fireEvent.change(screen.getByTestId("field"), { target: { value: "12" } });
+    unmount();
+    expect(onCommit).toHaveBeenCalledExactlyOnceWith(12);
+  });
+
   it("holds the number to its range only when left", () => {
     const { field, onCommit } = renderField();
     fireEvent.change(field, { target: { value: "50" } });

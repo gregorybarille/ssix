@@ -661,7 +661,8 @@ fn expand_include(arg: &str, home: &Path) -> Result<Vec<PathBuf>, String> {
     let anchored = home.join(".ssh").join(expanded);
 
     let mut current = vec![PathBuf::new()];
-    for component in anchored.components() {
+    let mut components = anchored.components().peekable();
+    while let Some(component) = components.next() {
         let part = component.as_os_str().to_string_lossy();
         if !part.contains(['*', '?']) {
             for path in &mut current {
@@ -683,8 +684,14 @@ fn expand_include(arg: &str, home: &Path) -> Result<Vec<PathBuf>, String> {
             names.sort();
             next.extend(names.into_iter().map(|name| dir.join(name)));
         }
-        // More than the reader will open anyway; it reports the overflow.
-        next.truncate(MAX_FILES + 1);
+        if next.len() > MAX_FILES + 1 {
+            // Folders cut here would drop their files without a word.
+            if components.peek().is_some() {
+                return Err("it matches too many folders".to_string());
+            }
+            // More than the reader will open anyway; it reports the overflow.
+            next.truncate(MAX_FILES + 1);
+        }
         current = next;
     }
     current.retain(|path| path.exists());
@@ -1742,6 +1749,24 @@ mod tests {
         let config = ParsedConfig::read(&main, &home.0).unwrap();
         assert_eq!(config.files.len(), MAX_FILES);
         assert!(config.notices.iter().any(|n| n.message.contains("at most")));
+    }
+
+    #[test]
+    fn a_glob_over_too_many_folders_is_reported_not_cut_short() {
+        let home = TempHome::new();
+        for i in 0..80 {
+            home.write(&format!(".ssh/work/{i:03}/config"), "");
+        }
+        let main = home.write(".ssh/config", "Include work/*/config\nHost web\n");
+        let config = ParsedConfig::read(&main, &home.0).unwrap();
+        assert!(
+            config
+                .notices
+                .iter()
+                .any(|n| n.message.contains("too many folders")),
+            "{:?}",
+            config.notices
+        );
     }
 
     #[test]

@@ -27,7 +27,7 @@
 //! `STOP_GRACE` to exit, and then its channel is closed. Closing the channel
 //! alone would leave the script running, and libssh2 cannot send the SSH
 //! `signal` request on a channel that has already started. So on POSIX
-//! `kill -s TERM -<group>` runs on a second channel of the same session; a
+//! `kill -s TERM -- -<group>` runs on a second channel of the same session; a
 //! stop asked for before the PID line arrived waits for it. On Windows a
 //! second session's `taskkill` is refused ("Access denied"), so the stop
 //! is cooperative: a second channel creates the run's stop file in
@@ -265,7 +265,9 @@ fn stop_command(
     group: Option<u32>,
 ) -> Option<String> {
     match platform {
-        ScriptPlatform::Posix => group.map(|g| format!("kill -s TERM -{}", g)),
+        // Through `sh` and with `--`: the login shell's own `kill` takes the
+        // negative group for an option in dash and bash 3.2, and csh has no `--`.
+        ScriptPlatform::Posix => group.map(|g| format!("exec sh -c 'kill -s TERM -- -{}'", g)),
         ScriptPlatform::Windows => Some(encoded_powershell(
             interpreter,
             "",
@@ -708,7 +710,7 @@ mod tests {
     fn stop_command_fits_the_platform() {
         assert_eq!(
             stop_command(ScriptPlatform::Posix, "sh -s", "r1", Some(42)).as_deref(),
-            Some("kill -s TERM -42")
+            Some("exec sh -c 'kill -s TERM -- -42'")
         );
         assert_eq!(
             stop_command(ScriptPlatform::Posix, "sh -s", "r1", None),

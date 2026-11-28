@@ -99,7 +99,8 @@ paths. It plans at most 2000 hosts, or
 fewer when a very large file makes each one slow to work out, and offers at most
 2000 connections, with at most 64 forwards per host. It lists at most 2000 skipped
 entries and 200 passed-over lines. `Include` cycles stop at the file that would
-repeat. Each limit is reported once in the panel under **Passed over**.
+repeat. An `Include` whose `*` or `?` matches more than 65 folders on the way to
+its files is not read at all. Each limit is reported once in the panel under **Passed over**.
 
 ## When part of a config is not applied
 
@@ -169,7 +170,7 @@ offered again.
 | A name and destination | That destination under another name | Skipped: already imported as that name |
 | A name and destination | That name, with another destination or key | Skipped: **name clash**. The existing connection is left as it is |
 | Two aliases with one destination | | Both are offered. The first starts ticked and the second unticked, so you can pick either or both. From `~/.ssh/config` each alias is stored as its host, so two aliases are two destinations and both start ticked |
-| Two aliases with one name | | The first is offered and the second skipped as a duplicate. Spaces around a name do not count, because they are not stored: `Host " web"` and `Host web` are one name |
+| Two aliases with one name | | The first is offered and the second skipped as a duplicate. Spaces around a name do not count, because they are not stored: `Host " web"` and `Host web` are one name. From `~/.ssh/config` itself, where the alias is what gets stored, a name with a space is refused: saved without it, it would match no `Host` block |
 
 Importing the same file again therefore creates nothing. To import a host whose
 name clashes, rename the connection or the `Host`.

@@ -82,7 +82,8 @@ new ones finish; failed and cancelled ones stay until you dismiss or clear them.
   result and naming both, rather than replacing one with the other. A folder upload
   to a server on such a disk does the same: SFTP gives no file ids, so when something
   is found at the second name, the folder's listing decides; a server that folds case
-  lists only the first spelling.
+  lists only the first spelling. Every part of the path is checked that way, so
+  `Docs/readme` and `docs/readme` are kept apart too.
 - **Folders keep their permissions**, as files do and as `scp -r` does, so a `0700`
   folder stays private on the other side. A read-only source folder stays writable
   until its contents are in, and if the transfer stops first it keeps its owner's
@@ -106,7 +107,7 @@ new ones finish; failed and cancelled ones stay until you dismiss or clear them.
 | You picked a symlink to copy | Followed, as `scp` does |
 | A symlink inside a folder being copied | Skipped and counted in the result. Following it could leave the tree or go round in a loop |
 | A symlink inside a folder being deleted | The link is removed; what it points to is untouched |
-| A server folder holding more than 100 symlinks | Where they lead is not looked up, one round trip each, so they show a plain link icon and sort with the files. Opening one tries it as a folder; on a file that fails and says so. Lookups also stop after 5 s in all, or at the first that times out (a link into a mount that does not answer), and the links left show the same way |
+| A server folder holding more than 100 symlinks | Where they lead is not looked up, one round trip each, so they show a plain link icon and sort with the files. Opening one tries it as a folder; on a file that fails and says so. Lookups also stop after 5 s in all, or at the first that times out (a link into a mount that does not answer), and the links left show the same way. After such a timeout the listing shows and the pane opens a new SFTP channel on the same connection before anything else, because the server's late answer would otherwise be taken for the answer to the next action |
 
 Deleting the root, your home or login folder, or any folder that holds it, is
 refused on both panes, however the path reaches it through symlinks. Names a server
@@ -171,8 +172,9 @@ off, which the Files view cannot browse. Folders need SFTP.
 - **Uploads need write permission on the target folder** for the temporary file, so
   they fail where only the file itself is writable.
 - **After a crash**, a leftover edit copy is removed at a later launch, once it is
-  more than 24 hours old. Waiting that long keeps the copies of another running
-  instance safe.
+  more than 24 hours old, counted from the last change to the copy or its folder.
+  Waiting that long keeps the copies of another running instance safe, unless one
+  has sat untouched in an open panel for more than a day.
 - **Modification times are not preserved** by transfers.
 - **Automated coverage** does not reach dropping files from the desktop or starting
   a real editor. Unit tests cover the first; the end-to-end spec edits the temporary

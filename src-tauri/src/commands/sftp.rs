@@ -111,6 +111,13 @@ pub(crate) fn call_error(action: &str, path: &str, e: &ssh2::Error) -> String {
     }
 }
 
+/// Whether the connection, not the server's answer, failed the call. Such an
+/// error must never be passed over: after a timeout libssh2 hands the late
+/// reply to the next call of the same kind, a `stat` most of all.
+pub(crate) fn transport_failed(e: &ssh2::Error) -> bool {
+    matches!(e.code(), ErrorCode::Session(_))
+}
+
 pub(crate) fn is_not_found(e: &ssh2::Error) -> bool {
     matches!(
         e.code(),

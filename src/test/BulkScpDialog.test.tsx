@@ -70,6 +70,25 @@ describe("BulkScpDialog Stop", () => {
     expect(screen.queryByTestId("bulk-scp-stop")).toBeNull();
   });
 
+  it("drops the last group's rows when pointed at another group while open", async () => {
+    const first = [host("a")];
+    const { rerender } = render(
+      <BulkScpDialog open onOpenChange={vi.fn()} connections={first} groupLabel="prod" />,
+    );
+    fireEvent.change(screen.getByTestId("bulk-scp-local-path"), { target: { value: "/l" } });
+    fireEvent.change(screen.getByTestId("bulk-scp-remote-path"), { target: { value: "/r" } });
+    fireEvent.click(screen.getByTestId("bulk-scp-start"));
+    await waitFor(() => expect(finishCopy.a).toBeDefined());
+    await act(async () => finishCopy.a(copied));
+    expect(row("a")).toHaveAttribute("data-status", "success");
+
+    rerender(
+      <BulkScpDialog open onOpenChange={vi.fn()} connections={[host("z")]} groupLabel="dev" />,
+    );
+    expect(screen.queryByTestId("bulk-scp-row-a")).toBeNull();
+    expect(screen.getByTestId("bulk-scp-local-path")).toHaveValue("");
+  });
+
   it("skips the rest when the copy finished just as the stop came", async () => {
     await start([host("a"), host("b")]);
     fireEvent.click(screen.getByTestId("bulk-scp-stop"));

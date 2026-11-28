@@ -102,6 +102,9 @@ const PROBE_CHANNEL_TYPE: &str = "ssix-probe@ssix.invalid";
 /// costs a thread and two descriptors.
 const MAX_CLIENTS: usize = 1024;
 
+/// Clients a forward accepts before it looks for a stop again.
+const ACCEPT_BATCH: usize = 64;
+
 /// How long a forward stops accepting when no descriptor is free. On Linux the
 /// connection stays queued and the listener readable, so the supervisor would spin.
 const OUT_OF_DESCRIPTORS_PAUSE: Duration = Duration::from_millis(100);
@@ -110,7 +113,7 @@ const OUT_OF_DESCRIPTORS_PAUSE: Duration = Duration::from_millis(100);
 #[cfg(unix)]
 const WANTED_OPEN_FILES: libc::rlim_t = 10_240;
 
-/// How long a SOCKS client gets for each step of its handshake.
+/// How long a SOCKS client gets for its whole handshake.
 const SOCKS_HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// Longest the supervisor sleeps while clients are connected, so it notices
@@ -816,28 +819,33 @@ enum Incoming {
 }
 
 impl Incoming {
-    /// Start a thread for everyone waiting. An error ends the forward.
+    /// Start a thread for everyone waiting, `ACCEPT_BATCH` at most: the
+    /// listener stays readable for the rest, and the supervisor gets to see a
+    /// stop in between however fast clients arrive. An error ends the forward.
     fn accept_all(&mut self, hub: &Arc<Hub>) -> Result<(), String> {
         match self {
-            Incoming::Tcp { listener, serve } => loop {
-                match listener.accept() {
-                    Ok((stream, peer)) => {
-                        let serve = Arc::clone(serve);
-                        hub.spawn_client(move |hub| serve(hub, stream, peer));
+            Incoming::Tcp { listener, serve } => {
+                for _ in 0..ACCEPT_BATCH {
+                    match listener.accept() {
+                        Ok((stream, peer)) => {
+                            let serve = Arc::clone(serve);
+                            hub.spawn_client(move |hub| serve(hub, stream, peer));
+                        }
+                        Err(e) if e.kind() == io::ErrorKind::WouldBlock => return Ok(()),
+                        Err(e) if one_client_failed(&e) => {}
+                        Err(e) if out_of_descriptors(&e) => {
+                            hub.status(
+                                "client_error",
+                                Some(format!("Could not accept a new client: {}", e)),
+                            );
+                            thread::sleep(OUT_OF_DESCRIPTORS_PAUSE);
+                            return Ok(());
+                        }
+                        Err(e) => return Err(format!("accept failed: {}", e)),
                     }
-                    Err(e) if e.kind() == io::ErrorKind::WouldBlock => return Ok(()),
-                    Err(e) if one_client_failed(&e) => {}
-                    Err(e) if out_of_descriptors(&e) => {
-                        hub.status(
-                            "client_error",
-                            Some(format!("Could not accept a new client: {}", e)),
-                        );
-                        thread::sleep(OUT_OF_DESCRIPTORS_PAUSE);
-                        return Ok(());
-                    }
-                    Err(e) => return Err(format!("accept failed: {}", e)),
                 }
-            },
+                Ok(())
+            }
             Incoming::Ssh {
                 listener,
                 session,
@@ -1125,13 +1133,16 @@ fn serve_socks_client(
     // macOS, and the handshake reads it step by step.
     let blocking = stream
         .set_nonblocking(false)
-        .and_then(|()| stream.set_read_timeout(Some(SOCKS_HANDSHAKE_TIMEOUT)))
         .and_then(|()| stream.set_write_timeout(Some(SOCKS_HANDSHAKE_TIMEOUT)));
     if blocking.is_err() {
         return;
     }
 
-    let target = match socks5::negotiate(&mut stream) {
+    let handshake = socks5::negotiate(&mut socks5::Deadline {
+        stream: &stream,
+        at: Instant::now() + SOCKS_HANDSHAKE_TIMEOUT,
+    });
+    let target = match handshake {
         Ok(target) => target,
         Err(why) => {
             debug.at(1, || format!("SOCKS client {}: {}", peer, why));

@@ -275,15 +275,16 @@ describe("InstallKeyDialog", () => {
     expect(screen.getByRole("status")).toHaveTextContent(/installed successfully/i);
   });
 
-  it("submit button carries aria-busy while installing", async () => {
+  it("submit button carries aria-busy while installing, and Escape does not close it", async () => {
     let resolveInvoke: (v: undefined) => void = () => {};
     vi.mocked(invoke).mockImplementationOnce(
       () => new Promise<undefined>((res) => { resolveInvoke = res; }),
     );
+    const onOpenChange = vi.fn();
     render(
       <InstallKeyDialog
         open
-        onOpenChange={() => {}}
+        onOpenChange={onOpenChange}
         credentialId="cred-1"
         defaultHost="a.example"
         defaultUsername="root"
@@ -296,6 +297,8 @@ describe("InstallKeyDialog", () => {
     // While the in-flight invoke is pending, the button advertises busy.
     const busyBtn = await screen.findByRole("button", { name: /Installing/i });
     expect(busyBtn).toHaveAttribute("aria-busy", "true");
+    fireEvent.keyDown(screen.getByTestId("install-key-dialog"), { key: "Escape" });
+    expect(onOpenChange).not.toHaveBeenCalled();
     resolveInvoke(undefined);
   });
 

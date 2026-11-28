@@ -53,6 +53,36 @@ pub(super) fn write_reply<W: Write>(stream: &mut W, reply: Reply) -> io::Result<
     stream.flush()
 }
 
+/// A client's socket whose reads must all be done by `at`. A read timeout on
+/// the socket alone starts again with every byte, so a client sending one
+/// now and then could hold its thread for an hour.
+pub(super) struct Deadline<'a> {
+    pub(super) stream: &'a TcpStream,
+    pub(super) at: Instant,
+}
+
+impl Read for Deadline<'_> {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        let left = self
+            .at
+            .checked_duration_since(Instant::now())
+            .filter(|left| !left.is_zero())
+            .ok_or(io::ErrorKind::TimedOut)?;
+        self.stream.set_read_timeout(Some(left))?;
+        self.stream.read(buf)
+    }
+}
+
+impl Write for Deadline<'_> {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        self.stream.write(buf)
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        self.stream.flush()
+    }
+}
+
 fn handshake_error(e: io::Error) -> String {
     format!("SOCKS handshake failed: {}", e)
 }
@@ -193,6 +223,22 @@ mod tests {
     use super::*;
     use std::io::Cursor;
     use std::net::TcpListener;
+
+    #[test]
+    fn a_client_that_trickles_bytes_runs_out_of_time() {
+        let (mut client, server) = crate::proxy::loopback_pair().unwrap();
+        // No timeout of the socket's own: only the deadline can end the read.
+        client.write_all(&[VERSION]).unwrap();
+        let started = Instant::now();
+        let mut slow = Deadline {
+            stream: &server,
+            at: started + Duration::from_millis(100),
+        };
+        let err = negotiate(&mut slow).unwrap_err();
+        assert!(err.contains("handshake failed"), "{}", err);
+        assert!(started.elapsed() < Duration::from_secs(5));
+        assert!(slow.read(&mut [0]).is_err(), "nothing is read past it");
+    }
 
     /// What a client sent, and what it was sent back.
     struct Duplex {
