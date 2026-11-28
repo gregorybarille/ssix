@@ -155,7 +155,13 @@ export function InstallKeyDialog({
   }, [open, defaultHost, defaultPort, defaultUsername]);
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog
+      open={open}
+      // An install under way keeps the dialog: closing would hide its result.
+      onOpenChange={(next) => {
+        if (!isSubmitting) onOpenChange(next);
+      }}
+    >
       <DialogContent data-testid="install-key-dialog">
         <DialogHeader>
           <DialogTitle>Install Public Key on Remote</DialogTitle>

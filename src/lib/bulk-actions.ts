@@ -106,24 +106,35 @@ const STOP_SKIP_REASON = "Not started: the transfer was stopped";
  * Build the initial `BulkScpStep[]` for a download. Each step's
  * `localPath` is precomputed via {@link suffixedLocalDownloadPath}
  * so the user can see exactly where each file will land before
- * the transfer starts.
+ * the transfer starts. Two names that give one file (`Prod` and `prod` on
+ * a disk that folds case, `a/b` and `a:b`) get `-2`, `-3` so no host's file
+ * replaces another's.
  */
 export function planBulkDownload(
   connections: Connection[],
   input: BulkScpDownloadInput,
 ): BulkScpStep[] {
-  return connections.map((conn) => ({
-    connectionId: conn.id,
-    connectionName: conn.name,
-    remotePath: input.remotePath,
-    localPath: suffixedLocalDownloadPath(
-      input.localDir,
-      input.remotePath,
-      conn.name,
-    ),
-    status: isBulkActionable(conn) ? "pending" : "skipped",
-    error: isBulkActionable(conn) ? undefined : FORWARD_SKIP_REASON,
-  }));
+  const taken = new Set<string>();
+  return connections.map((conn) => {
+    const actionable = isBulkActionable(conn);
+    const pathFor = (name: string) =>
+      suffixedLocalDownloadPath(input.localDir, input.remotePath, name);
+    let localPath = pathFor(conn.name);
+    if (actionable) {
+      for (let n = 2; taken.has(localPath.toLowerCase()); n++) {
+        localPath = pathFor(`${conn.name}-${n}`);
+      }
+      taken.add(localPath.toLowerCase());
+    }
+    return {
+      connectionId: conn.id,
+      connectionName: conn.name,
+      remotePath: input.remotePath,
+      localPath,
+      status: actionable ? "pending" : "skipped",
+      error: actionable ? undefined : FORWARD_SKIP_REASON,
+    };
+  });
 }
 
 /**

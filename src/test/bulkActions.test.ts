@@ -103,6 +103,19 @@ describe("planBulkDownload", () => {
     expect(plan[0].localPath).toBe("/tmp/dl/app-alpha.log");
     expect(plan[1].localPath).toBe("/tmp/dl/app-beta.log");
   });
+
+  it("keeps apart hosts whose names give the same file", () => {
+    const plan = planBulkDownload(
+      [direct("1", "Prod"), direct("2", "prod"), direct("3", "a/b"), direct("4", "a:b")],
+      { remotePath: "/etc/hosts", localDir: "/tmp/dl", recursive: false },
+    );
+    expect(plan.map((s) => s.localPath)).toEqual([
+      "/tmp/dl/hosts-Prod",
+      "/tmp/dl/hosts-prod-2",
+      "/tmp/dl/hosts-a_b",
+      "/tmp/dl/hosts-a_b-2",
+    ]);
+  });
 });
 
 describe("runBulkScp", () => {

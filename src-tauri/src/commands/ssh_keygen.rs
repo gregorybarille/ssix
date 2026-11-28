@@ -49,9 +49,9 @@ pub struct GenerateSshKeyInput {
 pub struct GeneratedKey {
     /// Path to the private key on disk, if it was written.
     pub private_key_path: Option<String>,
-    /// Inline private key text in OpenSSH PEM form. Always present so the
-    /// caller can immediately use it; persistence to secrets.json is handled
-    /// by the credential-add path.
+    /// The private key in OpenSSH PEM form when it is kept inline, for the
+    /// credential form to save. Empty when it was written to disk: the file
+    /// is the only copy, and none crosses to the webview.
     pub private_key: String,
     /// Public key as a single line, e.g. `ssh-ed25519 AAAA... comment`.
     pub public_key: String,
@@ -201,8 +201,11 @@ pub(crate) fn generate_ssh_key_sync(input: GenerateSshKeyInput) -> Result<Genera
     };
 
     Ok(GeneratedKey {
+        private_key: match path_written {
+            Some(_) => String::new(),
+            None => private_pem,
+        },
         private_key_path: path_written,
-        private_key: private_pem,
         public_key: public_line,
     })
 }
@@ -615,6 +618,7 @@ mod tests {
             Some(path.to_string_lossy().as_ref())
         );
         assert!(path.exists());
+        assert!(out.private_key.is_empty(), "a key on disk stays there");
         assert!(path.with_extension("pub").exists());
         #[cfg(unix)]
         {

@@ -1,4 +1,5 @@
-import { useState, type ComponentProps } from "react";
+import { useEffect, useState, type ComponentProps } from "react";
+import { useLatestCallback } from "@/hooks/useLatestCallback";
 import { Input } from "./input";
 
 interface NumberInputProps
@@ -13,10 +14,17 @@ interface NumberInputProps
 /**
  * A number field whose text can be edited freely: emptied, or typed over digit
  * by digit. It becomes a number, held to its range, only when the field is
- * left. A text without a number gives way to `value` again.
+ * left, or taken off screen: a shortcut can change the view without a blur.
+ * A text without a number gives way to `value` again.
  */
 export function NumberInput({ value, parse, onCommit, ...props }: NumberInputProps) {
   const [draft, setDraft] = useState<string | null>(null);
+  const commit = useLatestCallback(() => {
+    if (draft === null) return;
+    const parsed = parse(draft);
+    if (parsed !== undefined && parsed !== value) onCommit(parsed);
+  });
+  useEffect(() => commit, [commit]);
   return (
     <Input
       {...props}
@@ -24,10 +32,8 @@ export function NumberInput({ value, parse, onCommit, ...props }: NumberInputPro
       value={draft ?? value}
       onChange={(e) => setDraft(e.target.value)}
       onBlur={() => {
-        if (draft === null) return;
+        commit();
         setDraft(null);
-        const parsed = parse(draft);
-        if (parsed !== undefined && parsed !== value) onCommit(parsed);
       }}
     />
   );

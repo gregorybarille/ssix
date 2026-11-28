@@ -928,12 +928,13 @@ fn upload_plan(
             Ok((path, created))
         },
         |run, rel, mode| {
-            let mut file = fs::File::open(local_under(source, rel))
-                .map_err(|e| format!("Could not read {}: {}", source.display(), e))?;
+            let local = local_under(source, rel);
+            let mut file = fs::File::open(&local)
+                .map_err(|e| format!("Could not read {}: {}", local.display(), e))?;
             let path = remote_under(target, rel);
             let destination = RemoteTarget::resolve(sftp, &path)?;
             if let Some(first) = clashes.written_as(rel, destination.existing.is_some()) {
-                if !listed_exactly(sftp, &path)? {
+                if !listed_exactly(sftp, target, rel)? {
                     run.skipped += 1;
                     run.notes.push(format!(
                         "{rel} was skipped: the server took it for {first}, which differs only by case"
@@ -996,13 +997,29 @@ impl CaseClashes {
     }
 }
 
-/// Whether the listing of `path`'s folder holds that exact name.
-fn listed_exactly(sftp: &Sftp, path: &str) -> Result<bool, String> {
-    let dir = remote_parent(path).ok_or_else(|| format!("{} has no folder", path))?;
-    let name = remote_entry_name(path)?;
-    let entries =
-        read_remote_dir(sftp, &dir).map_err(|e| call_error("Could not read", &dir, &e))?;
-    Ok(entries.iter().any(|(entry, _)| entry.as_os_str() == name))
+/// Whether the server lists `rel` under `root` with this exact spelling, in
+/// every part: `docs/readme` is `Docs/readme` to a server that folds case,
+/// and only the listing above `docs` shows it.
+fn listed_exactly(sftp: &Sftp, root: &str, rel: &str) -> Result<bool, String> {
+    for part in path_prefixes(rel) {
+        let path = remote_under(root, part);
+        let dir = remote_parent(&path).ok_or_else(|| format!("{} has no folder", path))?;
+        let name = remote_entry_name(&path)?;
+        let entries =
+            read_remote_dir(sftp, &dir).map_err(|e| call_error("Could not read", &dir, &e))?;
+        if !entries.iter().any(|(entry, _)| entry.as_os_str() == name) {
+            return Ok(false);
+        }
+    }
+    Ok(true)
+}
+
+/// `a`, `a/b` and `a/b/c` for `a/b/c`.
+fn path_prefixes(rel: &str) -> impl Iterator<Item = &str> {
+    rel.match_indices('/')
+        .map(|(at, _)| at)
+        .chain([rel.len()])
+        .map(|at| &rel[..at])
 }
 
 /// How far a copy got, whether or not it reached its end. `bytes` includes a
@@ -1168,8 +1185,14 @@ pub(super) fn stage_upload(
     let written = copy_stream_growing(source, &mut remote, on_chunk).and_then(|()| {
         with_finish_limit(session, || {
             // Durable before it can replace anything. Not every server has the
-            // extension; a failing connection shows in the close below.
-            let _ = remote.fsync();
+            // extension. A timeout must end the copy: libssh2 would hand
+            // its late reply to the next file's fsync on this session.
+            if let Err(e) = remote.fsync() {
+                if e.code() == ssh2::ErrorCode::Session(libssh2_sys::LIBSSH2_ERROR_TIMEOUT) {
+                    let lost = call_error("Could not finish writing", &target.path, &e);
+                    return Err(Stop::Failed(lost));
+                }
+            }
             remote
                 .close()
                 .map_err(|e| Stop::Failed(call_error("Could not finish writing", &target.path, &e)))
@@ -1234,10 +1257,14 @@ fn keep_attributes(sftp: &Sftp, staged: &str, target: &RemoteTarget) -> Result<(
     // Owner first, since changing it clears setuid. Only root may give a
     // file away, so failing here is normal for a shared file.
     if existing.uid.is_some() && existing.gid.is_some() {
-        let _ = sftp.setstat(
+        if let Err(e) = sftp.setstat(
             Path::new(staged),
             attributes(existing.uid, existing.gid, None),
-        );
+        ) {
+            if super::transport_failed(&e) {
+                return Err(call_error("Could not keep the owner of", &target.path, &e));
+            }
+        }
     }
     if let Some(perm) = existing.perm {
         sftp.setstat(
@@ -1648,6 +1675,13 @@ mod tests {
     use std::collections::BTreeSet;
     use std::io::{self, Cursor};
     use std::sync::Mutex;
+
+    #[test]
+    fn every_part_of_a_path_is_checked_for_its_spelling() {
+        let parts: Vec<&str> = path_prefixes("docs/sub/readme").collect();
+        assert_eq!(parts, ["docs", "docs/sub", "docs/sub/readme"]);
+        assert_eq!(path_prefixes("readme").collect::<Vec<_>>(), ["readme"]);
+    }
 
     /// A reader that fails after a first chunk of data, like a dropped link.
     struct FailsAfter(Cursor<Vec<u8>>);

@@ -82,20 +82,18 @@ export function BulkScpDialog({
     [connections],
   );
 
-  // Reset state when the dialog closes. The dialog is always
-  // unmounted/remounted for each group, so there is no in-flight
-  // state to carry over to a different group.
+  // Start clean when the dialog closes, and when it is pointed at another
+  // group while open: it is mounted once, and the store refuses a new group
+  // while a run is under way.
   useEffect(() => {
-    if (!open) {
-      setMode("upload");
-      setLocalPath("");
-      setRemotePath("");
-      setRecursive(false);
-      setSubmitted(false);
-      setSteps([]);
-      setRunning(false);
-    }
-  }, [open]);
+    setMode("upload");
+    setLocalPath("");
+    setRemotePath("");
+    setRecursive(false);
+    setSubmitted(false);
+    setSteps([]);
+    setRunning(false);
+  }, [open, connections]);
 
   const localPathError =
     submitted && !localPath.trim()

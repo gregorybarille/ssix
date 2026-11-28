@@ -181,6 +181,11 @@ fn run_attempt<S: Discard + Send + 'static>(
         match wait_for_user(control, Some(ATTEMPT_POLL), pty_size) {
             Some(action @ (UserAction::Close | UserAction::Cancel)) => {
                 cancelled.store(true, Ordering::SeqCst);
+                // One that arrived during the wait would be dropped with the
+                // receiver, and a shell must be discarded to be freed.
+                if let Ok(Ok(shell)) = rx.try_recv() {
+                    shell.discard();
+                }
                 return Attempt::Interrupted(action);
             }
             // Already attempting: nothing to do sooner.

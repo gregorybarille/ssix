@@ -12,6 +12,7 @@ use std::ffi::OsString;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{Shutdown, TcpListener, TcpStream};
 use std::process::{Child, Command, Stdio};
+use std::sync::LazyLock;
 use std::thread;
 
 use crate::ssh::Endpoint;
@@ -100,8 +101,8 @@ fn shell(command: &str) -> Command {
 /// child. A group already gone only makes `kill` return an error, ignored here.
 /// The guard is because 0 would mean our own group and -1 every process.
 #[cfg(unix)]
-fn kill_tree(child: &Child) {
-    if let Ok(pid @ 2..) = libc::pid_t::try_from(child.id()) {
+fn kill_tree(pid: u32) {
+    if let Ok(pid @ 2..) = libc::pid_t::try_from(pid) {
         // SAFETY: `kill` takes plain integers and touches no memory of ours.
         unsafe { libc::kill(-pid, libc::SIGKILL) };
     }
@@ -110,10 +111,10 @@ fn kill_tree(child: &Child) {
 /// Killing `cmd.exe` alone would leave "Through WSL"'s `wsl.exe` and `nc` running.
 /// The handle `child` holds keeps the pid from going to anyone else.
 #[cfg(windows)]
-fn kill_tree(child: &Child) {
+fn kill_tree(pid: u32) {
     use std::os::windows::process::CommandExt;
     let _ = Command::new("taskkill")
-        .args(["/T", "/F", "/PID", &child.id().to_string()])
+        .args(["/T", "/F", "/PID", &pid.to_string()])
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
@@ -123,9 +124,29 @@ fn kill_tree(child: &Child) {
 
 /// End the command and what it started. Reaping comes last, as `kill_tree` needs.
 fn stop(mut child: Child) {
-    kill_tree(&child);
+    // Off the list first: a pid on it has not been reaped, so it is still ours.
+    RUNNING.remove(&child.id());
+    kill_tree(child.id());
     let _ = child.kill();
     let _ = child.wait();
+}
+
+/// The commands carrying a session now, by pid.
+static RUNNING: LazyLock<dashmap::DashSet<u32>> = LazyLock::new(dashmap::DashSet::new);
+
+/// End every proxy command. For when the app quits: the threads that would
+/// stop them die with it, and a command in a group of its own (`nc` holding
+/// its connection open) would otherwise outlive the app, as it never does
+/// with `ssh`.
+pub fn stop_all() {
+    kill_each(&RUNNING);
+}
+
+fn kill_each(running: &dashmap::DashSet<u32>) {
+    // `stop` cannot take a pid off the list while this reads it.
+    for pid in running.iter() {
+        kill_tree(*pid);
+    }
 }
 
 /// A connected loopback pair whose far end is accepted from our own
@@ -223,6 +244,7 @@ fn pump(mut child: Child, far: TcpStream, addr: String) {
 
     // Socket → child stdin; owns the child and ends it once the SSH session
     // has closed its side.
+    RUNNING.insert(child.id());
     thread::spawn(move || {
         let mut from_socket = far;
         let mut buf = [0u8; 32 * 1024];
@@ -420,6 +442,18 @@ mod tests {
             .read_to_end(&mut output)
             .unwrap();
         stop(child);
+    }
+
+    /// A list of its own: the real one holds the other tests' commands.
+    #[cfg(unix)]
+    #[test]
+    fn quitting_ends_a_command_and_what_it_started() {
+        let mut child = shell("sleep 60 | cat").spawn().unwrap();
+        let running = dashmap::DashSet::new();
+        running.insert(child.id());
+        kill_each(&running);
+        use std::os::unix::process::ExitStatusExt;
+        assert_eq!(child.wait().unwrap().signal(), Some(libc::SIGKILL));
     }
 
     #[cfg(unix)]

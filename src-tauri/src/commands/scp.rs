@@ -23,7 +23,9 @@ use crate::commands::sftp::transfer::{
     copy_stream, download_unattended, file_mode, limit_tidying, local_target, upload_unattended,
     with_finish_limit, write_partial, Copied, Stop, CALL_TIMEOUT_MS,
 };
-use crate::commands::sftp::{join_remote, remote_parent, temp_name, SESSION_LOST};
+use crate::commands::sftp::{
+    join_remote, remote_parent, temp_name, transport_failed, SESSION_LOST,
+};
 use crate::commands::ssh::{find_connection, ConnectedSession};
 use crate::commands::ssh_keygen::shell_single_quote;
 use crate::models::Connection;
@@ -611,7 +613,15 @@ fn ensure_remote_parents(sftp: &Sftp, remote_path: &str) -> Result<(), String> {
     let mut dirs = directory_creation_sequence(remote_path, &remote_home(sftp)?);
     dirs.pop();
     for dir in dirs {
-        if sftp.stat(Path::new(&dir)).is_err() {
+        // A failed connection is not a missing folder: see `transport_failed`.
+        let missing = match sftp.stat(Path::new(&dir)) {
+            Ok(_) => false,
+            Err(e) if transport_failed(&e) => {
+                return Err(format!("Failed to stat {}: {}", dir, e));
+            }
+            Err(_) => true,
+        };
+        if missing {
             sftp.mkdir(Path::new(&dir), 0o755)
                 .map_err(|e| format!("Failed to create remote directory {}: {}", dir, e))?;
         }

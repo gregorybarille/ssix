@@ -52,7 +52,7 @@ which connects from inside the default WSL distribution, so SSIX reaches
 hosts only WSL can see (its own network, or a VPN running there). The
 distribution needs `nc` (`netcat-openbsd` on Debian and Ubuntu). SCP and
 port forwards use the proxy too; the copied `ssh` command carries it as
-`-o ProxyCommand=…`.
+`-o ProxyCommand=…`. Quitting SSIX ends the proxy commands still running.
 
 A host can be an alias from `~/.ssh/config`: when connecting, SSIX uses the `HostName` that applies to it, as `ssh` does. Whole hosts, with their port, user, key and forwards, can be imported: see [Import from SSH config](ssh-config-import.md).
 
@@ -735,7 +735,9 @@ hosts that carry no tags) and offers two bulk actions:
     a single local directory. Each downloaded file is suffixed
     with `-<connection-name>` (sanitized for filesystem use) so
     multiple hosts don't overwrite each other (e.g.
-    `app.log` → `app-server-a.log`, `app-server-b.log`). Recursive
+    `app.log` → `app-server-a.log`, `app-server-b.log`). Two names
+    that would give the same file (`Prod` and `prod`, `a/b` and
+    `a:b`) get `-2`, `-3` after the name. Recursive
     downloads suffix the top-level directory name only
     (`mydir-server-a/`).
   - Transfers run sequentially, one host at a time, with a live

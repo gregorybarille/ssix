@@ -27,7 +27,7 @@ use zip::{CompressionMethod, ZipArchive, ZipWriter};
 
 /// Bumped when the archive layout changes; newer archives are refused.
 const FORMAT: u32 = 1;
-const PREFIX: &str = "ssix-backup-";
+pub(crate) const PREFIX: &str = "ssix-backup-";
 const MANIFEST: &str = "manifest.json";
 /// The files a backup holds, in archive order. `data.json` is required.
 pub(crate) const FILES: [&str; 3] = ["data.json", "secrets.json", "known_hosts"];

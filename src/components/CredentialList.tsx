@@ -95,6 +95,8 @@ export function CredentialList({
 
   const installDialog = installCred && (
     <InstallKeyDialog
+      // One instance per credential: a result must not show under another's name.
+      key={installCred.id}
       open={!!installCred}
       onOpenChange={(o) => !o && setInstallCred(null)}
       credentialId={installCred.id}

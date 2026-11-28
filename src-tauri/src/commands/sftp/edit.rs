@@ -574,10 +574,7 @@ fn purge_older_than(age: Duration) {
     };
     let now = SystemTime::now();
     for entry in entries.flatten() {
-        let stale = entry
-            .metadata()
-            .and_then(|meta| meta.modified())
-            .ok()
+        let stale = last_touched(&entry.path())
             .and_then(|modified| now.duration_since(modified).ok())
             .is_some_and(|elapsed| elapsed >= age);
         if stale {
@@ -586,6 +583,17 @@ fn purge_older_than(age: Duration) {
             }
         }
     }
+}
+
+/// When an edit's folder or the copy in it last changed. An editor that
+/// saves in place changes the copy only, never the folder.
+fn last_touched(folder: &Path) -> Option<SystemTime> {
+    let modified = |path: &Path| fs::metadata(path).and_then(|meta| meta.modified()).ok();
+    let inside = fs::read_dir(folder).ok()?.flatten();
+    inside
+        .filter_map(|entry| modified(&entry.path()))
+        .chain(modified(folder))
+        .max()
 }
 
 #[cfg(test)]
@@ -736,6 +744,23 @@ mod tests {
             remove_open_copies();
             assert!(!folder.exists());
             assert!(record(&id).is_err());
+        });
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_copy_saved_in_place_keeps_an_old_folder_from_the_purge() {
+        with_isolated_data_dir(|| {
+            let id = open_record("edited");
+            let folder = record(&id).unwrap().folder;
+            let long_ago = SystemTime::now() - Duration::from_secs(3 * 24 * 3600);
+            fs::File::open(&folder)
+                .unwrap()
+                .set_modified(long_ago)
+                .unwrap();
+            purge_stale_copies();
+            assert!(folder.exists(), "the copy inside was written just now");
+            EDITS.remove(&id);
         });
     }
 

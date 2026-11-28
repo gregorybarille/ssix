@@ -1666,7 +1666,15 @@ fn run_io_loop<O: ShellOutput>(shell: OpenShell, io: &mut ShellIo<O>) -> ShellEn
             // all along, and waiting on that would spin.
             let socket = [fds[0]];
             let writable: &[wake::Fd] = if send_blocked { &socket } else { &[] };
-            wake::wait_ready(&fds, writable, idle_wait(readers));
+            // Once the server has sent EOF `take_in` reads nothing, so what
+            // came behind it (exit status, close) keeps the socket readable
+            // and a wait on it would spin until the terminal catches up. Its
+            // ack comes through the wake pipe, which is enough to wait on.
+            // Before EOF the socket stays in the wait: a flood has to go on
+            // being read, or the server stops taking what is sent to it.
+            let unread = paused && wake::is_readable(fds[0]) && server_sent_eof(&mut channel);
+            let readable = if unread { &fds[1..] } else { &fds[..] };
+            wake::wait_ready(readable, writable, idle_wait(readers));
             io.control.wake.drain();
         }
     }

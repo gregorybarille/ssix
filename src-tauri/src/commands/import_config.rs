@@ -486,6 +486,13 @@ fn server_plan(
     if !valid_host(&host) {
         return Err(Refusal::invalid(format!("'{host}' cannot be a host name")));
     }
+    // A stored alias is looked up again at connect, where saving has trimmed
+    // it: `" web"` would match no block and dial the name `web`.
+    if env.store_alias && !valid_host(alias) {
+        return Err(Refusal::invalid(format!(
+            "'{alias}' cannot be stored as a host alias"
+        )));
+    }
 
     let port = match (port, &resolved.port) {
         (Some(port), _) => port,
@@ -2651,6 +2658,16 @@ mod tests {
             f.import("Host web\n  User u\nHost *\n  HostName %h.corp.example.com\n");
             assert_eq!(stored("web").host, "web");
             assert_eq!(connects_to(&f, "web"), "web.corp.example.com");
+        });
+    }
+
+    #[test]
+    fn an_alias_the_save_would_change_is_not_stored_from_the_live_config() {
+        with_isolated_data_dir(|| {
+            let f = Fixture::live();
+            let preview = f.preview("Host \" web\"\n  HostName 10.0.0.5\n  User u\n");
+            assert!(preview.items.is_empty(), "{preview:#?}");
+            assert!(skip(&preview, " web").reason.contains("host alias"));
         });
     }
 
